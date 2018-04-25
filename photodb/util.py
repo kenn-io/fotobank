@@ -8,7 +8,8 @@ FILE_TYPES = {
     'JPG': 'exif',
     'JPEG': 'exif',
     'GIF': 'exif',
-    'DNG': 'raw'
+    'DNG': 'raw',
+    'CR2': 'raw'
 }
 
 
@@ -28,9 +29,9 @@ def get_checksum(path, kind='md5'):
 def get_file_extension(path):
     root, ext = os.path.splitext(path)
     if len(ext) > 0 and ext[0] == '.':
-        return ext[1:]
+        return ext[1:].upper()
     else:
-        return ext
+        return ext.upper()
 
 
 def get_type_from_ext(extension):
