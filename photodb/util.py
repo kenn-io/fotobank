@@ -51,7 +51,22 @@ def discover_photos(directory_path):
                 yield os.path.join(dirpath, filename)
 
 
+def discover_movies(directory_path):
+    """
+    Return generator yielding all paths that appear to be movies
+    """
+    for dirpath, dirnames, filenames in os.walk(directory_path):
+        for filename in filenames:
+            if path_is_movie(filename):
+                yield os.path.join(dirpath, filename)
+
+
 def path_is_photo(path):
     ext = get_file_extension(path)
     file_type = get_type_from_ext(ext)
     return file_type != 'unknown'
+
+
+def path_is_movie(path):
+    ext = get_file_extension(path)
+    return ext in {'MP4', 'AVI', 'MOV', 'MP2', 'MPG'}
