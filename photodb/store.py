@@ -1,4 +1,3 @@
-import json
 import os
 import shutil
 
@@ -50,6 +49,21 @@ class PhotoStore(object):
 
         results = list(self.con.execute(stmt))
         return len(results) > 0
+
+    def delete_checksum(self, checksum, metadata_only=False):
+        """
+        Delete photo from database having indicated md5 checksum
+
+        Parameters
+        ----------
+        checksum : string
+        metadata_only : boolean, default False
+            If True, only delete metadata for photo
+        """
+        t = self.table_photos
+        stmt = (t.delete()
+                .where(t.c.checksum == checksum))
+        self.con.execute(stmt)
 
     def insert_photo(self, photo):
         checksum = photo.checksum
@@ -111,3 +125,9 @@ def get_photo_path(base_path, photo):
         seq += 1
 
     return directory, unique_path
+
+
+def get_store_path(metadata):
+    file_path = metadata['path']
+    directory = str(metadata['timestamp'].year)
+    return os.path.join(directory, file_path)

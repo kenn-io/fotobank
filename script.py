@@ -1,38 +1,35 @@
 import os
 import shutil
 
-from photodb.common import Photo
-from photodb.store import PhotoStore
-import photodb.util as util
+from photodb.store import PhotoStore, get_store_path
 
+from sqlalchemy.sql import select
 
-if __name__ == '__main__':
-    store_path = '/home/wesm/fotobank'
-    store = PhotoStore(store_path)
-    # to_ingest = '/home/wesm/Documents/photos_to_sort/PhotosTigerSpain'
-    # to_ingest = '/media/wesm/6263-3532'
-    # to_ingest = '/media/wesm/CANON_DC'
-    # to_ingest = '/media/wesm/disk'
-    # to_ingest = '/home/wesm/Documents/photos_to_sort'
-    to_ingest = '/media/wesm/photos/Google Photos'
+store_path = '/media/wesm/photos/fotobank'
+to_ingest = '/media/wesm/photos/Google Photos'
 
-    movie_path = os.path.join(store_path, 'movies')
-    os.makedirs(movie_path, exist_ok=True)
+store = PhotoStore(store_path)
 
-    for path in util.discover_movies(to_ingest):
-        _, tail = os.path.split(path)
+# from photodb.process import ingest_path
+# ingest_path(to_ingest, store_path)
 
-        checksum = util.get_checksum(path)
-        extension = util.get_file_extension(path)
-        movie_dest = '.'.join((os.path.join(movie_path, checksum), extension))
-        print('Copying {0} to {1}'.format(path, movie_dest))
-        shutil.copy(path, movie_dest)
+t = store.table_photos
+stmt = select([t])
+stmt = stmt.where(t.c.original_filename.like('%Thumbs%'))
 
-    # for path in util.discover_photos(to_ingest):
-    #     if 'Thumbs' in path:
-    #         print('Skipping {0}'.format(path))
-    #         continue
+results = list(store.con.execute(stmt))
 
-    #     photo = Photo(path)
-    #     if photo.is_valid:
-    #         store.insert_photo(photo)
+deadpool = os.path.join(store_path, 'deadpool')
+
+os.makedirs(deadpool, exist_ok=True)
+
+for meta in results:
+    cs = meta['checksum']
+    print("Deleting {0}".format(cs))
+    store.delete_checksum(cs)
+    file_relpath = get_store_path(meta)
+    file_abspath = os.path.join(store_path, file_relpath)
+    print("Moving {0} to {1}".format(file_abspath, deadpool))
+    shutil.move(file_abspath, deadpool)
+
+# ('20180425_235400_0.JPG', '/home/wesm/Documents/photos_to_sort/PhotosTiger/2005/02/11/Thumbs/106.jpg', datetime.datetime(2018, 4, 25, 23, 54), 10690, 'ea4470d458de25cc04c012cb31f0e57b', 'unknown', 'unknown', 240, None, 180, -1, 'unknown', -1.0)
