@@ -4,14 +4,18 @@ import shutil
 from sqlalchemy.sql import select
 import sqlalchemy as sa
 
+from fotobank.common import Photo
+import fotobank.util as util
+
 
 class PhotoStore(object):
 
     def __init__(self, base_path):
         self.base_path = base_path
+        os.makedirs(self.base_path, exist_ok=True)
 
-        if not os.path.exists(self.base_path):
-            os.makedirs(self.base_path)
+        self.movie_path = os.path.join(self.base_path, 'movies')
+        os.makedirs(self.movie_path, exist_ok=True)
 
         self.registry_path = os.path.join(self.base_path, 'registry.sqlite')
 
@@ -50,7 +54,7 @@ class PhotoStore(object):
         results = list(self.con.execute(stmt))
         return len(results) > 0
 
-    def delete_checksum(self, checksum, metadata_only=False):
+    def delete_checksum(self, checksum, metadata_only=True):
         """
         Delete photo from database having indicated md5 checksum
 
@@ -60,12 +64,48 @@ class PhotoStore(object):
         metadata_only : boolean, default False
             If True, only delete metadata for photo
         """
+        if not metadata_only:
+            raise NotImplementedError
+
         t = self.table_photos
         stmt = (t.delete()
                 .where(t.c.checksum == checksum))
         self.con.execute(stmt)
 
-    def insert_photo(self, photo):
+    def import_directory(self, path, move=False):
+        """
+        Ingest all images and movies in indicated directory
+
+        Parameters
+        ----------
+
+        """
+        for movie_src in util.discover_movies(path):
+            _, tail = os.path.split(movie_src)
+
+            checksum = util.get_checksum(movie_src)
+            extension = util.get_file_extension(movie_src)
+            movie_filename = '.'.join(checksum, extension)
+
+            self._add_file(movie_src, self.movie_dir, movie_filename,
+                           move=move)
+
+        for image_src in util.discover_photos(path):
+            photo = Photo(image_src)
+            if photo.is_valid:
+                self.insert_photo(photo, move=move)
+
+    def insert_photo(self, photo, move=False):
+        """
+        Insert image file into database (if it does not exist already), moving
+        file if requested
+
+        Parameters
+        ----------
+        photo : fotobank.BasePhoto
+        move : boolean, default False
+            If True, move image file, otherwise copy
+        """
         checksum = photo.checksum
 
         if self.have_photo_already(checksum):
@@ -90,15 +130,43 @@ class PhotoStore(object):
 
         self.con.execute(ins)
 
-        self._copy_to_store(photo.path, directory, unique_path)
+        self._add_file(photo.path, directory, unique_path, move=move)
 
-    def _copy_to_store(self, source_abspath, directory, unique_path):
+    def sync_metadata(self, dry_run=False):
+        """
+        Delete metadata records for images that have been removed from the
+        database by some other means
+        """
+        t = self.table_photos
+        stmt = select([t])
+
+        checksums_to_delete = []
+        records = list()
+
+        records = [x[1] for x in sorted((x['timestamp'], x)
+                                        for x in self.con.execute(stmt))]
+
+        for record in records:
+            path = os.path.join(self.base_path, get_store_path(record))
+            if not os.path.exists(path):
+                checksums_to_delete.append((record['checksum'], path))
+
+        for checksum, path in checksums_to_delete:
+            self._log("Deleting metadata for {0} at {1}"
+                      .format(checksum, path))
+            if not dry_run:
+                self.delete_checksum(checksum)
+
+    def _add_file(self, source_abspath, directory, unique_path, move=False):
         self._ensure_directory_exists(directory)
 
         dest_abspath = os.path.join(directory, unique_path)
         self._log('Copying {0} to {1}'.format(source_abspath,
                                               dest_abspath))
-        shutil.copy(source_abspath, dest_abspath)
+        if move:
+            shutil.move(source_abspath, dest_abspath)
+        else:
+            shutil.copy(source_abspath, dest_abspath)
 
     def _ensure_directory_exists(self, directory):
         if not os.path.exists(directory):
@@ -107,7 +175,7 @@ class PhotoStore(object):
 
 
 def get_photo_path(base_path, photo):
-    directory = os.path.join(base_path, str(photo.timestamp.year))
+    directory = _directory_from_timestamp(photo.timestamp)
 
     base_name = photo.timestamp.strftime('%Y%m%d_%H%M%S')
 
@@ -129,5 +197,13 @@ def get_photo_path(base_path, photo):
 
 def get_store_path(metadata):
     file_path = metadata['path']
-    directory = str(metadata['timestamp'].year)
+    directory = _directory_from_timestamp(metadata['timestamp'])
     return os.path.join(directory, file_path)
+
+
+def _directory_from_timestamp(timestamp):
+    if timestamp is None:
+        directory = 'unknown_date'
+    else:
+        directory = str(timestamp.year)
+    return directory

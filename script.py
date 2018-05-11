@@ -1,7 +1,7 @@
 import os
 import shutil
 
-from photodb.store import PhotoStore, get_store_path
+from fotobank.store import PhotoStore, get_store_path
 
 from sqlalchemy.sql import select
 
@@ -10,7 +10,7 @@ to_ingest = '/media/wesm/photos/Google Photos'
 
 store = PhotoStore(store_path)
 
-# from photodb.process import ingest_path
+# from fotobank.process import ingest_path
 # ingest_path(to_ingest, store_path)
 
 t = store.table_photos
@@ -31,5 +31,3 @@ for meta in results:
     file_abspath = os.path.join(store_path, file_relpath)
     print("Moving {0} to {1}".format(file_abspath, deadpool))
     shutil.move(file_abspath, deadpool)
-
-# ('20180425_235400_0.JPG', '/home/wesm/Documents/photos_to_sort/PhotosTiger/2005/02/11/Thumbs/106.jpg', datetime.datetime(2018, 4, 25, 23, 54), 10690, 'ea4470d458de25cc04c012cb31f0e57b', 'unknown', 'unknown', 240, None, 180, -1, 'unknown', -1.0)
