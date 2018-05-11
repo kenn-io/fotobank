@@ -27,12 +27,13 @@ DATABASE_HELP = "Path to database, defaults to $FOTOBANK_DATABASE_PATH"
 DRY_RUN_HELP = "Print, but do not perform the intended actions"
 
 
-@cli.command(help="Synchronize metadata with any moved files")
+@cli.command(name='sync-metadata',
+             help="Synchronize metadata with any moved files")
 @click.option('-d', '--dry-run', is_flag=True, default=False,
               help=DRY_RUN_HELP)
 @click.option('-D', '--database', default=None,
               help=DATABASE_HELP)
-def sync(database, dry_run, **params):
+def sync_metadata(database, dry_run, **params):
     database = _get_database(database)
     store = PhotoStore(database)
     store.sync_metadata()
