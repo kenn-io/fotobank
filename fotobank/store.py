@@ -1,3 +1,4 @@
+import datetime
 import os
 import shutil
 
@@ -10,7 +11,9 @@ import fotobank.util as util
 
 class PhotoStore(object):
 
-    def __init__(self, base_path):
+    def __init__(self, base_path, verbose=False):
+        self.verbose = verbose
+
         self.base_path = base_path
         os.makedirs(self.base_path, exist_ok=True)
 
@@ -43,7 +46,11 @@ class PhotoStore(object):
         self.metadata.create_all(engine)
         return engine, engine.connect()
 
-    def _log(self, msg):
+    def _log_verbose(self, msg):
+        if self.verbose:
+            print(msg)
+
+    def _log_normal(self, msg):
         print(msg)
 
     def have_photo_already(self, checksum):
@@ -72,7 +79,7 @@ class PhotoStore(object):
                 .where(t.c.checksum == checksum))
         self.con.execute(stmt)
 
-    def import_directory(self, path, move=False):
+    def import_directory(self, path, dry_run=False, move=False):
         """
         Ingest all images and movies in indicated directory
 
@@ -80,7 +87,7 @@ class PhotoStore(object):
         ----------
 
         """
-        for movie_src in util.discover_movies(path):
+        for movie_src in sorted(util.discover_movies(path)):
             _, tail = os.path.split(movie_src)
 
             checksum = util.get_checksum(movie_src)
@@ -88,14 +95,14 @@ class PhotoStore(object):
             movie_filename = '.'.join(checksum, extension)
 
             self._add_file(movie_src, self.movie_dir, movie_filename,
-                           move=move)
+                           dry_run=dry_run, move=move)
 
-        for image_src in util.discover_photos(path):
+        for image_src in sorted(util.discover_photos(path)):
             photo = Photo(image_src)
             if photo.is_valid:
-                self.insert_photo(photo, move=move)
+                self.insert_photo(photo, dry_run=dry_run, move=move)
 
-    def insert_photo(self, photo, move=False):
+    def insert_photo(self, photo, dry_run=False, move=False):
         """
         Insert image file into database (if it does not exist already), moving
         file if requested
@@ -109,7 +116,7 @@ class PhotoStore(object):
         checksum = photo.checksum
 
         if self.have_photo_already(checksum):
-            self._log('Skipping duplicate {0}'.format(photo.path))
+            self._log_verbose('Skipping duplicate {0}'.format(photo.path))
             return
 
         directory, unique_path = get_photo_path(self.base_path, photo)
@@ -128,9 +135,10 @@ class PhotoStore(object):
                        shutter=photo.shutter_speed,
                        aperture=photo.aperture))
 
-        self.con.execute(ins)
-
-        self._add_file(photo.path, directory, unique_path, move=move)
+        if not dry_run:
+            self.con.execute(ins)
+        self._add_file(photo.path, directory, unique_path, dry_run=dry_run,
+                       move=move)
 
     def sync_metadata(self, dry_run=False):
         """
@@ -143,8 +151,15 @@ class PhotoStore(object):
         checksums_to_delete = []
         records = list()
 
-        records = [x[1] for x in sorted((x['timestamp'], x)
-                                        for x in self.con.execute(stmt))]
+        def _get_sort_timestamp(x):
+            if x is None:
+                return datetime.datetime(1970, 1, 1)
+            else:
+                return x
+
+        records = [x[1] for x in
+                   sorted((_get_sort_timestamp(x['timestamp']), x)
+                          for x in self.con.execute(stmt))]
 
         for record in records:
             path = os.path.join(self.base_path, get_store_path(record))
@@ -152,32 +167,39 @@ class PhotoStore(object):
                 checksums_to_delete.append((record['checksum'], path))
 
         for checksum, path in checksums_to_delete:
-            self._log("Deleting metadata for {0} at {1}"
-                      .format(checksum, path))
+            self._log_normal("Deleting metadata for {0} at {1}"
+                             .format(checksum, path))
             if not dry_run:
                 self.delete_checksum(checksum)
 
-    def _add_file(self, source_abspath, directory, unique_path, move=False):
+    def _add_file(self, source_abspath, directory, unique_path, dry_run=False,
+                  move=False):
         self._ensure_directory_exists(directory)
 
         dest_abspath = os.path.join(directory, unique_path)
-        self._log('Copying {0} to {1}'.format(source_abspath,
-                                              dest_abspath))
-        if move:
-            shutil.move(source_abspath, dest_abspath)
-        else:
-            shutil.copy(source_abspath, dest_abspath)
+
+        file_action = shutil.move if move else shutil.copy
+        action_name = 'Moving' if move else 'Copying'
+
+        self._log_normal('{0} {1} to {2}'.format(action_name, source_abspath,
+                                                 dest_abspath))
+        if not dry_run:
+            file_action(source_abspath, dest_abspath)
 
     def _ensure_directory_exists(self, directory):
         if not os.path.exists(directory):
-            self._log('Creating {0}'.format(directory))
+            self._log_normal('Creating {0}'.format(directory))
             os.makedirs(directory)
 
 
 def get_photo_path(base_path, photo):
-    directory = _directory_from_timestamp(photo.timestamp)
+    directory = os.path.join(base_path,
+                             _directory_from_timestamp(photo.timestamp))
 
-    base_name = photo.timestamp.strftime('%Y%m%d_%H%M%S')
+    if photo.timestamp is None:
+        _, base_name = os.path.split(photo.path)
+    else:
+        base_name = photo.timestamp.strftime('%Y%m%d_%H%M%S')
 
     # There may be multiple photos taken in the same second, we
     # increment the sequence number until finding something unique

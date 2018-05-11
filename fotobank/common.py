@@ -17,8 +17,9 @@ class ImageMetadata(object):
         self.tags = tags
 
     def __getattribute__(self, key):
-        if key in self.tags:
-            return self.tags[key]
+        tags = object.__getattribute__(self, 'tags')
+        if key in tags:
+            return tags[key]
         else:
             return object.__getattribute__(self, key)
 
@@ -56,7 +57,7 @@ class BasePhoto(object):
     timestamp = _get_metadata_field('timestamp')
 
 
-class Photo(object):
+class Photo(BasePhoto):
     """
     An image file (or movie) with embedded EXIF metadata
     """
