@@ -92,9 +92,9 @@ class PhotoStore(object):
 
             checksum = util.get_checksum(movie_src)
             extension = util.get_file_extension(movie_src)
-            movie_filename = '.'.join(checksum, extension)
+            movie_filename = '.'.join((checksum, extension))
 
-            self._add_file(movie_src, self.movie_dir, movie_filename,
+            self._add_file(movie_src, self.movie_path, movie_filename,
                            dry_run=dry_run, move=move)
 
         for image_src in sorted(util.discover_photos(path)):
