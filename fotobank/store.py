@@ -178,7 +178,7 @@ class PhotoStore(object):
 
         dest_abspath = os.path.join(directory, unique_path)
 
-        file_action = shutil.move if move else shutil.copy
+        file_action = shutil.move if move else shutil.copyfile
         action_name = 'Moving' if move else 'Copying'
 
         self._log_normal('{0} {1} to {2}'.format(action_name, source_abspath,
