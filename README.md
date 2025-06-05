@@ -23,7 +23,27 @@ images, RAW files for most cameras, movies, and more. First, install that.
 To install Fotobank itself, run:
 
 ```shell
+uv add fotobank
+```
+
+Or if you prefer pip:
+
+```shell
 pip install fotobank
+```
+
+### Local Development
+
+For local development, clone this repository and run:
+
+```shell
+uv sync
+```
+
+Then run fotobank commands with:
+
+```shell
+uv run fotobank [command]
 ```
 
 The primary command for Fotobank is `import`. To begin adding photos to your

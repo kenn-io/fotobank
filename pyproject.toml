@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fotobank"
+description = "A database for your digital photographs"
+readme = "README.md"
+requires-python = ">=3.6"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Wes McKinney"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Database",
+]
+dependencies = [
+    "click",
+    "python-dateutil",
+    "sqlalchemy",
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = [
+    "ipython",
+    "flake8",
+]
+
+[project.scripts]
+fotobank = "fotobank.cli:cli"
+
+[project.urls]
+Homepage = "https://github.com/wesm/fotobank"
+Repository = "https://github.com/wesm/fotobank"
+
+[tool.hatch.version]
+path = "fotobank/__init__.py"
+pattern = '__version__ = "(?P<version>[^"]+)"'
+
+[tool.uv]
+dev-dependencies = [
+    "ipython",
+    "flake8",
+]
