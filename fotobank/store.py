@@ -55,11 +55,11 @@ class PhotoStore(object):
 
     def have_photo_already(self, checksum):
         t = self.table_photos
-        stmt = select([t])
+        stmt = select(t)
         stmt = stmt.where(t.c.checksum == checksum)
 
-        results = list(self.con.execute(stmt))
-        return len(results) > 0
+        result = self.con.execute(stmt)
+        return result.rowcount > 0
 
     def delete_checksum(self, checksum, metadata_only=True):
         """
@@ -78,6 +78,7 @@ class PhotoStore(object):
         stmt = (t.delete()
                 .where(t.c.checksum == checksum))
         self.con.execute(stmt)
+        self.con.commit()
 
     def import_directory(self, path, dry_run=False, move=False):
         """
@@ -137,6 +138,7 @@ class PhotoStore(object):
 
         if not dry_run:
             self.con.execute(ins)
+            self.con.commit()
         self._add_file(photo.path, directory, unique_path, dry_run=dry_run,
                        move=move)
 
@@ -146,7 +148,7 @@ class PhotoStore(object):
         database by some other means
         """
         t = self.table_photos
-        stmt = select([t])
+        stmt = select(t)
 
         checksums_to_delete = []
         records = list()
@@ -157,9 +159,9 @@ class PhotoStore(object):
             else:
                 return x
 
-        records = [x[1] for x in
-                   sorted((_get_sort_timestamp(x['timestamp']), x)
-                          for x in self.con.execute(stmt))]
+        result = self.con.execute(stmt)
+        rows = list(result.mappings())
+        records = sorted(rows, key=lambda x: _get_sort_timestamp(x['timestamp']))
 
         for record in records:
             path = os.path.join(self.base_path, get_store_path(record))
