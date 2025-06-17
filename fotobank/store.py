@@ -151,7 +151,6 @@ class PhotoStore(object):
         stmt = select(t)
 
         checksums_to_delete = []
-        records = list()
 
         def _get_sort_timestamp(x):
             if x is None:
@@ -163,10 +162,32 @@ class PhotoStore(object):
         rows = list(result.mappings())
         records = sorted(rows, key=lambda x: _get_sort_timestamp(x['timestamp']))
 
+        # Cache directory listings to avoid repeated network calls
+        dir_listings = {}
+        
+        def _get_directory_files(dir_path):
+            if dir_path not in dir_listings:
+                try:
+                    if os.path.exists(dir_path):
+                        dir_listings[dir_path] = set(os.listdir(dir_path))
+                    else:
+                        dir_listings[dir_path] = set()
+                except OSError:
+                    # Handle permission errors or other filesystem issues
+                    dir_listings[dir_path] = set()
+            return dir_listings[dir_path]
+
         for record in records:
-            path = os.path.join(self.base_path, get_store_path(record))
-            if not os.path.exists(path):
-                checksums_to_delete.append((record['checksum'], path))
+            relative_path = get_store_path(record)
+            full_path = os.path.join(self.base_path, relative_path)
+            
+            # Split into directory and filename
+            dir_path, filename = os.path.split(full_path)
+            
+            # Check if file exists in the cached directory listing
+            dir_files = _get_directory_files(dir_path)
+            if filename not in dir_files:
+                checksums_to_delete.append((record['checksum'], full_path))
 
         for checksum, path in checksums_to_delete:
             self._log_normal("Deleting metadata for {0} at {1}"
