@@ -482,7 +482,8 @@ media (
   -- Video-specific (nullable for photos)
   duration_ms      INTEGER,
 
-  thumb_status     TEXT NOT NULL,             -- 'pending' | 'ready' | 'no_preview' | 'failed'
+  thumb_status     TEXT NOT NULL,             -- see §10: pending | working | ready | no_preview | failed
+  thumb_claimed_at TIMESTAMP,                  -- lease stamp when status = 'working'
 
   FOREIGN KEY (owner_hub, owner_user_id) REFERENCES owners(hub, user_id),
   UNIQUE (owner_hub, owner_user_id, checksum), -- within-owner dedup
@@ -574,6 +575,9 @@ scopes (
   revoked_at       TIMESTAMP,                 -- nullable; set on revocation
   broker_status    TEXT NOT NULL,             -- 'pending' | 'active' | 'failed'
                                               -- | 'revoking' | 'revoked_remote'
+  broker_registered_at TIMESTAMP,             -- RegisterScope succeeded
+  broker_granted_at    TIMESTAMP,             -- CreateGrant succeeded
+  broker_revoked_at    TIMESTAMP,             -- RevokeGrant succeeded
   broker_last_error TEXT,                     -- last error message when failed
   broker_attempts  INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (owner_hub, owner_user_id) REFERENCES owners(hub, user_id)
@@ -691,7 +695,7 @@ proxy is in use). Only the meaning of each field is fixed.
 `X-Auth-*` headers is only sound if fotobank cannot be reached by
 anything *other* than the stripping/injecting proxy. Otherwise any
 client on the network can forge identity. When the header-based
-provider is selected, fotobank **must** run with exactly one of the
+provider is selected, fotobank **must** run with at least one of the
 following configured; startup fails closed if none is set:
 
 1. **Loopback-only bind.** HTTP listener on `127.0.0.1:<port>` or a
@@ -728,6 +732,12 @@ happen afterwards and are retried if they fail.
 
 ```go
 type BrokerRegistrar interface {
+    // All three methods MUST be idempotent by scope UUID (and for
+    // CreateGrant, by the (scope_uuid, grantee) pair). Repeated
+    // calls with the same arguments must either succeed or return a
+    // well-defined already-exists signal that the caller treats as
+    // success. The outbox worker relies on this to retry safely
+    // after partial failure.
     RegisterScope(ctx context.Context, scope ScopeHandle) error
     CreateGrant(ctx context.Context, scope ScopeHandle, grantee Principal, opts GrantOptions) error
     RevokeGrant(ctx context.Context, scopeUUID string) error
@@ -738,13 +748,35 @@ v1 ships:
 
 - `stub.BrokerRegistrar` — no-op for single-owner dev deployments.
   Scopes it returns success for flip straight to `broker_status='active'`
-  (there is no remote state to diverge).
+  (there is no remote state to diverge). Idempotent by construction.
 - `exec.BrokerRegistrar` — shells out to a configurable broker CLI
   (`{broker_cli} scope register …`, `… grant create …`, etc.). Command
-  templates are in fotobank config.
+  templates are in fotobank config. The broker CLI is expected to be
+  idempotent; if it is not, the registrar implementation must probe
+  first (e.g., `broker_cli scope show` before `scope register`) to
+  avoid duplicate-creation errors on retry. Non-idempotent broker CLIs
+  are a configuration error.
 
 A future native-protocol implementation can be added without touching
 the service layer.
+
+**Fine-grained progress columns** on the `scopes` row support the
+outbox worker in skipping already-done steps even when the broker
+happens not to be idempotent:
+
+```
+broker_registered_at  TIMESTAMP,    -- set when RegisterScope succeeds
+broker_granted_at     TIMESTAMP,    -- set when CreateGrant succeeds
+broker_revoked_at     TIMESTAMP     -- set when RevokeGrant succeeds
+```
+
+The worker's per-scope decision: if `broker_registered_at IS NULL`,
+call `RegisterScope`; then if `broker_granted_at IS NULL`, call
+`CreateGrant`. For a revocation: call `RevokeGrant` if
+`broker_revoked_at IS NULL`. These columns are hints; idempotency on
+the interface is still the contract, because a crash between a
+successful remote call and the local UPDATE writing the timestamp is
+recoverable only if the next retry is a safe no-op.
 
 **Share create flow:**
 
@@ -965,13 +997,26 @@ can chain operations reliably.
 
 ### 8.3 Share management
 
-Both CLI and web. Creating a share mints a scope, registers it with the
-broker, creates the grant. Revoking a share sets `revoked_at`, deregisters
-the grant with the broker.
+Both CLI and web, both via the same `ShareService`. The outbox flow is
+authoritative; see §6.3 for the state machine and retry semantics.
 
-Web UX for share management is out of scope in *this* vision doc — it's a
-web-frontend sub-spec concern. The service-layer API it will consume is
-fixed here.
+- **Create.** `ShareService.CreateShare(...)` mints a scope UUID,
+  commits the `scopes` row with `broker_status='pending'` plus any
+  `scope_media` rows in a single transaction, and returns the scope
+  handle to the caller. The broker-sync worker subsequently
+  `RegisterScope` + `CreateGrant` and advances the row to `active`.
+- **Revoke.** `ShareService.RevokeShare(scope_uuid)` sets `revoked_at`
+  and `broker_status='revoking'` locally in a transaction, which
+  makes the scope immediately inert for fotobank-served traffic
+  (§7.2). The worker subsequently `RevokeGrant` with the broker and
+  advances to `revoked_remote`.
+- **Retry failed.** `ShareService.RetryShare(scope_uuid)` resets a
+  `failed` scope back to `pending` so the worker picks it up again.
+  Useful after fixing a misconfigured broker CLI or broker outage.
+
+Web UX for share management is out of scope in *this* vision doc —
+it's a web-frontend sub-spec concern. The service-layer API it will
+consume is fixed here.
 
 ## 9. EXIF and metadata
 
@@ -982,10 +1027,13 @@ The Go port drops `exiftool` and `exifread`. A pure-Go library (candidates:
 deferred to the core sub-spec) replaces both.
 
 No subprocess fallback. If EXIF extraction fails for a file, the photo is
-imported with minimal metadata: MD5, size, dimensions if derivable from the
-image container, `timestamp = NULL`, `thumb_status` computed from whether a
-preview exists. The file is still browsable and searchable by import
-time; it just lands under `unknown_date/` on NAS.
+imported with minimal metadata: MD5, size, dimensions if derivable from
+the image container, `timestamp = NULL`, and `thumb_status = 'pending'`
+like any other successful import. The file is still browsable and
+searchable by import time; it just lands under `unknown_date/` on NAS.
+The thumbnail worker will later flip it to `ready` (if the worker can
+decode the image), `no_preview` (if a RAW with no embedded preview), or
+`failed` (if something truly unreadable slipped through — rare).
 
 ### 9.2 Supported formats
 
@@ -1017,17 +1065,36 @@ Go port prefers proper NULLs).
 ## 10. Thumbnails and derivatives
 
 Summarised in §4.3 and §4.4; details belong in the thumbnail sub-spec
-(§15.5). High-level:
+(§15.3). High-level:
 
-- **Generation is eager-enqueued, asynchronous.** As part of a
-  successful import, the media row is committed with
-  `thumb_status='pending'` and a thumbnail job is pushed to an
-  in-process queue. A worker picks up the job, generates the three
-  sizes, writes them to NAS, and updates the row to
-  `thumb_status='ready'` (or `'no_preview'` / `'failed'`). Import is
-  reported complete as soon as the row commits; the media item is
-  visible and listable immediately, just with a placeholder until
-  its thumbnails are ready.
+- **The DB is the durable queue.** `thumb_status='pending'` on a
+  `media` row IS the queued job; there is no separate in-memory queue
+  to lose across processes or restarts. This matters because
+  fotobank ships a CLI and a server as separate processes sharing one
+  SQLite database: `fotobank import` run from a shell cannot push
+  into the server's memory, but it *can* commit `pending` rows, and
+  the server's thumbnail worker will pick them up.
+- **Worker claim loop.** The server runs a thumbnail worker that
+  periodically (e.g., every few seconds, with a shorter poll when
+  work was just found) claims a small batch of `pending` rows by
+  transitioning them to `thumb_status='working'` using a conditional
+  UPDATE. Only one worker claims any given row — the conditional
+  update is the mutex. After generating and writing thumbnails, the
+  worker transitions to `ready` / `no_preview` / `failed`. A crash
+  mid-claim leaves the row in `working`; a lease-expiry sweep (rows
+  in `working` longer than *T*) puts them back to `pending`.
+- **Optional in-process fast path.** When an import happens
+  in-process with the server (HTTP-triggered import), a wakeup
+  channel can signal the worker to poll immediately instead of
+  waiting for the next tick. This is an optimisation over the
+  DB-claim loop, never a replacement.
+- **Generation itself.** As part of a successful import the media
+  row is committed with `thumb_status='pending'`. The worker
+  generates the three sizes, writes them to NAS (atomically,
+  same-tier temp + rename), and updates the row. Import is reported
+  complete as soon as the row commits; the media item is visible
+  and listable immediately, with a placeholder until its thumbnails
+  are ready.
 - **Viewer behaviour under `pending`.** The grid renders a placeholder
   (e.g., EXIF dimensions as a blurred background colour, or a generic
   loading tile). The web UI may poll or subscribe for completion;
@@ -1039,13 +1106,11 @@ Summarised in §4.3 and §4.4; details belong in the thumbnail sub-spec
 - Three sizes: `grid` (256px), `preview` (1024px), `lightbox` (2048px).
   All WebP.
 - RAW input: extract embedded JPEG preview, resize. No `libraw` dependency.
-- `thumb_status` on the media row tracks generation outcome:
-  `pending` → `ready` / `no_preview` / `failed`.
+- `thumb_status` state machine: `pending` → `working` → `ready` /
+  `no_preview` / `failed`, with `working` → `pending` on lease
+  expiry.
 - Regeneration command: `fotobank thumbs regenerate <media_id|--all>`.
-  Useful if sizing policy changes or a generation bug is fixed. Also
-  picks up any `pending` rows orphaned by a server restart.
-- On startup, the worker scans for `thumb_status='pending'` rows and
-  resumes — no thumbnail work is lost across restarts.
+  Sets the targeted rows back to `pending`; the worker picks them up.
 
 ## 11. Backup and durability
 
