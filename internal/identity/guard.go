@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
 	"net"
@@ -37,9 +38,10 @@ type GuardConfig struct {
 // handler based on the configured ingress checks. Construct with NewGuard
 // and invoke Check per request.
 type Guard struct {
-	cfg   GuardConfig
-	cidrs []*net.IPNet
-	mode  guardMode
+	cfg        GuardConfig
+	cidrs      []*net.IPNet
+	mode       guardMode
+	secretHash [sha256.Size]byte
 }
 
 type guardMode struct {
@@ -58,7 +60,7 @@ func NewGuard(cfg GuardConfig) *Guard {
 			nets = append(nets, n)
 		}
 	}
-	return &Guard{
+	g := &Guard{
 		cfg:   cfg,
 		cidrs: nets,
 		mode: guardMode{
@@ -68,6 +70,10 @@ func NewGuard(cfg GuardConfig) *Guard {
 			mtls:         cfg.ProxyMTLSCAFile != "",
 		},
 	}
+	if g.mode.secretCheck {
+		g.secretHash = sha256.Sum256([]byte(cfg.ProxySecret))
+	}
+	return g
 }
 
 // Check returns nil when the request satisfies the configured ingress
@@ -89,8 +95,11 @@ func (g *Guard) Check(r *http.Request) error {
 		}
 	}
 	if g.mode.secretCheck {
-		got := r.Header.Get(g.cfg.ProxySecretHeader)
-		if subtle.ConstantTimeCompare([]byte(got), []byte(g.cfg.ProxySecret)) != 1 {
+		// Hash both sides to fixed length before constant-time compare:
+		// raw ConstantTimeCompare short-circuits on length mismatch and
+		// would leak the expected secret's length.
+		got := sha256.Sum256([]byte(r.Header.Get(g.cfg.ProxySecretHeader)))
+		if subtle.ConstantTimeCompare(got[:], g.secretHash[:]) != 1 {
 			return fmt.Errorf("%w: proxy secret mismatch", errs.ErrDirectAccessBlocked)
 		}
 	}
