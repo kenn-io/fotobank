@@ -1,5 +1,5 @@
-// Package config loads fotobank's TOML configuration file, applies
-// defaults, and layers environment-variable overrides.
+// Package config loads fotobank's TOML configuration file and applies
+// defaults. Environment-variable overrides will be layered in a later task.
 package config
 
 import (
@@ -102,19 +102,16 @@ type Backup struct {
 // and returns the config. Returns an error if the file is missing or
 // malformed; callers decide whether to exit.
 func Load(path string) (*Config, error) {
-	bytes, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read config %q: %w", path, err)
-	}
 	var cfg Config
-	if err := toml.Unmarshal(bytes, &cfg); err != nil {
-		return nil, fmt.Errorf("parse config %q: %w", path, err)
+	meta, err := toml.DecodeFile(path, &cfg)
+	if err != nil {
+		return nil, fmt.Errorf("load config %q: %w", path, err)
 	}
-	applyDefaults(&cfg)
+	applyDefaults(&cfg, meta)
 	return &cfg, nil
 }
 
-func applyDefaults(c *Config) {
+func applyDefaults(c *Config, meta toml.MetaData) {
 	if c.Flash.Root == "" {
 		c.Flash.Root = defaultFlashRoot()
 	}
@@ -127,11 +124,10 @@ func applyDefaults(c *Config) {
 	if c.Storage.OriginalsCacheMaxMedia == 0 {
 		c.Storage.OriginalsCacheMaxMedia = 100_000
 	}
-	// Bool zero-value cannot be distinguished from explicit `false` without
-	// switching to *bool or tracking toml.MetaData. Per spec, default-on is
-	// acceptable in v0.1 — an explicit-disable knob will come via a pointer
-	// field or env override in a later task.
-	if !c.Storage.ThumbsCacheEnabled {
+	// Only default ThumbsCacheEnabled to true when it was not explicitly
+	// set in the TOML; otherwise we would silently override a user's
+	// explicit `thumbs_cache_enabled = false`.
+	if !meta.IsDefined("storage", "thumbs_cache_enabled") {
 		c.Storage.ThumbsCacheEnabled = true
 	}
 	if c.Identity.Mode == "" {

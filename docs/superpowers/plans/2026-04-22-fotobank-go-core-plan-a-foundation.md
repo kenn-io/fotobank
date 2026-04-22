@@ -1060,11 +1060,11 @@ git commit -m "Validate config; header mode requires guard"
 **Files:**
 - Modify: `internal/config/config.go`
 - Modify: `internal/config/config_test.go`
-- Create: `config.example.toml`
+- Create: `internal/config/config.example.toml`  ← package-local so `//go:embed` works without traversing parents
 
-- [ ] **Step 1: Write `config.example.toml`**
+- [ ] **Step 1: Write `internal/config/config.example.toml`**
 
-Copy the full TOML schema from spec §4.1 verbatim (with all comments).
+Copy the full TOML schema from spec §4.1 verbatim (with all comments). The file lives inside the `internal/config/` package directory so the later `//go:embed` pattern (Step 4) does not need to traverse parent directories — Go's embed system rejects patterns containing `..`.
 
 - [ ] **Step 2: Write failing tests**
 
@@ -1103,12 +1103,12 @@ func TestEnsureDefaultWritesExampleOnFirstRun(t *testing.T) {
 
 - [ ] **Step 4: Implement**
 
-Embed the example config:
+Embed the example config (file lives at `internal/config/config.example.toml`):
 
 ```go
 import _ "embed"
 
-//go:embed ../../config.example.toml
+//go:embed config.example.toml
 var exampleTOML []byte
 
 func DefaultConfigPath() string {
@@ -1142,7 +1142,7 @@ func EnsureDefault(path string) (bool, error) {
 }
 ```
 
-Note: `//go:embed ../../config.example.toml` requires `config.example.toml` be at the module root. Verify the Go embed path rules — if `../../` is not allowed, move the embed-source file into `internal/config/` or use a copy placed into the package dir via `go generate`. **Simpler:** keep the canonical file at repo root (`config.example.toml`) and have `internal/config/embed.go` copy its content via `go:embed` by placing a symlink or by moving the file into `internal/config/` itself. Resolve at implementation time; if `//go:embed` rejects `../../`, move `config.example.toml` to `internal/config/config.example.toml` and add `make` step to keep a root-level copy if we want one.
+The embed pattern is package-relative: the canonical source lives at `internal/config/config.example.toml`. Go's `//go:embed` rejects `..` path traversal, so we never embed across the package boundary.
 
 - [ ] **Step 5: Run, verify pass**
 
@@ -1408,14 +1408,39 @@ git commit -m "Open SQLite with RW/RO pools, WAL, and Tx helper"
 
 ---
 
-### Task 15: Embedded migrations runner
+### Task 15: Embedded migrations runner + initial schema
 
 **Files:**
 - Create: `internal/db/migrations.go`
 - Create: `internal/db/migrations_test.go`
-- Create: `internal/db/migrations/.gitkeep`
+- Create: `internal/db/migrations/000001_initial_schema.up.sql`
+- Create: `internal/db/migrations/000001_initial_schema.down.sql`
 
-- [ ] **Step 1: Write failing test**
+> **Why runner + first migration in the same task?** Go's `//go:embed migrations/*.sql` fails to compile if the pattern matches zero files. Keeping a `.gitkeep` in the directory doesn't help because `.gitkeep` doesn't match `*.sql`. The cleanest resolution is to land the first real migration alongside the runner so the embed always has content.
+
+- [ ] **Step 1: Write the initial schema SQL** — `internal/db/migrations/000001_initial_schema.up.sql`
+
+Copy the entire DDL block from spec §6.4 into `000001_initial_schema.up.sql` — `owners`, `principal_display`, `media` (with `UNIQUE(owner_hub, owner_user_id, checksum)`, `UNIQUE(owner_hub, owner_user_id, path)`, `thumb_version`, `thumb_updated_at`, all three `media_*_idx` indexes), `albums`, `album_media` + both consistency triggers, `scopes` + indexes, `scope_media` + both consistency triggers, and the two `scopes_target_album_owner_consistency_*` triggers.
+
+Down migration at `000001_initial_schema.down.sql`:
+
+```sql
+DROP TRIGGER IF EXISTS scopes_target_album_owner_consistency_update;
+DROP TRIGGER IF EXISTS scopes_target_album_owner_consistency_insert;
+DROP TRIGGER IF EXISTS scope_media_owner_consistency_update;
+DROP TRIGGER IF EXISTS scope_media_owner_consistency_insert;
+DROP TABLE IF EXISTS scope_media;
+DROP TABLE IF EXISTS scopes;
+DROP TRIGGER IF EXISTS album_media_owner_consistency_update;
+DROP TRIGGER IF EXISTS album_media_owner_consistency_insert;
+DROP TABLE IF EXISTS album_media;
+DROP TABLE IF EXISTS albums;
+DROP TABLE IF EXISTS media;
+DROP TABLE IF EXISTS principal_display;
+DROP TABLE IF EXISTS owners;
+```
+
+- [ ] **Step 2: Write failing tests**
 
 ```go
 package db_test
@@ -1428,18 +1453,50 @@ import (
 	"github.com/wesm/fotobank/internal/db"
 )
 
-func TestRunMigrationsIsNoOpWithNoMigrations(t *testing.T) {
-	// Before we add any .sql files, migrations should no-op cleanly.
-	d, err := db.Open(filepath.Join(t.TempDir(), "m.sqlite"))
-	require.NoError(t, err)
+func TestInitialSchemaCreatesAllTables(t *testing.T) {
+	r := require.New(t)
+	d, err := db.Open(filepath.Join(t.TempDir(), "s.sqlite"))
+	r.NoError(err)
 	defer d.Close()
-	// Open already runs migrations; getting here means success.
+
+	tables := []string{
+		"owners", "principal_display", "media",
+		"albums", "album_media",
+		"scopes", "scope_media",
+	}
+	for _, name := range tables {
+		var count int
+		r.NoError(d.ReadDB().QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name,
+		).Scan(&count))
+		r.Equal(1, count, "table %q missing", name)
+	}
+}
+
+func TestAlbumMediaOwnerConsistencyTrigger(t *testing.T) {
+	r := require.New(t)
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.sqlite"))
+	r.NoError(err)
+	defer d.Close()
+
+	rw := d.WriteDB()
+	mustExec := func(q string, args ...any) { _, err := rw.Exec(q, args...); r.NoError(err) }
+	mustExec(`INSERT INTO owners VALUES('h1','u1','k1','u1',datetime('now'))`)
+	mustExec(`INSERT INTO owners VALUES('h2','u2','k2','u2',datetime('now'))`)
+	mustExec(`INSERT INTO albums (id,owner_hub,owner_user_id,name,created_at,updated_at)
+	          VALUES('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','h1','u1','a',datetime('now'),datetime('now'))`)
+	mustExec(`INSERT INTO media (id,owner_hub,owner_user_id,media_type,mime_type,path,imported_at,size,checksum,thumb_status,thumb_version,thumb_updated_at)
+	          VALUES('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','h2','u2','photo','image/jpeg','a.jpg',datetime('now'),1,'cs','pending',1,datetime('now'))`)
+
+	_, err = rw.Exec(
+		`INSERT INTO album_media VALUES('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',datetime('now'),NULL)`,
+	)
+	r.Error(err)
+	r.Contains(err.Error(), "album and media must share owner")
 }
 ```
 
-(Once Task 16 adds 000001, we expand this test to assert tables exist.)
-
-- [ ] **Step 2: Implement runMigrations**
+- [ ] **Step 3: Implement runMigrations**
 
 Port middleman's `internal/db/migrations.go`, simplified: no legacy-schema-version handling, no `reconcileWorkspaceSetupMigrationVersion10`. Keep the iofs+migrate driver wiring, `latestMigrationVersion()` helper, dirty-state check, newer-than-binary check.
 
@@ -1552,112 +1609,24 @@ func (d *DB) init() error {
 }
 ```
 
-Write an empty `internal/db/migrations/.gitkeep` so `//go:embed migrations/*.sql` does not fail at compile when the directory is empty (Go requires at least one file to match the pattern only if the embed variable is referenced; an empty glob is allowed, but the dir must exist).
-
-- [ ] **Step 3: Run, verify pass**
+- [ ] **Step 4: Run, verify pass**
 
 ```bash
 go test ./internal/db/... -shuffle=on
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add internal/db/migrations.go internal/db/migrations/.gitkeep internal/db/migrations_test.go
-git commit -m "Add embedded migrations runner"
+git add internal/db/migrations.go internal/db/migrations_test.go internal/db/migrations/000001_initial_schema.up.sql internal/db/migrations/000001_initial_schema.down.sql
+git commit -m "Add embedded migrations runner + initial schema (all Phase 1 tables + triggers)"
 ```
 
 ---
 
-### Task 16: Initial schema migration
+### Task 16: *(merged into Task 15)*
 
-**Files:**
-- Create: `internal/db/migrations/000001_initial_schema.up.sql`
-- Create: `internal/db/migrations/000001_initial_schema.down.sql`
-- Modify: `internal/db/migrations_test.go`
-
-- [ ] **Step 1: Write migration SQL**
-
-Copy the entire DDL block from spec §6.4 into `000001_initial_schema.up.sql` — `owners`, `principal_display`, `media` (with `UNIQUE(owner_hub, owner_user_id, checksum)`, `UNIQUE(owner_hub, owner_user_id, path)`, `thumb_version`, `thumb_updated_at`, all three `media_*_idx` indexes), `albums`, `album_media` + both consistency triggers, `scopes` + indexes, `scope_media` + both consistency triggers, and the two `scopes_target_album_owner_consistency_*` triggers.
-
-For the down migration, drop in reverse order:
-
-```sql
-DROP TRIGGER IF EXISTS scopes_target_album_owner_consistency_update;
-DROP TRIGGER IF EXISTS scopes_target_album_owner_consistency_insert;
-DROP TRIGGER IF EXISTS scope_media_owner_consistency_update;
-DROP TRIGGER IF EXISTS scope_media_owner_consistency_insert;
-DROP TABLE IF EXISTS scope_media;
-DROP TABLE IF EXISTS scopes;
-DROP TRIGGER IF EXISTS album_media_owner_consistency_update;
-DROP TRIGGER IF EXISTS album_media_owner_consistency_insert;
-DROP TABLE IF EXISTS album_media;
-DROP TABLE IF EXISTS albums;
-DROP TABLE IF EXISTS media;
-DROP TABLE IF EXISTS principal_display;
-DROP TABLE IF EXISTS owners;
-```
-
-- [ ] **Step 2: Extend the migrations test**
-
-```go
-func TestInitialSchemaCreatesAllTables(t *testing.T) {
-	r := require.New(t)
-	d, err := db.Open(filepath.Join(t.TempDir(), "s.sqlite"))
-	r.NoError(err)
-	defer d.Close()
-
-	tables := []string{
-		"owners", "principal_display", "media",
-		"albums", "album_media",
-		"scopes", "scope_media",
-	}
-	for _, name := range tables {
-		var count int
-		r.NoError(d.ReadDB().QueryRow(
-			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name,
-		).Scan(&count))
-		r.Equal(1, count, "table %q missing", name)
-	}
-}
-
-func TestAlbumMediaOwnerConsistencyTrigger(t *testing.T) {
-	r := require.New(t)
-	d, err := db.Open(filepath.Join(t.TempDir(), "t.sqlite"))
-	r.NoError(err)
-	defer d.Close()
-
-	// Seed two owners, one album, one media belonging to the OTHER owner;
-	// then expect trigger to reject the album_media insert.
-	rw := d.WriteDB()
-	mustExec := func(q string, args ...any) { _, err := rw.Exec(q, args...); r.NoError(err) }
-	mustExec(`INSERT INTO owners VALUES('h1','u1','k1','u1',datetime('now'))`)
-	mustExec(`INSERT INTO owners VALUES('h2','u2','k2','u2',datetime('now'))`)
-	mustExec(`INSERT INTO albums (id,owner_hub,owner_user_id,name,created_at,updated_at)
-	          VALUES('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','h1','u1','a',datetime('now'),datetime('now'))`)
-	mustExec(`INSERT INTO media (id,owner_hub,owner_user_id,media_type,mime_type,path,imported_at,size,checksum,thumb_status,thumb_version,thumb_updated_at)
-	          VALUES('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','h2','u2','photo','image/jpeg','a.jpg',datetime('now'),1,'cs','pending',1,datetime('now'))`)
-
-	_, err = rw.Exec(
-		`INSERT INTO album_media VALUES('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',datetime('now'),NULL)`,
-	)
-	r.Error(err)
-	r.Contains(err.Error(), "album and media must share owner")
-}
-```
-
-- [ ] **Step 3: Run, verify pass**
-
-```bash
-go test ./internal/db/... -shuffle=on
-```
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add internal/db/migrations/000001_initial_schema.*.sql internal/db/migrations_test.go
-git commit -m "Add initial schema migration (all Phase 1 tables + triggers)"
-```
+The initial schema migration was folded into Task 15 to avoid an invalid empty `//go:embed migrations/*.sql` compile state between the runner landing and the first migration landing. Task numbers 17+ are preserved for continuity with prior task references.
 
 ---
 

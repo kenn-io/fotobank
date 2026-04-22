@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	r.Equal("/tmp/test-nas", cfg.NAS.Root)
 	r.NotEmpty(cfg.Flash.Root)               // defaulted
 	r.Equal("flash_cache", cfg.Storage.Mode) // defaulted
+	r.True(cfg.Storage.ThumbsCacheEnabled)   // defaulted true when unset
 	r.Equal("stub", cfg.Identity.Mode)       // defaulted
 	r.Equal("127.0.0.1:8090", cfg.HTTP.ListenAddress)
 	r.Equal(30*time.Second, cfg.HTTP.RequestTimeout)
@@ -29,4 +31,71 @@ func TestLoadAppliesDefaults(t *testing.T) {
 func TestLoadMissingFileIsError(t *testing.T) {
 	_, err := config.Load("/no/such/path.toml")
 	require.Error(t, err)
+}
+
+func TestExplicitThumbsCacheFalseIsHonored(t *testing.T) {
+	// Regression test: default should not overwrite an explicit false.
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[storage]
+thumbs_cache_enabled = false
+`), 0o600))
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	require.False(t, cfg.Storage.ThumbsCacheEnabled)
+}
+
+func TestExplicitTOMLValuesWinOverDefaults(t *testing.T) {
+	// Regression test: TOML values override defaults for every section.
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/custom/nas"
+[flash]
+root = "/custom/flash"
+[storage]
+mode = "nas_only"
+originals_cache_days = 7
+originals_cache_max_media = 10
+[identity]
+mode = "header"
+[http]
+listen_address = "127.0.0.1:9999"
+request_timeout = "15s"
+write_timeout = "45s"
+[imports]
+concurrent_workers = 8
+[thumbs]
+worker_concurrency = 1
+poll_interval = "1s"
+lease_timeout = "2m"
+[broker]
+mode = "exec"
+[backup]
+snapshot_interval = "1h"
+snapshot_retention = 48
+`), 0o600))
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	r := require.New(t)
+	r.Equal("/custom/nas", cfg.NAS.Root)
+	r.Equal("/custom/flash", cfg.Flash.Root)
+	r.Equal("nas_only", cfg.Storage.Mode)
+	r.Equal(7, cfg.Storage.OriginalsCacheDays)
+	r.Equal(10, cfg.Storage.OriginalsCacheMaxMedia)
+	r.Equal("header", cfg.Identity.Mode)
+	r.Equal("127.0.0.1:9999", cfg.HTTP.ListenAddress)
+	r.Equal(15*time.Second, cfg.HTTP.RequestTimeout)
+	r.Equal(45*time.Second, cfg.HTTP.WriteTimeout)
+	r.Equal(8, cfg.Imports.ConcurrentWorkers)
+	r.Equal(1, cfg.Thumbs.WorkerConcurrency)
+	r.Equal(time.Second, cfg.Thumbs.PollInterval)
+	r.Equal(2*time.Minute, cfg.Thumbs.LeaseTimeout)
+	r.Equal("exec", cfg.Broker.Mode)
+	r.Equal(time.Hour, cfg.Backup.SnapshotInterval)
+	r.Equal(48, cfg.Backup.SnapshotRetention)
 }
