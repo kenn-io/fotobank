@@ -70,10 +70,10 @@ have a clean one-shot migration path.
    fotobank's SQLite plus a grant registered with the external broker.
 
 5. **Per-owner namespaces on NAS.** Each owner gets their own subtree
-   (`{nas_root}/{owner_id}/…`). No cross-owner content-addressable dedup in
-   v1; dedup happens within an owner's library via MD5, the same as today.
-   The migration path to cross-owner dedup (a future content-addressable
-   store) is preserved, not prematurely paid for.
+   (`{nas_root}/{owner_storage_key}/…`). No cross-owner content-addressable
+   dedup in v1; dedup happens within an owner's library via MD5, the same
+   as today. The migration path to cross-owner dedup (a future
+   content-addressable store) is preserved, not prematurely paid for.
 
 6. **Deprecate the exiftool dependency.** The Go port uses a pure-Go EXIF
    library. No subprocess fallback, no Perl in the install path.
@@ -126,13 +126,13 @@ have a clean one-shot migration path.
    │               │              │                                 │
    └───────────────┼──────────────┼─────────────────────────────────┘
                    ▼              ▼
-   ┌──────────────────────┐    ┌──────────────────────────────────┐
-   │  flash (local)       │    │  NAS (authoritative)             │
-   │  recent originals    │    │  /{owner_id}/YYYY/…              │
-   │  all thumbnails      │    │  /{owner_id}/movies/…            │
-   │  SQLite DB           │    │  /{owner_id}/.thumbs/{photo_id}/ │
-   └──────────────────────┘    │  SQLite snapshots (backup)       │
-                               └──────────────────────────────────┘
+   ┌──────────────────────┐    ┌────────────────────────────────────────┐
+   │  flash (local)       │    │  NAS (authoritative)                   │
+   │  recent originals    │    │  /{owner_storage_key}/YYYY/…           │
+   │  all thumbnails      │    │  /{owner_storage_key}/movies/…         │
+   │  SQLite DB           │    │  /{owner_storage_key}/.thumbs/{media_id}/ │
+   └──────────────────────┘    │  SQLite snapshots (backup)             │
+                               └────────────────────────────────────────┘
 ```
 
 ### 3.1 fotobank server (Go binary)
@@ -182,9 +182,25 @@ Two tiers:
   typically all thumbnails (small enough to fit). Read-through cache;
   misses fall back to NAS and repopulate flash.
 
-The storage abstraction (`storage.Store`) exposes `Read(owner, key) →
-Reader` and `Write(owner, key, reader) → error`, hiding the tiering from
-the service layer.
+The storage abstraction (`storage.Store`) hides the tiering from the
+service layer. Its interface, at a minimum:
+
+- `Stat(owner, key) → StoreInfo` — size, modtime, tier hint for
+  `ETag` / `Last-Modified` headers.
+- `ReadRange(owner, key, offset, length) → io.ReadCloser` — covers both
+  plain reads (`offset=0, length=-1`) and HTTP `Range` requests used
+  by video playback and resumable downloads. Callers do not need a
+  separate `Seek`-able handle; range reads are the one primitive.
+- `Write(owner, key, reader) → (key, error)` — writes via the atomic
+  `*.tmp-*` + rename sequence (§4.4); returns the final key in case
+  the store has to disambiguate (e.g., `_{seq}` bump).
+- `Delete(owner, key) → error` — used by media deletion and reconcile.
+  Deletes from both tiers; a flash-only delete is an internal operation
+  not exposed.
+
+Range-read support is load-bearing for videos: browsers always issue
+`Range` requests for `<video>` playback. Serving a video via
+whole-file reads breaks seeking and memory on large files.
 
 ### 3.5 External identity/grant broker
 
@@ -214,13 +230,13 @@ read verbs for scripting. Target subcommands (non-exhaustive):
 ```
 fotobank import <directory>          # trigger ingest (as today)
 fotobank albums create <name>
-fotobank albums add <album_id> <photo_ids...>
+fotobank albums add <album_id> <media_ids...>
 fotobank albums list
 fotobank shares create --album <id> --grantee <principal> [--download] [--expires <duration>]
-fotobank shares create --photos <id...> --grantee <principal> [...]
+fotobank shares create --media <id...> --grantee <principal> [...]
 fotobank shares list
 fotobank shares revoke <scope_uuid>
-fotobank thumbs regenerate <photo_id|--all>
+fotobank thumbs regenerate <media_id|--all>
 ```
 
 CLI commands emit human output by default and machine-readable JSON under
@@ -239,32 +255,37 @@ see the library through the HTTP viewer path.
 
 ### 4.1 NAS namespace
 
-Per-owner subtree under a configured NAS root:
+Per-owner subtree under a configured NAS root. Directory names use
+`{owner_storage_key}` — the `owners.storage_key` column (§5.1), a
+path-safe ASCII slug registered per owner at init/migration time.
+Decoupling the path slug from the broker-managed user ID means
+upstream handle changes never require a filesystem rename.
 
 ```
 {nas_root}/
-├── {owner_id}/
-│   ├── YYYY/
+├── {owner_storage_key}/
+│   ├── YYYY/                   -- photos by timestamp year
 │   │   ├── YYYYMMDD_HHMMSS_0.jpg
 │   │   ├── YYYYMMDD_HHMMSS_1.arw
 │   │   └── …
 │   ├── unknown_date/
 │   │   └── …
-│   ├── movies/
+│   ├── movies/                 -- videos stored content-addressed
 │   │   └── {md5}.{ext}
-│   └── .thumbs/
-│       └── {photo_id}/
+│   └── .thumbs/                -- derivatives keyed by media_id
+│       └── {media_id}/
 │           ├── grid.webp       # 256px
 │           ├── preview.webp    # 1024px
-│           └── lightbox.webp   # 2048px
+│           └── lightbox.webp   # 2048px (videos: poster frame only)
 └── .fotobank/
-    ├── snapshots/              # SQLite backup shipments
-    └── config/                 # shared deployment config (optional)
+    ├── snapshots/              -- SQLite backup shipments
+    └── config/                 -- shared deployment config (optional)
 ```
 
-`{owner_id}` is an opaque string keying the owner's principal. Typical
-form in production: a UUID or a sanitised slug derived from the identity
-broker's handle. In dev-stub mode: a configured value like `dev-owner`.
+Videos keep the existing `movies/{md5}.{ext}` layout inherited from
+the current Python tool — videos often lack reliable creation
+timestamps, content-addressed naming is stable either way, and this
+keeps the Lightroom coexistence story unchanged.
 
 ### 4.2 File naming
 
@@ -283,15 +304,15 @@ Three fixed sizes, WebP format:
 - `lightbox` — 2048px, for full-screen detail; also the largest size a
   grantee without `allow_download` can ever receive.
 
-Keyed by **photo_id**, not by filename, so renames (rare but possible) do
+Keyed by **media_id**, not by filename, so renames (rare but possible) do
 not break derivatives.
 
 Eager generation: thumbnails are built as part of `ImportService`'s
 pipeline before an import is reported complete. For RAW files (ARW, CR2,
 DNG, RAF, NEF, …) fotobank extracts the **embedded JPEG preview** from EXIF
 and resizes from there — no `libraw` / `dcraw` dependency. If a RAW has no
-embedded preview, fotobank records the photo row but flags it as
-`thumb_status = 'no_preview'`; the photo is listed but renders a placeholder
+embedded preview, fotobank records the media row but flags it as
+`thumb_status = 'no_preview'`; the item is listed but renders a placeholder
 in the viewer. A later sub-spec can add optional real RAW decoding.
 
 ### 4.4 Tiering policy
@@ -308,10 +329,60 @@ sizes), flash can typically hold the entire set with no eviction
 pressure. Very-large libraries may evict by LRU; this is a configuration
 concern, not a v1 design decision.
 
-**Writes.** Imports write to NAS first. Only after the NAS write returns
-success is the photo row committed in SQLite. Flash population is a
-non-blocking follow-up — if flash write fails, the photo is still
-durable and readable from NAS.
+**Write ordering and atomicity.** Imports follow a strict sequence that
+keeps NAS and SQLite reconcilable even under crash:
+
+1. **Dedup probe.** Compute MD5 on the source file. If
+   `(owner, checksum)` already exists in `media`, skip (noop import).
+2. **Resolve canonical path.** From the owner's storage root and the
+   media's timestamp, compute the candidate path. If a file exists at
+   that path with a different checksum, increment the `_{seq}` suffix
+   until a free slot is found. The DB also enforces a
+   `UNIQUE (owner_hub, owner_user_id, path)` constraint so a concurrent
+   importer cannot claim the same slot.
+3. **Write to temp path.** Stream the source bytes to
+   `{canonical_path}.tmp-{import_id}` on NAS. Verify the written length
+   matches the source length.
+4. **Atomic rename.** `rename(tmp, canonical)` — atomic on POSIX same-
+   filesystem. If this fails, the temp file is cleaned up in a `defer`
+   and the import aborts with no partial state.
+5. **Commit DB row.** Open a transaction, insert the `media` row
+   (including the final `path`), commit.
+6. **Post-commit side effects.** Enqueue thumbnail generation; async
+   flash cache population. Failures here do not roll back the commit —
+   the media item is durably stored and visible; thumbnails and cache
+   warming are eventually-consistent.
+
+**Failure windows.** Two narrow windows remain:
+
+- Step 4 succeeds, step 5 fails (rare: SQLite commit after NAS rename).
+  An orphan byte exists on NAS with no DB row.
+- Step 3 partial-write followed by a crash. A stale `*.tmp-*` file
+  exists on NAS.
+
+Both are recoverable by `fotobank reconcile` (§8.1), which walks the
+NAS tree and the `media` table and reports discrepancies:
+
+- Canonical file on NAS, no DB row → candidate orphan.
+- DB row, no file on NAS → the existing "sync-metadata" case;
+  operator confirms and the row is deleted (or restored from backup).
+- `*.tmp-*` files older than a grace period → candidate leftover from a
+  crashed import.
+
+Reconcile never deletes unilaterally; it reports and offers
+`--commit-deletes` / `--commit-recoveries` flags gated on operator
+review.
+
+**Concurrent imports.** A file lock at `{nas_root}/.fotobank/import.lock`
+serialises imports per deployment. Combined with the per-row DB
+`UNIQUE(owner, path)` and `UNIQUE(owner, checksum)` constraints, this
+prevents both sequencing races on filename slots and duplicate rows
+if two importers race on the same source file. Concurrent *reads*
+(viewer traffic) are unaffected.
+
+**Flash population.** Writing to flash is a non-blocking follow-up to
+a successful commit. Flash write failures are logged but do not abort
+the import — the media item remains durable and readable from NAS.
 
 **Graceful degradation.** If no flash tier is configured, fotobank reads
 and writes NAS directly. No hot-cache codepath is special-cased beyond
@@ -323,32 +394,112 @@ This section describes interface-level concepts. Exact DDL, indexes, and
 migration shape belong in the Go core sub-spec (§15.1). Identifier types
 are illustrative.
 
-### 5.1 Photos
+### 5.1 Principals and owners
+
+A **principal** is always the tuple `(hub, user_id)` — the hub origin
+plus a stable identifier from that hub. Same-hub deployments can treat
+`hub` as implicit in UI, but the tuple is always materialised in storage
+so cross-hub principals can be represented without schema migration.
+
+An **owner** is a principal that owns media hosted by this fotobank
+deployment. Owners have one registered row each; every other table
+references them by principal tuple (FK to `owners(hub, user_id)`).
 
 ```
-photos (
-  id              UUID PRIMARY KEY,
-  owner_hub       TEXT NOT NULL,              -- identity broker origin
-  owner_user_id   TEXT NOT NULL,              -- stable user UUID from broker
-  path            TEXT NOT NULL,              -- relative, e.g. "YYYY/name.jpg"
-  original_filename TEXT,                     -- source path at import time
-  imported_at     TIMESTAMP NOT NULL,
-  timestamp       TIMESTAMP,                  -- from EXIF, nullable
-  size            BIGINT NOT NULL,
-  checksum        TEXT NOT NULL,              -- MD5 hex, lowercase
-  make, model, focal_length, shutter          -- EXIF text fields
-  width, height, iso                          -- EXIF integers
-  aperture        REAL,
-  thumb_status    TEXT NOT NULL,              -- 'ready' | 'no_preview' | 'failed'
-  UNIQUE (owner_hub, owner_user_id, checksum) -- within-owner dedup
+owners (
+  hub             TEXT NOT NULL,
+  user_id         TEXT NOT NULL,
+  storage_key     TEXT NOT NULL UNIQUE,       -- path-safe slug used in NAS paths
+  display_handle  TEXT,                       -- cached from broker for UI
+  created_at      TIMESTAMP NOT NULL,
+  PRIMARY KEY (hub, user_id)
 )
 ```
 
-The owner principal is stored inline on every row, not via a join table.
-Identity caching (display handle) is optional and lives in a separate
-`principal_display` table used only for UX.
+**`storage_key`** is the on-disk directory name — an ASCII path-safe
+string like `wes` or `ac3e2df7` or `wes-mckinney`. It is decoupled from
+the principal tuple so an owner's handle can change upstream without
+having to rename NAS directories. Uniqueness is enforced at the DB
+level. The owner registers their desired `storage_key` at fotobank init
+(or migration) time; changing it later requires a deliberate filesystem
+move and DB update.
 
-### 5.2 Albums
+**`display_handle`** is a cache of the broker's current handle for this
+owner, for share-UI labels. Non-authoritative; refreshed opportunistically.
+
+A separate display cache serves non-owner principals (grantees) the same
+way:
+
+```
+principal_display (
+  hub             TEXT NOT NULL,
+  user_id         TEXT NOT NULL,
+  handle          TEXT,                       -- e.g. "@mom@hub.example"
+  cached_at       TIMESTAMP NOT NULL,
+  PRIMARY KEY (hub, user_id)
+)
+```
+
+Purely for UX. The broker is authoritative; a stale handle is a display
+inconvenience, not a security issue.
+
+### 5.2 Media
+
+Photos and videos share a single `media` table differentiated by
+`media_type`. EXIF fields are nullable; video-specific fields
+(`duration_ms`) are likewise nullable for photos.
+
+```
+media (
+  id               UUID PRIMARY KEY,
+  owner_hub        TEXT NOT NULL,
+  owner_user_id    TEXT NOT NULL,
+  media_type       TEXT NOT NULL,             -- 'photo' | 'video'
+  mime_type        TEXT NOT NULL,             -- e.g. 'image/jpeg', 'video/mp4'
+  path             TEXT NOT NULL,             -- relative, owner-namespace
+  original_filename TEXT,                     -- source path at import time
+  imported_at      TIMESTAMP NOT NULL,
+  timestamp        TIMESTAMP,                 -- creation date (EXIF / container)
+  size             BIGINT NOT NULL,
+  checksum         TEXT NOT NULL,             -- MD5 hex, lowercase
+
+  -- Photo-specific EXIF (nullable for videos)
+  make             TEXT,
+  model            TEXT,
+  focal_length     TEXT,
+  shutter          TEXT,
+  width            INTEGER,
+  height           INTEGER,
+  iso              INTEGER,
+  aperture         REAL,
+
+  -- Video-specific (nullable for photos)
+  duration_ms      INTEGER,
+
+  thumb_status     TEXT NOT NULL,             -- 'ready' | 'no_preview' | 'failed'
+
+  FOREIGN KEY (owner_hub, owner_user_id) REFERENCES owners(hub, user_id),
+  UNIQUE (owner_hub, owner_user_id, checksum)  -- within-owner dedup
+)
+```
+
+The owner principal is stored inline on every row as FK into `owners`,
+not duplicated in a join table. Dedup is within-owner by MD5.
+
+**Videos in v1.** Videos appear in the web viewer alongside photos,
+sorted by timestamp where available. The grid shows a poster thumbnail
+(extracted frame) generated at import time; clicking plays the video
+via the browser's native `<video>` element, served directly from NAS.
+No transcoding in v1 — codecs the browser does not support render as an
+"unsupported" placeholder with a download link (subject to
+`allow_download`). Timestamp extraction from MOV / MP4 container
+metadata (QuickTime `creation_time`) is a best-effort — missing
+timestamps land videos under the `unknown_date` directory like photos.
+
+### 5.3 Albums
+
+Albums group media items for browsing and sharing. Strictly per-owner —
+a user cannot add another user's media to their album.
 
 ```
 albums (
@@ -357,25 +508,30 @@ albums (
   owner_user_id   TEXT NOT NULL,
   name            TEXT NOT NULL,
   created_at      TIMESTAMP NOT NULL,
-  updated_at      TIMESTAMP NOT NULL
+  updated_at      TIMESTAMP NOT NULL,
+  FOREIGN KEY (owner_hub, owner_user_id) REFERENCES owners(hub, user_id)
 )
 
-album_photos (
-  album_id        UUID NOT NULL REFERENCES albums(id),
-  photo_id        UUID NOT NULL REFERENCES photos(id),
+album_media (
+  album_id        UUID NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+  media_id        UUID NOT NULL REFERENCES media(id)  ON DELETE CASCADE,
   added_at        TIMESTAMP NOT NULL,
   position        INTEGER,                    -- nullable, for manual ordering
-  PRIMARY KEY (album_id, photo_id)
+  PRIMARY KEY (album_id, media_id)
 )
 ```
 
-Albums are strictly per-owner. A user cannot add another user's photo to
-their album — if they want to "use" a photo in a share, they do it via a
-scope (§5.3) targeting the original owner's photo id. Re-share grants
-(granting a share onward to a third party) are out of scope for v1; see
-§14 Phase 4+.
+**Owner-consistency constraint.** An `album_media` row is only valid if
+the album and the media item share the same owner. This cannot be
+expressed as a plain FK in portable SQL, so it is enforced by a DB
+trigger on insert/update rather than at the service layer alone — a
+defence-in-depth measure against service-layer bugs. Violating the
+constraint aborts the transaction.
 
-### 5.3 Scopes — grant semantics
+Re-share grants (granting a share onward to a third party) are out of
+scope for v1; see §14 Phase 4+.
+
+### 5.4 Scopes — grant semantics
 
 A **scope** is what gets granted. Each scope is minted by fotobank, has an
 opaque UUID, and is registered with the external broker. The broker tells
@@ -394,59 +550,66 @@ scopes (
   owner_user_id    TEXT NOT NULL,
   grantee_hub      TEXT NOT NULL,             -- who the share is for
   grantee_user_id  TEXT NOT NULL,
-  target_type      TEXT NOT NULL,             -- 'album' | 'photo_set'
-  target_album_id  UUID,                      -- when target_type = 'album'
+  target_type      TEXT NOT NULL,             -- 'album_live' | 'media_set'
+  target_album_id  UUID,                      -- when target_type = 'album_live'
   allow_download   BOOLEAN NOT NULL DEFAULT false,
   label            TEXT,                      -- human-visible, e.g. "Summer 2024"
   created_at       TIMESTAMP NOT NULL,
   expires_at       TIMESTAMP,                 -- nullable; null = indefinite
-  revoked_at       TIMESTAMP                  -- nullable; set on revocation
+  revoked_at       TIMESTAMP,                 -- nullable; set on revocation
+  FOREIGN KEY (owner_hub, owner_user_id) REFERENCES owners(hub, user_id)
 )
 
-scope_photos (
-  scope_uuid       UUID NOT NULL REFERENCES scopes(uuid),
-  photo_id         UUID NOT NULL REFERENCES photos(id),
-  PRIMARY KEY (scope_uuid, photo_id)
+scope_media (
+  scope_uuid       UUID NOT NULL REFERENCES scopes(uuid) ON DELETE CASCADE,
+  media_id         UUID NOT NULL REFERENCES media(id)    ON DELETE CASCADE,
+  PRIMARY KEY (scope_uuid, media_id)
 )
--- Populated only when target_type = 'photo_set'.
+-- Populated only when target_type = 'media_set'.
 ```
 
-A scope is immutable in the semantic sense — its `target_type`,
-`target_album_id`, `scope_photos` rows, `grantee_*`, and `allow_download`
-do not mutate. Changing what's accessible means minting a new scope (and
-revoking the old if appropriate). This keeps the audit story simple: a
-scope UUID's meaning never changes over its lifetime.
+As with `album_media`, an **owner-consistency trigger** enforces that
+every row in `scope_media` has the same owner as the scope. The
+scope's `target_album_id` (when present) likewise must reference an
+album owned by the same principal.
+
+**Binding immutability, membership liveness.** The scope's *binding*
+— its `target_type`, `target_album_id`, `scope_media` rows,
+`grantee_*`, `allow_download` — is immutable for the life of the
+scope. The *resolved membership* is not, and this depends on the
+target type:
+
+- **`album_live`.** The grantee sees the album's current members at
+  each request. Adding a media item to the album later makes it
+  visible to the grantee automatically. Removing an item hides it.
+  This matches consumer expectations for shared albums (Google
+  Photos, iCloud, Lightroom Shared Albums) but means owners must be
+  aware that "share this album" is a standing grant over future
+  additions. The owner-facing share UI surfaces this explicitly.
+- **`media_set`.** A fixed set of media IDs at mint time. Adding
+  media to other albums, or modifying `album_media`, does not
+  change what this grantee can see. The set is frozen in
+  `scope_media`.
+
+If an owner wants a snapshot of an album's current contents without
+future additions, they create a `media_set` scope from the album's
+current members. Album snapshots as a first-class `target_type` are
+tracked as a potential future variant (§16).
 
 **Enforcement vs display.** The external broker is authoritative for
 whether a given user actually *holds* a scope right now — it's the
 broker that injects `X-Auth-Scopes` on the grantee's requests, and a
 scope that the broker has revoked will simply stop appearing there.
-Fotobank's local `grantee_*` fields are for the owner-facing UI ("who
-has access to this album?") and for bookkeeping around expiry and
-revocation; they are not consulted during request-time enforcement.
-Enforcement always follows the path: broker-injected scope UUID →
-local `scopes` row → local `revoked_at` / `expires_at` / target lookup.
+Fotobank's local `grantee_*` fields are used for the owner-facing UI
+("who has access to this album?"), for expiry/revocation bookkeeping,
+**and** for a defence-in-depth principal check at request time
+(§7.2) — the requester's principal must equal `grantee_*` for the
+scope to apply. The service-layer enforcement flow:
 
-### 5.4 Principals and identity references
-
-A **principal** is always the tuple `(hub, user_id)`. Same-hub deployments
-can treat `hub` as implicit in UI, but it is always present in storage so
-cross-hub principals can be represented without schema migration.
-
-Optional display cache:
-
-```
-principal_display (
-  hub             TEXT NOT NULL,
-  user_id         TEXT NOT NULL,
-  handle          TEXT,                       -- e.g. "@mom@hub.example"
-  cached_at       TIMESTAMP NOT NULL,
-  PRIMARY KEY (hub, user_id)
-)
-```
-
-Purely for UX. The broker remains authoritative; a stale handle is a
-display inconvenience, not a security issue.
+  broker-injected scope UUID → local `scopes` row
+  → verify `revoked_at IS NULL` and `expires_at` not passed
+  → verify requester principal equals `(grantee_hub, grantee_user_id)`
+  → resolve `target_type` to media IDs.
 
 ## 6. Identity and grants integration
 
@@ -537,7 +700,8 @@ service layer.
 ### 6.4 Dev-stub `IdentityProvider`
 
 When fotobank is started without an identity broker in front of it (local
-development, single-user NAS homelab), the stub provider:
+development, single-user NAS homelab, migration from the Python tool),
+the stub provider:
 
 - Returns a configured single-owner principal on every request. Default:
   `hub="dev-local", user_id="owner", handle="owner"`. Configurable via env
@@ -546,14 +710,31 @@ development, single-user NAS homelab), the stub provider:
   principal even if they try).
 - Grants the principal full access to everything owned by that principal
   — which in single-owner mode is everything.
-- Refuses to start if `scopes` contains any rows (i.e., if someone has
-  been sharing), to prevent accidentally collapsing a real multi-user
-  deployment into single-owner mode. Overridable with an explicit
-  `--unsafe-dev-stub` flag.
 
-The stub is also useful for testing and for the migration from the
-existing Python tool (§12): the legacy library has exactly one owner
-by definition.
+**Sharing under dev-stub.** The CLI runs in local-admin mode (it does
+not go through the `IdentityProvider`), so the owner can create and
+revoke scopes against the local `scopes` table for testing. What the
+dev-stub *cannot* do is route grantee HTTP requests: there is no broker
+to authenticate non-owner users or inject `X-Auth-Scopes`. Any HTTP
+request reaching fotobank is resolved to the configured owner, and that
+owner's requests are never subject to scope enforcement (owner access
+is by ownership, not grant).
+
+On startup, if the `scopes` table has any non-revoked rows, the
+dev-stub logs a clear warning:
+
+```
+dev-stub identity provider: N active scopes exist in this database,
+but no broker is configured. Grantee requests cannot be served.
+Attach a real identity broker (§6.2 header contract) to enable sharing.
+```
+
+This surfaces the Phase 1→2 boundary (local share scaffolding works;
+remote share serving requires a broker) without gating on it.
+
+The stub is also used for the one-shot migration from the existing
+Python tool (§12): the legacy library has exactly one owner by
+definition, and no shares exist before migration.
 
 ## 7. Request flow
 
@@ -583,30 +764,42 @@ browser → reverse proxy → fotobank server
    `X-Auth-Scopes`.
 2. `IdentityProvider.Identify()` returns the grantee's principal and their
    scope UUIDs.
-3. `ShareService.ResolveScopes(scope_uuids)` reads `scopes` rows:
-   - For each scope, filter out those where `revoked_at IS NOT NULL` or
-     `expires_at <= now()`.
-   - Union the targets: for `target_type='album'`, expand to the album's
-     `album_photos`; for `target_type='photo_set'`, expand to
-     `scope_photos`. Result is a set of photo IDs.
+3. `ShareService.ResolveScopes(requester, scope_uuids)` reads `scopes`
+   rows. For each scope it drops any row that fails **any** of:
+   - `revoked_at IS NULL`,
+   - `expires_at IS NULL OR expires_at > now()`,
+   - `(grantee_hub, grantee_user_id) = requester_principal` — the
+     defence-in-depth principal check. If the broker or reverse proxy
+     leaks a scope UUID to the wrong user, this check blocks it.
+   Scopes that survive are unioned into a set of media IDs:
+   `target_type='album_live'` expands to the album's current
+   `album_media`; `target_type='media_set'` expands to `scope_media`.
 4. Endpoint filters:
-   - **List / browse:** returned photos are limited to the resolved set.
-     Albums the grantee holds a scope for appear as "shared" entries.
-   - **Fetch original bytes** (`/photos/{id}/original`): the endpoint
+   - **List / browse:** returned media items are limited to the resolved
+     set. Albums the grantee holds a scope for appear as "shared" entries.
+   - **Fetch original bytes** (`/media/{id}/original`): the endpoint
      additionally checks that at least one applicable scope has
      `allow_download = true`. If none, the response is `403`; the
      viewer is expected to use a derivative endpoint (e.g.,
-     `/photos/{id}/thumb?size=lightbox`) for display of view-only
+     `/media/{id}/thumb?size=lightbox`) for display of view-only
      shares. No silent fallback — that would break caching and make
      client behaviour opaque.
-   - **Fetch thumbnail / derivative:** always allowed if the photo is
-     in the resolved set. `grid`, `preview`, and `lightbox` sizes are
-     available to any grantee whose scope resolves to this photo,
-     regardless of `allow_download`.
+   - **Fetch thumbnail / derivative:** always allowed if the media item
+     is in the resolved set. `grid`, `preview`, and `lightbox` sizes are
+     available to any grantee whose scope resolves to this item,
+     regardless of `allow_download`. For videos the derivatives are
+     poster frames.
+   - **Stream video bytes** (HTTP Range requests against
+     `/media/{id}/original`): subject to the same `allow_download`
+     check. Video playback from the browser therefore requires a
+     download-enabled scope; view-only video shares are represented in
+     the viewer as a playable poster with no seek/play — v1 does not
+     support proxied streaming of view-only videos, and this is called
+     out as a limitation in the share UI.
    - **Any admin op** (create album, delete, import, create share): `403`.
      Only the owner can mutate.
-5. Any photo not in the resolved set is treated as nonexistent — 404, not
-   403, to avoid leaking existence.
+5. Any media item not in the resolved set is treated as nonexistent —
+   404, not 403, to avoid leaking existence.
 
 ### 7.3 Scope resolution and caching
 
@@ -639,8 +832,10 @@ commands are thin adapters.
 
 - **CLI:** `fotobank import <directory>` (matches current tool's entry
   point). Walks the directory, computes checksums, extracts EXIF, writes
-  originals to NAS at the canonical path, enqueues thumbnail generation,
-  commits photo rows. Dedup (within-owner MD5) skips already-imported files.
+  originals to NAS following the atomic sequence in §4.4, commits media
+  rows, enqueues thumbnail generation. Dedup (within-owner MD5) skips
+  already-imported files. Concurrent imports are serialised via a file
+  lock at `{nas_root}/.fotobank/import.lock`.
 
 - **Watched folder:** `ImportService` can be configured with one or more
   inbox directories. A background watcher (filesystem-level `fsnotify`
@@ -652,6 +847,14 @@ commands are thin adapters.
   trail until the operator clears it) or **`delete`** (remove outright —
   tidier). Files that fail import are moved to a `failed/` subdirectory
   with an adjacent `.error` file explaining why, never silently dropped.
+
+- **Reconcile:** `fotobank reconcile` walks both NAS and the `media`
+  table and reports discrepancies as described in §4.4 — orphan bytes,
+  stale temp files, and DB rows pointing at missing files. The command
+  is read-only by default; `--commit-deletes` and `--commit-recoveries`
+  flags act on what the operator has reviewed. `fotobank reconcile`
+  subsumes the old `sync-metadata` command from the Python tool, which
+  only handled the "DB row, no file" direction.
 
 Web upload is **out of scope for v1.** Large uploads from a browser need
 chunked upload, progress UI, staging directory handling, and mobile
@@ -723,7 +926,7 @@ Summarised in §4.3 and §4.4; details belong in the thumbnail sub-spec
 - Three sizes: `grid` (256px), `preview` (1024px), `lightbox` (2048px).
   All WebP.
 - RAW input: extract embedded JPEG preview, resize. No `libraw` dependency.
-- `thumb_status` on the photo row tracks generation outcome.
+- `thumb_status` on the media row tracks generation outcome.
 - Regeneration command: `fotobank thumbs regenerate <id|--all>`. Useful if
   sizing policy changes or a generation bug is fixed.
 
@@ -737,6 +940,16 @@ Summarised in §4.3 and §4.4; details belong in the thumbnail sub-spec
   (via `VACUUM INTO` or the SQLite backup API) to
   `{nas_root}/.fotobank/snapshots/{timestamp}.sqlite`, keeping the last *N*
   snapshots. Default interval and retention: sub-spec concern.
+
+  **Non-zero metadata RPO.** Between snapshots, any new imports, album
+  edits, or share changes exist only on flash. A flash failure strictly
+  between snapshots loses that delta — bytes remain durably on NAS, but
+  the DB rows describing them do not. Reconcile (§8.1) can partially
+  rebuild from NAS (re-register orphan bytes as re-imports), but album
+  memberships and scope rows are lost unless reconstructed from
+  broker-side audit state. Operators who need tighter RPO should
+  shorten the snapshot interval or configure WAL shipping to NAS; both
+  are sub-spec parameters.
 
 - **Thumbnails are regeneratable but persisted.** Kept on NAS so flash
   loss doesn't cost hours of CPU and NAS-read bandwidth. If a thumbnail
@@ -756,21 +969,48 @@ The current Python fotobank library has exactly one implicit owner and a
 known on-disk layout (`{base}/YYYY/…`, `{base}/movies/…`,
 `{base}/registry.sqlite`). Migration is a one-shot operation:
 
-1. Operator runs `fotobank migrate --from-legacy {legacy_base}
-   --owner {owner_id}`.
-2. The migrator reads `registry.sqlite`, maps columns to the new schema,
-   stamps every row with the given owner principal (hub + user_id).
-3. Filesystem bytes move from `{legacy_base}/YYYY/…` to
-   `{nas_root}/{owner_id}/YYYY/…`. Option to symlink in place instead of
-   physically moving — useful if the legacy base is already on the NAS.
-4. Thumbnail generation is enqueued for all migrated photos.
-5. The new SQLite is written to the fotobank server's flash.
-6. The legacy SQLite is not modified; the operator deletes it once they've
-   verified the new installation.
+1. Operator runs
+   `fotobank migrate --from-legacy {legacy_base}
+     --owner <hub>:<user_id> --storage-key <slug>
+     [--mode symlink|move]`.
+2. The migrator creates an `owners` row for the given principal with the
+   given `storage_key`.
+3. It reads the legacy `registry.sqlite`, maps columns to the new
+   `media` schema (photos), stamps every row with the owner principal,
+   and also scans the legacy `movies/` directory to register videos as
+   `media` rows with `media_type='video'`.
+4. Filesystem bytes go from `{legacy_base}/YYYY/…` to
+   `{nas_root}/{owner_storage_key}/YYYY/…` — physically moved under
+   `--mode move`, or left in place with a per-owner symlink tree under
+   `--mode symlink` (recommended for active Lightroom users, see below).
+5. Thumbnail generation is enqueued for all migrated media items.
+6. The new SQLite is written to the fotobank server's flash.
+7. The legacy SQLite is not modified; the operator deletes it once
+   they've verified the new installation.
 
 Migration runs with the dev-stub identity provider (single-owner mode).
 After migration, the operator can attach an identity broker and start
 sharing without re-importing.
+
+**Lightroom catalog coexistence.** Operators using Lightroom Classic
+against the existing library must account for path changes when the
+legacy layout (`{legacy_base}/YYYY/…`) becomes
+`{nas_root}/{owner_storage_key}/YYYY/…`. Two supported paths:
+
+- **Symlink-in-place (recommended for active LR users).** The
+  migrator leaves bytes where they are and creates the per-owner
+  namespace as a symlink tree pointing at the originals. LR's catalog
+  keeps working. The operator can physically consolidate later at a
+  time of their choosing.
+- **Physical move + Lightroom relocate.** The migrator moves bytes
+  into the new layout. The operator uses LR's "Locate Folder" or
+  "Update Folder Location" flow to point the catalog at the new
+  path once. One interruption; clean final state.
+
+Migration also scans the legacy `movies/` directory and registers each
+video as a `media` row (`media_type='video'`), closing the gap where
+the Python tool kept video bytes on disk but did not record them in the
+DB.
 
 ## 13. Threat model (summary)
 
@@ -818,23 +1058,63 @@ sharing without re-importing.
 
 ## 14. Phasing roadmap
 
-### Phase 1 — Go core and CLI parity
+### Phase 1 — Go core (three milestones)
 
-Rewrite fotobank in Go with:
+Phase 1 replaces the Python tool with a Go core that a dev-stub
+single-owner deployment can run end-to-end. It is split into three
+milestones so each can land, be tested, and be reviewed independently
+before the next begins. Nothing in Phase 1 depends on a real broker.
 
-- Multi-user schema (owner principals on every row), even though only one
-  owner exists initially.
-- Per-owner NAS layout.
-- Pure-Go EXIF.
-- SQLite metadata store on flash with NAS snapshots.
-- Thumbnail generation pipeline, three sizes, WebP.
-- CLI parity with the current tool (`import`, `sync-metadata`) plus
-  `albums`, `shares`, `migrate`, `thumbs` subcommands.
-- Dev-stub `IdentityProvider`. No real broker integration yet.
-- Migration from the legacy Python library.
+**1a — Parity and migration.** The bedrock.
 
-Phase 1 is complete when the Python tool can be deleted and a dev-stub
-single-owner deployment matches or exceeds current functionality.
+- Single Go binary with `fotobank-server` and `fotobank` entry points.
+- `owners`, `media` schema (multi-owner capable from day one, even
+  though only one owner is registered).
+- Pure-Go EXIF extraction; drop `exiftool`.
+- SQLite on flash; NAS-authoritative byte writes with the atomic
+  sequence in §4.4.
+- `storage.Store` with Stat / ReadRange / Write / Delete, flash cache
+  for originals.
+- CLI subcommands at parity with the Python tool:
+  `fotobank import <dir>`, `fotobank reconcile` (replaces
+  `sync-metadata` and extends it with orphan-byte reporting).
+- `fotobank migrate --from-legacy` — one-shot importer from the Python
+  DB, including `movies/` registration.
+- Dev-stub `IdentityProvider`. No HTTP server yet — the binary runs as
+  a CLI only at this milestone.
+
+**1b — Thumbnails and albums.** Browsing substrate.
+
+- Thumbnail pipeline (WebP, three sizes, eager generation, RAW
+  embedded-preview extraction, `thumb_status` tracking).
+- Video poster extraction.
+- `albums` and `album_media` tables plus owner-consistency trigger.
+- `fotobank albums` subcommands (create / list / add / remove / rename
+  / delete) with `--json` output for agents.
+- `fotobank thumbs regenerate` for forced rebuilds.
+- Minimal HTTP server (no auth): `/media`, `/media/{id}/original`,
+  `/media/{id}/thumb?size=…`, `/albums`, `/albums/{id}`. Dev-stub
+  identity only — no broker integration yet, so the server effectively
+  serves a single-owner library. Enough to validate the read path
+  with a real browser.
+
+**1c — Share scaffolding.** Local-only sharing primitives.
+
+- `scopes` and `scope_media` tables plus owner-consistency trigger.
+- `ShareService` mint / revoke / list operations backed by
+  `stub.BrokerRegistrar` (no-op outbound). CLI surface:
+  `fotobank shares create --album <id> --grantee <principal>
+  [--download] [--expires …]`, `fotobank shares list`,
+  `fotobank shares revoke <scope_uuid>`.
+- Dev-stub startup warning when active scopes exist without a broker
+  (§6.4).
+- Owner-side HTTP read path unchanged (owners access by ownership).
+  Grantee HTTP path is **not** operative in 1c; that requires real
+  broker integration (Phase 2).
+
+Phase 1 is complete when the Python tool can be deleted, a dev-stub
+single-owner deployment matches or exceeds current functionality, and
+the shares scaffolding exists locally for Phase 2 to activate.
 
 ### Phase 2 — HTTP API and identity integration
 
@@ -934,6 +1214,24 @@ Tracked for resolution during sub-specs or spec review.
 10. **Import on NAS-mounted inbox.** `fsnotify` on NAS is unreliable
     across SMB / NFS variants. The watched-folder design must specify a
     periodic-scan fallback and reconcile both triggers.
+11. **First-class album snapshot scope.** `media_set` already captures
+    "freeze the current album at mint time" when the owner expands the
+    album into a fixed list. A dedicated `album_snapshot` target_type
+    (stores the album ID plus a frozen members snapshot) might be
+    nicer in the UI — the grantee sees an album title, not an ad-hoc
+    set, but the members don't drift. Worth revisiting once real share
+    UX exists.
+12. **Video streaming for view-only shares.** §7.2 punts this: view-only
+    videos show a non-playing poster because enabling Range requests
+    against `/media/{id}/original` requires `allow_download = true`.
+    An alternative would be a separate streaming endpoint that serves
+    compressed-bitrate H.264 derivatives — but that requires transcoding
+    and is out of scope for v1. Confirm v1 users are fine with
+    "view-only = photo only" or escalate to a transcoding sub-spec.
+13. **SQLite snapshot cadence and WAL shipping.** §11 calls out non-zero
+    RPO. The backup sub-spec needs to commit to a default cadence
+    (e.g., every 15 minutes + hourly + daily retention) and whether
+    WAL shipping to NAS is wired up in Phase 1 or deferred.
 
 ---
 
