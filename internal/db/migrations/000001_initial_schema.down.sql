@@ -1,0 +1,13 @@
+DROP TRIGGER IF EXISTS scopes_target_album_owner_consistency_update;
+DROP TRIGGER IF EXISTS scopes_target_album_owner_consistency_insert;
+DROP TRIGGER IF EXISTS scope_media_owner_consistency_update;
+DROP TRIGGER IF EXISTS scope_media_owner_consistency_insert;
+DROP TABLE IF EXISTS scope_media;
+DROP TABLE IF EXISTS scopes;
+DROP TRIGGER IF EXISTS album_media_owner_consistency_update;
+DROP TRIGGER IF EXISTS album_media_owner_consistency_insert;
+DROP TABLE IF EXISTS album_media;
+DROP TABLE IF EXISTS albums;
+DROP TABLE IF EXISTS media;
+DROP TABLE IF EXISTS principal_display;
+DROP TABLE IF EXISTS owners;

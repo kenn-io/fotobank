@@ -50,6 +50,9 @@ func (d *DB) init() error {
 	if _, err := d.rw.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return fmt.Errorf("enable WAL: %w", err)
 	}
+	if err := runMigrations(d.rw); err != nil {
+		return err
+	}
 	return nil
 }
 
