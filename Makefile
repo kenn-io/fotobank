@@ -7,28 +7,32 @@ BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS         := -X main.vVersion=$(VERSION) -X main.vCommit=$(COMMIT) -X main.vBuildDate=$(BUILD_DATE)
 LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 
-BINARY := fotobank
+BIN_DIR := bin
+BINARY  := $(BIN_DIR)/fotobank
 
 .PHONY: build build-release install dev test test-short vet lint nilaway \
         testify-helper-check migration-history-check tidy api-generate \
         install-hooks clean help
 
-build: ## Build debug binary with version ldflags
+$(BIN_DIR):
+	@mkdir -p $(BIN_DIR)
+
+build: | $(BIN_DIR) ## Build debug binary with version ldflags
 	go build -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/fotobank
 
-build-release: ## Build release binary (trimpath + stripped)
+build-release: | $(BIN_DIR) ## Build release binary (trimpath + stripped)
 	go build -ldflags="$(LDFLAGS_RELEASE)" -trimpath -o $(BINARY) ./cmd/fotobank
 
 install: build-release ## Install to ~/.local/bin or $GOBIN
 	@if [ -d "$(HOME)/.local/bin" ]; then \
-		echo "Installing to ~/.local/bin/$(BINARY)"; \
-		cp $(BINARY) "$(HOME)/.local/bin/$(BINARY)"; \
+		echo "Installing to ~/.local/bin/fotobank"; \
+		cp $(BINARY) "$(HOME)/.local/bin/fotobank"; \
 	else \
 		INSTALL_DIR="$${GOBIN:-$$(go env GOBIN)}"; \
 		[ -z "$$INSTALL_DIR" ] && INSTALL_DIR="$$(go env GOPATH)/bin"; \
 		mkdir -p "$$INSTALL_DIR"; \
-		echo "Installing to $$INSTALL_DIR/$(BINARY)"; \
-		cp $(BINARY) "$$INSTALL_DIR/$(BINARY)"; \
+		echo "Installing to $$INSTALL_DIR/fotobank"; \
+		cp $(BINARY) "$$INSTALL_DIR/fotobank"; \
 	fi
 
 dev: ## Live-reload via air
@@ -66,7 +70,7 @@ install-hooks: ## Install prek git hooks
 	prek install -f
 
 clean: ## Remove built artefacts
-	rm -f $(BINARY) openapi.json
+	rm -rf $(BIN_DIR) openapi.json
 
 help: ## Print available targets
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)

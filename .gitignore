@@ -100,9 +100,9 @@ ENV/
 # mypy
 .mypy_cache/
 
-# binaries
-/fotobank
-/fotobank-openapi
+# Go build output
+/bin/
+/openapi.json
 *.exe
 
 # build/test artefacts
@@ -125,4 +125,3 @@ coverage.out
 # IDE swap/temp
 *~
 .DS_Store
-
