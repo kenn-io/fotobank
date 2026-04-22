@@ -1620,13 +1620,16 @@ fotobank version
      picking a new `storage_key` or removing the existing owner
      with `fotobank owners remove`.
 5. There is intentionally no "target NAS path must be empty"
-   pre-flight. An already-populated tree is either a resume
-   (existing rows point at those bytes, and UNIQUE(owner, checksum)
-   will skip them) or an operator mistake against the wrong
-   target — and the conflict-state detection in (4) catches the
-   operator mistake based on DB state, which is authoritative.
-   Relying on filesystem emptiness would block the legitimate
-   resume path.
+   pre-flight. An already-populated tree is either a legitimate
+   resume (existing rows point at those bytes, and
+   UNIQUE(owner, checksum) will skip them) or foreign bytes at a
+   colliding path — the per-row `os.Link` / `storage.Write` calls
+   in §14.2 are no-clobber, so foreign bytes surface as per-row
+   failures during execution rather than up front. Pre-flight
+   catches the *identity* mistake (wrong owner / storage_key
+   collision, step 4); fs-level no-clobber catches the *path*
+   mistake during execution. Relying on filesystem emptiness here
+   would block the legitimate resume path.
 
 ### 14.2 Execution
 
