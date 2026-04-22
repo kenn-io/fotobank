@@ -4,11 +4,14 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/wesm/fotobank/internal/errs"
 )
 
 type Config struct {
@@ -108,7 +111,66 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("load config %q: %w", path, err)
 	}
 	applyDefaults(&cfg, meta)
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
+}
+
+// Validate returns ErrBadConfiguration (wrapped with detail) if any
+// required setting is missing or any enum field holds an unknown value.
+func (c *Config) Validate() error {
+	if c.NAS.Root == "" {
+		return fmt.Errorf("%w: [nas].root is required", errs.ErrBadConfiguration)
+	}
+	switch c.Identity.Mode {
+	case "stub":
+		// nothing extra
+	case "header":
+		if err := c.validateHeaderGuard(); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("%w: [identity].mode=%q (must be stub|header)",
+			errs.ErrBadConfiguration, c.Identity.Mode)
+	}
+	switch c.Storage.Mode {
+	case "nas_only", "flash_cache":
+	default:
+		return fmt.Errorf("%w: [storage].mode=%q (must be nas_only|flash_cache)",
+			errs.ErrBadConfiguration, c.Storage.Mode)
+	}
+	switch c.Broker.Mode {
+	case "stub", "exec":
+	default:
+		return fmt.Errorf("%w: [broker].mode=%q (must be stub|exec)",
+			errs.ErrBadConfiguration, c.Broker.Mode)
+	}
+	return nil
+}
+
+func (c *Config) validateHeaderGuard() error {
+	h := c.Identity.Header
+	if isLoopbackBind(c.HTTP.ListenAddress) ||
+		len(h.TrustedProxyCIDRs) > 0 ||
+		(h.ProxySecretHeader != "" && (h.ProxySecret != "" || os.Getenv("FOTOBANK_PROXY_SECRET") != "")) ||
+		h.ProxyMTLSCAFile != "" {
+		return nil
+	}
+	return fmt.Errorf("%w: [identity].mode=header requires loopback bind, trusted_proxy_cidrs, proxy_secret, or mtls",
+		errs.ErrBadConfiguration)
+}
+
+func isLoopbackBind(addr string) bool {
+	if strings.HasPrefix(addr, "unix:") {
+		return true
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func applyDefaults(c *Config, meta toml.MetaData) {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wesm/fotobank/internal/config"
+	"github.com/wesm/fotobank/internal/errs"
 )
 
 func TestLoadAppliesDefaults(t *testing.T) {
@@ -98,4 +99,72 @@ snapshot_retention = 48
 	r.Equal("exec", cfg.Broker.Mode)
 	r.Equal(time.Hour, cfg.Backup.SnapshotInterval)
 	r.Equal(48, cfg.Backup.SnapshotRetention)
+}
+
+func TestValidateRequiresNASRoot(t *testing.T) {
+	_, err := config.Load(filepath.Join("..", "..", "testdata", "config", "missing-nas.toml"))
+	require.Error(t, err)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+}
+
+func TestValidateHeaderModeRequiresGuard(t *testing.T) {
+	_, err := config.Load(filepath.Join("..", "..", "testdata", "config", "header-no-guard.toml"))
+	require.Error(t, err)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+}
+
+func TestValidateAcceptsLoopbackInHeaderMode(t *testing.T) {
+	// Loopback bind satisfies the guard on its own.
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	err := os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[identity]
+mode = "header"
+[http]
+listen_address = "127.0.0.1:8090"
+`), 0o600)
+	require.NoError(t, err)
+	_, err = config.Load(p)
+	require.NoError(t, err)
+}
+
+func TestValidateRejectsUnknownIdentityMode(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[identity]
+mode = "bogus"
+`), 0o600))
+	_, err := config.Load(p)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+}
+
+func TestValidateRejectsUnknownStorageMode(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[storage]
+mode = "weird"
+`), 0o600))
+	_, err := config.Load(p)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+}
+
+func TestValidateRejectsUnknownBrokerMode(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[broker]
+mode = "unknown"
+`), 0o600))
+	_, err := config.Load(p)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
 }
