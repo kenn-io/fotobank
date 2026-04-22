@@ -48,7 +48,7 @@ lint: ## Run golangci-lint + testify-helper-check
 	$(MAKE) testify-helper-check
 
 testify-helper-check: ## Enforce testify helper usage
-	go run ./tools/testifyhelpercheck ./...
+	go run ./tools/testifyhelpercheck/cmd ./...
 
 migration-history-check: ## Check no edits to main-branch migrations
 	go run ./tools/migrationhistorycheck
