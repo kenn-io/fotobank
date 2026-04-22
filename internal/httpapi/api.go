@@ -40,7 +40,7 @@ func New(deps Deps) (http.Handler, error) {
 	api.OpenAPI().Info.Description = "Fotobank HTTP API"
 
 	registerHealthz(api)
-	// /me registered in Task 25.
+	registerMe(api)
 
 	if deps.IdentityProvider != nil {
 		return WithMiddleware(deps.IdentityProvider)(mux), nil
