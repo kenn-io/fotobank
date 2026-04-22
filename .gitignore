@@ -99,3 +99,30 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+# binaries
+/fotobank
+/fotobank-openapi
+*.exe
+
+# build/test artefacts
+/tmp/
+*.out
+*.test
+coverage.out
+
+# editor
+.vscode/
+.idea/
+
+# env
+.env
+.env.local
+
+# air
+/tmp/air/
+
+# IDE swap/temp
+*~
+.DS_Store
+
