@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -14,14 +15,26 @@ import (
 // Output that the user requested (help, version) is written to stdout; error
 // output (usage on bad input) is written to stderr. The returned integer is
 // the process exit code: 0 on success, 2 on usage errors.
+//
+// Run is a thin wrapper around RunContext with a background context. Call
+// RunContext directly when a long-lived subcommand (for example server)
+// needs to observe cancellation from the caller.
 func Run(args []string, stdout, stderr io.Writer) int {
+	return RunContext(context.Background(), args, stdout, stderr)
+}
+
+// RunContext dispatches a fotobank CLI invocation, threading ctx through to
+// long-lived subcommands. Subcommands that complete synchronously (owners,
+// config, version, help) ignore ctx; the server subcommand observes it to
+// trigger graceful shutdown when the caller cancels.
+func RunContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printUsage(stderr)
 		return 2
 	}
 	switch args[0] {
 	case "server":
-		return runServer(args[1:], stdout, stderr)
+		return runServer(ctx, args[1:], stdout, stderr)
 	case "owners":
 		return runOwners(args[1:], stdout, stderr)
 	case "config":
@@ -50,8 +63,5 @@ commands:
 `)
 }
 
-// TODO(Task 29): implement server subcommand.
-func runServer(_ []string, _, _ io.Writer) int { return 0 }
-
-// TODO(Task 30): implement owners subcommand.
+// TODO(Task 31): implement owners subcommand.
 func runOwners(_ []string, _, _ io.Writer) int { return 0 }
