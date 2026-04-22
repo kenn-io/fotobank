@@ -2,6 +2,8 @@ package service_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,6 +13,39 @@ import (
 	"github.com/wesm/fotobank/internal/service"
 	"github.com/wesm/fotobank/internal/testutil"
 )
+
+// raceFakeRepo simulates the lost-race scenario Ensure must handle: the
+// first GetByPrincipal returns ErrNotFound (our probe sees no row), Insert
+// fails as though another caller inserted the same row first, and the
+// second GetByPrincipal returns that other caller's row.
+type raceFakeRepo struct {
+	getCalls        int
+	raceWinnerOwner owners.Owner
+	insertCalls     int
+	insertErr       error
+}
+
+func (f *raceFakeRepo) GetByPrincipal(context.Context, owners.Principal) (owners.Owner, error) {
+	f.getCalls++
+	if f.getCalls == 1 {
+		return owners.Owner{}, errs.ErrNotFound
+	}
+	return f.raceWinnerOwner, nil
+}
+
+func (f *raceFakeRepo) Insert(context.Context, owners.Owner) error {
+	f.insertCalls++
+	return f.insertErr
+}
+
+func (f *raceFakeRepo) List(context.Context) ([]owners.Owner, error) { return nil, nil }
+func (f *raceFakeRepo) Delete(context.Context, owners.Principal) error {
+	return nil
+}
+func (f *raceFakeRepo) UpdateDisplayHandle(context.Context, owners.Principal, string) error {
+	return nil
+}
+func (f *raceFakeRepo) DB() *sql.DB { return nil }
 
 func TestEnsureIsIdempotent(t *testing.T) {
 	r := require.New(t)
@@ -33,26 +68,39 @@ func TestEnsureConflictingStorageKeyErrors(t *testing.T) {
 }
 
 func TestEnsureRecoversFromRaceInsert(t *testing.T) {
-	// Regression: Ensure's GetByPrincipal probe + Insert is not atomic.
-	// If a concurrent caller wins the Insert between our probe and our
-	// write, our Insert fails with a UNIQUE-constraint error. Ensure
-	// must re-read and, when the stored storage_key matches, honour the
-	// idempotent contract. Simulating this deterministically: pre-insert
-	// the owner via repo (bypassing the service), then call Ensure. The
-	// service's GetByPrincipal now returns the row, so the re-read
-	// branch is exercised end-to-end when we then call Ensure with a
-	// mismatching storage_key and expect ErrAlreadyExists.
-	r := require.New(t)
-	d := testutil.OpenTestDB(t)
-	repo := owners.NewRepo(d.WriteDB(), d.ReadDB())
-	svc := service.NewOwnerService(repo)
+	// Regression: when Ensure's GetByPrincipal probe returns ErrNotFound
+	// but Insert then fails because a concurrent caller inserted the
+	// same principal first, Ensure must re-read and honour the
+	// idempotent contract. Uses a fake repo so the race is
+	// deterministic, not goroutine-flaky.
 	p := owners.Principal{Hub: "h", UserID: "u"}
 
-	r.NoError(repo.Insert(context.Background(), owners.Owner{
-		Principal: p, StorageKey: "k", CreatedAt: time.Now().UTC(),
-	}))
-	r.NoError(svc.Ensure(context.Background(), p, "k"))
-	r.ErrorIs(svc.Ensure(context.Background(), p, "other"), errs.ErrAlreadyExists)
+	t.Run("matching storage key returns nil", func(t *testing.T) {
+		r := require.New(t)
+		repo := &raceFakeRepo{
+			raceWinnerOwner: owners.Owner{
+				Principal: p, StorageKey: "k", CreatedAt: time.Now().UTC(),
+			},
+			insertErr: errors.New("UNIQUE constraint failed: owners.hub, owners.user_id"),
+		}
+		svc := service.NewOwnerService(repo)
+		r.NoError(svc.Ensure(context.Background(), p, "k"))
+		r.Equal(2, repo.getCalls, "should re-read after failed Insert")
+		r.Equal(1, repo.insertCalls)
+	})
+
+	t.Run("mismatching storage key returns ErrAlreadyExists", func(t *testing.T) {
+		r := require.New(t)
+		repo := &raceFakeRepo{
+			raceWinnerOwner: owners.Owner{
+				Principal: p, StorageKey: "winner", CreatedAt: time.Now().UTC(),
+			},
+			insertErr: errors.New("UNIQUE constraint failed: owners.hub, owners.user_id"),
+		}
+		svc := service.NewOwnerService(repo)
+		r.ErrorIs(svc.Ensure(context.Background(), p, "mine"), errs.ErrAlreadyExists)
+		r.Equal(2, repo.getCalls, "should re-read after failed Insert")
+	})
 }
 
 func TestRemoveRefusesWhenMediaExists(t *testing.T) {

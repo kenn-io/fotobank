@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -14,17 +15,29 @@ import (
 	"github.com/wesm/fotobank/internal/owners"
 )
 
+// OwnerRepo is the subset of owners.Repo that OwnerService depends on.
+// Accepting an interface here lets tests inject fakes that simulate
+// concurrency races without spinning real goroutines.
+type OwnerRepo interface {
+	Insert(ctx context.Context, o owners.Owner) error
+	GetByPrincipal(ctx context.Context, p owners.Principal) (owners.Owner, error)
+	List(ctx context.Context) ([]owners.Owner, error)
+	Delete(ctx context.Context, p owners.Principal) error
+	UpdateDisplayHandle(ctx context.Context, p owners.Principal, handle string) error
+	DB() *sql.DB
+}
+
 // OwnerService orchestrates owner lifecycle operations on top of an
-// owners.Repo. The now field is a seam for deterministic timestamps in
+// OwnerRepo. The now field is a seam for deterministic timestamps in
 // tests; production callers get time.Now().UTC() via NewOwnerService.
 type OwnerService struct {
-	repo *owners.Repo
+	repo OwnerRepo
 	now  func() time.Time
 }
 
 // NewOwnerService constructs an OwnerService that uses repo for
 // persistence and time.Now().UTC() as its clock.
-func NewOwnerService(repo *owners.Repo) *OwnerService {
+func NewOwnerService(repo OwnerRepo) *OwnerService {
 	return &OwnerService{repo: repo, now: func() time.Time { return time.Now().UTC() }}
 }
 
