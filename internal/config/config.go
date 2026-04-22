@@ -98,8 +98,9 @@ type Backup struct {
 	WALShipping       bool          `toml:"wal_shipping"`
 }
 
-// Load reads the file at path, applies defaults, and returns the
-// parsed config. Missing file is a fatal error.
+// Load reads the file at path, parses it as TOML, applies defaults,
+// and returns the config. Returns an error if the file is missing or
+// malformed; callers decide whether to exit.
 func Load(path string) (*Config, error) {
 	bytes, err := os.ReadFile(path)
 	if err != nil {
@@ -126,6 +127,10 @@ func applyDefaults(c *Config) {
 	if c.Storage.OriginalsCacheMaxMedia == 0 {
 		c.Storage.OriginalsCacheMaxMedia = 100_000
 	}
+	// Bool zero-value cannot be distinguished from explicit `false` without
+	// switching to *bool or tracking toml.MetaData. Per spec, default-on is
+	// acceptable in v0.1 — an explicit-disable knob will come via a pointer
+	// field or env override in a later task.
 	if !c.Storage.ThumbsCacheEnabled {
 		c.Storage.ThumbsCacheEnabled = true
 	}
