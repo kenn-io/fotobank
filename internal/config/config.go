@@ -3,6 +3,8 @@
 package config
 
 import (
+	_ "embed"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -13,6 +15,43 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/wesm/fotobank/internal/errs"
 )
+
+//go:embed config.example.toml
+var exampleTOML []byte
+
+// DefaultConfigPath resolves the config file path with this precedence:
+// $FOTOBANK_CONFIG → $XDG_CONFIG_HOME/fotobank/config.toml →
+// $HOME/.config/fotobank/config.toml → "./config.toml".
+func DefaultConfigPath() string {
+	if v := os.Getenv("FOTOBANK_CONFIG"); v != "" {
+		return v
+	}
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "fotobank", "config.toml")
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".config", "fotobank", "config.toml")
+	}
+	return "./config.toml"
+}
+
+// EnsureDefault writes the embedded example config if path does not exist.
+// Returns scaffolded=true when a new file was written, false if the file
+// was already present.
+func EnsureDefault(path string) (bool, error) {
+	if _, err := os.Stat(path); err == nil {
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("stat %q: %w", path, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, fmt.Errorf("mkdir %q: %w", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, exampleTOML, 0o600); err != nil {
+		return false, fmt.Errorf("write %q: %w", path, err)
+	}
+	return true, nil
+}
 
 type Config struct {
 	Flash    Flash    `toml:"flash"`

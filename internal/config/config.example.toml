@@ -1,0 +1,73 @@
+# Where fotobank stores its SQLite DB and (optionally) flash-cached
+# originals and thumbnails.
+[flash]
+root = "~/.local/state/fotobank"     # default; ~ expanded
+
+# Where durable bytes live. Imports write originals here before the
+# media row is committed; thumbnails are written here asynchronously
+# by the background worker after the row commits (see §10, §11).
+[nas]
+root = "/mnt/nas/fotobank"           # required
+
+# "nas_only" (no flash tier), "flash_cache" (default)
+[storage]
+mode = "flash_cache"
+originals_cache_days = 30            # recency window for original cache
+originals_cache_max_media = 100000   # hard ceiling; whichever hits first
+thumbs_cache_enabled = true          # thumbs cached on flash
+
+[identity]
+mode = "stub"                        # "stub" | "header"
+
+[identity.stub]
+hub = "dev-local"
+user_id = "owner"
+handle = "owner"
+# auto-registers the owner with storage_key = "owner" on first start
+
+[identity.header]
+# Names can be overridden per deployment; defaults shown.
+user_id_header = "X-Auth-User-Id"
+hub_header = "X-Auth-Hub"
+handle_header = "X-Auth-Handle"
+scopes_header = "X-Auth-Scopes"
+request_id_header = "X-Auth-Request-Id"
+# Direct-access guard inputs (at least one must be set in header mode).
+# The bind address itself lives under [http].listen_address — the
+# guard inspects that field when deciding if loopback satisfies it.
+trusted_proxy_cidrs = []             # e.g. ["10.0.0.0/24"]
+proxy_secret_header = ""             # when set, require X-Auth-Proxy-Secret match
+proxy_secret = ""                    # loaded from env FOTOBANK_PROXY_SECRET if unset here
+proxy_mtls_ca_file = ""              # PEM file of CA certs for client auth
+
+[http]
+listen_address = "127.0.0.1:8090"    # TCP host:port or "unix:/path/to/socket"
+                                     # in header mode, loopback/UDS satisfies the direct-access guard
+base_url = ""                        # used to build absolute URLs in API responses; empty = omit
+request_timeout = "30s"
+write_timeout = "60s"                # accommodates range streams and large originals
+cors_origins = []                    # typically set to the frontend origin in Phase 3
+
+[imports]
+concurrent_workers = 2               # goroutines doing EXIF + hash inside a single 'fotobank import' invocation
+file_lock_path = ""                  # default: {nas.root}/.fotobank/import.lock
+
+[thumbs]
+worker_concurrency = 4               # goroutines generating thumbnails per server process
+poll_interval = "5s"                 # how often to scan for pending rows
+lease_timeout = "10m"                # working rows reclaimed after this
+
+[broker]
+# v1 ships stub only. When Phase 2 lands, mode = "exec" with commands.
+mode = "stub"
+
+[broker.exec]
+# Reserved for Phase 2. Example shape (broker name omitted
+# intentionally; fill in when the broker CLI is available):
+# command = "/usr/local/bin/<broker-cli>"
+# register_scope_args = ["scope", "register", "--app", "fotobank", ...]
+
+[backup]
+snapshot_interval = "15m"
+snapshot_retention = 96              # keep last N snapshots
+wal_shipping = false                 # future

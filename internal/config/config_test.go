@@ -221,3 +221,50 @@ proxy_mtls_ca_file = "/etc/ca.pem"
 		})
 	}
 }
+
+func TestDefaultConfigPathHonoursXDG(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg")
+	t.Setenv("FOTOBANK_CONFIG", "")
+	require.Equal(t, "/tmp/xdg/fotobank/config.toml", config.DefaultConfigPath())
+}
+
+func TestDefaultConfigPathHonoursEnvOverride(t *testing.T) {
+	t.Setenv("FOTOBANK_CONFIG", "/custom/c.toml")
+	require.Equal(t, "/custom/c.toml", config.DefaultConfigPath())
+}
+
+func TestEnsureDefaultWritesExampleOnFirstRun(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.toml")
+
+	scaffolded, err := config.EnsureDefault(path)
+	r.NoError(err)
+	r.True(scaffolded)
+
+	// File now exists.
+	_, err = os.Stat(path)
+	r.NoError(err)
+
+	// Second run is a no-op.
+	scaffolded, err = config.EnsureDefault(path)
+	r.NoError(err)
+	r.False(scaffolded)
+}
+
+func TestEnsureDefaultWrittenFileLoadsCleanly(t *testing.T) {
+	// After EnsureDefault writes the example, config.Load should parse it
+	// successfully (the embedded example must itself be a valid config).
+	r := require.New(t)
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.toml")
+	_, err := config.EnsureDefault(path)
+	r.NoError(err)
+
+	// The example file sets nas.root to a placeholder; since it may be
+	// "/mnt/nas/fotobank" which is valid syntax, Load should parse it.
+	cfg, err := config.Load(path)
+	r.NoError(err)
+	r.NotNil(cfg)
+	r.NotEmpty(cfg.NAS.Root)
+}
