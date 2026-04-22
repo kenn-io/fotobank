@@ -36,6 +36,12 @@ listen_address = "127.0.0.1:0"
 	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrSink)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	// Register cleanup immediately so any require.* failure before the
+	// explicit cancel() still triggers server shutdown. The server
+	// goroutine observes ctx.Done() and exits; on happy path we block
+	// on `done` below to assert the exit code.
+	t.Cleanup(cancel)
+
 	done := make(chan int, 1)
 	go func() {
 		var so, se bytes.Buffer
@@ -52,12 +58,16 @@ listen_address = "127.0.0.1:0"
 	}
 	r.NotEmpty(addr, "server did not publish bind address")
 
-	healthz, err := http.Get("http://" + addr + "/api/v1/healthz")
+	// Short per-request timeout so a stalled server can't hang the test
+	// until Go's global test timeout (minutes).
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	healthz, err := client.Get("http://" + addr + "/api/v1/healthz")
 	r.NoError(err)
 	r.NoError(healthz.Body.Close())
 	r.Equal(http.StatusOK, healthz.StatusCode)
 
-	resp, err := http.Get("http://" + addr + "/api/v1/me")
+	resp, err := client.Get("http://" + addr + "/api/v1/me")
 	r.NoError(err)
 	defer resp.Body.Close()
 	r.Equal(http.StatusOK, resp.StatusCode)
@@ -74,6 +84,9 @@ listen_address = "127.0.0.1:0"
 	r.Equal("alice", body.Principal.UserID)
 	r.Equal("Alice", body.Principal.Handle)
 
+	// Trigger shutdown explicitly and assert the server exits cleanly.
+	// t.Cleanup will also call cancel(), but a second cancel on an
+	// already-cancelled context is a no-op.
 	cancel()
 	select {
 	case code := <-done:

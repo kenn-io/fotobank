@@ -59,6 +59,23 @@ func TestOwnersListShowsAddedRow(t *testing.T) {
 	r.Equal("h", rows[0]["hub"])
 }
 
+func TestOwnersListRejectsBadFlags(t *testing.T) {
+	// Regression: owners list used to discard fs.Parse errors, so an
+	// invalid flag would silently open the DB and list rows. It must
+	// now exit 2 with usage before doing any work.
+	r := require.New(t)
+	_ = newCLITempEnv(t)
+
+	var out, eout bytes.Buffer
+	r.Equal(2, cli.Run([]string{"owners", "list", "--bad"}, &out, &eout))
+	r.Contains(eout.String(), "usage")
+
+	out.Reset()
+	eout.Reset()
+	r.Equal(2, cli.Run([]string{"owners", "list", "extra-positional"}, &out, &eout))
+	r.Contains(eout.String(), "usage")
+}
+
 func TestOwnersRemoveSucceedsWhenEmpty(t *testing.T) {
 	r := require.New(t)
 	_ = newCLITempEnv(t)

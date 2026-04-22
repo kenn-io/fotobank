@@ -68,7 +68,14 @@ func runOwnersList(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("owners list", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOut := fs.Bool("json", false, "")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(stderr, "usage: fotobank owners list [--json]")
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "usage: fotobank owners list [--json]")
+		return 2
+	}
 
 	svc, cleanup, err := clictx.LoadOwnerService()
 	if err != nil {
