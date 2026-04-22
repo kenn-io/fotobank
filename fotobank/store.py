@@ -164,7 +164,7 @@ class PhotoStore(object):
 
         # Cache directory listings to avoid repeated network calls
         dir_listings = {}
-        
+
         def _get_directory_files(dir_path):
             if dir_path not in dir_listings:
                 try:
@@ -180,10 +180,10 @@ class PhotoStore(object):
         for record in records:
             relative_path = get_store_path(record)
             full_path = os.path.join(self.base_path, relative_path)
-            
+
             # Split into directory and filename
             dir_path, filename = os.path.split(full_path)
-            
+
             # Check if file exists in the cached directory listing
             dir_files = _get_directory_files(dir_path)
             if filename not in dir_files:
