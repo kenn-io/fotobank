@@ -288,8 +288,9 @@ Single TOML file loaded at startup. Schema:
 [flash]
 root = "~/.local/state/fotobank"     # default; ~ expanded
 
-# Where durable bytes live. Every import writes originals and thumbs
-# here before the media row is committed.
+# Where durable bytes live. Imports write originals here before the
+# media row is committed; thumbnails are written here asynchronously
+# by the background worker after the row commits (see §10, §11).
 [nas]
 root = "/mnt/nas/fotobank"           # required
 
@@ -1040,26 +1041,42 @@ swap is a one-line change in `main.go`.
 
 ### 9.6 ThumbService
 
-- `Enqueue(ctx, mediaID)` — sets `thumb_status='pending'` (usually
-  called from the ingest pipeline immediately after the media row is
-  committed). Does not touch `thumb_version`; that only bumps when
-  a regeneration actually completes.
+Thumbnail lifecycle: the version bumps at the **start** of each
+lifecycle (enqueue), not at the terminal transitions. This keeps
+cache-coherence correct across all terminal outcomes: whether a
+regeneration ends in `ready`, `no_preview`, or `failed`, the client
+sees a new version and invalidates its cache. A regeneration that
+ends in `failed` therefore surfaces as "new version, 409 response"
+rather than "same version, stale cached bytes."
+
+- `Enqueue(ctx, mediaID)` — called by `thumbs regenerate` and any
+  future regeneration trigger. Atomically: sets
+  `thumb_status = 'pending'`, increments `thumb_version`, sets
+  `thumb_updated_at = now()`. Refuses (no-op) if the row is
+  already `pending` or `working` — don't double-bump a version
+  that will otherwise only have one set of bytes behind it.
+- The **import pipeline** inserts new media rows with
+  `thumb_status = 'pending'`, `thumb_version = 1`,
+  `thumb_updated_at = now()` directly in the insert, bypassing
+  `Enqueue`. First-ever thumbs start at version 1.
 - `ClaimBatch(ctx, limit)` — the worker's claim query: conditional
   UPDATE `pending → working` with `thumb_claimed_at = now()`
   returning rows. SQLite does not support `UPDATE … RETURNING`
   directly for all versions, so the worker uses a two-step pattern
   wrapped in a transaction: SELECT with `LIMIT` for candidates,
-  UPDATE by primary key, check affected rowcount.
-- `MarkReady(ctx, mediaID)` — transitions `working → ready`,
-  increments `thumb_version`, sets `thumb_updated_at = now()`. The
-  bump is what tells HTTP cache clients that the bytes have
-  changed (§12.6).
-- `MarkNoPreview(ctx, mediaID)`, `MarkFailed(ctx, mediaID, err)` —
-  terminal state transitions that do NOT bump `thumb_version` (no
-  new bytes were produced).
+  UPDATE by primary key, check affected rowcount. `thumb_version`
+  is NOT touched here.
+- `MarkReady(ctx, mediaID)`, `MarkNoPreview(ctx, mediaID)`,
+  `MarkFailed(ctx, mediaID, err)` — terminal state transitions
+  from `working`. None of them bump `thumb_version`; it was
+  already bumped at the start of this lifecycle. HTTP clients
+  that fetched `/thumb?…v={N}` and received 409 during `working`
+  simply retry once status settles.
 - `SweepLeases(ctx)` — reverts `working` rows where
   `thumb_claimed_at < now() - lease_timeout` back to `pending`.
-  Runs on a timer.
+  Runs on a timer. Does not bump `thumb_version` (lease recovery
+  is not a new lifecycle, just a continuation of the existing
+  one).
 
 The actual generation pipeline lives in `internal/thumb/` (§11).
 
@@ -1167,15 +1184,40 @@ For AVI/MPG, extraction is best-effort; failures leave fields NULL.
           it inline here avoids an orphan-report churn.
    e. **Insert the `media` row in a per-row transaction** with
       `thumb_status='pending'`, `path` = the canonical path that
-      actually holds the bytes. On `UNIQUE(owner, checksum)`
-      constraint violation (another worker or a prior run beat us):
-      roll back, `storage.Delete` the bytes we just wrote (because
-      we know they are ours — no-clobber finalize guarantees we
-      created them this run), count as a duplicate, return.
-      On `UNIQUE(owner, path)` violation (should be vanishingly rare
-      given the seq-bumping in step d, but possible if another
-      importer races between our link and our insert): same rollback
-      — remove our bytes, retry from step c once, then give up.
+      actually holds the bytes. Constraint-violation handling:
+      - `UNIQUE(owner, checksum)` → another worker or a prior run
+        already has this content. Roll back, `storage.Delete` the
+        bytes we just wrote (safe — no-clobber finalize guarantees
+        we created them this run), count as a duplicate, return.
+      - `UNIQUE(owner, path)` → some other row already claims this
+        canonical path. Given the in-process checksum dedup
+        (step 3) and the file lock (§10.6), this should be
+        vanishingly rare. The scenario that can still produce it:
+        a pre-existing DB row that points at `path` whose bytes
+        were deleted externally (phantom row). Our no-clobber
+        finalize just succeeded at `path`, so the bytes now
+        present are ours.
+
+        Branch on the existing row's checksum:
+        - **Phantom (checksums differ).** The DB row thinks
+          path `X` holds content `C'`; our bytes at `X` have
+          content `C`. Removing our bytes restores the
+          pre-write state (DB still has a missing-file phantom
+          reconcile will surface). Do the remove, bump `SEQ`,
+          retry from step c at `X+1`. Abort after two retry
+          cycles and return as a failure — the operator's job
+          to reconcile the phantom.
+        - **Match (checksums equal).** The DB row's claim on
+          path `X` is legitimate, and our no-clobber write
+          happened to restore its missing bytes. Do NOT remove
+          our bytes — they belong to the existing row now.
+          Count as a duplicate (the row already exists), return.
+          Reconcile's previous "missing file" entry for this
+          row is self-healed.
+
+      This branch keeps the rule honest: bytes only get removed
+      when we know they do not satisfy any legitimate DB row's
+      pointer.
    f. On successful insert: if flash cache is enabled, enqueue async
       population. Return success.
 5. Collect per-candidate results; return a summary
@@ -1432,12 +1474,16 @@ without a versioning handle would leave stale bytes in browsers.
   unchanged; when `thumb_version` bumps, the ETag changes and the
   client fetches the new bytes.
 
-Regeneration via `fotobank thumbs regenerate` sets `thumb_status =
-'pending'`; when the worker completes the regeneration it increments
-`thumb_version` and sets `thumb_updated_at = now()` in the same
-UPDATE that transitions status back to `ready`. Clients either
-revalidate against the new ETag on their next request or wait for
-their cached copy to expire.
+`fotobank thumbs regenerate` routes through `ThumbService.Enqueue`,
+which atomically sets `thumb_status = 'pending'`, increments
+`thumb_version`, and updates `thumb_updated_at`. The bump happens at
+the **start** of the regeneration lifecycle — before the worker has
+even picked up the job — so clients observing the new version via
+listings or ETag revalidation invalidate their caches immediately,
+regardless of whether the regeneration ultimately ends in `ready`,
+`no_preview`, or `failed`. This keeps cache state coherent even
+when regeneration fails: clients never keep serving a stale old
+thumbnail under a URL whose server-side state says "regenerated."
 
 List endpoints that return media summaries include the current
 `thumb_version` so client-side image tags can append it as a query
@@ -1558,11 +1604,29 @@ fotobank version
 1. Validates the required flags.
 2. Confirms `--mode symlink` has `--legacy-durable`.
 3. Opens `{legacy_base}/registry.sqlite` read-only.
-4. Confirms the target NAS path is empty or contains no
-   `{storage_key}/` directory. Refuses to clobber an existing
-   owner's tree.
-5. Ensures the target SQLite has no `media` rows for the target
-   owner.
+4. Resolves the migration state:
+   - **First-run state:** no `owners` row matches
+     `--owner`/`--storage-key` AND no `media` rows exist for that
+     owner. Proceed normally.
+   - **Resume state:** an `owners` row matches AND `media` rows
+     exist for that owner. A prior `fotobank migrate` landed
+     partial progress; treat this invocation as a resume. Log:
+     `resuming prior migration: N media rows already present for
+     owner <hub>:<user_id>`. Continue.
+   - **Conflict state:** an `owners` row exists with a *different*
+     `storage_key` than requested, OR the requested `storage_key`
+     is taken by a *different* principal. This is operator error
+     — abort with a clear message. The safe recovery is either
+     picking a new `storage_key` or removing the existing owner
+     with `fotobank owners remove`.
+5. There is intentionally no "target NAS path must be empty"
+   pre-flight. An already-populated tree is either a resume
+   (existing rows point at those bytes, and UNIQUE(owner, checksum)
+   will skip them) or an operator mistake against the wrong
+   target — and the conflict-state detection in (4) catches the
+   operator mistake based on DB state, which is authoritative.
+   Relying on filesystem emptiness would block the legitimate
+   resume path.
 
 ### 14.2 Execution
 
@@ -1583,32 +1647,58 @@ Top-level flow:
    same per-row pipeline with `media_type='video'`.
 4. Emit the final report (§14.4).
 
-**Per-row pipeline** (bytes-first, then DB):
+**Per-row pipeline** (target-first, DB commit, then source
+removal — the source file is the safety net and is not touched
+until the row is durably committed):
 
 a. Generate a new UUID and compute the target key from the legacy
    row's timestamp + filename (photos) or MD5 (videos). Map legacy
    columns to the new schema (sentinel strings like
    `make='unknown'` → NULL per master §9.3).
-b. Materialise the bytes at the target location according to
-   `--mode`:
-   - **`move`**: `os.Link` + `os.Remove(source)` when on the same
-     filesystem (preferred — atomic, cheap, no temp file);
-     otherwise stream-copy through the `storage.Write` no-clobber
-     finalize (§7.2) and `os.Remove(source)` only after the link
-     succeeds.
-   - **`symlink`**: resolve the legacy source to an absolute path;
-     `os.Symlink(abs_source, target)`. No byte movement.
-c. Verify the bytes are readable at the target: `os.Stat` +
-   (for move mode) a checksum re-read to confirm no data corruption.
-   For symlink mode, `os.Stat` alone suffices.
-d. Insert the `media` row in a per-row transaction. On
-   `UNIQUE(owner, checksum)` violation, the item was already
-   migrated on a prior run — remove the target bytes we just
-   materialised (they're redundant), count as "already migrated",
-   continue.
-e. If any of a-d fail: clean up any partially-materialised bytes
-   at the target, record the failure with source path and reason,
-   continue to the next row.
+b. **Place bytes at the target without removing the source.**
+   - **`move` mode, same filesystem:** `os.Link(source, target)` —
+     creates a second directory entry for the same inode. Both
+     source and target now reference the bytes; source is not
+     removed at this point. No-clobber naturally via `link(2)`:
+     fails with `EEXIST` if the target is already present, which
+     signals the path-collision handling (bump `_seq`, retry).
+   - **`move` mode, cross-filesystem:** stream-copy source bytes
+     through `storage.Write` (no-clobber finalize, §7.2). Source
+     remains intact.
+   - **`symlink` mode:** resolve the legacy source to an absolute
+     path; `os.Symlink(abs_source, target)`. Source is the byte
+     store by design.
+c. Verify the target is readable: `os.Stat`. For `move`
+   cross-filesystem, re-checksum the target and compare to the
+   legacy row's checksum to detect copy corruption.
+d. **Insert the `media` row in a per-row transaction**, `path`
+   set to the target. Success → proceed to step e. Failures:
+   - `UNIQUE(owner, checksum)` violation → the content was
+     already migrated on a prior run. Remove the target bytes we
+     just materialised (safe — no-clobber finalize guarantees we
+     created them this run, and the legacy source is still
+     intact), leave the source alone, count as
+     `already_migrated`, return.
+   - Any other insert error → remove the target bytes, leave the
+     source alone, record as a failure, return.
+e. **Only after a successful DB commit**, perform the final
+   source-side action:
+   - `move` mode: `os.Remove(source)`. The target is already
+     durable and referenced by a committed row; source removal
+     cannot lose data even if it fails (we simply leave the
+     source behind as a cleanup task, reported as a warning).
+   - `symlink` mode: no-op. The source IS the byte store.
+f. If any of a-d fail: clean up any partially-materialised bytes
+   at the target (`move`: `os.Remove(target)`; `symlink`: ditto).
+   Source is untouched. Record the failure with source path and
+   reason, continue to the next row.
+
+**Invariant.** At every point in the per-row pipeline, the source
+file exists until after the target is durably committed in the DB.
+A SQLite error, a `UNIQUE` collision, or a crash cannot lose media
+— the worst outcome is an orphan target file that
+`fotobank reconcile` reports and the operator re-runs migration
+against.
 
 Step d uses per-row transactions rather than one big transaction so
 a single bad row cannot invalidate the work of thousands of
@@ -1619,11 +1709,18 @@ one SQLite transaction would hold a lock for the whole run.
 
 - **Cross-device move.** When `os.Link` fails with `EXDEV`, fall
   back to `storage.Write`-based stream-copy (still using the
-  no-clobber finalize). `os.Remove(source)` runs only after the
-  target is durable.
+  no-clobber finalize). Source is removed only after the per-row
+  DB commit (§14.2 step e).
 - **Symlink target.** Resolved to an absolute path so moving the
   fotobank deployment later does not break the links. Relative
   symlinks are a trap on migration.
+- **Source-removal errors.** If `os.Remove(source)` fails in step
+  e (permissions, read-only filesystem, race with another tool),
+  the DB row is already committed and durable — the failure is
+  logged as a warning in the final report. The operator's follow-
+  up is to delete the source manually; fotobank will not retry.
+  This is deliberately tolerant: source removal is the cleanup
+  half of a move, not the durability half.
 - **Lightroom catalog post-step.** In `move` mode, the final
   report includes a message directing the operator to update the
   LR catalog's folder location (master §12).
