@@ -1,0 +1,16 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+cmd = "go build -o ./fotobank ./cmd/fotobank"
+bin = "./fotobank server"
+include_ext = ["go", "sql", "tpl", "tmpl", "html"]
+include_dir = ["cmd", "internal"]
+exclude_dir = ["tmp", "testdata", "vendor", ".git"]
+delay = 500
+stop_on_error = true
+send_interrupt = true
+kill_delay = "2s"
+
+[screen]
+clear_on_rebuild = false
