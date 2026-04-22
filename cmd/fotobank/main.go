@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 
+	"github.com/wesm/fotobank/internal/cli"
 	"github.com/wesm/fotobank/internal/version"
 )
 
@@ -19,6 +20,5 @@ func main() {
 	version.Short = vVersion
 	version.Commit = vCommit
 	version.BuildDate = vBuildDate
-	// Dispatch added in Task 28; for now, exit 0.
-	os.Exit(0)
+	os.Exit(cli.Run(os.Args[1:], os.Stdout, os.Stderr))
 }
