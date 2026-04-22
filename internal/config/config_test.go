@@ -268,3 +268,63 @@ func TestEnsureDefaultWrittenFileLoadsCleanly(t *testing.T) {
 	r.NotNil(cfg)
 	r.NotEmpty(cfg.NAS.Root)
 }
+
+func TestProxySecretFallsBackToEnvIfTOMLUnset(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[identity]
+mode = "header"
+[identity.header]
+proxy_secret_header = "X-Foo"
+[http]
+listen_address = "0.0.0.0:9090"
+`), 0o600))
+
+	t.Setenv("FOTOBANK_PROXY_SECRET", "s3cret")
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	require.Equal(t, "s3cret", cfg.Identity.Header.ProxySecret)
+}
+
+func TestProxySecretTOMLWinsOverEnv(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[identity.header]
+proxy_secret = "toml-wins"
+`), 0o600))
+
+	t.Setenv("FOTOBANK_PROXY_SECRET", "env-loses")
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	require.Equal(t, "toml-wins", cfg.Identity.Header.ProxySecret)
+}
+
+func TestStubDevEnvOverridesTOML(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[identity.stub]
+hub = "toml-hub"
+user_id = "toml-user"
+handle = "toml-handle"
+`), 0o600))
+
+	t.Setenv("FOTOBANK_DEV_HUB", "env-hub")
+	t.Setenv("FOTOBANK_DEV_USER_ID", "env-user")
+	t.Setenv("FOTOBANK_DEV_HANDLE", "env-handle")
+
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	r := require.New(t)
+	r.Equal("env-hub", cfg.Identity.Stub.Hub)
+	r.Equal("env-user", cfg.Identity.Stub.UserID)
+	r.Equal("env-handle", cfg.Identity.Stub.Handle)
+}

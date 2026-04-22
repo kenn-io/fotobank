@@ -1,5 +1,6 @@
-// Package config loads fotobank's TOML configuration file and applies
-// defaults. Environment-variable overrides will be layered in a later task.
+// Package config loads fotobank's TOML configuration file, applies
+// defaults, and layers a narrow set of environment-variable overrides
+// (see applyEnvOverrides).
 package config
 
 import (
@@ -150,10 +151,32 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("load config %q: %w", path, err)
 	}
 	applyDefaults(&cfg, meta)
+	applyEnvOverrides(&cfg)
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// applyEnvOverrides layers a narrow set of environment-variable overrides
+// onto the config. Semantics by field:
+//   - FOTOBANK_PROXY_SECRET is a FALLBACK: TOML wins if non-empty, env
+//     fills in otherwise (keeps secrets out of committed configs).
+//   - FOTOBANK_DEV_HUB/USER_ID/HANDLE are OVERRIDES: env wins over TOML
+//     (operator convenience for CI and testing).
+func applyEnvOverrides(c *Config) {
+	if c.Identity.Header.ProxySecret == "" {
+		c.Identity.Header.ProxySecret = os.Getenv("FOTOBANK_PROXY_SECRET")
+	}
+	if v := os.Getenv("FOTOBANK_DEV_HUB"); v != "" {
+		c.Identity.Stub.Hub = v
+	}
+	if v := os.Getenv("FOTOBANK_DEV_USER_ID"); v != "" {
+		c.Identity.Stub.UserID = v
+	}
+	if v := os.Getenv("FOTOBANK_DEV_HANDLE"); v != "" {
+		c.Identity.Stub.Handle = v
+	}
 }
 
 // Validate returns ErrBadConfiguration (wrapped with detail) if any
@@ -190,13 +213,9 @@ func (c *Config) Validate() error {
 
 func (c *Config) validateHeaderGuard() error {
 	h := c.Identity.Header
-	// Reading FOTOBANK_PROXY_SECRET here is provisional: Task 13 will
-	// layer env overrides directly into ProxySecret, at which point this
-	// os.Getenv call can be removed. Until then, accepting env at this
-	// point keeps secrets out of committed TOML files.
 	if isLoopbackBind(c.HTTP.ListenAddress) ||
 		len(h.TrustedProxyCIDRs) > 0 ||
-		(h.ProxySecretHeader != "" && (h.ProxySecret != "" || os.Getenv("FOTOBANK_PROXY_SECRET") != "")) ||
+		(h.ProxySecretHeader != "" && h.ProxySecret != "") ||
 		h.ProxyMTLSCAFile != "" {
 		return nil
 	}
