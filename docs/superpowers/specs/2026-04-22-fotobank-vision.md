@@ -773,10 +773,12 @@ broker_revoked_at     TIMESTAMP     -- set when RevokeGrant succeeds
 The worker's per-scope decision: if `broker_registered_at IS NULL`,
 call `RegisterScope`; then if `broker_granted_at IS NULL`, call
 `CreateGrant`. For a revocation: call `RevokeGrant` if
-`broker_revoked_at IS NULL`. These columns are hints; idempotency on
-the interface is still the contract, because a crash between a
-successful remote call and the local UPDATE writing the timestamp is
-recoverable only if the next retry is a safe no-op.
+`broker_revoked_at IS NULL`. These columns reduce redundant calls in
+the common case — they do **not** relax the idempotency requirement
+on the interface. A crash between a successful remote call and the
+local UPDATE writing the timestamp is recoverable only if the next
+retry is a safe no-op, so idempotency remains mandatory regardless of
+what the progress columns currently say.
 
 **Share create flow:**
 
@@ -848,10 +850,18 @@ On startup, if the `scopes` table has any non-revoked rows, the
 dev-stub logs a clear warning:
 
 ```
-dev-stub identity provider: N active scopes exist in this database,
-but no broker is configured. Grantee requests cannot be served.
-Attach a real identity broker (§6.2 header contract) to enable sharing.
+dev-stub identity provider: N non-revoked scope rows exist in this
+database, but no broker is configured. Grantee requests cannot be
+served. Attach a real identity broker (§6.2 header contract) to
+enable sharing.
 ```
+
+"Non-revoked" is the literal condition (`revoked_at IS NULL`) and
+covers every local state that might plausibly want to serve grantee
+traffic — `pending`, `active`, `failed`, or `revoking` `broker_status`.
+It is deliberately broader than `broker_status='active'` so the
+warning fires as soon as any share work exists locally, not only
+once broker sync has completed.
 
 This surfaces the Phase 1→2 boundary (local share scaffolding works;
 remote share serving requires a broker) without gating on it.
