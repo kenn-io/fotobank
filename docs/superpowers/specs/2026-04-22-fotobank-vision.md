@@ -290,10 +290,11 @@ keeps the Lightroom coexistence story unchanged.
 ### 4.2 File naming
 
 Existing convention preserved: `YYYYMMDD_HHMMSS_{seq}.{ext}` for photos,
-`{md5}.{ext}` for videos, `unknown_date/` for files without usable
-timestamps. `{seq}` is an integer increment to disambiguate multiple photos
-in the same second. This keeps the library readable to Lightroom and
-consistent with the existing Python tool.
+`{md5}.{ext}` for videos (content-addressed, year-independent),
+`unknown_date/` for **photos** without usable timestamps. `{seq}` is an
+integer increment to disambiguate multiple photos in the same second.
+This keeps the library readable to Lightroom and consistent with the
+existing Python tool.
 
 ### 4.3 Thumbnails
 
@@ -307,13 +308,18 @@ Three fixed sizes, WebP format:
 Keyed by **media_id**, not by filename, so renames (rare but possible) do
 not break derivatives.
 
-Eager generation: thumbnails are built as part of `ImportService`'s
-pipeline before an import is reported complete. For RAW files (ARW, CR2,
-DNG, RAF, NEF, …) fotobank extracts the **embedded JPEG preview** from EXIF
-and resizes from there — no `libraw` / `dcraw` dependency. If a RAW has no
-embedded preview, fotobank records the media row but flags it as
-`thumb_status = 'no_preview'`; the item is listed but renders a placeholder
-in the viewer. A later sub-spec can add optional real RAW decoding.
+**Eager-enqueue, async-generate.** Thumbnail generation is scheduled
+as part of every successful import but runs asynchronously in a
+background worker; see §10 for the full lifecycle and the
+`thumb_status` state machine. The media row is committed with
+`thumb_status='pending'` and becomes immediately listable; thumbnails
+arrive shortly after.
+
+For RAW files (ARW, CR2, DNG, RAF, NEF, …) the worker extracts the
+**embedded JPEG preview** from EXIF and resizes from there — no
+`libraw` / `dcraw` dependency. If a RAW has no embedded preview, the
+worker sets `thumb_status='no_preview'` and the viewer renders a
+placeholder. A later sub-spec can add optional real RAW decoding.
 
 ### 4.4 Tiering policy
 
@@ -476,10 +482,11 @@ media (
   -- Video-specific (nullable for photos)
   duration_ms      INTEGER,
 
-  thumb_status     TEXT NOT NULL,             -- 'ready' | 'no_preview' | 'failed'
+  thumb_status     TEXT NOT NULL,             -- 'pending' | 'ready' | 'no_preview' | 'failed'
 
   FOREIGN KEY (owner_hub, owner_user_id) REFERENCES owners(hub, user_id),
-  UNIQUE (owner_hub, owner_user_id, checksum)  -- within-owner dedup
+  UNIQUE (owner_hub, owner_user_id, checksum), -- within-owner dedup
+  UNIQUE (owner_hub, owner_user_id, path)      -- canonical path claim
 )
 ```
 
@@ -487,14 +494,22 @@ The owner principal is stored inline on every row as FK into `owners`,
 not duplicated in a join table. Dedup is within-owner by MD5.
 
 **Videos in v1.** Videos appear in the web viewer alongside photos,
-sorted by timestamp where available. The grid shows a poster thumbnail
-(extracted frame) generated at import time; clicking plays the video
-via the browser's native `<video>` element, served directly from NAS.
-No transcoding in v1 — codecs the browser does not support render as an
-"unsupported" placeholder with a download link (subject to
-`allow_download`). Timestamp extraction from MOV / MP4 container
-metadata (QuickTime `creation_time`) is a best-effort — missing
-timestamps land videos under the `unknown_date` directory like photos.
+sorted by timestamp where available (NULL-timestamp videos sort last
+or into a dated-unknown bucket — UX detail). The grid shows a poster
+thumbnail (extracted frame) generated asynchronously like photo
+thumbnails; clicking plays the video via the browser's native
+`<video>` element, served directly from NAS. No transcoding in v1 —
+codecs the browser does not support render as an "unsupported"
+placeholder with a download link (subject to `allow_download`).
+
+**Video on-disk layout.** Videos always live at
+`{owner_storage_key}/movies/{md5}.{ext}`, regardless of whether a
+timestamp was recovered. Content-addressed naming is the stable
+layout inherited from the Python tool; the `timestamp` column on the
+`media` row carries the extracted creation time (best-effort, see
+§9.2), and the viewer, not the filesystem, resolves ordering. Videos
+never land under `unknown_date/` — that path applies only to photos
+whose filesystem name is timestamp-derived.
 
 ### 5.3 Albums
 
@@ -557,6 +572,10 @@ scopes (
   created_at       TIMESTAMP NOT NULL,
   expires_at       TIMESTAMP,                 -- nullable; null = indefinite
   revoked_at       TIMESTAMP,                 -- nullable; set on revocation
+  broker_status    TEXT NOT NULL,             -- 'pending' | 'active' | 'failed'
+                                              -- | 'revoking' | 'revoked_remote'
+  broker_last_error TEXT,                     -- last error message when failed
+  broker_attempts  INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (owner_hub, owner_user_id) REFERENCES owners(hub, user_id)
 )
 
@@ -668,16 +687,44 @@ Exact header names are configurable per deployment. Fotobank's config
 schema lets an operator rename the prefix (e.g., to match whichever
 proxy is in use). Only the meaning of each field is fixed.
 
+**Direct-access guard (load-bearing invariant).** Trusting incoming
+`X-Auth-*` headers is only sound if fotobank cannot be reached by
+anything *other* than the stripping/injecting proxy. Otherwise any
+client on the network can forge identity. When the header-based
+provider is selected, fotobank **must** run with exactly one of the
+following configured; startup fails closed if none is set:
+
+1. **Loopback-only bind.** HTTP listener on `127.0.0.1:<port>` or a
+   Unix domain socket. The proxy, co-located on the same host,
+   connects locally. External clients have no route to fotobank.
+2. **Trusted-proxy CIDRs.** Listener binds to a routable address, but
+   fotobank rejects any connection whose source address is outside a
+   configured allowlist of proxy CIDRs. Useful when the proxy is on
+   a separate host in a known subnet.
+3. **Shared proxy secret.** The proxy sends a configured
+   `X-Auth-Proxy-Secret` header on every request; fotobank rejects any
+   request without a matching value. Constant-time compared. Useful
+   when CIDRs are not stable (container orchestration) but co-located
+   bind is not possible.
+4. **Proxy mTLS.** The proxy presents a client certificate issued by
+   a configured CA when connecting to fotobank. Highest-assurance
+   option; also the most operational overhead.
+
+These are mutually compatible — an operator can combine, say, a
+trusted-CIDR bind with mTLS for defence in depth. The config schema
+captures which mode(s) are active and refuses to start if the selected
+identity provider is `header` and none of the above is configured.
+
+The dev-stub provider imposes no direct-access guard because it does
+not trust any header contents. Attackers forging `X-Auth-*` headers
+while the stub is active are ignored; requests still resolve to the
+single configured owner.
+
 ### 6.3 Scope registration with the external broker
 
-When `ShareService` creates a new scope, it:
-
-1. Inserts the semantic row in the local `scopes` table.
-2. Registers the scope UUID and its label with the external broker via a
-   `BrokerRegistrar` dependency.
-3. Creates the grant (scope → grantee principal) via the same registrar.
-
-`BrokerRegistrar` is an interface, not a concrete protocol:
+Scope creation is an **outbox-backed** operation. The local DB is the
+single write target inside the user-visible transaction; broker calls
+happen afterwards and are retried if they fail.
 
 ```go
 type BrokerRegistrar interface {
@@ -690,12 +737,57 @@ type BrokerRegistrar interface {
 v1 ships:
 
 - `stub.BrokerRegistrar` — no-op for single-owner dev deployments.
+  Scopes it returns success for flip straight to `broker_status='active'`
+  (there is no remote state to diverge).
 - `exec.BrokerRegistrar` — shells out to a configurable broker CLI
   (`{broker_cli} scope register …`, `… grant create …`, etc.). Command
   templates are in fotobank config.
 
-A future native-protocol implementation can be added without touching the
-service layer.
+A future native-protocol implementation can be added without touching
+the service layer.
+
+**Share create flow:**
+
+1. `ShareService.CreateShare(...)` runs a DB transaction: insert the
+   `scopes` row with `broker_status='pending'`, insert any
+   `scope_media` rows. Commit.
+2. A **broker-sync worker** reads `broker_status='pending'` rows and
+   calls `RegisterScope` then `CreateGrant`. On success, updates
+   `broker_status='active'`. On failure, records `broker_last_error`,
+   bumps `broker_attempts`, and either re-queues (transient errors,
+   exponential backoff) or flips to `broker_status='failed'` after a
+   configured maximum of attempts.
+3. The CLI and HTTP share-create endpoints return the scope row as
+   soon as step 1 commits — the grantee will not receive the scope
+   until the broker reflects it, but the owner has a stable handle
+   to the share immediately and can track its state.
+
+**Share revoke flow** is symmetric. `RevokeShare` sets
+`revoked_at = now()` and `broker_status = 'revoking'` in a local
+transaction. The worker calls `RevokeGrant` on the broker; on
+success, `broker_status = 'revoked_remote'`. Local scope enforcement
+(§7.2) already refuses the scope by virtue of `revoked_at`, so
+revocation is effective for fotobank-served traffic immediately; the
+worker flow exists to propagate revocation to the broker so the
+scope UUID stops appearing in the grantee's `X-Auth-Scopes` header.
+
+**Owner-visible states.** The share-list UI surfaces non-`active`
+scopes explicitly:
+
+- `pending` — "Waiting for broker to register this share…"
+- `failed` — "Share could not be registered with the broker. Retry?"
+  (CLI: `fotobank shares retry <scope_uuid>`; or `shares revoke` to
+  abandon it.)
+- `revoking` — "Revocation in progress." (Rendered alongside
+  `revoked_at`; disappears from the share list once
+  `revoked_remote`.)
+
+`broker_status` never affects enforcement. A `failed` scope with no
+grantee-held header simply means nobody ever received the grant; the
+scope exists locally but is inert. Rolling the local row back on
+broker failure would lose the error message and the retry affordance,
+which is why the outbox pattern is preferred over in-transaction
+broker calls.
 
 ### 6.4 Dev-stub `IdentityProvider`
 
@@ -902,8 +994,15 @@ Preserved from the current tool:
 - **Photos (EXIF extracted):** JPG, JPEG, GIF, PNG, HEIC, ARW, RAF, DNG,
   CR2, NEF. (HEIC and PNG are new additions; the current Python tool
   handles the rest.)
-- **Movies (checksum only):** MP4, AVI, MOV, MP2, MPG, M4V. Timestamp
-  extraction from video container metadata is a future enhancement.
+- **Movies (checksum + best-effort timestamp):** MP4, AVI, MOV, MP2,
+  MPG, M4V. Unlike the Python tool, the Go port extracts creation
+  time from the container where present — QuickTime / ISO-BMFF
+  `moov/mvhd/creation_time`, the `com.apple.quicktime.creationdate`
+  key where set by iPhones, and equivalent AVI / MPG header fields.
+  Library choice (pure-Go MP4 parser vs. a narrow custom reader) is
+  a sub-spec decision (§15.2). Extraction is best-effort; missing
+  timestamps land as `NULL` and do not block import. Duration is
+  captured where readable.
 
 ### 9.3 Timestamps, dimensions, camera metadata
 
@@ -920,15 +1019,33 @@ Go port prefers proper NULLs).
 Summarised in §4.3 and §4.4; details belong in the thumbnail sub-spec
 (§15.5). High-level:
 
-- Generation is eager, part of the import pipeline. Import is reported
-  complete only after thumbnails are written to NAS. Flash population is
-  async.
+- **Generation is eager-enqueued, asynchronous.** As part of a
+  successful import, the media row is committed with
+  `thumb_status='pending'` and a thumbnail job is pushed to an
+  in-process queue. A worker picks up the job, generates the three
+  sizes, writes them to NAS, and updates the row to
+  `thumb_status='ready'` (or `'no_preview'` / `'failed'`). Import is
+  reported complete as soon as the row commits; the media item is
+  visible and listable immediately, just with a placeholder until
+  its thumbnails are ready.
+- **Viewer behaviour under `pending`.** The grid renders a placeholder
+  (e.g., EXIF dimensions as a blurred background colour, or a generic
+  loading tile). The web UI may poll or subscribe for completion;
+  detailed UX belongs in the web sub-spec.
+- **Why async.** Thumbnail generation for a large import (thousands of
+  files) can run for minutes and is CPU-bound; blocking imports on it
+  would make bulk ingestion feel broken and starve the watched-folder
+  trigger.
 - Three sizes: `grid` (256px), `preview` (1024px), `lightbox` (2048px).
   All WebP.
 - RAW input: extract embedded JPEG preview, resize. No `libraw` dependency.
-- `thumb_status` on the media row tracks generation outcome.
-- Regeneration command: `fotobank thumbs regenerate <id|--all>`. Useful if
-  sizing policy changes or a generation bug is fixed.
+- `thumb_status` on the media row tracks generation outcome:
+  `pending` → `ready` / `no_preview` / `failed`.
+- Regeneration command: `fotobank thumbs regenerate <media_id|--all>`.
+  Useful if sizing policy changes or a generation bug is fixed. Also
+  picks up any `pending` rows orphaned by a server restart.
+- On startup, the worker scans for `thumb_status='pending'` rows and
+  resumes — no thumbnail work is lost across restarts.
 
 ## 11. Backup and durability
 
@@ -997,11 +1114,23 @@ against the existing library must account for path changes when the
 legacy layout (`{legacy_base}/YYYY/…`) becomes
 `{nas_root}/{owner_storage_key}/YYYY/…`. Two supported paths:
 
-- **Symlink-in-place (recommended for active LR users).** The
-  migrator leaves bytes where they are and creates the per-owner
-  namespace as a symlink tree pointing at the originals. LR's catalog
-  keeps working. The operator can physically consolidate later at a
-  time of their choosing.
+- **Symlink-in-place (recommended for active LR users, with a
+  caveat).** The migrator leaves bytes where they are and creates
+  the per-owner namespace as a symlink tree pointing at the
+  originals. LR's catalog keeps working. The operator can physically
+  consolidate later at a time of their choosing.
+
+  **Caveat:** symlink mode preserves the legacy base as the
+  durability surface. Fotobank's "NAS is authoritative" guarantee
+  (§2.2, §11) holds only if the symlink target is itself on backed-up
+  NAS-grade storage. If the legacy library lives on a laptop's local
+  SSD or an unreliable drive, symlink mode inherits that fragility.
+  `fotobank migrate` refuses `--mode symlink` unless
+  `--legacy-durable` is also passed, asserting the operator has
+  confirmed the legacy path is durable; the flag is an explicit
+  acknowledgement, not a check fotobank can perform. Operators
+  unsure about legacy durability should use `--mode move` and rely
+  on the new `{nas_root}` as the single durable surface.
 - **Physical move + Lightroom relocate.** The migrator moves bytes
   into the new layout. The operator uses LR's "Locate Folder" or
   "Update Folder Location" flow to point the catalog at the new
