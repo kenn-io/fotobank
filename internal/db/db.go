@@ -21,39 +21,38 @@ type DB struct {
 // Open opens (or creates) a SQLite database at path, enables WAL mode,
 // and returns a DB. Callers should defer Close.
 //
-// The DSN enables a 5-second busy timeout and foreign-key enforcement
-// per connection.
+// The RW pool writes through a 5-second busy timeout with foreign-key
+// enforcement. The RO pool opens the same file with SQLite's
+// mode=ro URI parameter so reader connections cannot mutate data, even
+// if a caller forgets and invokes Exec against ReadDB().
 func Open(path string) (*DB, error) {
-	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-	rw, err := sql.Open("sqlite", dsn)
+	rwDSN := path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	rw, err := sql.Open("sqlite", rwDSN)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 	rw.SetMaxOpenConns(1)
 
-	ro, err := sql.Open("sqlite", dsn)
+	// Initialise the file through the RW pool before opening the RO
+	// pool: SQLite's mode=ro refuses to create a missing database.
+	if _, err := rw.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		_ = rw.Close()
+		return nil, fmt.Errorf("enable WAL: %w", err)
+	}
+	if err := runMigrations(rw); err != nil {
+		_ = rw.Close()
+		return nil, err
+	}
+
+	roDSN := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&mode=ro"
+	ro, err := sql.Open("sqlite", roDSN)
 	if err != nil {
 		_ = rw.Close()
 		return nil, fmt.Errorf("open db ro: %w", err)
 	}
 	ro.SetMaxOpenConns(4)
 
-	d := &DB{rw: rw, ro: ro}
-	if err := d.init(); err != nil {
-		_ = d.Close()
-		return nil, err
-	}
-	return d, nil
-}
-
-func (d *DB) init() error {
-	if _, err := d.rw.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return fmt.Errorf("enable WAL: %w", err)
-	}
-	if err := runMigrations(d.rw); err != nil {
-		return err
-	}
-	return nil
+	return &DB{rw: rw, ro: ro}, nil
 }
 
 // Close closes both pools. Returns the rw close error (ro close errors

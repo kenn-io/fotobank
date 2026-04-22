@@ -44,6 +44,21 @@ func TestTxCommitsOnNilError(t *testing.T) {
 	r.Equal(1, n)
 }
 
+func TestReadDBRejectsWrites(t *testing.T) {
+	// Regression: the RO pool must open with mode=ro so an accidental
+	// Exec through ReadDB() fails rather than mutating the database.
+	r := require.New(t)
+	d, err := db.Open(filepath.Join(t.TempDir(), "ro.sqlite"))
+	r.NoError(err)
+	defer d.Close()
+
+	_, err = d.WriteDB().Exec(`CREATE TABLE t (x INTEGER)`)
+	r.NoError(err)
+
+	_, err = d.ReadDB().Exec(`INSERT INTO t VALUES (1)`)
+	r.Error(err)
+}
+
 func TestTxRollsBackOnError(t *testing.T) {
 	r := require.New(t)
 	d, err := db.Open(filepath.Join(t.TempDir(), "r.sqlite"))

@@ -30,23 +30,40 @@ func NewOwnerService(repo *owners.Repo) *OwnerService {
 
 // Ensure inserts an owners row if missing; is a no-op if the same
 // principal+storage_key already exists; returns ErrAlreadyExists if
-// the principal exists with a different storage_key.
+// the principal exists with a different storage_key. Safe under
+// concurrent callers: an Insert that races and loses to another caller
+// inserting the same row is reinterpreted via a re-read.
 func (s *OwnerService) Ensure(ctx context.Context, p owners.Principal, storageKey string) error {
 	existing, err := s.repo.GetByPrincipal(ctx, p)
 	switch {
 	case err == nil:
-		if existing.StorageKey != storageKey {
-			return fmt.Errorf("%w: owner %s has storage_key %q, got %q",
-				errs.ErrAlreadyExists, p, existing.StorageKey, storageKey)
-		}
-		return nil
+		return s.reconcileStorageKey(existing, p, storageKey)
 	case errors.Is(err, errs.ErrNotFound):
-		return s.repo.Insert(ctx, owners.Owner{
+		insertErr := s.repo.Insert(ctx, owners.Owner{
 			Principal: p, StorageKey: storageKey, CreatedAt: s.now(),
 		})
+		if insertErr == nil {
+			return nil
+		}
+		// A concurrent caller may have inserted a row between our
+		// GetByPrincipal probe and this Insert. Re-read: if the stored
+		// storage_key matches, the caller's intent was already realised.
+		existing, getErr := s.repo.GetByPrincipal(ctx, p)
+		if getErr != nil {
+			return insertErr
+		}
+		return s.reconcileStorageKey(existing, p, storageKey)
 	default:
 		return err
 	}
+}
+
+func (s *OwnerService) reconcileStorageKey(existing owners.Owner, p owners.Principal, storageKey string) error {
+	if existing.StorageKey == storageKey {
+		return nil
+	}
+	return fmt.Errorf("%w: owner %s has storage_key %q, got %q",
+		errs.ErrAlreadyExists, p, existing.StorageKey, storageKey)
 }
 
 // List returns all registered owners ordered by (hub, user_id).
