@@ -2,6 +2,8 @@ package httpapi_test
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -46,6 +48,25 @@ func TestMiddlewareSurfacesIdentityError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestMiddlewareSanitizesInternalErrorBody(t *testing.T) {
+	// Regression: internal provider errors must not leak backend details
+	// to the client. 500 responses should carry only http.StatusText.
+	r := require.New(t)
+	leakySecret := "password=hunter2 internal trace: /etc/foo"
+	idp := &errIdentityProvider{err: errors.New(leakySecret)}
+	h := httpapi.WithMiddleware(idp)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	r.Equal(http.StatusInternalServerError, rec.Code)
+
+	body, err := io.ReadAll(rec.Body)
+	r.NoError(err)
+	r.NotContains(string(body), leakySecret)
+	r.Contains(string(body), http.StatusText(http.StatusInternalServerError))
 }
 
 type errIdentityProvider struct{ err error }

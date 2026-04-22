@@ -33,3 +33,21 @@ func TestTranslateMapsSentinels(t *testing.T) {
 		require.Equal(t, c.want, httpapi.StatusFrom(got), "%v", c.in)
 	}
 }
+
+func TestTranslateNilReturnsNil(t *testing.T) {
+	// Regression: Translate(nil) used to panic on the default branch
+	// when it called err.Error(). It should now return nil so callers
+	// can treat it symmetrically with StatusFrom.
+	require.Nil(t, httpapi.Translate(nil))
+}
+
+func TestTranslateHidesInternalErrorMessage(t *testing.T) {
+	// Regression: unknown errors (non-sentinel) must not leak their
+	// message through the 500 response body. Callers are expected to
+	// log the original err; wire messages should be the generic
+	// http.StatusText for 500.
+	leaky := errors.New("sql: database is locked at /var/fotobank/registry.sqlite")
+	got := httpapi.Translate(leaky)
+	require.Equal(t, 500, httpapi.StatusFrom(got))
+	require.NotContains(t, got.Error(), "registry.sqlite")
+}

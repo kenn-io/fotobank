@@ -79,9 +79,12 @@ func traverse(cfg *config.Config, key string) (string, error) {
 	parts := strings.Split(key, ".")
 	v := reflect.ValueOf(cfg).Elem()
 	for _, p := range parts {
+		if v.Kind() != reflect.Struct {
+			return "", fmt.Errorf("unknown config key %q", key)
+		}
 		t := v.Type()
 		found := false
-		for i := 0; i < t.NumField(); i++ {
+		for i := range t.NumField() {
 			tag := strings.Split(t.Field(i).Tag.Get("toml"), ",")[0]
 			if tag == p {
 				v = v.Field(i)

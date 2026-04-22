@@ -12,8 +12,13 @@ import (
 // Translate converts a domain error into a huma.StatusError with the
 // HTTP status code that best describes the failure. Sentinel errors
 // from internal/errs map to their documented status codes; any other
-// error falls through to 500 Internal Server Error.
+// error falls through to 500 Internal Server Error with a sanitized
+// body (the original err should be logged by the caller). Returns nil
+// when err is nil.
 func Translate(err error) huma.StatusError {
+	if err == nil {
+		return nil
+	}
 	switch {
 	case errors.Is(err, errs.ErrNotFound):
 		return huma.Error404NotFound(err.Error())
@@ -30,7 +35,7 @@ func Translate(err error) huma.StatusError {
 	case errors.Is(err, errs.ErrBrokerUnavailable):
 		return huma.Error503ServiceUnavailable(err.Error())
 	default:
-		return huma.Error500InternalServerError(err.Error())
+		return huma.Error500InternalServerError(http.StatusText(http.StatusInternalServerError))
 	}
 }
 
