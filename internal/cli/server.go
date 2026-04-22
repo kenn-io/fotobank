@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -46,7 +47,14 @@ func runServer(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return 1
 	}
 	if *listen != "" {
+		// --listen can turn a loopback header-mode config into a
+		// public bind that Validate would have rejected; re-run it so
+		// the CLI override stays as strict as the file-only path.
 		cfg.HTTP.ListenAddress = *listen
+		if err := cfg.Validate(); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 
 	dbPath := os.Getenv("FOTOBANK_DB_PATH")
@@ -76,7 +84,7 @@ func runServer(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return 1
 	}
 
-	ln, err := net.Listen("tcp", cfg.HTTP.ListenAddress)
+	ln, err := bindListener(cfg.HTTP.ListenAddress)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -117,11 +125,27 @@ func runServer(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
+			// Shutdown timed out or errored; force-close so in-flight
+			// connections are torn down before deferred db.Close
+			// runs. Drain the serve goroutine to avoid a leak.
 			fmt.Fprintln(stderr, err)
+			_ = srv.Close()
+			<-serveErr
 			return 1
 		}
+		<-serveErr
 		return 0
 	}
+}
+
+// bindListener dispatches on the "unix:" prefix: addresses starting
+// with "unix:" bind a Unix domain socket; everything else is treated
+// as a host:port TCP bind. This matches the validator in internal/config.
+func bindListener(addr string) (net.Listener, error) {
+	if after, ok := strings.CutPrefix(addr, "unix:"); ok {
+		return net.Listen("unix", after)
+	}
+	return net.Listen("tcp", addr)
 }
 
 // buildIdentityProvider selects the identity provider implementation that
