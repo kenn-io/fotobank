@@ -32,14 +32,19 @@ type Deps struct {
 // New constructs the Fotobank HTTP handler: a net/http.ServeMux with a
 // huma API layered on top. The returned handler serves every operation
 // registered during setup; an error is returned if any registration or
-// wiring step fails.
-func New(_ Deps) (http.Handler, error) {
+// wiring step fails. When deps.IdentityProvider is non-nil the handler
+// is wrapped with the identity + request-id + logging middleware.
+func New(deps Deps) (http.Handler, error) {
 	mux := http.NewServeMux()
 	api := humago.New(mux, huma.DefaultConfig("Fotobank", version.Short))
 	api.OpenAPI().Info.Description = "Fotobank HTTP API"
 
 	registerHealthz(api)
 	// /me registered in Task 25.
+
+	if deps.IdentityProvider != nil {
+		return WithMiddleware(deps.IdentityProvider)(mux), nil
+	}
 	return mux, nil
 }
 
