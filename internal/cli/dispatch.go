@@ -55,6 +55,3 @@ func runServer(_ []string, _, _ io.Writer) int { return 0 }
 
 // TODO(Task 30): implement owners subcommand.
 func runOwners(_ []string, _, _ io.Writer) int { return 0 }
-
-// TODO(Task 31): implement config subcommand.
-func runConfigCmd(_ []string, _, _ io.Writer) int { return 0 }
