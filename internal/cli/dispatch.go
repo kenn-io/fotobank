@@ -62,11 +62,3 @@ commands:
   help          Show this help
 `)
 }
-
-// TODO(Task 31): implement owners subcommand. Until it lands, advertising
-// the subcommand as a silent success would mislead users, so we surface
-// an explicit not-implemented message and exit with code 2.
-func runOwners(_ []string, _, stderr io.Writer) int {
-	fmt.Fprintln(stderr, "fotobank owners: not implemented yet")
-	return 2
-}

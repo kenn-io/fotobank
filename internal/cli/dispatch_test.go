@@ -33,14 +33,3 @@ func TestVersionPrintsVersionInfo(t *testing.T) {
 	require.Equal(t, 0, cli.Run([]string{"version"}, &stdout, &stderr))
 	require.Contains(t, stdout.String(), "fotobank")
 }
-
-func TestOwnersStubReportsNotImplemented(t *testing.T) {
-	// Regression: the dispatcher used to silently exit 0 for owners
-	// while the real implementation was pending, misleading users. It
-	// should surface a not-implemented message and exit non-zero until
-	// Task 31 lands the real subcommand.
-	r := require.New(t)
-	var stdout, stderr bytes.Buffer
-	r.Equal(2, cli.Run([]string{"owners"}, &stdout, &stderr))
-	r.Contains(stderr.String(), "not implemented")
-}
