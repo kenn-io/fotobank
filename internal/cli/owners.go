@@ -1,141 +1,135 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
-	"io"
+
+	"github.com/spf13/cobra"
 
 	"github.com/wesm/fotobank/internal/cli/clictx"
 	"github.com/wesm/fotobank/internal/owners"
 )
 
-// runOwners dispatches `fotobank owners <subcommand>` to the appropriate
-// handler. Returns exit code 2 on usage errors, 1 on runtime errors, and
-// 0 on success.
-func runOwners(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: fotobank owners <add|list|remove>")
-		return 2
+func newOwnersCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "owners",
+		Short: "Manage registered owners (principals that own media)",
 	}
-	switch args[0] {
-	case "add":
-		return runOwnersAdd(args[1:], stdout, stderr)
-	case "list":
-		return runOwnersList(args[1:], stdout, stderr)
-	case "remove":
-		return runOwnersRemove(args[1:], stdout, stderr)
-	default:
-		fmt.Fprintln(stderr, "usage: fotobank owners <add|list|remove>")
-		return 2
-	}
+	cmd.AddCommand(newOwnersAddCmd())
+	cmd.AddCommand(newOwnersListCmd())
+	cmd.AddCommand(newOwnersRemoveCmd())
+	return cmd
 }
 
-func runOwnersAdd(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("owners add", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	hub := fs.String("hub", "", "")
-	uid := fs.String("user-id", "", "")
-	key := fs.String("storage-key", "", "")
-	handle := fs.String("handle", "", "")
-	if err := fs.Parse(args); err != nil || *hub == "" || *uid == "" || *key == "" {
-		fmt.Fprintln(stderr, "usage: fotobank owners add --hub H --user-id U --storage-key K [--handle H]")
-		return 2
+func newOwnersAddCmd() *cobra.Command {
+	var (
+		hub        string
+		userID     string
+		storageKey string
+		handle     string
+	)
+	cmd := &cobra.Command{
+		Use:   "add",
+		Short: "Register a new owner (idempotent on identical --storage-key)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if hub == "" || userID == "" || storageKey == "" {
+				return newUsageError("--hub, --user-id, and --storage-key are required")
+			}
+			svc, cleanup, err := clictx.LoadOwnerService()
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			p := owners.Principal{Hub: hub, UserID: userID}
+			ctx := cmd.Context()
+			if err := svc.Ensure(ctx, p, storageKey); err != nil {
+				return err
+			}
+			if handle != "" {
+				if err := svc.UpdateDisplay(ctx, p, handle); err != nil {
+					return err
+				}
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "added", p)
+			return nil
+		},
 	}
-	svc, cleanup, err := clictx.LoadOwnerService()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	defer cleanup()
-	p := owners.Principal{Hub: *hub, UserID: *uid}
-	if err := svc.Ensure(context.Background(), p, *key); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if *handle != "" {
-		if err := svc.UpdateDisplay(context.Background(), p, *handle); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-	}
-	fmt.Fprintln(stdout, "added", p)
-	return 0
+	cmd.Flags().StringVar(&hub, "hub", "", "identity hub (required)")
+	cmd.Flags().StringVar(&userID, "user-id", "", "user ID within the hub (required)")
+	cmd.Flags().StringVar(&storageKey, "storage-key", "", "on-disk storage key (required)")
+	cmd.Flags().StringVar(&handle, "handle", "", "optional display handle")
+	return cmd
 }
 
-func runOwnersList(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("owners list", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	jsonOut := fs.Bool("json", false, "")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintln(stderr, "usage: fotobank owners list [--json]")
-		return 2
+func newOwnersListCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List registered owners",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			svc, cleanup, err := clictx.LoadOwnerService()
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			rows, err := svc.List(cmd.Context())
+			if err != nil {
+				return err
+			}
+			stdout := cmd.OutOrStdout()
+			if jsonOut {
+				out := make([]map[string]any, 0, len(rows))
+				for _, o := range rows {
+					out = append(out, map[string]any{
+						"hub":         o.Principal.Hub,
+						"user_id":     o.Principal.UserID,
+						"storage_key": o.StorageKey,
+						"handle":      o.DisplayHandle,
+						"created_at":  o.CreatedAt,
+					})
+				}
+				return json.NewEncoder(stdout).Encode(out)
+			}
+			for _, o := range rows {
+				fmt.Fprintf(stdout, "%s\t%s\t%s\n", o.Principal, o.StorageKey, o.DisplayHandle)
+			}
+			return nil
+		},
 	}
-	if fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "usage: fotobank owners list [--json]")
-		return 2
-	}
-
-	svc, cleanup, err := clictx.LoadOwnerService()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	defer cleanup()
-	rows, err := svc.List(context.Background())
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if *jsonOut {
-		out := make([]map[string]any, 0, len(rows))
-		for _, o := range rows {
-			out = append(out, map[string]any{
-				"hub":         o.Principal.Hub,
-				"user_id":     o.Principal.UserID,
-				"storage_key": o.StorageKey,
-				"handle":      o.DisplayHandle,
-				"created_at":  o.CreatedAt,
-			})
-		}
-		return encodeJSON(stdout, stderr, out)
-	}
-	for _, o := range rows {
-		fmt.Fprintf(stdout, "%s\t%s\t%s\n", o.Principal, o.StorageKey, o.DisplayHandle)
-	}
-	return 0
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSON instead of tab-separated text")
+	return cmd
 }
 
-func runOwnersRemove(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("owners remove", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	hub := fs.String("hub", "", "")
-	uid := fs.String("user-id", "", "")
-	purge := fs.Bool("purge", false, "also remove media rows (Plan B+)")
-	if err := fs.Parse(args); err != nil || *hub == "" || *uid == "" {
-		fmt.Fprintln(stderr, "usage: fotobank owners remove --hub H --user-id U [--purge]")
-		return 2
+func newOwnersRemoveCmd() *cobra.Command {
+	var (
+		hub    string
+		userID string
+		purge  bool
+	)
+	cmd := &cobra.Command{
+		Use:   "remove",
+		Short: "Unregister an owner (refuses if media still references them)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if hub == "" || userID == "" {
+				return newUsageError("--hub and --user-id are required")
+			}
+			svc, cleanup, err := clictx.LoadOwnerService()
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			if err := svc.Remove(cmd.Context(), owners.Principal{Hub: hub, UserID: userID}, purge); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "removed")
+			return nil
+		},
 	}
-	svc, cleanup, err := clictx.LoadOwnerService()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	defer cleanup()
-	if err := svc.Remove(context.Background(), owners.Principal{Hub: *hub, UserID: *uid}, *purge); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	fmt.Fprintln(stdout, "removed")
-	return 0
-}
-
-func encodeJSON(stdout, stderr io.Writer, v any) int {
-	enc := json.NewEncoder(stdout)
-	if err := enc.Encode(v); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	return 0
+	cmd.Flags().StringVar(&hub, "hub", "", "identity hub (required)")
+	cmd.Flags().StringVar(&userID, "user-id", "", "user ID within the hub (required)")
+	cmd.Flags().BoolVar(&purge, "purge", false, "also remove media rows (Plan B+)")
+	return cmd
 }

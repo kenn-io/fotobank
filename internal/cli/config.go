@@ -1,76 +1,85 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
-	"io"
 	"reflect"
 	"strings"
+
+	"github.com/spf13/cobra"
 
 	"github.com/wesm/fotobank/internal/config"
 )
 
-func runConfigCmd(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: fotobank config <path|read|validate>")
-		return 2
+func newConfigCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Inspect fotobank configuration",
 	}
-	switch args[0] {
-	case "path":
-		return runConfigPath(args[1:], stdout, stderr)
-	case "read":
-		return runConfigRead(args[1:], stdout, stderr)
-	case "validate":
-		return runConfigValidate(args[1:], stdout, stderr)
-	default:
-		fmt.Fprintln(stderr, "usage: fotobank config <path|read|validate>")
-		return 2
+	cmd.AddCommand(newConfigPathCmd())
+	cmd.AddCommand(newConfigReadCmd())
+	cmd.AddCommand(newConfigValidateCmd())
+	return cmd
+}
+
+func newConfigPathCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "path",
+		Short: "Print the resolved config file path",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			fmt.Fprintln(cmd.OutOrStdout(), config.DefaultConfigPath())
+			return nil
+		},
 	}
 }
 
-func runConfigPath(_ []string, stdout, _ io.Writer) int {
-	fmt.Fprintln(stdout, config.DefaultConfigPath())
-	return 0
+func newConfigValidateCmd() *cobra.Command {
+	var cfgPath string
+	cmd := &cobra.Command{
+		Use:   "validate",
+		Short: "Load the config and report any validation errors",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			path := cfgPath
+			if path == "" {
+				path = config.DefaultConfigPath()
+			}
+			if _, err := config.Load(path); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "ok")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
+	return cmd
 }
 
-func runConfigValidate(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("config validate", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	cfgPath := fs.String("config", config.DefaultConfigPath(), "path to config file")
-	if err := fs.Parse(args); err != nil {
-		return 2
+func newConfigReadCmd() *cobra.Command {
+	var cfgPath string
+	cmd := &cobra.Command{
+		Use:   "read <dotted.key>",
+		Short: "Print the scalar value at a dotted TOML key",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path := cfgPath
+			if path == "" {
+				path = config.DefaultConfigPath()
+			}
+			cfg, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			v, err := traverse(cfg, args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), v)
+			return nil
+		},
 	}
-	if _, err := config.Load(*cfgPath); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	fmt.Fprintln(stdout, "ok")
-	return 0
-}
-
-func runConfigRead(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("config read", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	cfgPath := fs.String("config", config.DefaultConfigPath(), "path to config file")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "config read requires one key (e.g. nas.root)")
-		return 2
-	}
-	cfg, err := config.Load(*cfgPath)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	v, err := traverse(cfg, fs.Arg(0))
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	fmt.Fprintln(stdout, v)
-	return 0
+	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
+	return cmd
 }
 
 // traverse resolves a dotted TOML key against the config struct using

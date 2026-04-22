@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/wesm/fotobank/internal/config"
 	"github.com/wesm/fotobank/internal/db"
@@ -27,33 +28,55 @@ import (
 // requests to drain before the server forcibly closes connections.
 const shutdownTimeout = 30 * time.Second
 
+func newServerCmd() *cobra.Command {
+	var (
+		cfgPath string
+		listen  string
+	)
+	cmd := &cobra.Command{
+		Use:   "server",
+		Short: "Start the fotobank HTTP server",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runServer(cmd.Context(), serverOpts{
+				cfgPath: cfgPath,
+				listen:  listen,
+				stdout:  cmd.OutOrStdout(),
+				stderr:  cmd.ErrOrStderr(),
+			})
+		},
+	}
+	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
+	cmd.Flags().StringVar(&listen, "listen", "", "override [http].listen_address")
+	return cmd
+}
+
+type serverOpts struct {
+	cfgPath string
+	listen  string
+	stdout  io.Writer
+	stderr  io.Writer
+}
+
 // runServer loads config, opens the database, wires the identity provider
 // and HTTP handler, binds the configured listen address, and serves until
-// ctx is cancelled or the process receives SIGINT/SIGTERM. It returns 0 on
-// graceful shutdown, 1 on config, database, identity, or listener errors,
-// and 2 on flag-parse errors.
-func runServer(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("server", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	cfgPath := fs.String("config", config.DefaultConfigPath(), "path to config file")
-	listen := fs.String("listen", "", "override [http].listen_address")
-	if err := fs.Parse(args); err != nil {
-		return 2
+// ctx is cancelled or the process receives SIGINT/SIGTERM.
+func runServer(ctx context.Context, opts serverOpts) error {
+	path := opts.cfgPath
+	if path == "" {
+		path = config.DefaultConfigPath()
 	}
-
-	cfg, err := config.Load(*cfgPath)
+	cfg, err := config.Load(path)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+		return err
 	}
-	if *listen != "" {
+	if opts.listen != "" {
 		// --listen can turn a loopback header-mode config into a
 		// public bind that Validate would have rejected; re-run it so
 		// the CLI override stays as strict as the file-only path.
-		cfg.HTTP.ListenAddress = *listen
+		cfg.HTTP.ListenAddress = opts.listen
 		if err := cfg.Validate(); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
+			return err
 		}
 	}
 
@@ -63,16 +86,15 @@ func runServer(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	d, err := db.Open(dbPath)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+		return err
 	}
 	defer d.Close()
 
 	ownerSvc := service.NewOwnerService(owners.NewRepo(d.WriteDB(), d.ReadDB()))
 
-	idp, code := buildIdentityProvider(ctx, cfg, ownerSvc, stderr)
-	if code != 0 {
-		return code
+	idp, err := buildIdentityProvider(ctx, cfg, ownerSvc)
+	if err != nil {
+		return err
 	}
 
 	handler, err := httpapi.New(httpapi.Deps{
@@ -80,21 +102,19 @@ func runServer(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		OwnerService:     ownerSvc,
 	})
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+		return err
 	}
 
 	ln, err := bindListener(cfg.HTTP.ListenAddress)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
+		return err
 	}
 	if sink := os.Getenv("FOTOBANK_TEST_LISTEN_ADDR_SINK"); sink != "" {
 		if werr := os.WriteFile(sink, []byte(ln.Addr().String()), 0o600); werr != nil {
-			fmt.Fprintln(stderr, "test sink write failed:", werr)
+			fmt.Fprintln(opts.stderr, "test sink write failed:", werr)
 		}
 	}
-	fmt.Fprintln(stdout, "fotobank server listening on", ln.Addr())
+	fmt.Fprintln(opts.stdout, "fotobank server listening on", ln.Addr())
 
 	srv := &http.Server{
 		Handler:      handler,
@@ -116,11 +136,7 @@ func runServer(ctx context.Context, args []string, stdout, stderr io.Writer) int
 
 	select {
 	case err := <-serveErr:
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		return 0
+		return err
 	case <-sigCtx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
@@ -128,13 +144,12 @@ func runServer(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			// Shutdown timed out or errored; force-close so in-flight
 			// connections are torn down before deferred db.Close
 			// runs. Drain the serve goroutine to avoid a leak.
-			fmt.Fprintln(stderr, err)
 			_ = srv.Close()
 			<-serveErr
-			return 1
+			return err
 		}
 		<-serveErr
-		return 0
+		return nil
 	}
 }
 
@@ -150,14 +165,12 @@ func bindListener(addr string) (net.Listener, error) {
 
 // buildIdentityProvider selects the identity provider implementation that
 // matches cfg.Identity.Mode. In stub mode it also ensures the owners row
-// for the configured principal exists. It returns (provider, 0) on success
-// or (nil, 1) after writing a diagnostic to stderr.
+// for the configured principal exists.
 func buildIdentityProvider(
 	ctx context.Context,
 	cfg *config.Config,
 	ownerSvc *service.OwnerService,
-	stderr io.Writer,
-) (identity.Provider, int) {
+) (identity.Provider, error) {
 	switch cfg.Identity.Mode {
 	case "stub":
 		p := owners.Principal{
@@ -169,10 +182,9 @@ func buildIdentityProvider(
 			storageKey = cfg.Identity.Stub.UserID
 		}
 		if err := ownerSvc.Ensure(ctx, p, storageKey); err != nil {
-			fmt.Fprintln(stderr, err)
-			return nil, 1
+			return nil, err
 		}
-		return identity.NewStub(p, cfg.Identity.Stub.Handle), 0
+		return identity.NewStub(p, cfg.Identity.Stub.Handle), nil
 	case "header":
 		guard := identity.NewGuard(identity.GuardConfig{
 			ListenAddress:     cfg.HTTP.ListenAddress,
@@ -187,9 +199,8 @@ func buildIdentityProvider(
 			HandleHeader:    cfg.Identity.Header.HandleHeader,
 			ScopesHeader:    cfg.Identity.Header.ScopesHeader,
 			RequestIDHeader: cfg.Identity.Header.RequestIDHeader,
-		}, guard), 0
+		}, guard), nil
 	default:
-		fmt.Fprintf(stderr, "unknown identity mode %q\n", cfg.Identity.Mode)
-		return nil, 1
+		return nil, fmt.Errorf("unknown identity mode %q", cfg.Identity.Mode)
 	}
 }
