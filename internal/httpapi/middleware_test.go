@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -41,13 +42,17 @@ func TestMiddlewareGeneratesRequestIDIfAbsent(t *testing.T) {
 }
 
 func TestMiddlewareSurfacesIdentityError(t *testing.T) {
+	r := require.New(t)
 	idp := &errIdentityProvider{err: errs.ErrIdentityMissing}
 	h := httpapi.WithMiddleware(idp)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	r.Equal(http.StatusUnauthorized, rec.Code)
+	body, err := io.ReadAll(rec.Body)
+	r.NoError(err)
+	r.Contains(string(body), http.StatusText(http.StatusUnauthorized))
 }
 
 func TestMiddlewareSanitizesInternalErrorBody(t *testing.T) {
@@ -67,6 +72,27 @@ func TestMiddlewareSanitizesInternalErrorBody(t *testing.T) {
 	r.NoError(err)
 	r.NotContains(string(body), leakySecret)
 	r.Contains(string(body), http.StatusText(http.StatusInternalServerError))
+}
+
+func TestMiddlewareSanitizesWrappedSentinel(t *testing.T) {
+	// Regression: errors.Is matches wrapped sentinels, so an internal
+	// detail around ErrIdentityMissing would have been echoed to the
+	// 401 body. Middleware must emit only http.StatusText for the
+	// mapped status — the full err goes to slog, not the wire.
+	r := require.New(t)
+	leaky := "db path /srv/fotobank/nas"
+	idp := &errIdentityProvider{err: fmt.Errorf("%s: %w", leaky, errs.ErrIdentityMissing)}
+	h := httpapi.WithMiddleware(idp)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	r.Equal(http.StatusUnauthorized, rec.Code)
+
+	body, err := io.ReadAll(rec.Body)
+	r.NoError(err)
+	r.NotContains(string(body), leaky)
+	r.Contains(string(body), http.StatusText(http.StatusUnauthorized))
 }
 
 type errIdentityProvider struct{ err error }

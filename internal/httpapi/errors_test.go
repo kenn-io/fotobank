@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -50,4 +51,18 @@ func TestTranslateHidesInternalErrorMessage(t *testing.T) {
 	got := httpapi.Translate(leaky)
 	require.Equal(t, 500, httpapi.StatusFrom(got))
 	require.NotContains(t, got.Error(), "registry.sqlite")
+}
+
+func TestTranslateHidesWrappedSentinelContext(t *testing.T) {
+	// Regression: errors.Is matches through fmt.Errorf(... %w ...),
+	// so a wrapped sentinel carrying an internal detail could have
+	// echoed the detail through the 404/409/403/... body. Translate
+	// must return only the sentinel's own message.
+	r := require.New(t)
+	leaky := "owner_hub=h user_id=u storage_key=k"
+	wrapped := fmt.Errorf("%s: %w", leaky, errs.ErrNotFound)
+	got := httpapi.Translate(wrapped)
+	r.Equal(404, httpapi.StatusFrom(got))
+	r.NotContains(got.Error(), leaky)
+	r.Contains(got.Error(), errs.ErrNotFound.Error())
 }

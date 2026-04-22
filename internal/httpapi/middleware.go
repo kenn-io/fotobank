@@ -32,19 +32,18 @@ func WithMiddleware(idp identity.Provider) func(http.Handler) http.Handler {
 			id, err := idp.FromRequest(r.Context(), r)
 			if err != nil {
 				status := http.StatusInternalServerError
-				// Sentinel errors carry safe-to-surface messages (e.g.
-				// "no ingress check satisfied"); anything else is an
-				// internal fault whose details we should not leak.
-				body := http.StatusText(status)
 				switch {
 				case errors.Is(err, errs.ErrIdentityMissing):
 					status = http.StatusUnauthorized
-					body = err.Error()
 				case errors.Is(err, errs.ErrDirectAccessBlocked):
 					status = http.StatusForbidden
-					body = err.Error()
 				}
-				http.Error(w, body, status)
+				// Never echo err.Error() to the wire. A sentinel may be
+				// wrapped by an internal detail (e.g. fmt.Errorf("db
+				// path /srv/sensitive: %w", ErrIdentityMissing)) that
+				// errors.Is still matches. Log the full err
+				// server-side; return only the status text to clients.
+				http.Error(w, http.StatusText(status), status)
 				slog.Warn("request rejected",
 					"method", r.Method, "path", r.URL.Path,
 					"status", status, "err", err, "dur", time.Since(start))

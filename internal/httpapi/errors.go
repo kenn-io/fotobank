@@ -12,8 +12,12 @@ import (
 // Translate converts a domain error into a huma.StatusError with the
 // HTTP status code that best describes the failure. Sentinel errors
 // from internal/errs map to their documented status codes; any other
-// error falls through to 500 Internal Server Error with a sanitized
-// body (the original err should be logged by the caller). Returns nil
+// error falls through to 500 Internal Server Error. The response body
+// never echoes err.Error() — a wrapped sentinel could carry internal
+// details (e.g. fmt.Errorf("db path /srv/...: %w", ErrNotFound)) that
+// errors.Is still matches, so we only return the sentinel's own
+// message (for known sentinels) or http.StatusText (for the default
+// path). Callers must log the original err server-side. Returns nil
 // when err is nil.
 func Translate(err error) huma.StatusError {
 	if err == nil {
@@ -21,19 +25,23 @@ func Translate(err error) huma.StatusError {
 	}
 	switch {
 	case errors.Is(err, errs.ErrNotFound):
-		return huma.Error404NotFound(err.Error())
-	case errors.Is(err, errs.ErrAlreadyExists), errors.Is(err, errs.ErrConcurrentImport):
-		return huma.Error409Conflict(err.Error())
+		return huma.Error404NotFound(errs.ErrNotFound.Error())
+	case errors.Is(err, errs.ErrAlreadyExists):
+		return huma.Error409Conflict(errs.ErrAlreadyExists.Error())
+	case errors.Is(err, errs.ErrConcurrentImport):
+		return huma.Error409Conflict(errs.ErrConcurrentImport.Error())
 	case errors.Is(err, errs.ErrInvalidArgument):
-		return huma.Error400BadRequest(err.Error())
-	case errors.Is(err, errs.ErrPermissionDenied),
-		errors.Is(err, errs.ErrOwnerMismatch),
-		errors.Is(err, errs.ErrDirectAccessBlocked):
-		return huma.Error403Forbidden(err.Error())
+		return huma.Error400BadRequest(errs.ErrInvalidArgument.Error())
+	case errors.Is(err, errs.ErrPermissionDenied):
+		return huma.Error403Forbidden(errs.ErrPermissionDenied.Error())
+	case errors.Is(err, errs.ErrOwnerMismatch):
+		return huma.Error403Forbidden(errs.ErrOwnerMismatch.Error())
+	case errors.Is(err, errs.ErrDirectAccessBlocked):
+		return huma.Error403Forbidden(errs.ErrDirectAccessBlocked.Error())
 	case errors.Is(err, errs.ErrIdentityMissing):
-		return huma.Error401Unauthorized(err.Error())
+		return huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
 	case errors.Is(err, errs.ErrBrokerUnavailable):
-		return huma.Error503ServiceUnavailable(err.Error())
+		return huma.Error503ServiceUnavailable(errs.ErrBrokerUnavailable.Error())
 	default:
 		return huma.Error500InternalServerError(http.StatusText(http.StatusInternalServerError))
 	}
