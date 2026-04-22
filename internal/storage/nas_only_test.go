@@ -3,6 +3,8 @@ package storage_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -100,4 +102,38 @@ func TestNASOnlyDeleteIsIdempotent(t *testing.T) {
 	r.NoError(s.Delete(context.Background(), p, "d.bin")) // idempotent
 	_, err = s.Stat(context.Background(), p, "d.bin")
 	r.ErrorIs(err, os.ErrNotExist)
+}
+
+func TestNASOnlyConcurrentWriteResolvesToSingleWinner(t *testing.T) {
+	// Two goroutines racing on the same canonical path. Exactly one
+	// should win with a nil error; the other must see ErrPathOccupied.
+	// This is the key invariant that makes the import pipeline safe.
+	r := require.New(t)
+	s, _, p := newNASStore(t)
+
+	type result struct {
+		err error
+	}
+	results := make(chan result, 2)
+	for i := range 2 {
+		go func() {
+			_, err := s.Write(context.Background(), p, "race.bin",
+				bytes.NewReader(fmt.Appendf(nil, "payload-%d", i)))
+			results <- result{err: err}
+		}()
+	}
+	var okCount, occCount int
+	for range 2 {
+		res := <-results
+		switch {
+		case res.err == nil:
+			okCount++
+		case errors.Is(res.err, storage.ErrPathOccupied):
+			occCount++
+		default:
+			r.Fail("unexpected error", res.err.Error())
+		}
+	}
+	r.Equal(1, okCount)
+	r.Equal(1, occCount)
 }
