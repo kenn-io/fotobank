@@ -16,7 +16,7 @@ func TestAllowsNewMigration(t *testing.T) {
 	isolateGitEnvironment(t)
 	repo := initRepoWithMainMigration(t)
 	t.Chdir(repo)
-	t.Setenv("MIDDLEMAN_MIGRATION_BASE_REF", "main")
+	t.Setenv("FOTOBANK_MIGRATION_BASE_REF", "main")
 
 	writeFile(t, repo, "internal/db/migrations/000002_next.up.sql", "new\n")
 	gitCommand(t, "add", "internal/db/migrations/000002_next.up.sql")
@@ -31,7 +31,7 @@ func TestBlocksNewMigrationWhenNumberAlreadyExistsOnMain(t *testing.T) {
 	isolateGitEnvironment(t)
 	repo := initRepoWithMainMigration(t)
 	t.Chdir(repo)
-	t.Setenv("MIDDLEMAN_MIGRATION_BASE_REF", "main")
+	t.Setenv("FOTOBANK_MIGRATION_BASE_REF", "main")
 
 	gitCommand(t, "checkout", "main")
 	writeFile(t, repo, "internal/db/migrations/000002_main_name.up.sql", "main up\n")
@@ -55,7 +55,7 @@ func TestBlocksMainBranchMigrationEdit(t *testing.T) {
 	isolateGitEnvironment(t)
 	repo := initRepoWithMainMigration(t)
 	t.Chdir(repo)
-	t.Setenv("MIDDLEMAN_MIGRATION_BASE_REF", "main")
+	t.Setenv("FOTOBANK_MIGRATION_BASE_REF", "main")
 
 	writeFile(t, repo, "internal/db/migrations/000001_init.up.sql", "changed\n")
 	gitCommand(t, "add", "internal/db/migrations/000001_init.up.sql")
@@ -70,7 +70,7 @@ func TestBlocksMainBranchMigrationRename(t *testing.T) {
 	isolateGitEnvironment(t)
 	repo := initRepoWithMainMigration(t)
 	t.Chdir(repo)
-	t.Setenv("MIDDLEMAN_MIGRATION_BASE_REF", "main")
+	t.Setenv("FOTOBANK_MIGRATION_BASE_REF", "main")
 
 	gitCommand(t, "mv", "internal/db/migrations/000001_init.up.sql", "internal/db/migrations/000001_renamed.up.sql")
 

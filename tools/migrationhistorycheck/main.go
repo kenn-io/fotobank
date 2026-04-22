@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	defaultBaseRef      = "origin/main"
+	defaultBaseRef      = "origin/master"
 	defaultMigrationDir = "internal/db/migrations"
 )
 
@@ -22,8 +22,8 @@ func main() {
 }
 
 func run(stderr io.Writer) int {
-	baseRef := getenvDefault("MIDDLEMAN_MIGRATION_BASE_REF", defaultBaseRef)
-	migrationDir := strings.TrimRight(getenvDefault("MIDDLEMAN_MIGRATION_DIR", defaultMigrationDir), "/")
+	baseRef := getenvDefault("FOTOBANK_MIGRATION_BASE_REF", defaultBaseRef)
+	migrationDir := strings.TrimRight(getenvDefault("FOTOBANK_MIGRATION_DIR", defaultMigrationDir), "/")
 
 	if _, err := git("rev-parse", "--git-dir"); err != nil {
 		fmt.Fprintln(stderr, "migration history check must run inside a git worktree")
@@ -32,7 +32,7 @@ func run(stderr io.Writer) int {
 
 	if _, err := git("rev-parse", "--verify", "--quiet", baseRef+"^{commit}"); err != nil {
 		fmt.Fprintf(stderr, "Cannot verify migration history because %s is unavailable.\n", baseRef)
-		fmt.Fprintln(stderr, "Fetch the main branch or set MIDDLEMAN_MIGRATION_BASE_REF to the main-branch ref to compare against.")
+		fmt.Fprintln(stderr, "Fetch the main branch or set FOTOBANK_MIGRATION_BASE_REF to the main-branch ref to compare against.")
 		return 1
 	}
 
