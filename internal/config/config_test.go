@@ -108,6 +108,9 @@ func TestValidateRequiresNASRoot(t *testing.T) {
 }
 
 func TestValidateHeaderModeRequiresGuard(t *testing.T) {
+	// Neutralise an inherited env secret so the test is deterministic
+	// regardless of the developer's shell.
+	t.Setenv("FOTOBANK_PROXY_SECRET", "")
 	_, err := config.Load(filepath.Join("..", "..", "testdata", "config", "header-no-guard.toml"))
 	require.Error(t, err)
 	require.ErrorIs(t, err, errs.ErrBadConfiguration)
@@ -167,4 +170,54 @@ mode = "unknown"
 `), 0o600))
 	_, err := config.Load(p)
 	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+}
+
+func TestValidateHeaderModeGuardSatisfiers(t *testing.T) {
+	// Exercise each of the three non-loopback guard satisfiers with a
+	// public bind address so only the guard can accept the config.
+	t.Setenv("FOTOBANK_PROXY_SECRET", "")
+
+	header := func(extra string) string {
+		return `
+[nas]
+root = "/tmp/nas"
+[identity]
+mode = "header"
+[http]
+listen_address = "0.0.0.0:8090"
+` + extra
+	}
+
+	cases := []struct {
+		name  string
+		extra string
+	}{
+		{
+			name: "cidr",
+			extra: `[identity.header]
+trusted_proxy_cidrs = ["10.0.0.0/8"]
+`,
+		},
+		{
+			name: "proxy_secret",
+			extra: `[identity.header]
+proxy_secret = "s3cret"
+`,
+		},
+		{
+			name: "mtls",
+			extra: `[identity.header]
+proxy_mtls_ca_file = "/etc/ca.pem"
+`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			p := filepath.Join(tmp, "c.toml")
+			require.NoError(t, os.WriteFile(p, []byte(header(c.extra)), 0o600))
+			_, err := config.Load(p)
+			require.NoError(t, err)
+		})
+	}
 }

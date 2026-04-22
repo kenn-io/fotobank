@@ -151,16 +151,24 @@ func (c *Config) Validate() error {
 
 func (c *Config) validateHeaderGuard() error {
 	h := c.Identity.Header
+	// Reading FOTOBANK_PROXY_SECRET here is provisional: Task 13 will
+	// layer env overrides directly into ProxySecret, at which point this
+	// os.Getenv call can be removed. Until then, accepting env at this
+	// point keeps secrets out of committed TOML files.
 	if isLoopbackBind(c.HTTP.ListenAddress) ||
 		len(h.TrustedProxyCIDRs) > 0 ||
 		(h.ProxySecretHeader != "" && (h.ProxySecret != "" || os.Getenv("FOTOBANK_PROXY_SECRET") != "")) ||
 		h.ProxyMTLSCAFile != "" {
 		return nil
 	}
-	return fmt.Errorf("%w: [identity].mode=header requires loopback bind, trusted_proxy_cidrs, proxy_secret, or mtls",
+	return fmt.Errorf("%w: [identity].mode=header requires loopback bind, trusted_proxy_cidrs, proxy_secret (header + value), or mtls",
 		errs.ErrBadConfiguration)
 }
 
+// isLoopbackBind reports whether addr is a loopback or UDS bind. It
+// accepts numeric addresses only — names like "localhost" are rejected
+// (no DNS at config-validate time). Callers who want "localhost" must
+// use "127.0.0.1" or "[::1]" instead.
 func isLoopbackBind(addr string) bool {
 	if strings.HasPrefix(addr, "unix:") {
 		return true
@@ -218,6 +226,9 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	}
 	if c.Identity.Header.RequestIDHeader == "" {
 		c.Identity.Header.RequestIDHeader = "X-Auth-Request-Id"
+	}
+	if c.Identity.Header.ProxySecretHeader == "" {
+		c.Identity.Header.ProxySecretHeader = "X-Auth-Proxy-Secret"
 	}
 	if c.HTTP.ListenAddress == "" {
 		c.HTTP.ListenAddress = "127.0.0.1:8090"
