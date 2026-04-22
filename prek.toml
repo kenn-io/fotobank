@@ -1,0 +1,91 @@
+default_install_hook_types = ["pre-commit", "pre-push"]
+default_stages = ["pre-commit"]
+
+[[repos]]
+repo = "builtin"
+hooks = [
+  { id = "check-case-conflict" },
+  { id = "check-merge-conflict", args = ["--assume-in-merge"] },
+  { id = "detect-private-key" },
+  { id = "check-added-large-files", args = ["--maxkb=1024"] },
+  { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"] },
+  { id = "end-of-file-fixer" },
+  { id = "check-json" },
+  { id = "check-toml" },
+  { id = "check-yaml" },
+]
+
+[[repos]]
+repo = "local"
+hooks = [
+  {
+    id = "migration-history-check",
+    name = "prevent edits to main-branch migrations",
+    language = "system",
+    entry = "go run ./tools/migrationhistorycheck",
+    files = "^internal/db/migrations/.*$",
+    pass_filenames = false,
+    priority = 0,
+  },
+  {
+    id = "api-generate",
+    name = "regenerate openapi spec",
+    language = "system",
+    entry = "make api-generate",
+    files = "^(go\\.mod|go\\.sum|cmd/fotobank-openapi/.*\\.go|internal/httpapi/.*\\.go|internal/db/.*\\.go)$",
+    pass_filenames = false,
+    priority = 0,
+  },
+  {
+    id = "gofmt",
+    name = "gofmt",
+    language = "system",
+    entry = "gofmt -w",
+    files = "\\.go$",
+    priority = 0,
+  },
+  {
+    id = "golangci-lint",
+    name = "golangci-lint --fix",
+    language = "system",
+    entry = "make lint",
+    files = "^(go\\.mod|go\\.sum|.*\\.go)$",
+    pass_filenames = false,
+    priority = 10,
+  },
+  {
+    id = "testify-helper-check",
+    name = "testify helper check",
+    language = "system",
+    entry = "make testify-helper-check",
+    files = "^(go\\.mod|go\\.sum|.*\\.go)$",
+    pass_filenames = false,
+    priority = 15,
+  },
+  {
+    id = "go-test-short",
+    name = "go test (short)",
+    language = "system",
+    entry = "make test-short",
+    files = "^(go\\.mod|go\\.sum|.*\\.go)$",
+    pass_filenames = false,
+    priority = 20,
+  },
+  {
+    id = "nilaway",
+    name = "nilaway",
+    language = "system",
+    entry = "make nilaway",
+    stages = ["pre-push"],
+    types_or = ["go", "go-mod", "go-sum"],
+    pass_filenames = false,
+    priority = 25,
+  },
+]
+
+[[repos]]
+repo = "meta"
+hooks = [
+  { id = "check-hooks-apply" },
+  { id = "check-useless-excludes" },
+]
