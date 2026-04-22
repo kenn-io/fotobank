@@ -97,6 +97,10 @@ func (r *Repo) Delete(ctx context.Context, p Principal) error {
 	return nil
 }
 
+// DB returns the RO handle for callers that need ad-hoc queries
+// spanning owners + other tables (e.g., "count media for owner").
+func (r *Repo) DB() *sql.DB { return r.ro }
+
 // UpdateDisplayHandle updates the display_handle of an existing owner.
 // Returns errs.ErrNotFound if no such owner is registered.
 func (r *Repo) UpdateDisplayHandle(ctx context.Context, p Principal, handle string) error {
