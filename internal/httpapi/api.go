@@ -35,17 +35,24 @@ type Deps struct {
 // wiring step fails. When deps.IdentityProvider is non-nil the handler
 // is wrapped with the identity + request-id + logging middleware.
 func New(deps Deps) (http.Handler, error) {
-	mux := http.NewServeMux()
-	api := humago.New(mux, huma.DefaultConfig("Fotobank", version.Short))
-	api.OpenAPI().Info.Description = "Fotobank HTTP API"
-
-	registerHealthz(api)
-	registerMe(api)
-
+	mux, _ := buildAPI()
 	if deps.IdentityProvider != nil {
 		return WithMiddleware(deps.IdentityProvider)(mux), nil
 	}
 	return mux, nil
+}
+
+// buildAPI creates the shared mux + huma API and registers every
+// operation exposed under /api/v1/. Both the runtime handler (New) and
+// the spec dumper (OpenAPISpec) use it so that the served API and the
+// documented API cannot drift apart.
+func buildAPI() (*http.ServeMux, huma.API) {
+	mux := http.NewServeMux()
+	api := humago.New(mux, huma.DefaultConfig("Fotobank", version.Short))
+	api.OpenAPI().Info.Description = "Fotobank HTTP API"
+	registerHealthz(api)
+	registerMe(api)
+	return mux, api
 }
 
 type healthzOutput struct {
