@@ -28,6 +28,7 @@ classifiers = [
 ]
 dependencies = [
     "click",
+    "exifread",
     "python-dateutil",
     "sqlalchemy",
 ]
