@@ -316,14 +316,17 @@ hub_header = "X-Auth-Hub"
 handle_header = "X-Auth-Handle"
 scopes_header = "X-Auth-Scopes"
 request_id_header = "X-Auth-Request-Id"
-# Direct-access guard: at least one required.
-listen_address = "127.0.0.1:8090"    # loopback bind, or UDS "unix:/var/run/fotobank.sock"
+# Direct-access guard inputs (at least one must be set in header mode).
+# The bind address itself lives under [http].listen_address — the
+# guard inspects that field when deciding if loopback satisfies it.
 trusted_proxy_cidrs = []             # e.g. ["10.0.0.0/24"]
 proxy_secret_header = ""             # when set, require X-Auth-Proxy-Secret match
 proxy_secret = ""                    # loaded from env FOTOBANK_PROXY_SECRET if unset here
 proxy_mtls_ca_file = ""              # PEM file of CA certs for client auth
 
 [http]
+listen_address = "127.0.0.1:8090"    # TCP host:port or "unix:/path/to/socket"
+                                     # in header mode, loopback/UDS satisfies the direct-access guard
 base_url = ""                        # used to build absolute URLs in API responses; empty = omit
 request_timeout = "30s"
 write_timeout = "60s"                # accommodates range streams and large originals
@@ -545,6 +548,8 @@ CREATE TABLE media (
         thumb_status IN ('pending', 'working', 'ready', 'no_preview', 'failed')
     ),
     thumb_claimed_at  TIMESTAMP,
+    thumb_version     INTEGER NOT NULL DEFAULT 0,  -- bumped on every regeneration
+    thumb_updated_at  TIMESTAMP,                   -- when thumb_version was last bumped
 
     FOREIGN KEY (owner_hub, owner_user_id) REFERENCES owners(hub, user_id),
     UNIQUE (owner_hub, owner_user_id, checksum),
@@ -637,8 +642,11 @@ CREATE TABLE scopes (
 
 CREATE INDEX scopes_grantee_idx        ON scopes(grantee_hub, grantee_user_id) WHERE revoked_at IS NULL;
 CREATE INDEX scopes_owner_idx          ON scopes(owner_hub, owner_user_id) WHERE revoked_at IS NULL;
+-- Worker poll index. 'failed' is intentionally excluded — it's a
+-- terminal state awaiting Retry; including it would keep the worker
+-- polling rows that should be inert until operator intervention.
 CREATE INDEX scopes_broker_pending_idx ON scopes(broker_status, broker_attempts)
-    WHERE broker_status IN ('pending', 'revoking', 'failed');
+    WHERE broker_status IN ('pending', 'revoking');
 
 CREATE TABLE scope_media (
     scope_uuid       UUID NOT NULL REFERENCES scopes(uuid) ON DELETE CASCADE,
@@ -670,6 +678,37 @@ BEGIN
           OR (SELECT owner_user_id FROM scopes WHERE uuid = NEW.scope_uuid) !=
              (SELECT owner_user_id FROM media  WHERE id   = NEW.media_id)
         THEN RAISE(ABORT, 'scope and media must share owner')
+    END;
+END;
+
+-- Owner-consistency trigger on scopes.target_album_id: an album_live
+-- scope must reference an album owned by the same principal as the
+-- scope. Fires on INSERT and on UPDATE of the relevant columns.
+CREATE TRIGGER scopes_target_album_owner_consistency_insert
+BEFORE INSERT ON scopes
+FOR EACH ROW
+WHEN NEW.target_album_id IS NOT NULL
+BEGIN
+    SELECT CASE
+        WHEN (SELECT owner_hub FROM albums WHERE id = NEW.target_album_id) !=
+             NEW.owner_hub
+          OR (SELECT owner_user_id FROM albums WHERE id = NEW.target_album_id) !=
+             NEW.owner_user_id
+        THEN RAISE(ABORT, 'scope and target album must share owner')
+    END;
+END;
+
+CREATE TRIGGER scopes_target_album_owner_consistency_update
+BEFORE UPDATE OF owner_hub, owner_user_id, target_album_id ON scopes
+FOR EACH ROW
+WHEN NEW.target_album_id IS NOT NULL
+BEGIN
+    SELECT CASE
+        WHEN (SELECT owner_hub FROM albums WHERE id = NEW.target_album_id) !=
+             NEW.owner_hub
+          OR (SELECT owner_user_id FROM albums WHERE id = NEW.target_album_id) !=
+             NEW.owner_user_id
+        THEN RAISE(ABORT, 'scope and target album must share owner')
     END;
 END;
 ```
@@ -741,17 +780,38 @@ looks up once at init (owners are not churn-heavy).
 ### 7.2 NAS-only backend
 
 `storage.NASOnly` uses `os` syscalls against `{nas.root}/{storage_key}/…`.
-Writes:
+Writes use **no-clobber finalization** — `os.Link` succeeds only if
+the destination does not exist, which prevents silent byte-overwrite
+from racing workers or stale orphans at a canonical path:
 
 1. Create parent dir via `os.MkdirAll`.
-2. Open `{final}.tmp-{process_pid}-{nanotime}`.
-3. Stream `src` into the temp file, tracking bytes written.
-4. `f.Sync()` to flush to disk (per POSIX atomicity; may be disabled
-   via config for benchmarking but on by default).
-5. `os.Rename(tmp, final)` — atomic on same filesystem.
-6. `defer` cleans up temp on any early return.
+2. Open `{final}.tmp-{process_pid}-{nanotime}-{random}`.
+3. Stream `src` into the temp file, tracking bytes written; `f.Sync()`.
+4. `os.Link(tmp, final)` — atomic, fails with `EEXIST` if something
+   already lives at `final`. This is the no-clobber finalize.
+5. On success: `os.Remove(tmp)`; return the final key.
+6. On `EEXIST` at step 4: remove the temp file and return
+   `storage.ErrPathOccupied`. The caller (import pipeline) decides
+   whether to retry with a bumped `_seq` suffix (photo path) or to
+   treat the existing bytes as a prior-import orphan that reconcile
+   will handle (video content-addressed path).
+7. On any other error: remove the temp file and return the error.
 
-Reads use `os.Open` plus `io.CopyN`/`io.SectionReader` for ranges.
+Reads use `os.Open` plus `io.CopyN` / `io.SectionReader` for ranges.
+
+**Why not `os.Rename`.** `rename(2)` silently replaces any file at
+the destination on POSIX. That's what the initial draft assumed,
+but it creates two failure modes at import time: (a) two workers
+resolving the same canonical path both rename — the loser's bytes
+land at the final path with no collision error, and the DB insert
+that follows with the winner's UUID then describes the wrong bytes;
+(b) a stale orphan (crashed prior import) at the canonical path is
+silently overwritten. `link` + `remove(tmp)` preserves the atomicity
+guarantee while refusing to clobber, which is exactly the semantics
+we want.
+
+**Delete** uses `os.Remove`; tolerates `ENOENT` so deleting bytes
+that were already removed elsewhere is idempotent.
 
 ### 7.3 Flash cache backend
 
@@ -770,17 +830,24 @@ Reads use `os.Open` plus `io.CopyN`/`io.SectionReader` for ranges.
 
 ### 7.4 Key scheme
 
-Opaque keys the storage layer translates to on-disk paths. For a
-media `row`:
+Keys are relative paths inside the owner's NAS subtree. The layout
+is exactly the master-spec §4.1 layout — no intermediate wrapper
+directory, so Lightroom and any other tool that walks the per-owner
+tree sees the canonical `YYYY/`, `movies/`, `.thumbs/` hierarchy.
 
-- Photos: `original/{row.path}` where `row.path` is `YYYY/NAME.ext`
-  or `unknown_date/NAME.ext`.
-- Videos: `original/movies/{md5}.{ext}`.
-- Thumbnails: `thumbs/{media_id}/grid.webp` (and `preview.webp`,
-  `lightbox.webp`).
+For a media `row`:
 
-Storage layer prepends `{nas.root}/{storage_key}/` for NAS or
-`{flash.root}/{storage_key}/` for flash.
+- Photos: `row.path` — e.g. `2024/20240615_143022_0.jpg` or
+  `unknown_date/IMG_0001.jpg`.
+- Videos: `movies/{md5}.{ext}` — stored as the `row.path`.
+- Thumbnails: `.thumbs/{media_id}/grid.webp` (plus
+  `preview.webp`, `lightbox.webp`). Computed by the thumbnail
+  service, not stored on the `media` row.
+
+The storage layer prepends `{nas.root}/{storage_key}/` for NAS or
+`{flash.root}/{storage_key}/` for flash and appends the key as-is.
+There is no `original/` or other intermediate segment — the owner
+directory contains year folders, `movies/`, and `.thumbs/` directly.
 
 ### 7.5 Concurrent safety
 
@@ -849,7 +916,10 @@ At server startup, `config.Validate` refuses to start in
 `identity.mode = "header"` if no guard is configured (master §6.2).
 Allowed combinations:
 
-- `listen_address` starts with `127.0.0.1`, `::1`, or `unix:` → OK.
+- **Loopback / UDS bind** — `[http].listen_address` starts with
+  `127.0.0.1`, `::1`, or `unix:` → OK. The guard inspects the
+  actual bind address; there is no separate `listen_address` on
+  `[identity.header]`.
 - `trusted_proxy_cidrs` non-empty → OK; HTTP middleware compares
   `r.RemoteAddr` against the CIDR list and rejects mismatches.
 - `proxy_secret_header` + `proxy_secret` non-empty → OK; middleware
@@ -858,8 +928,12 @@ Allowed combinations:
   `tls.Config{ClientAuth: RequireAndVerifyClientCert, ClientCAs:
   loaded}`.
 
-Combinations are additive (all configured checks must pass). The
-stub provider skips the guard entirely.
+Combinations are additive (all configured checks must pass at
+request time). The stub provider skips the guard entirely.
+`[http].listen_address` is the sole bind-address field in either
+identity mode — stub mode still needs a listen address, which is
+why it lives under `[http]` rather than under an identity-specific
+block.
 
 ### 8.5 CLI local-admin identity
 
@@ -936,9 +1010,15 @@ resolved media IDs.
 
 A goroutine on the server:
 
-- Polls `scopes WHERE broker_status IN ('pending', 'revoking',
-  'failed')` (the failed case picks up on explicit `Retry`).
-- For each row, drives the state machine:
+- Polls `scopes WHERE broker_status IN ('pending', 'revoking')`.
+  **`failed` is NOT polled** — it is a terminal state requiring
+  explicit `Retry` (or `Revoke` to abandon) from the owner. An
+  untouched `failed` row stays failed forever, which is what we
+  want; automatic retry without user intent just relitigates the
+  same error repeatedly. `ShareService.Retry` transitions
+  `failed → pending`, at which point the worker picks it up on its
+  next poll.
+- For each polled row, drives the state machine:
   - `pending` + `broker_registered_at IS NULL` → `RegisterScope`; on
     success, set `broker_registered_at`. Idempotent per contract.
   - `pending` + `broker_granted_at IS NULL` → `CreateGrant`; on
@@ -947,8 +1027,10 @@ A goroutine on the server:
     success, set `broker_revoked_at`, transition to `revoked_remote`.
 - On transient error: bump `broker_attempts`, set
   `broker_last_error`, sleep with exponential backoff (capped).
+  Retried on the next poll.
 - On permanent failure (attempts > max): transition to `failed`,
-  emit a warning log.
+  emit a warning log. The row drops out of the poll filter and
+  waits for operator intervention.
 
 For v1 the only `BrokerRegistrar` implementation is
 `broker.Stub{}` — every method returns `nil` and the state machine
@@ -960,15 +1042,21 @@ swap is a one-line change in `main.go`.
 
 - `Enqueue(ctx, mediaID)` — sets `thumb_status='pending'` (usually
   called from the ingest pipeline immediately after the media row is
-  committed).
+  committed). Does not touch `thumb_version`; that only bumps when
+  a regeneration actually completes.
 - `ClaimBatch(ctx, limit)` — the worker's claim query: conditional
   UPDATE `pending → working` with `thumb_claimed_at = now()`
   returning rows. SQLite does not support `UPDATE … RETURNING`
   directly for all versions, so the worker uses a two-step pattern
   wrapped in a transaction: SELECT with `LIMIT` for candidates,
   UPDATE by primary key, check affected rowcount.
-- `MarkReady`, `MarkNoPreview`, `MarkFailed` — terminal state
-  transitions.
+- `MarkReady(ctx, mediaID)` — transitions `working → ready`,
+  increments `thumb_version`, sets `thumb_updated_at = now()`. The
+  bump is what tells HTTP cache clients that the bytes have
+  changed (§12.6).
+- `MarkNoPreview(ctx, mediaID)`, `MarkFailed(ctx, mediaID, err)` —
+  terminal state transitions that do NOT bump `thumb_version` (no
+  new bytes were produced).
 - `SweepLeases(ctx)` — reverts `working` rows where
   `thumb_claimed_at < now() - lease_timeout` back to `pending`.
   Runs on a timer.
@@ -1045,26 +1133,66 @@ For AVI/MPG, extraction is best-effort; failures leave fields NULL.
 
 1. Acquire file lock (§10.6); defer release.
 2. Resolve owner from `opts.Owner` or primary owner.
-3. Discover candidates; fan out to `imports.concurrent_workers`
-   goroutines, each doing:
-   a. MD5 of source.
-   b. Probe `media` for `(owner, checksum)`; if present → count as
-      dup, skip.
-   c. Extract EXIF (photo) or container metadata (video).
-   d. Compute canonical `path`:
+3. **Discover and checksum** — walk the source directory, compute MD5
+   for each candidate, and build an in-memory map keyed by checksum.
+   When two source paths share a checksum (identical bytes), pick one
+   deterministically (first by sorted source path) and drop the
+   rest. This in-process dedup prevents parallel workers from racing
+   on the same checksum — every checksum passes through the import
+   pipeline exactly once.
+4. Fan out deduplicated candidates to `imports.concurrent_workers`
+   goroutines. Each worker:
+   a. Probe `media` for `(owner, checksum)` via the RO pool.
+      Present → count as a duplicate of a prior-run import, skip.
+   b. Extract EXIF (photo) or container metadata (video).
+   c. Resolve a canonical `path`:
       - Photo with timestamp: `YYYY/YYYYMMDD_HHMMSS_SEQ.ext`.
-        Worker attempts `SEQ=0`; if `UNIQUE(owner, path)` fails,
-        retry with `SEQ+1` up to 1000.
-      - Photo without timestamp: `unknown_date/{basename}`; if
-        collision, append `_{seq}` to basename.
-      - Video: `movies/{md5}.{ext}`.
-   e. `storage.Write` atomically to NAS (temp + rename).
-   f. Insert `media` row with `thumb_status='pending'`.
-   g. If flash cache is enabled, enqueue async population.
-4. Return a summary: imported / duplicates / failed.
+        Start with `SEQ=0`.
+      - Photo without timestamp: `unknown_date/{basename_SEQ}.ext`.
+      - Video: `movies/{md5}.{ext}` (content-addressed; no seq).
+   d. **Attempt the write at the current candidate path.**
+      `storage.Write` uses no-clobber finalize (§7.2):
+      - Success → proceed to insert.
+      - `ErrPathOccupied` for a photo path → bump `SEQ` and retry
+        up to 1000 attempts. Failure after the cap returns
+        `ErrPathCollisionExhausted` to the caller.
+      - `ErrPathOccupied` for a video path → the bytes at
+        `movies/{md5}.{ext}` already exist. Two sub-cases:
+        - If a `media` row with this checksum exists for this
+          owner, treat as duplicate.
+        - If no row exists, the bytes are an orphan from a crashed
+          import. Insert the row pointing at the existing bytes
+          (skipping the write step) after verifying the on-disk
+          size matches. Reconcile would otherwise adopt it; doing
+          it inline here avoids an orphan-report churn.
+   e. **Insert the `media` row in a per-row transaction** with
+      `thumb_status='pending'`, `path` = the canonical path that
+      actually holds the bytes. On `UNIQUE(owner, checksum)`
+      constraint violation (another worker or a prior run beat us):
+      roll back, `storage.Delete` the bytes we just wrote (because
+      we know they are ours — no-clobber finalize guarantees we
+      created them this run), count as a duplicate, return.
+      On `UNIQUE(owner, path)` violation (should be vanishingly rare
+      given the seq-bumping in step d, but possible if another
+      importer races between our link and our insert): same rollback
+      — remove our bytes, retry from step c once, then give up.
+   f. On successful insert: if flash cache is enabled, enqueue async
+      population. Return success.
+5. Collect per-candidate results; return a summary
+   `{imported, duplicates, path_collisions, failures}` with
+   per-failure context. Non-zero `failures` → exit code `1`; zero
+   failures → exit code `0`.
 
-Step 3b uses the RO pool; step 3f uses the RW pool inside a
+Step 4a uses the RO pool; step 4e uses the RW pool inside a
 transaction per row.
+
+**Invariant.** Every `media` row points at bytes on NAS at the row's
+`path`. Every file under `{nas_root}/{storage_key}/(YYYY|movies|
+unknown_date)/` either has a `media` row pointing at it, or is a
+reconcile orphan awaiting operator review. There is no "bytes
+present, DB thinks they are a different media item" state — the
+no-clobber finalize plus cleanup-on-insert-failure makes that
+impossible.
 
 ### 10.5 Deduplication
 
@@ -1272,7 +1400,7 @@ Huma's default shapes (RFC 7807 for errors, raw JSON for success)
 apply. Pagination uses a simple `{items: [...], next_offset: N,
 total: M}` envelope declared once and reused via a generic helper.
 
-### 12.6 Byte streaming and range
+### 12.6 Byte streaming, range, and cache headers
 
 `/api/v1/media/{id}/original` and `/api/v1/media/{id}/thumb` use huma's
 `StreamResponse` (or fall back to raw `http.ResponseWriter` via a huma
@@ -1283,9 +1411,38 @@ shim that issues fresh `ReadRange` calls on `Seek`. For small files
 this is trivially efficient; for large videos, `http.ServeContent`
 typically issues one Range per client request.
 
-`ETag` is the media's `checksum`. `Last-Modified` is `imported_at`.
-`Cache-Control: private, max-age=31536000, immutable` — photos never
-change once imported.
+**Originals** — bytes never change once imported, so aggressive
+caching is safe:
+
+- `ETag`: the media's `checksum` (MD5).
+- `Last-Modified`: `imported_at`.
+- `Cache-Control: private, max-age=31536000, immutable`.
+
+**Thumbnails** — can be regenerated at the same URL when sizing
+policy changes or a generation bug is fixed. Aggressive caching
+without a versioning handle would leave stale bytes in browsers.
+
+- `ETag`: `W/"{media_id}-{size}-v{thumb_version}"`. Weak ETag
+  because the same `thumb_version` may re-encode to slightly
+  different bytes if the encoder is upgraded between runs; content
+  equivalence is preserved but byte equality is not guaranteed.
+- `Last-Modified`: `thumb_updated_at`.
+- `Cache-Control: private, max-age=86400, must-revalidate`. Daily
+  revalidation via `If-None-Match` yields cheap `304` when
+  unchanged; when `thumb_version` bumps, the ETag changes and the
+  client fetches the new bytes.
+
+Regeneration via `fotobank thumbs regenerate` sets `thumb_status =
+'pending'`; when the worker completes the regeneration it increments
+`thumb_version` and sets `thumb_updated_at = now()` in the same
+UPDATE that transitions status back to `ready`. Clients either
+revalidate against the new ETag on their next request or wait for
+their cached copy to expire.
+
+List endpoints that return media summaries include the current
+`thumb_version` so client-side image tags can append it as a query
+parameter (e.g., `?v={thumb_version}`) for cache-busting if they
+choose not to rely on ETag revalidation.
 
 ## 13. CLI surface
 
@@ -1409,48 +1566,87 @@ fotobank version
 
 ### 14.2 Execution
 
-Within a single transaction wrapping media inserts (videos
-separately, see below):
+Migration is **per-row atomic, not run-level atomic**: each source
+item's bytes are materialised first, verified, then the DB row is
+inserted in its own transaction. A failure on item N leaves rows
+1..N-1 fully migrated and item N reported as a failure. Re-running
+`fotobank migrate` is idempotent — the within-owner
+`UNIQUE(owner, checksum)` already skips items that made it through,
+so the second run only processes the failures.
 
-1. Insert/ensure the `owners` row.
-2. Stream-read legacy `photos` rows. For each:
-   - Generate new UUID.
-   - Map columns: legacy `make='unknown'` → NULL (we prefer proper
-     NULLs per master §9.3).
-   - Map legacy `path` → new `path`. The legacy `path` is
-     `filename_only.ext`; the legacy relative layout reconstructed
-     from `timestamp` (`YYYY/`) or `unknown_date/`. The new `path`
-     is the same relative path; the owner prefix is prepended by
-     storage.
-   - Set `imported_at = time.Now()` (migrations are imports as far
-     as the new system is concerned).
-   - `thumb_status = 'pending'`.
-3. Walk `{legacy_base}/movies/` and `INSERT` a `media` row per file,
-   `media_type='video'`, `mime_type` by extension, attempting a best-
-   effort container-metadata read for `timestamp`/`duration_ms`.
+Top-level flow:
 
-### 14.3 Filesystem
+1. Insert/ensure the `owners` row in its own transaction.
+2. Stream-read legacy `photos` rows one at a time. For each, run the
+   per-row pipeline below.
+3. Walk `{legacy_base}/movies/` one file at a time. For each, run the
+   same per-row pipeline with `media_type='video'`.
+4. Emit the final report (§14.4).
 
-- `--mode move`: for each row, `os.Rename` (preferred) or fall back
-  to stream-copy + `os.Remove` when renaming across devices. On any
-  failure, the transaction is still committed — files that failed to
-  move are listed in a report and must be reconciled manually.
-  (We do not roll the DB transaction back; re-running migration
-  against partial state would be fragile. Instead, the operator
-  fixes failures out-of-band and re-runs `fotobank reconcile`.)
-- `--mode symlink`: for each row, create a parent dir and
-  `os.Symlink` from the new path to the legacy absolute path. No
-  byte movement. Followed by a warning in the final report
-  describing the durability trade-off (§12 / master §12).
+**Per-row pipeline** (bytes-first, then DB):
+
+a. Generate a new UUID and compute the target key from the legacy
+   row's timestamp + filename (photos) or MD5 (videos). Map legacy
+   columns to the new schema (sentinel strings like
+   `make='unknown'` → NULL per master §9.3).
+b. Materialise the bytes at the target location according to
+   `--mode`:
+   - **`move`**: `os.Link` + `os.Remove(source)` when on the same
+     filesystem (preferred — atomic, cheap, no temp file);
+     otherwise stream-copy through the `storage.Write` no-clobber
+     finalize (§7.2) and `os.Remove(source)` only after the link
+     succeeds.
+   - **`symlink`**: resolve the legacy source to an absolute path;
+     `os.Symlink(abs_source, target)`. No byte movement.
+c. Verify the bytes are readable at the target: `os.Stat` +
+   (for move mode) a checksum re-read to confirm no data corruption.
+   For symlink mode, `os.Stat` alone suffices.
+d. Insert the `media` row in a per-row transaction. On
+   `UNIQUE(owner, checksum)` violation, the item was already
+   migrated on a prior run — remove the target bytes we just
+   materialised (they're redundant), count as "already migrated",
+   continue.
+e. If any of a-d fail: clean up any partially-materialised bytes
+   at the target, record the failure with source path and reason,
+   continue to the next row.
+
+Step d uses per-row transactions rather than one big transaction so
+a single bad row cannot invalidate the work of thousands of
+successful ones, and because wrapping a long-running migration in
+one SQLite transaction would hold a lock for the whole run.
+
+### 14.3 Filesystem specifics
+
+- **Cross-device move.** When `os.Link` fails with `EXDEV`, fall
+  back to `storage.Write`-based stream-copy (still using the
+  no-clobber finalize). `os.Remove(source)` runs only after the
+  target is durable.
+- **Symlink target.** Resolved to an absolute path so moving the
+  fotobank deployment later does not break the links. Relative
+  symlinks are a trap on migration.
+- **Lightroom catalog post-step.** In `move` mode, the final
+  report includes a message directing the operator to update the
+  LR catalog's folder location (master §12).
 
 ### 14.4 Reporting
 
 Final report to stdout (or `--json`):
 
 - `migrated_photos`, `migrated_videos` counts.
-- `fs_errors` list (path → reason).
+- `already_migrated` count (rows that hit `UNIQUE(owner, checksum)`
+  — these are no-ops on re-runs).
+- `failures` list: one entry per failed row with source path,
+  reason, and target path if one was attempted. Non-empty
+  `failures` → exit code `1`.
 - `warnings` list (e.g., "symlink mode chosen; NAS authority
-  depends on {legacy_base}/ being durable").
+  depends on {legacy_base}/ being durable", "LR catalog must be
+  re-pointed at the new NAS path").
+
+The `failures` list is actionable: each entry is a source file the
+operator can fix (permissions, missing file, etc.) and then re-run
+`fotobank migrate` to pick up only the outstanding items — the
+`UNIQUE(owner, checksum)` dedup on already-migrated rows means
+re-runs are cheap.
 
 ### 14.5 Lightroom coexistence
 
