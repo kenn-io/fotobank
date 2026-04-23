@@ -111,5 +111,6 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newServerCmd())
 	root.AddCommand(newOwnersCmd())
+	root.AddCommand(newImportCmd())
 	return root
 }
