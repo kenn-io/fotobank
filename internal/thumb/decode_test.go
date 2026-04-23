@@ -27,9 +27,9 @@ func TestDecodeJPEGNoOrientation(t *testing.T) {
 }
 
 func TestDecodeJPEGOrientation6RotatesDimensions(t *testing.T) {
-	// Orientation=6 means "rotate 90 CW" — a 100x200 pixel buffer
-	// displays as 200x100. Decode must apply the rotation so downstream
-	// resize/encode sees display-correct dimensions.
+	// Orientation=6 means "rotate 90° CW" — a 100×200 pixel buffer
+	// displays as 200×100. Decode must apply the rotation so downstream
+	// resize/encode sees display-correct pixels AND dimensions.
 	r := require.New(t)
 	path := filepath.Join("..", "..", "testdata", "thumb", "portrait-orient6.jpg")
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
@@ -39,8 +39,31 @@ func TestDecodeJPEGOrientation6RotatesDimensions(t *testing.T) {
 	r.NoError(err)
 	img, err := thumb.Decode("image/jpeg", bytes.NewReader(bs))
 	r.NoError(err)
+
+	// Dimensions first.
 	r.Equal(200, img.Bounds().Dx(), "orientation=6 should swap W/H")
 	r.Equal(100, img.Bounds().Dy())
+
+	// Pixel content: the fixture's gradient is
+	//   src(sx, sy) = RGBA{200, sy*255/200, sx*255/100, 255}
+	// After 90° CW, source (sx, sy) -> display (h-1-sy, sx) = (199-sy, sx).
+	// So display(199, 0) comes from source (0, 0) -> R=200, G=0, B=0.
+	// Display(0, 99) comes from source (99, 199) -> R=200, G=~253, B=~252.
+	// JPEG + YCbCr conversion introduces small rounding, so we assert
+	// approximately (within 12) rather than exactly — enough to distinguish
+	// the correct rotation from the broken one (which produced pure green
+	// at display(199,0) — wildly off).
+	corner := img.At(199, 0)
+	rC, gC, bC, _ := corner.RGBA()
+	r.InDelta(200, int(rC>>8), 12, "display(199,0).R")
+	r.InDelta(0, int(gC>>8), 12, "display(199,0).G")
+	r.InDelta(0, int(bC>>8), 12, "display(199,0).B")
+
+	far := img.At(0, 99)
+	rF, gF, bF, _ := far.RGBA()
+	r.InDelta(200, int(rF>>8), 12, "display(0,99).R")
+	r.InDelta(253, int(gF>>8), 12, "display(0,99).G")
+	r.InDelta(252, int(bF>>8), 12, "display(0,99).B")
 }
 
 func TestDecodeHEICReturnsErrNoPreview(t *testing.T) {

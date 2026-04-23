@@ -104,13 +104,13 @@ func applyOrientation(img image.Image, orient int) image.Image {
 		remap = func(x, y int) (int, int) { return y, x }
 	case 6:
 		outW, outH = h, w
-		remap = func(x, y int) (int, int) { return y, w - 1 - x }
+		remap = func(x, y int) (int, int) { return y, h - 1 - x }
 	case 7:
 		outW, outH = h, w
-		remap = func(x, y int) (int, int) { return h - 1 - y, w - 1 - x }
+		remap = func(x, y int) (int, int) { return w - 1 - y, h - 1 - x }
 	case 8:
 		outW, outH = h, w
-		remap = func(x, y int) (int, int) { return h - 1 - y, x }
+		remap = func(x, y int) (int, int) { return w - 1 - y, x }
 	default:
 		return img
 	}
