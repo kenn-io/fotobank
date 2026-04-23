@@ -321,6 +321,15 @@ func scanMedia(s rowScanner) (Media, error) {
 	return m, nil
 }
 
+// ScanMediaForAlbum is scanMedia re-exported for internal/album.
+// internal packages are in the same module so a cross-package helper
+// is fine; kept narrowly named so callers don't repurpose it.
+func ScanMediaForAlbum(s interface {
+	Scan(dest ...any) error
+}) (Media, error) {
+	return scanMedia(s)
+}
+
 func nullStr(s string) sql.NullString {
 	if s == "" {
 		return sql.NullString{}

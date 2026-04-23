@@ -334,3 +334,238 @@ func TestRepoListByOwnerDerivesCoverAndCount(t *testing.T) {
 	r.NotNil(items[0].Cover)
 	r.Equal(ready, items[0].Cover.MediaID)
 }
+
+func TestRepoAddMediaHappyPath(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	a := seedAlbum(t, repo, p, "Trip")
+	m1 := uuid.NewString()
+	m2 := uuid.NewString()
+	seedMediaRow(t, d.WriteDB(), p, m1, "cs1", "ready", 1)
+	seedMediaRow(t, d.WriteDB(), p, m2, "cs2", "ready", 1)
+
+	added, already, err := repo.AddMedia(context.Background(), a.ID, []string{m1, m2}, time.Now().UTC())
+	r.NoError(err)
+	r.Equal(2, added)
+	r.Equal(0, already)
+}
+
+func TestRepoAddMediaIsIdempotent(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	a := seedAlbum(t, repo, p, "Trip")
+	m := uuid.NewString()
+	seedMediaRow(t, d.WriteDB(), p, m, "cs", "ready", 1)
+
+	added1, already1, err := repo.AddMedia(context.Background(), a.ID, []string{m}, time.Now().UTC())
+	r.NoError(err)
+	r.Equal(1, added1)
+	r.Equal(0, already1)
+
+	added2, already2, err := repo.AddMedia(context.Background(), a.ID, []string{m}, time.Now().UTC())
+	r.NoError(err)
+	r.Equal(0, added2)
+	r.Equal(1, already2)
+}
+
+func TestRepoAddMediaEmptyInputNoOp(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	a := seedAlbum(t, repo, p, "Empty")
+
+	added, already, err := repo.AddMedia(context.Background(), a.ID, nil, time.Now().UTC())
+	r.NoError(err)
+	r.Equal(0, added)
+	r.Equal(0, already)
+}
+
+func TestRepoAddMediaScalesToBatchCap(t *testing.T) {
+	// Proves the INSERT handles the 500-row batch size that the service layer caps at.
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	a := seedAlbum(t, repo, p, "Big")
+
+	ids := make([]string, 500)
+	for i := range ids {
+		id := uuid.NewString()
+		ids[i] = id
+		seedMediaRow(t, d.WriteDB(), p, id, "cs"+id, "ready", 1)
+	}
+	added, already, err := repo.AddMedia(context.Background(), a.ID, ids, time.Now().UTC())
+	r.NoError(err)
+	r.Equal(500, added)
+	r.Equal(0, already)
+}
+
+func TestRepoRemoveMediaHappyPath(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	a := seedAlbum(t, repo, p, "Trip")
+	m := uuid.NewString()
+	seedMediaRow(t, d.WriteDB(), p, m, "cs", "ready", 1)
+	seedAlbumMedia(t, d.WriteDB(), a.ID, m, time.Now().UTC())
+
+	r.NoError(repo.RemoveMedia(context.Background(), a.ID, m))
+}
+
+func TestRepoRemoveMediaNotInAlbum(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	a := seedAlbum(t, repo, p, "Trip")
+
+	err := repo.RemoveMedia(context.Background(), a.ID, "nonesuch")
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestRepoDeleteAlbumCascadesAlbumMedia(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	a := seedAlbum(t, repo, p, "Trip")
+	m1 := uuid.NewString()
+	m2 := uuid.NewString()
+	seedMediaRow(t, d.WriteDB(), p, m1, "cs1", "ready", 1)
+	seedMediaRow(t, d.WriteDB(), p, m2, "cs2", "ready", 1)
+	seedAlbumMedia(t, d.WriteDB(), a.ID, m1, time.Now().UTC())
+	seedAlbumMedia(t, d.WriteDB(), a.ID, m2, time.Now().UTC())
+
+	r.NoError(repo.Delete(context.Background(), a.ID))
+
+	var n int
+	r.NoError(d.ReadDB().QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM album_media WHERE album_id = ?`, a.ID).Scan(&n))
+	r.Equal(0, n)
+}
+
+func TestRepoDeleteMediaCascadesAlbumMedia(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	a := seedAlbum(t, repo, p, "Trip")
+	m := uuid.NewString()
+	seedMediaRow(t, d.WriteDB(), p, m, "cs", "ready", 1)
+	seedAlbumMedia(t, d.WriteDB(), a.ID, m, time.Now().UTC())
+
+	_, err := d.WriteDB().ExecContext(context.Background(), `DELETE FROM media WHERE id = ?`, m)
+	r.NoError(err)
+
+	var n int
+	r.NoError(d.ReadDB().QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM album_media WHERE album_id = ?`, a.ID).Scan(&n))
+	r.Equal(0, n, "deleting media should cascade to album_media via FK")
+}
+
+func TestRepoListMediaSortModes(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	a := seedAlbum(t, repo, p, "Trip")
+
+	first := uuid.NewString()
+	second := uuid.NewString()
+	third := uuid.NewString()
+	seedMediaRow(t, d.WriteDB(), p, first, "cs1", "ready", 1)
+	seedMediaRow(t, d.WriteDB(), p, second, "cs2", "ready", 1)
+	seedMediaRow(t, d.WriteDB(), p, third, "cs3", "ready", 1)
+
+	base := time.Now().UTC().Truncate(time.Second)
+	seedAlbumMedia(t, d.WriteDB(), a.ID, first, base) // added earliest
+	seedAlbumMedia(t, d.WriteDB(), a.ID, second, base.Add(time.Second))
+	seedAlbumMedia(t, d.WriteDB(), a.ID, third, base.Add(2*time.Second)) // added latest
+
+	cases := []struct {
+		name    string
+		filter  album.AlbumMediaFilter
+		wantIDs []string
+	}{
+		{"added-desc (default)", album.AlbumMediaFilter{SortBy: "added"}, []string{third, second, first}},
+		{"added-asc", album.AlbumMediaFilter{SortBy: "added", SortAsc: true}, []string{first, second, third}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := repo.ListMedia(context.Background(), a.ID, tc.filter)
+			require.NoError(t, err)
+			ids := make([]string, 0, len(got))
+			for _, m := range got {
+				ids = append(ids, m.ID)
+			}
+			require.Equal(t, tc.wantIDs, ids)
+		})
+	}
+	_ = r
+}
+
+func TestRepoListMediaPagination(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	a := seedAlbum(t, repo, p, "Trip")
+
+	ids := make([]string, 3)
+	base := time.Now().UTC().Truncate(time.Second)
+	for i := range ids {
+		ids[i] = uuid.NewString()
+		seedMediaRow(t, d.WriteDB(), p, ids[i], "cs"+ids[i], "ready", 1)
+		seedAlbumMedia(t, d.WriteDB(), a.ID, ids[i], base.Add(time.Duration(i)*time.Second))
+	}
+
+	got, err := repo.ListMedia(context.Background(), a.ID,
+		album.AlbumMediaFilter{SortBy: "added", Limit: 2, Offset: 1})
+	r.NoError(err)
+	r.Len(got, 2)
+	// added-desc → [ids[2], ids[1], ids[0]], offset=1 → [ids[1], ids[0]]
+	r.Equal(ids[1], got[0].ID)
+	r.Equal(ids[0], got[1].ID)
+}
+
+func TestRepoListMediaImportedSort(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	a := seedAlbum(t, repo, p, "Trip")
+
+	// seedMediaRow hardcodes imported_at = time.Now() at call time, so
+	// we order the calls to match our expectation.
+	early := uuid.NewString()
+	late := uuid.NewString()
+	seedMediaRow(t, d.WriteDB(), p, early, "cs-e", "ready", 1)
+	time.Sleep(10 * time.Millisecond)
+	seedMediaRow(t, d.WriteDB(), p, late, "cs-l", "ready", 1)
+	seedAlbumMedia(t, d.WriteDB(), a.ID, early, time.Now().UTC())
+	seedAlbumMedia(t, d.WriteDB(), a.ID, late, time.Now().UTC())
+
+	got, err := repo.ListMedia(context.Background(), a.ID,
+		album.AlbumMediaFilter{SortBy: "imported"})
+	r.NoError(err)
+	r.Len(got, 2)
+	r.Equal(late, got[0].ID, "imported-desc → latest first")
+	r.Equal(early, got[1].ID)
+}

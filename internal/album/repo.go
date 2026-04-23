@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wesm/fotobank/internal/errs"
+	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
 )
 
@@ -221,6 +223,127 @@ SELECT oa.id, oa.owner_hub, oa.owner_user_id, oa.name, oa.created_at, oa.updated
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate albums: %w", err)
+	}
+	return out, nil
+}
+
+// AddMedia is mechanical and tolerant of empty input: the service layer
+// enforces the 1..500 bound. Empty input → (0, 0, nil) without touching
+// the DB. Uses a batched INSERT ... VALUES (?,?,?),... ON CONFLICT
+// DO NOTHING; reports added = RowsAffected, alreadyPresent = len - added.
+// Does NOT bump albums.updated_at; that is a non-goal for Plan D.
+func (r *Repo) AddMedia(
+	ctx context.Context,
+	albumID string,
+	mediaIDs []string,
+	now time.Time,
+) (added, alreadyPresent int, err error) {
+	if len(mediaIDs) == 0 {
+		return 0, 0, nil
+	}
+	// Build "(?,?,?),(?,?,?),..." with 3 args per row.
+	values := make([]string, 0, len(mediaIDs))
+	args := make([]any, 0, len(mediaIDs)*3)
+	for _, mid := range mediaIDs {
+		values = append(values, "(?,?,?)")
+		args = append(args, albumID, mid, now)
+	}
+	q := `INSERT INTO album_media (album_id, media_id, added_at) VALUES ` +
+		strings.Join(values, ",") +
+		` ON CONFLICT (album_id, media_id) DO NOTHING`
+	res, err := r.rw.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, 0, fmt.Errorf("add album media: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, 0, fmt.Errorf("add album media rows affected: %w", err)
+	}
+	added = int(n)
+	alreadyPresent = len(mediaIDs) - added
+	return added, alreadyPresent, nil
+}
+
+// RemoveMedia removes one media_id from an album. ErrNotFound if the
+// album does not exist or the pair (album_id, media_id) is absent —
+// SQLite cannot distinguish the two cases at this layer, which is fine:
+// the service's caller-owner check already gates cross-owner album IDs.
+func (r *Repo) RemoveMedia(ctx context.Context, albumID, mediaID string) error {
+	res, err := r.rw.ExecContext(ctx,
+		`DELETE FROM album_media WHERE album_id = ? AND media_id = ?`,
+		albumID, mediaID,
+	)
+	if err != nil {
+		return fmt.Errorf("remove album media: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("remove rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: album_media (album=%s, media=%s)",
+			errs.ErrNotFound, albumID, mediaID)
+	}
+	return nil
+}
+
+const albumMediaMediaSelect = `SELECT
+    m.id, m.owner_hub, m.owner_user_id, m.media_type, m.mime_type, m.path, m.original_filename,
+    m.imported_at, m.timestamp, m.size, m.checksum,
+    m.make, m.model, m.focal_length, m.shutter, m.width, m.height, m.iso, m.aperture,
+    m.duration_ms,
+    m.thumb_status, m.thumb_version, m.thumb_updated_at
+FROM album_media am JOIN media m ON m.id = am.media_id`
+
+// ListMedia returns paginated media rows that belong to albumID. The
+// SortBy / SortAsc fields must be validated by the caller (service);
+// the repo trusts SortBy ∈ {"added","imported"}.
+func (r *Repo) ListMedia(
+	ctx context.Context,
+	albumID string,
+	filter AlbumMediaFilter,
+) ([]media.Media, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	offset := max(filter.Offset, 0)
+	direction := "DESC"
+	if filter.SortAsc {
+		direction = "ASC"
+	}
+
+	var orderBy string
+	switch filter.SortBy {
+	case "", "added":
+		orderBy = "am.added_at " + direction + ", am.media_id " + direction
+	case "imported":
+		orderBy = "m.imported_at " + direction + " NULLS LAST, m.id " + direction
+	default:
+		// The service validates SortBy; hitting this means a caller bypassed it.
+		return nil, fmt.Errorf("album.ListMedia: invalid SortBy %q", filter.SortBy)
+	}
+
+	q := albumMediaMediaSelect +
+		" WHERE am.album_id = ?" +
+		" ORDER BY " + orderBy +
+		" LIMIT ? OFFSET ?"
+	rows, err := r.ro.QueryContext(ctx, q, albumID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list album media: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []media.Media
+	for rows.Next() {
+		m, err := media.ScanMediaForAlbum(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan album media: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate album media: %w", err)
 	}
 	return out, nil
 }
