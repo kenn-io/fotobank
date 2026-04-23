@@ -31,6 +31,10 @@ type Deps struct {
 	// means those routes aren't registered; existing tests that don't
 	// need them can pass Deps without a MediaService.
 	MediaService *service.MediaService
+	// ThumbService powers /api/v1/media/{id}/thumb. Nil means that route
+	// isn't registered; tests and the OpenAPI spec dumper that don't
+	// need thumb serving can pass Deps without a ThumbService.
+	ThumbService *service.ThumbService
 }
 
 // New constructs the Fotobank HTTP handler: a net/http.ServeMux with a
@@ -61,6 +65,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerMe(api)
 	registerMedia(api, deps.MediaService)
 	registerMediaOriginal(mux, deps.MediaService)
+	registerMediaThumb(mux, deps.ThumbService)
 	return mux, api
 }
 

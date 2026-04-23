@@ -13,9 +13,10 @@ import (
 	"github.com/wesm/fotobank/internal/service"
 )
 
-// mediaDTO is the JSON shape of one media row. Thumb fields are
-// deliberately omitted so they stay internal until Plan C exposes
-// thumbnails.
+// mediaDTO is the JSON shape of one media row. ThumbStatus and
+// ThumbVersion are included so clients can decide whether to issue a
+// /thumb request and cache-bust via the ?v= param when a regenerate
+// bumps the version.
 type mediaDTO struct {
 	ID               string     `json:"id"`
 	Type             string     `json:"type"`
@@ -26,6 +27,8 @@ type mediaDTO struct {
 	Timestamp        *time.Time `json:"timestamp,omitempty"`
 	Size             int64      `json:"size"`
 	Checksum         string     `json:"checksum"`
+	ThumbStatus      string     `json:"thumb_status"`
+	ThumbVersion     int        `json:"thumb_version"`
 	Make             string     `json:"make,omitempty"`
 	Model            string     `json:"model,omitempty"`
 	FocalLength      string     `json:"focal_length,omitempty"`
@@ -48,6 +51,8 @@ func toMediaDTO(m media.Media) mediaDTO {
 		Timestamp:        m.Timestamp,
 		Size:             m.Size,
 		Checksum:         m.Checksum,
+		ThumbStatus:      m.ThumbStatus,
+		ThumbVersion:     m.ThumbVersion,
 		Make:             m.Make,
 		Model:            m.Model,
 		FocalLength:      m.FocalLength,
