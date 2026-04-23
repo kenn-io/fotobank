@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/gif"
 	"image/jpeg"
+	"image/png"
 	"io"
 
 	"github.com/dsoprea/go-exif/v3"
@@ -19,7 +20,8 @@ var ErrNoPreview = errors.New("thumb: no preview available")
 
 // Decode returns an image.Image from src, applying EXIF orientation so
 // downstream resize/encode produces display-correct pixels. Dispatch
-// is by MIME type. HEIC requires CGO and is deferred to a future plan
+// is by MIME type. PNG has no EXIF orientation by spec so we decode
+// it as-is. HEIC requires CGO and is deferred to a future plan
 // (returns ErrNoPreview here).
 func Decode(mime string, src io.Reader) (image.Image, error) {
 	switch mime {
@@ -31,6 +33,12 @@ func Decode(mime string, src io.Reader) (image.Image, error) {
 			return nil, fmt.Errorf("gif decode: %w", err)
 		}
 		return g, nil
+	case "image/png":
+		p, err := png.Decode(src)
+		if err != nil {
+			return nil, fmt.Errorf("png decode: %w", err)
+		}
+		return p, nil
 	case "image/heic", "image/heif":
 		return nil, fmt.Errorf("%w: %s (HEIC decoding requires CGO; deferred)", ErrNoPreview, mime)
 	}

@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"os"
 	"path/filepath"
@@ -93,6 +95,35 @@ func seedVideoRow(t *testing.T, fx workerFixture) string {
 	return id
 }
 
+// seedPNGPhotoRow inserts a pending photo row with mime image/png and
+// writes a small synthesized PNG to the store at the row's path.
+// Ingest classifies .png as TypePhoto (see discover.go), so the worker
+// must decode image/png rows to ready — not MarkFailed.
+func seedPNGPhotoRow(t *testing.T, fx workerFixture, path string) string {
+	t.Helper()
+	src := image.NewRGBA(image.Rect(0, 0, 32, 32))
+	src.Set(0, 0, color.RGBA{R: 255, A: 255})
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, src))
+	id := uuid.NewString()
+	m := media.Media{
+		ID:               id,
+		Owner:            fx.owner,
+		Type:             media.TypePhoto,
+		MimeType:         "image/png",
+		Path:             path,
+		OriginalFilename: "x.png",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Size:             int64(buf.Len()),
+		Checksum:         uuid.NewString(),
+		ThumbStatus:      "pending",
+	}
+	require.NoError(t, fx.repo.Insert(context.Background(), m))
+	_, err := fx.store.Write(context.Background(), fx.owner, path, bytes.NewReader(buf.Bytes()))
+	require.NoError(t, err)
+	return id
+}
+
 func readThumbStatusFor(t *testing.T, rw *sql.DB, id string) string {
 	t.Helper()
 	var status string
@@ -171,6 +202,41 @@ func TestWorkerSkipsVideoAsNoPreview(t *testing.T) {
 	go func() { done <- w.Run(ctx) }()
 
 	waitForStatus(t, fx.rw, id, "no_preview")
+
+	cancel()
+	<-done
+}
+
+// TestWorkerDrainsPNGPhotoToReady is the regression guard for the
+// codex finding on b2f9463: ingest accepts .png as TypePhoto +
+// image/png, so the worker must decode PNG rather than marking it
+// failed with "unsupported mime". Reaching "ready" proves the PNG
+// path ran the full decode → resize → encode pipeline.
+func TestWorkerDrainsPNGPhotoToReady(t *testing.T) {
+	r := require.New(t)
+	fx := newWorkerFixture(t)
+	id := seedPNGPhotoRow(t, fx, "2024/p-"+uuid.NewString()+".png")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+		WorkerConcurrency: 1,
+		PollInterval:      20 * time.Millisecond,
+		LeaseTimeout:      5 * time.Minute,
+	})
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	waitForStatus(t, fx.rw, id, "ready")
+
+	version := readThumbVersionFor(t, fx.rw, id)
+	key := thumb.ThumbKey(id, version, thumb.SizeGrid)
+	rc, err := fx.store.ReadRange(context.Background(), fx.owner, key, 0, -1)
+	r.NoError(err)
+	defer func() { _ = rc.Close() }()
+	bs, err := io.ReadAll(rc)
+	r.NoError(err)
+	r.Greater(len(bs), 100, "grid thumb empty for PNG source")
 
 	cancel()
 	<-done

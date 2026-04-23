@@ -3,7 +3,10 @@ package thumb_test
 import (
 	"bytes"
 	"errors"
+	"image"
+	"image/color"
 	"image/jpeg"
+	"image/png"
 	"os"
 	"path/filepath"
 	"testing"
@@ -81,4 +84,20 @@ func TestDecodeUnknownMIMERejected(t *testing.T) {
 	_, err := thumb.Decode("application/octet-stream", bytes.NewReader(nil))
 	require.Error(t, err)
 	require.NotErrorIs(t, err, thumb.ErrNoPreview)
+}
+
+func TestDecodePNGReturnsImage(t *testing.T) {
+	// Ingest classifies .png as TypePhoto + "image/png" (see
+	// internal/ingest/discover.go), so the worker must decode it
+	// rather than surfacing "unsupported mime".
+	r := require.New(t)
+	src := image.NewRGBA(image.Rect(0, 0, 16, 24))
+	src.Set(0, 0, color.RGBA{R: 255, A: 255})
+	var buf bytes.Buffer
+	r.NoError(png.Encode(&buf, src))
+
+	img, err := thumb.Decode("image/png", bytes.NewReader(buf.Bytes()))
+	r.NoError(err)
+	r.Equal(16, img.Bounds().Dx())
+	r.Equal(24, img.Bounds().Dy())
 }
