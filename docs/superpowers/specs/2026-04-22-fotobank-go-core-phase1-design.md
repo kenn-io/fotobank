@@ -845,13 +845,16 @@ For a media `row`:
 - Photos: `row.path` — e.g. `2024/20240615_143022_0.jpg` or
   `unknown_date/IMG_0001.jpg`.
 - Videos: `movies/{md5}.{ext}` — stored as the `row.path`.
-- Thumbnails: `.thumbs/{media_id}/v{thumb_version}/grid.webp`
-  (plus `preview.webp`, `lightbox.webp`). Computed by the
+- Thumbnails: `.thumbs/{media_id}/v{thumb_version}/grid.jpg`
+  (plus `preview.jpg`, `lightbox.jpg`). Computed by the
   thumbnail service, not stored on the `media` row. *(2026-04-22
-  execution note: versioned `v{N}/` subdirectory added in Plan C
-  so writes never collide with `Store.Write`'s no-clobber finalize
-  on regenerate / lease-sweep retry. See `2026-04-22-fotobank-
-  plan-c-thumbnails-design.md` §7.1.)*
+  execution notes: (1) versioned `v{N}/` subdirectory added in
+  Plan C so writes never collide with `Store.Write`'s no-clobber
+  finalize on regenerate / lease-sweep retry. (2) Format is JPEG
+  rather than WebP — the only viable pure-Go WebP encoder was
+  found to be lossless-only, yielding files 4-5× the design
+  budget. See `2026-04-22-fotobank-plan-c-thumbnails-design.md`
+  §7.1–§7.2.)*
 
 The storage layer prepends `{nas.root}/{storage_key}/` for NAS or
 `{flash.root}/{storage_key}/` for flash and appends the key as-is.

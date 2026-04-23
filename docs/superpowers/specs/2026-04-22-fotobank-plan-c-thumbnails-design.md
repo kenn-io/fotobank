@@ -16,7 +16,9 @@
 Extend the Go port with a thumbnail pipeline that:
 
 1. Decodes imported photos (JPEG/GIF) and RAW files (ARW/RAF/DNG/CR2
-   via embedded EXIF previews) into three WebP sizes.
+   via embedded EXIF previews) into three JPEG sizes. *(Encoder
+   decision: §7.2. Previously targeted WebP; the only viable pure-
+   Go WebP encoder proved lossless-only, so we ship JPEG instead.)*
 2. Runs as an in-process worker inside `fotobank server`, fed by a
    DB-backed claim/lease queue using the existing `thumb_*` columns.
 3. Serves derivatives over `/api/v1/media/{id}/thumb?size=…&v=…`
@@ -45,7 +47,7 @@ fotobank server (single process)
 └── ThumbWorker (new)
     ├── poll ticker  → ClaimBatch → fanOut
     ├── sweep ticker → SweepLeases
-    └── processOne: decode → resize 3× → encode WebP → write
+    └── processOne: decode → resize 3× → encode JPEG → write
 
 fotobank thumbs regenerate (CLI, separate process)
 └── calls ThumbService.Enqueue via DB only; the running server’s
@@ -107,7 +109,7 @@ internal/thumb/
 ├── worker_test.go
 ├── decode.go      – decodeSource: dispatch by MIME → image.Image
 ├── decode_test.go
-├── encode.go      – encodeWebP, resize
+├── encode.go      – EncodeJPEG, Resize
 ├── encode_test.go
 ├── raw.go         – extractEmbeddedPreview for RAW formats
 ├── raw_test.go
@@ -287,12 +289,12 @@ This is load-bearing. An earlier design had sweep only reset
 `thumb_status` and `thumb_claimed_at`. That left a hole:
 
 1. Worker A claims row at version `v=5`, writes `.thumbs/{id}/v5/
-   grid.webp` successfully, then hangs before writing `preview.webp`.
+   grid.jpg` successfully, then hangs before writing `preview.jpg`.
 2. `SweepLeases` times out A's lease, sets `pending` without bumping
    version.
 3. Worker B claims the same row at `v=5`, starts writing under the
    *same* `v5/` directory. `Store.Write`'s no-clobber finalize
-   (`internal/storage/storage.go:35`) rejects `grid.webp` with
+   (`internal/storage/storage.go:35`) rejects `grid.jpg` with
    `ErrPathOccupied` — B fails the whole row and marks it `failed`.
 4. When A eventually wakes up, its `MarkReady(id, v=5, T_A)` now
    returns `ErrClaimLost` (token mismatch from the sweep/reclaim)
@@ -355,7 +357,7 @@ func (w *Worker) processOne(ctx context.Context, c Claim) {
     }
 
     for _, size := range allSizes {     // grid, preview, lightbox
-        buf, err := encodeWebP(resize(img, size.maxEdge), webpQuality)
+        buf, err := EncodeJPEG(Resize(img, size.MaxEdge()), jpegQuality)
         if err != nil { w.markFailed(ctx, m, token, err); return }
         // Versioned key — writes never collide with prior versions
         // or sibling retries; see §7 for the scheme.
@@ -421,8 +423,8 @@ These match the vision spec (`docs/superpowers/specs/2026-04-22-
 fotobank-vision.md` §12) so one canonical size list stays honest
 across docs.
 
-**WebP quality:** `75` (pragmatic default; Google's reference encoder
-hits perceptually transparent for most photos in this range).
+**JPEG quality:** `85` (pragmatic default; stdlib `image/jpeg` is
+perceptually transparent at this setting for continuous-tone photos).
 
 **Resize algorithm:** `draw.CatmullRom` from `golang.org/x/image/
 draw` — bicubic, pure Go, well-maintained, good quality for
@@ -435,8 +437,19 @@ ship-worthy choice for the first revision.
 Thumbnails live at:
 
 ```
-.thumbs/{media_id}/v{thumb_version}/{size}.webp
+.thumbs/{media_id}/v{thumb_version}/{size}.jpg
 ```
+
+*(2026-04-22 execution note — original Plan C guidance was
+`.webp`. Task 1's encoder probe discovered that the only pure-Go
+WebP encoder, `HugoSmits86/nativewebp`, is VP8L-only (lossless),
+yielding thumbnail sizes 4–5× heavier than the design budget.
+Rather than accept CGO (`chai2010/webp`) or ship lossless WebP,
+Plan C falls back to stdlib `image/jpeg` at quality 85. File sizes
+return to the design budget at ~1.3× a hypothetical lossy-WebP
+baseline. Everything else in the pipeline — keys, HTTP, cache
+headers, worker — is unchanged except the `.jpg` extension and
+`image/jpeg` MIME.)*
 
 Every `(media_id, thumb_version, size)` triple has its own unique
 object on disk. This matters for two reasons:
@@ -444,7 +457,7 @@ object on disk. This matters for two reasons:
 1. **Plan B's `Store.Write` is no-clobber.** `NASOnly` finalizes via
    `os.Link` into the final path and returns `ErrPathOccupied` if
    the path already exists (see `internal/storage/storage.go:35`).
-   Stable keys like `.thumbs/{id}/grid.webp` would fail on every
+   Stable keys like `.thumbs/{id}/grid.jpg` would fail on every
    regenerate after the first. Versioned keys make each write the
    *only* write to that path — ever.
 2. **Retry-after-partial-failure is safe.** If encoding `grid`
@@ -472,50 +485,47 @@ walks the NAS tree and knows current `thumb_version` per row; a
 later plan can teach it to delete `.thumbs/{id}/v{N}/` whenever
 `N != current_version`. Not in scope for Plan C.
 
-### 7.2 WebP encoder — PRIMARY UNCERTAINTY
+### 7.2 Encoder decision — JPEG (stdlib)
 
-This is the biggest open question in Plan C and deserves its own
-investigation before the main implementation begins.
+**Resolution of the encoder question (2026-04-22):** Task 1's
+validation probe confirmed that the only pure-Go WebP encoder,
+`github.com/HugoSmits86/nativewebp`, supports only VP8L (lossless).
+On noise-heavy 4000×3000 input, lossless output ran 4.4–5.5× the
+size of stdlib `image/jpeg` at quality 85:
 
-Go's stdlib (`golang.org/x/image/webp`) supports **decoding** WebP but
-not encoding. Pure-Go WebP encoding options:
+| Size | nativewebp (VP8L) | JPEG q85 | Ratio |
+|------|-------------------|----------|-------|
+| 256 px grid | 119 KB | 22 KB | 5.5× |
+| 1024 px preview | 1.85 MB | 425 KB | 4.4× |
+| 2048 px lightbox | 7.4 MB | 1.55 MB | 4.7× |
 
-| Library                            | CGO  | Status                        |
-|------------------------------------|------|-------------------------------|
-| `github.com/chai2010/webp`         | Yes  | Stable, widely used (libwebp) |
-| `github.com/HugoSmits86/nativewebp`| No   | Pure Go; newer, less vetted   |
-| `github.com/Kagami/go-avif`        | Yes  | AVIF not WebP                 |
+These numbers break the design size budget (grid 8–30 KB, preview
+80–250 KB, lightbox 300–800 KB) hard enough that grid thumbnails
+at ~120 KB would defeat infinite-scroll UX.
 
-**Constraint:** the Go port aims to stay CGO-free (per Plan B, per
-master §4). That rules out `chai2010/webp` unless we relax the
-constraint.
+**Decision:** emit **JPEG at quality 85** via stdlib `image/jpeg`.
+Trade-offs considered and rejected:
 
-**Options for Plan C:**
+1. `HugoSmits86/nativewebp` — rejected. VP8L-only; produces files
+   4–5× the design budget; would need downstream UX compromises.
+2. `github.com/chai2010/webp` (CGO wrapping libwebp) — rejected.
+   Reverses Plan B's pure-Go design principle and adds a runtime
+   libwebp dependency on the deployment host. Held in reserve if a
+   later plan justifies CGO.
+3. **JPEG via stdlib** — chosen. Stdlib-only, zero supply-chain
+   risk, ~1.3× the size of hypothetical lossy-WebP, every client
+   handles JPEG natively. Only impact on the rest of the plan:
+   the on-disk file extension is `.jpg`, MIME is `image/jpeg`,
+   and the resize→encode path calls `jpeg.Encode` instead of
+   `nativewebp.Encode`.
 
-1. **`HugoSmits86/nativewebp`** — pure Go, keeps CGO-free story. Risk:
-   maturity, encoder correctness, performance. Must validate with real
-   sample photos and a quality check (SSIM vs libwebp reference) before
-   committing.
-2. **Relax CGO for thumb encoding only** — use `chai2010/webp`. Every
-   platform we ship to has libwebp available; the binary gains one
-   dynamic dep. Lower engineering risk, but reverses a design principle.
-3. **Emit JPEG instead of WebP** — `image/jpeg` in stdlib handles
-   encoding at quality 85 with acceptable file sizes (~1.3× WebP).
-   Boringly reliable. Client-facing API would need renaming to
-   `grid.jpg`, etc.
+The `nativewebp` dependency added by Task 1 is removed in a
+follow-up commit; `golang.org/x/image` stays because
+`draw.CatmullRom` is still the resize kernel.
 
-**Plan:** Task 1 of implementation is "validate `nativewebp` on a
-sample set" — decode 20–30 representative photos (JPEG, iPhone portrait
-with orientation, overexposed, low-light, high-contrast, RAW-extracted
-previews), encode at quality 75, compare visually to libwebp reference,
-benchmark encode throughput. If `nativewebp` is acceptable, proceed
-with (1). If it fails, escalate: do we accept CGO, or fall back to
-JPEG? The spec does NOT pre-commit to an answer; the plan's first task
-is the decision gate.
-
-**Whichever encoder ships, the on-disk format name stays WebP** (i.e.,
-we don't ship JPEG-named-as-WebP). If we fall back to JPEG, rename keys
-and bump the master spec §7.4 accordingly.
+If a future plan wants lossy WebP (or AVIF), swap the encoder in
+`thumb.Encode` and bump the format extension in `ThumbKey` —
+everything else in the pipeline is format-agnostic.
 
 ---
 
@@ -523,7 +533,7 @@ and bump the master spec §7.4 accordingly.
 
 `storage.Store` already supports `ReadRange`, `Write`, `Delete`, and
 the `owner + key` addressing model. Thumbnail writes reuse this
-interface — `.thumbs/{id}/v{N}/grid.webp` (per §7.1) is just another
+interface — `.thumbs/{id}/v{N}/grid.jpg` (per §7.1) is just another
 key, owned by the same principal as the source media.
 
 **ThumbsCache wiring.** `cfg.Storage.ThumbsCacheEnabled` exists since
@@ -588,7 +598,7 @@ media detail to pick up the new version and retries with the new URL.
 own the media row, else 404 (not 403; don't leak existence).
 
 **Key lookup:** the handler maps `(id, size, v)` to the on-disk key
-`.thumbs/{id}/v{v}/{size}.webp` (per §7.1) only after the DB
+`.thumbs/{id}/v{v}/{size}.jpg` (per §7.1) only after the DB
 confirms `thumb_version == v AND thumb_status == 'ready'`. Reading
 the versioned key directly is safe because versioned paths are
 write-once.
@@ -741,13 +751,13 @@ pattern as `fotobank reconcile`.
 - RAW preview extraction: table-driven test per format
   (ARW/RAF/DNG/CR2) using real sample files under `testdata/raw/`.
   Fail gracefully on RAW without an embedded preview.
-- WebP encoder byte-level test: decode encoded output with
-  `golang.org/x/image/webp` and assert dimensions.
+- JPEG encoder byte-level test: decode encoded output with
+  `image/jpeg` and assert dimensions.
 
 **Integration tests:**
 - Full worker loop: seed `pending` rows, start worker with short
   intervals, assert rows reach `ready` within a deadline, assert
-  bytes exist at `.thumbs/{id}/v{N}/grid.webp`, assert ETag in HTTP
+  bytes exist at `.thumbs/{id}/v{N}/grid.jpg`, assert ETag in HTTP
   response matches `thumb_version`.
 - Crash-recovery: start worker, mark row `working` with an old
   `thumb_claimed_at`, run sweep, assert row returns to `pending`
@@ -755,7 +765,7 @@ pattern as `fotobank reconcile`.
   goroutine's eventual `MarkReady` gets `ErrClaimLost` and does
   not corrupt the re-claimed row.
 - Same-version lease-retry never hits `ErrPathOccupied`: seed
-  `.thumbs/{id}/v5/grid.webp` on disk to simulate a partial write
+  `.thumbs/{id}/v5/grid.jpg` on disk to simulate a partial write
   from a swept claim, then run another claim→finish cycle; assert
   the new writes land under `v6/` (not `v5/`) and succeed
   end-to-end.
@@ -809,17 +819,16 @@ subsequent plan needs it.
 **New (uncontroversial):**
 - `golang.org/x/image/draw` (pure-Go resize, well-maintained by the Go
   team).
-- `golang.org/x/image/webp` (pure-Go WebP *decoder* — needed only in
-  tests to round-trip the encoder's output).
+- `image/jpeg` from the stdlib — encoder + decoder.
 
-**New, pending WebP encoder decision (§7.2):**
-- `github.com/HugoSmits86/nativewebp` — if Task 1 validation
-  passes.
-- Alternative paths (CGO libwebp or JPEG fallback) documented but
-  not pre-committed.
+**No new third-party encoder deps.** Task 1's probe added
+`github.com/HugoSmits86/nativewebp` and `golang.org/x/image`; the
+follow-up commit that resolved §7.2 removes `nativewebp` (unused
+after the JPEG decision) and keeps `golang.org/x/image` for
+`draw.CatmullRom`.
 
-**No new CGO deps** unless the encoder investigation forces it; in
-that case the plan stops and escalates to the user before proceeding.
+**No CGO deps.** The encoder decision explicitly rejected the CGO
+path (`chai2010/webp`).
 
 ---
 
@@ -839,11 +848,10 @@ that case the plan stops and escalates to the user before proceeding.
 
 ## 16. Critical uncertainties — flagged for review
 
-1. **WebP encoder choice (§7.2)** — the single biggest risk. Task 1
-   of implementation validates `nativewebp` on a sample set. If it
-   fails, we pause to decide: accept CGO via `chai2010/webp`, or fall
-   back to JPEG encoding. The rest of the plan assumes `nativewebp`
-   works.
+1. ~~**WebP encoder choice**~~ — **RESOLVED 2026-04-22.** Task 1's
+   probe found `nativewebp` to be VP8L-only, producing files 4-5×
+   the design budget. We now ship JPEG via stdlib `image/jpeg`; see
+   §7.2. No longer an open question.
 
 2. **RAW preview extraction robustness** — `dsoprea/go-exif/v3`
    exposes IFD walking but not a prebuilt "give me the preview bytes"
