@@ -1,0 +1,236 @@
+package thumb_test
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"image"
+	"io"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
+	"github.com/wesm/fotobank/internal/media"
+	"github.com/wesm/fotobank/internal/owners"
+	"github.com/wesm/fotobank/internal/storage"
+	"github.com/wesm/fotobank/internal/testutil"
+	"github.com/wesm/fotobank/internal/thumb"
+)
+
+// workerFixture wires a real SQLite DB, a NAS-backed Store, a Queue, and
+// an owner so tests can seed rows + bytes and observe worker transitions.
+type workerFixture struct {
+	rw    *sql.DB
+	repo  *media.Repo
+	queue *thumb.Queue
+	store storage.Store
+	owner owners.Principal
+}
+
+func newWorkerFixture(t *testing.T) workerFixture {
+	t.Helper()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	q := thumb.NewQueue(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "sk", time.Now().UTC(),
+	)
+	require.NoError(t, err)
+	store := storage.NewNASOnly(t.TempDir(), map[owners.Principal]string{p: "sk"})
+	return workerFixture{rw: d.WriteDB(), repo: repo, queue: q, store: store, owner: p}
+}
+
+// seedPhotoRow inserts a pending photo row and writes real JPEG bytes to
+// the store at the row's path. Returns the row ID.
+func seedPhotoRow(t *testing.T, fx workerFixture, path string) string {
+	t.Helper()
+	bs, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "photo-with-timestamp.jpg"))
+	require.NoError(t, err)
+	id := uuid.NewString()
+	m := media.Media{
+		ID:               id,
+		Owner:            fx.owner,
+		Type:             media.TypePhoto,
+		MimeType:         "image/jpeg",
+		Path:             path,
+		OriginalFilename: "x.jpg",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Size:             int64(len(bs)),
+		Checksum:         uuid.NewString(),
+		ThumbStatus:      "pending",
+	}
+	require.NoError(t, fx.repo.Insert(context.Background(), m))
+	_, err = fx.store.Write(context.Background(), fx.owner, path, bytes.NewReader(bs))
+	require.NoError(t, err)
+	return id
+}
+
+// seedVideoRow inserts a pending video row without writing bytes — the
+// worker must skip the storage read entirely for non-decodable types.
+func seedVideoRow(t *testing.T, fx workerFixture) string {
+	t.Helper()
+	id := uuid.NewString()
+	m := media.Media{
+		ID:               id,
+		Owner:            fx.owner,
+		Type:             media.TypeVideo,
+		MimeType:         "video/mp4",
+		Path:             "2024/v-" + id + ".mp4",
+		OriginalFilename: "v.mp4",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Size:             0,
+		Checksum:         uuid.NewString(),
+		ThumbStatus:      "pending",
+	}
+	require.NoError(t, fx.repo.Insert(context.Background(), m))
+	return id
+}
+
+func readThumbStatusFor(t *testing.T, rw *sql.DB, id string) string {
+	t.Helper()
+	var status string
+	err := rw.QueryRowContext(context.Background(),
+		`SELECT thumb_status FROM media WHERE id = ?`, id).Scan(&status)
+	require.NoError(t, err)
+	return status
+}
+
+func readThumbVersionFor(t *testing.T, rw *sql.DB, id string) int {
+	t.Helper()
+	var v int
+	err := rw.QueryRowContext(context.Background(),
+		`SELECT thumb_version FROM media WHERE id = ?`, id).Scan(&v)
+	require.NoError(t, err)
+	return v
+}
+
+// waitForStatus polls the DB for up to 5s for row id to reach want.
+func waitForStatus(t *testing.T, rw *sql.DB, id, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if readThumbStatusFor(t, rw, id) == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.Equalf(t, want, readThumbStatusFor(t, rw, id),
+		"row %s never reached status %q", id, want)
+}
+
+func TestWorkerDrainsPendingRowToReady(t *testing.T) {
+	r := require.New(t)
+	fx := newWorkerFixture(t)
+	id := seedPhotoRow(t, fx, "2024/a-"+uuid.NewString()+".jpg")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+		WorkerConcurrency: 2,
+		PollInterval:      20 * time.Millisecond,
+		LeaseTimeout:      5 * time.Minute,
+	})
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	waitForStatus(t, fx.rw, id, "ready")
+
+	// Read back the grid thumbnail — must be non-empty JPEG bytes.
+	version := readThumbVersionFor(t, fx.rw, id)
+	key := thumb.ThumbKey(id, version, thumb.SizeGrid)
+	rc, err := fx.store.ReadRange(context.Background(), fx.owner, key, 0, -1)
+	r.NoError(err)
+	defer func() { _ = rc.Close() }()
+	bs, err := io.ReadAll(rc)
+	r.NoError(err)
+	r.Greater(len(bs), 100, "grid thumb empty")
+
+	cancel()
+	<-done
+}
+
+func TestWorkerSkipsVideoAsNoPreview(t *testing.T) {
+	fx := newWorkerFixture(t)
+	id := seedVideoRow(t, fx)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+		WorkerConcurrency: 1,
+		PollInterval:      20 * time.Millisecond,
+		LeaseTimeout:      5 * time.Minute,
+	})
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	waitForStatus(t, fx.rw, id, "no_preview")
+
+	cancel()
+	<-done
+}
+
+// TestWorkerStaleWriteDoesNotCorruptReclaim is the regression guard for
+// spec §5.1: after a sweep bumps thumb_version, the worker's next claim
+// must write to the v+1 key, NOT retry the v0 key (which would hit
+// storage.ErrPathOccupied because the prior attempt's bytes linger).
+func TestWorkerStaleWriteDoesNotCorruptReclaim(t *testing.T) {
+	r := require.New(t)
+	fx := newWorkerFixture(t)
+	id := seedPhotoRow(t, fx, "2024/a-"+uuid.NewString()+".jpg")
+
+	// Simulate a prior worker that wrote v0/grid.jpg bytes before its
+	// lease was swept. Those bytes must still exist after the sweep, so
+	// a naive retry at v0 would collide.
+	var buf bytes.Buffer
+	stale := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	r.NoError(thumb.EncodeJPEG(&buf, thumb.Resize(stale, 256), 85))
+	_, err := fx.store.Write(
+		context.Background(), fx.owner,
+		thumb.ThumbKey(id, 0, thumb.SizeGrid), &buf,
+	)
+	r.NoError(err)
+
+	// Manually claim and sweep to bump the row to v1 pending.
+	claims, err := fx.queue.ClaimBatch(context.Background(), 1)
+	r.NoError(err)
+	r.Len(claims, 1)
+	n, err := fx.queue.SweepLeases(context.Background(), 0)
+	r.NoError(err)
+	r.Equal(1, n)
+	r.Equal(1, readThumbVersionFor(t, fx.rw, id), "sweep must have bumped version")
+
+	// Run the worker — it should claim at v1 and write v1 keys without
+	// tripping over the pre-existing v0 bytes.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+		WorkerConcurrency: 1,
+		PollInterval:      20 * time.Millisecond,
+		LeaseTimeout:      5 * time.Minute,
+	})
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	waitForStatus(t, fx.rw, id, "ready")
+	r.Equal(1, readThumbVersionFor(t, fx.rw, id))
+
+	// v1 grid key must be present.
+	rc, err := fx.store.ReadRange(
+		context.Background(), fx.owner,
+		thumb.ThumbKey(id, 1, thumb.SizeGrid), 0, -1,
+	)
+	r.NoError(err)
+	defer func() { _ = rc.Close() }()
+	bs, err := io.ReadAll(rc)
+	r.NoError(err)
+	r.Greater(len(bs), 100)
+
+	cancel()
+	<-done
+}
