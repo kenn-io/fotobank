@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,8 @@ storage_key = "alice-sk"
 listen_address = "127.0.0.1:0"
 [imports]
 file_lock_path = %q
+[thumbs]
+poll_interval = "100ms"
 `, nasRoot, flashRoot, filepath.Join(tmp, "import.lock")), 0o600))
 
 	t.Setenv("FOTOBANK_CONFIG", cfg)
@@ -99,12 +102,14 @@ file_lock_path = %q
 
 	// 3. List media: expect three items.
 	type mediaItem struct {
-		ID       string `json:"id"`
-		Type     string `json:"type"`
-		MimeType string `json:"mime_type"`
-		Path     string `json:"path"`
-		Size     int64  `json:"size"`
-		Checksum string `json:"checksum"`
+		ID           string `json:"id"`
+		Type         string `json:"type"`
+		MimeType     string `json:"mime_type"`
+		Path         string `json:"path"`
+		Size         int64  `json:"size"`
+		Checksum     string `json:"checksum"`
+		ThumbStatus  string `json:"thumb_status"`
+		ThumbVersion int    `json:"thumb_version"`
 	}
 	type listBody struct {
 		Items      []mediaItem `json:"items"`
@@ -178,6 +183,107 @@ file_lock_path = %q
 		r.Equalf(it.Checksum, hex.EncodeToString(sum[:]),
 			"streamed body md5 mismatch for fixture %s", fixtureName)
 	}
+
+	// 7. Wait for the thumbnail worker to drain each imported row to a
+	// terminal state. Photos should become "ready"; the video should
+	// settle on "no_preview" (Plan C defers video posters to Plan E).
+	waitAllTerminal := func() []mediaItem {
+		deadline := time.Now().Add(15 * time.Second)
+		for time.Now().Before(deadline) {
+			resp, err := client.Get(base + "/api/v1/media")
+			r.NoError(err)
+			var body listBody
+			decErr := json.NewDecoder(resp.Body).Decode(&body)
+			_ = resp.Body.Close()
+			r.NoError(decErr)
+			allTerminal := len(body.Items) == 3
+			for _, it := range body.Items {
+				switch it.ThumbStatus {
+				case "ready", "no_preview", "failed":
+				default:
+					allTerminal = false
+				}
+			}
+			if allTerminal {
+				return body.Items
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		r.Fail("thumb worker did not drain all rows within 15s")
+		return nil
+	}
+	items := waitAllTerminal()
+
+	// Separate photos from video; assert per-type terminal status.
+	type photoRow struct {
+		ID      string
+		Version int
+	}
+	var photos []photoRow
+	for _, it := range items {
+		if it.Type == "photo" {
+			r.Equalf("ready", it.ThumbStatus, "photo %s should be ready", it.ID)
+			photos = append(photos, photoRow{ID: it.ID, Version: it.ThumbVersion})
+			continue
+		}
+		r.Equalf("no_preview", it.ThumbStatus, "video %s should be no_preview", it.ID)
+	}
+	r.Len(photos, 2, "expected two photo rows")
+
+	// 8. Fetch grid thumb for each photo; assert 200, ETag, immutable cache.
+	for _, p := range photos {
+		url := base + "/api/v1/media/" + p.ID + "/thumb?size=grid&v=" + strconv.Itoa(p.Version)
+		resp, err := client.Get(url)
+		r.NoError(err)
+		r.Equalf(http.StatusOK, resp.StatusCode, "url=%s", url)
+		r.Equal(`"`+p.ID+`-grid-v`+strconv.Itoa(p.Version)+`"`, resp.Header.Get("ETag"))
+		r.Contains(resp.Header.Get("Cache-Control"), "immutable")
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		r.NoError(err)
+		r.Greater(len(body), 100, "thumb body suspiciously small")
+	}
+
+	// 9. Regenerate everything. All 3 rows get bumped (the video re-settles
+	// to no_preview at the new version, but still counts as enqueued).
+	{
+		var out, eout bytes.Buffer
+		code := cli.RunContext(context.Background(),
+			[]string{"thumbs", "regenerate", "--all", "--config", cfg}, &out, &eout)
+		r.Equalf(0, code, "regenerate stderr=%s", eout.String())
+		r.Contains(out.String(), "3 rows enqueued")
+	}
+
+	// 10. Old URL: 404 immediately with no-store cache directive so clients
+	// don't cache a stale-version miss past the worker's reprocess window.
+	oldURL := base + "/api/v1/media/" + photos[0].ID +
+		"/thumb?size=grid&v=" + strconv.Itoa(photos[0].Version)
+	staleResp, err := client.Get(oldURL)
+	r.NoError(err)
+	_ = staleResp.Body.Close()
+	r.Equal(http.StatusNotFound, staleResp.StatusCode)
+	r.Equal("no-store", staleResp.Header.Get("Cache-Control"),
+		"404 must be no-store to avoid stale caching")
+
+	// 11. New URL (v+1): eventually 200 after worker reprocesses at the
+	// bumped version.
+	newVer := photos[0].Version + 1
+	newURL := base + "/api/v1/media/" + photos[0].ID +
+		"/thumb?size=grid&v=" + strconv.Itoa(newVer)
+	newReadyDeadline := time.Now().Add(15 * time.Second)
+	newReady := false
+	for time.Now().Before(newReadyDeadline) {
+		resp, err := client.Get(newURL)
+		r.NoError(err)
+		status := resp.StatusCode
+		_ = resp.Body.Close()
+		if status == http.StatusOK {
+			newReady = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	r.Truef(newReady, "new thumb version never became ready url=%s", newURL)
 
 	// 6. Cancel and assert the server exits cleanly.
 	cancel()
