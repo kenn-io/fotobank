@@ -89,18 +89,12 @@ func runReconcile(ctx context.Context, opts reconcileOpts) error {
 		Hub:    cfg.Identity.Stub.Hub,
 		UserID: cfg.Identity.Stub.UserID,
 	}
-	storageKey := cfg.Identity.Stub.StorageKey
-	if storageKey == "" {
-		storageKey = cfg.Identity.Stub.UserID
-	}
 	ownerSvc := service.NewOwnerService(owners.NewRepo(d.WriteDB(), d.ReadDB()))
-	if err := ownerSvc.Ensure(ctx, owner, storageKey); err != nil {
-		return err
-	}
 
-	// The canonical storage_key lives on the owners row — Ensure may have
-	// accepted a pre-existing row written by another CLI/session, so read
-	// it back rather than trusting the config blindly.
+	// Reconcile is a diagnostic — even the --commit-* flags only mutate
+	// media/temp rows, not owners. Require that the owner already exists
+	// (via import or an earlier setup command) so a default run is
+	// unambiguously read-only against owners.
 	resolved, err := resolveOwnerStorageKey(ctx, ownerSvc, owner)
 	if err != nil {
 		return err

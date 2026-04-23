@@ -148,3 +148,82 @@ func TestExtractPreviewPreviewOffsetPastEOF(t *testing.T) {
 	require.NotErrorIs(t, err, thumb.ErrNoPreview)
 	require.Contains(t, err.Error(), "exceed file size")
 }
+
+// buildSyntheticTIFFWithPreviewAndOrientation emits a TIFF whose IFD0
+// carries a JPEGInterchangeFormat preview plus the Orientation tag
+// (274). Used to cover the RAW-side orientation path: portrait phone
+// photos ship preview pixels in sensor layout with orientation > 1.
+func buildSyntheticTIFFWithPreviewAndOrientation(t *testing.T, orient uint16) []byte {
+	t.Helper()
+	// Preview: 100 wide, 200 tall. Under orientation=6 (rotate 90° CW)
+	// the display-correct dimensions must be 200x100.
+	src := image.NewRGBA(image.Rect(0, 0, 100, 200))
+	for y := range 200 {
+		for x := range 100 {
+			src.Set(x, y, color.RGBA{R: 200, G: uint8(y * 255 / 200), B: uint8(x * 255 / 100), A: 255})
+		}
+	}
+	var jbuf bytes.Buffer
+	require.NoError(t, jpeg.Encode(&jbuf, src, &jpeg.Options{Quality: 80}))
+	jpegBytes := jbuf.Bytes()
+
+	var buf bytes.Buffer
+	buf.WriteString("II")
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(42))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(8))
+
+	// 3 entries: Orientation (274), JPEGInterchangeFormat (513),
+	// JPEGInterchangeFormatLength (514).
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(3))
+	ifdSize := uint32(2 + 3*12 + 4)
+	jpegOffset := uint32(8) + ifdSize
+
+	// Orientation tag: type=SHORT(3), count=1, value packed into first
+	// 2 bytes of the 4-byte value slot (little-endian).
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(274))
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(3))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(1))
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(orient))
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(0))
+
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(513))
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(4))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(1))
+	_ = binary.Write(&buf, binary.LittleEndian, jpegOffset)
+
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(514))
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(4))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(1))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(len(jpegBytes)))
+
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(0))
+	buf.Write(jpegBytes)
+	return buf.Bytes()
+}
+
+// TestExtractPreviewAppliesOrientation6 confirms that a RAW whose TIFF
+// Orientation tag is 6 (rotate 90° CW) gets the rotation baked into
+// the decoded preview. Without this, portrait RAW previews render
+// sideways even though the main image orientation is correct.
+func TestExtractPreviewAppliesOrientation6(t *testing.T) {
+	r := require.New(t)
+	raw := buildSyntheticTIFFWithPreviewAndOrientation(t, 6)
+
+	img, err := thumb.ExtractPreview(bytes.NewReader(raw))
+	r.NoError(err)
+	r.Equal(200, img.Bounds().Dx(), "orientation=6 should swap W/H")
+	r.Equal(100, img.Bounds().Dy())
+}
+
+// TestExtractPreviewOrientation1Identity confirms that the common case
+// (explicit orientation=1, i.e. identity) returns the preview
+// unchanged, matching the no-tag default.
+func TestExtractPreviewOrientation1Identity(t *testing.T) {
+	r := require.New(t)
+	raw := buildSyntheticTIFFWithPreviewAndOrientation(t, 1)
+
+	img, err := thumb.ExtractPreview(bytes.NewReader(raw))
+	r.NoError(err)
+	r.Equal(100, img.Bounds().Dx())
+	r.Equal(200, img.Bounds().Dy())
+}
