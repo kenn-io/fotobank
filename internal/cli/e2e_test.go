@@ -23,13 +23,15 @@ func TestEndToEndServerStubPrincipal(t *testing.T) {
 	r.NoError(os.WriteFile(cfg, fmt.Appendf(nil, `
 [nas]
 root = %q
+[flash]
+root = %q
 [identity.stub]
 hub = "local"
 user_id = "alice"
 handle = "Alice"
 [http]
 listen_address = "127.0.0.1:0"
-`, filepath.Join(tmp, "nas")), 0o600))
+`, filepath.Join(tmp, "nas"), filepath.Join(tmp, "flash")), 0o600))
 	t.Setenv("FOTOBANK_CONFIG", cfg)
 	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
 	addrSink := filepath.Join(tmp, "addr")

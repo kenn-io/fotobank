@@ -20,13 +20,20 @@ import (
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/httpapi"
 	"github.com/wesm/fotobank/internal/identity"
+	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service"
+	"github.com/wesm/fotobank/internal/storage"
 )
 
 // shutdownTimeout bounds how long graceful shutdown waits for in-flight
 // requests to drain before the server forcibly closes connections.
 const shutdownTimeout = 30 * time.Second
+
+// flashEvictInterval is how often the background janitor runs after the
+// initial startup eviction. One eviction a day keeps the flash footprint
+// bounded without thrashing the NAS on every request.
+const flashEvictInterval = 24 * time.Hour
 
 func newServerCmd() *cobra.Command {
 	var (
@@ -92,14 +99,26 @@ func runServer(ctx context.Context, opts serverOpts) error {
 
 	ownerSvc := service.NewOwnerService(owners.NewRepo(d.WriteDB(), d.ReadDB()))
 
+	// buildIdentityProvider must run first: stub mode inserts the
+	// configured owner row, and the subsequent loadStorageKeys() call
+	// needs that row to construct the storage key map.
 	idp, err := buildIdentityProvider(ctx, cfg, ownerSvc)
 	if err != nil {
 		return err
 	}
 
+	keys, err := loadStorageKeys(ctx, ownerSvc)
+	if err != nil {
+		return err
+	}
+	storeLayer, flashCache := buildStorageLayer(cfg, keys)
+
+	mediaSvc := service.NewMediaService(media.NewRepo(d.WriteDB(), d.ReadDB()), storeLayer)
+
 	handler, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: idp,
 		OwnerService:     ownerSvc,
+		MediaService:     mediaSvc,
 	})
 	if err != nil {
 		return err
@@ -124,6 +143,16 @@ func runServer(ctx context.Context, opts serverOpts) error {
 
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Run one eviction synchronously before Serve so a freshly booted
+	// server with a stale flash cache doesn't wait a full interval for
+	// cleanup, and so a fatal bug in Evict is visible at boot.
+	if flashCache != nil {
+		if err := flashCache.Evict(sigCtx); err != nil {
+			fmt.Fprintln(opts.stderr, "initial flash eviction failed:", err)
+		}
+		go runFlashJanitor(sigCtx, flashCache, opts.stderr)
+	}
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -202,5 +231,57 @@ func buildIdentityProvider(
 		}, guard), nil
 	default:
 		return nil, fmt.Errorf("unknown identity mode %q", cfg.Identity.Mode)
+	}
+}
+
+// loadStorageKeys reads every registered owner and returns the map that
+// the storage layer uses to resolve per-owner filesystem prefixes. The
+// map is a snapshot: owners added after server start are not visible
+// until the server is restarted (Plan B accepts this; dynamic refresh
+// lands in Plan D).
+func loadStorageKeys(ctx context.Context, ownerSvc *service.OwnerService) (map[owners.Principal]string, error) {
+	list, err := ownerSvc.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load owners: %w", err)
+	}
+	keys := make(map[owners.Principal]string, len(list))
+	for _, o := range list {
+		keys[o.Principal] = o.StorageKey
+	}
+	return keys, nil
+}
+
+// buildStorageLayer assembles the Store implementation dictated by
+// cfg.Storage.Mode. When mode is "flash_cache" the returned *FlashCache
+// is non-nil so the caller can drive its daily janitor; otherwise it's
+// nil and the NAS-only Store is returned. cfg.Validate already rejects
+// unknown modes, so the default branch here is defensive.
+func buildStorageLayer(cfg *config.Config, keys map[owners.Principal]string) (storage.Store, *storage.FlashCache) {
+	nasStore := storage.NewNASOnly(cfg.NAS.Root, keys)
+	if cfg.Storage.Mode != "flash_cache" {
+		return nasStore, nil
+	}
+	fc := storage.NewFlashCache(nasStore, cfg.Flash.Root, keys, storage.FlashCacheOptions{
+		OriginalsCacheDays:     cfg.Storage.OriginalsCacheDays,
+		OriginalsCacheMaxMedia: cfg.Storage.OriginalsCacheMaxMedia,
+	})
+	return fc, fc
+}
+
+// runFlashJanitor drives FlashCache.Evict on a fixed interval until
+// ctx is cancelled. Eviction errors are logged to stderr rather than
+// fatal — a transient filesystem hiccup should not crash the server.
+func runFlashJanitor(ctx context.Context, fc *storage.FlashCache, stderr io.Writer) {
+	ticker := time.NewTicker(flashEvictInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := fc.Evict(ctx); err != nil {
+				fmt.Fprintln(stderr, "flash eviction failed:", err)
+			}
+		}
 	}
 }
