@@ -187,11 +187,22 @@ UPDATE media
 // argument is accepted so callers can pass the decode/encode error
 // verbatim; it is not persisted today but reserved for future use
 // (e.g. a thumb_error column). Same fence semantics as MarkReady.
-func (q *Queue) MarkFailed(ctx context.Context, id string, version int, token time.Time, _ error) error {
+func (q *Queue) MarkFailed(
+	ctx context.Context,
+	id string,
+	version int,
+	token time.Time,
+	_ error,
+) error {
 	return q.finalize(ctx, markFailedSQL, id, version, token)
 }
 
-func (q *Queue) finalize(ctx context.Context, query, id string, version int, token time.Time) error {
+func (q *Queue) finalize(
+	ctx context.Context,
+	query, id string,
+	version int,
+	token time.Time,
+) error {
 	res, err := q.rw.ExecContext(ctx, query, time.Now().UTC(), id, version, token)
 	if err != nil {
 		return fmt.Errorf("finalize %s: %w", id, err)

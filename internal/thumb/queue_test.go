@@ -2,6 +2,8 @@ package thumb_test
 
 import (
 	"context"
+	"database/sql"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 // the opened Queue.
 type queueFixture struct {
 	q     *thumb.Queue
+	rw    *sql.DB
 	owner owners.Principal
 	ids   []string
 }
@@ -51,7 +54,7 @@ func newQueueFixture(t *testing.T, nRows int) queueFixture {
 		require.NoError(t, repo.Insert(context.Background(), m))
 		ids[i] = m.ID
 	}
-	return queueFixture{q: q, owner: p, ids: ids}
+	return queueFixture{q: q, rw: d.WriteDB(), owner: p, ids: ids}
 }
 
 func TestClaimBatchReturnsRowsAndMarksWorking(t *testing.T) {
@@ -66,21 +69,53 @@ func TestClaimBatchReturnsRowsAndMarksWorking(t *testing.T) {
 	}
 }
 
-func TestClaimBatchIsAtomicAcrossCallers(t *testing.T) {
+func TestClaimBatchPartitionsRowsUnderConcurrency(t *testing.T) {
 	r := require.New(t)
-	fx := newQueueFixture(t, 3)
+	const (
+		goroutines = 4
+		totalRows  = 3
+		claimSize  = 10
+	)
+	fx := newQueueFixture(t, totalRows)
 
-	a, err := fx.q.ClaimBatch(context.Background(), 10)
-	r.NoError(err)
-	b, err := fx.q.ClaimBatch(context.Background(), 10)
-	r.NoError(err)
-	r.Equal(3, len(a)+len(b))
-
-	seen := map[string]bool{}
-	for _, c := range append(a, b...) {
-		r.False(seen[c.Media.ID], "row %s claimed twice", c.Media.ID)
-		seen[c.Media.ID] = true
+	var (
+		wg     sync.WaitGroup
+		mu     sync.Mutex
+		seen   = map[string]int{}
+		dups   []string
+		errs   []error
+		counts = make([]int, goroutines)
+	)
+	for i := range goroutines {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			claims, err := fx.q.ClaimBatch(context.Background(), claimSize)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+				return
+			}
+			counts[idx] = len(claims)
+			for _, c := range claims {
+				if _, ok := seen[c.Media.ID]; ok {
+					dups = append(dups, c.Media.ID)
+				}
+				seen[c.Media.ID] = idx
+			}
+		}(i)
 	}
+	wg.Wait()
+
+	r.Empty(errs, "no goroutine should error")
+	r.Empty(dups, "rows claimed by more than one goroutine")
+	total := 0
+	for _, c := range counts {
+		total += c
+	}
+	r.Equal(totalRows, total, "sum of claims must equal total pending rows")
+	r.Len(seen, totalRows, "every pending row must be claimed by exactly one goroutine")
 }
 
 func TestMarkReadySucceedsWithMatchingToken(t *testing.T) {
@@ -155,4 +190,43 @@ func TestRegenerateWhileWorkingLosesClaim(t *testing.T) {
 
 	err = fx.q.MarkReady(context.Background(), c.Media.ID, c.Media.ThumbVersion, c.ClaimedAt)
 	r.ErrorIs(err, thumb.ErrClaimLost)
+
+	next, err := fx.q.ClaimBatch(context.Background(), 1)
+	r.NoError(err)
+	r.Len(next, 1)
+	r.Equal(c.Media.ThumbVersion+1, next[0].Media.ThumbVersion,
+		"Enqueue must bump thumb_version, not merely reset status")
+}
+
+func TestMarkNoPreviewSucceedsAndSetsStatus(t *testing.T) {
+	r := require.New(t)
+	fx := newQueueFixture(t, 1)
+	claims, err := fx.q.ClaimBatch(context.Background(), 1)
+	r.NoError(err)
+	c := claims[0]
+
+	r.NoError(fx.q.MarkNoPreview(
+		context.Background(), c.Media.ID, c.Media.ThumbVersion, c.ClaimedAt))
+	r.Equal("no_preview", readThumbStatus(t, fx.rw, c.Media.ID))
+}
+
+func TestMarkFailedSucceedsAndSetsStatus(t *testing.T) {
+	r := require.New(t)
+	fx := newQueueFixture(t, 1)
+	claims, err := fx.q.ClaimBatch(context.Background(), 1)
+	r.NoError(err)
+	c := claims[0]
+
+	r.NoError(fx.q.MarkFailed(
+		context.Background(), c.Media.ID, c.Media.ThumbVersion, c.ClaimedAt, nil))
+	r.Equal("failed", readThumbStatus(t, fx.rw, c.Media.ID))
+}
+
+func readThumbStatus(t *testing.T, rw *sql.DB, id string) string {
+	t.Helper()
+	var status string
+	err := rw.QueryRowContext(context.Background(),
+		`SELECT thumb_status FROM media WHERE id = ?`, id).Scan(&status)
+	require.NoError(t, err)
+	return status
 }
