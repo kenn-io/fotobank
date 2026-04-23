@@ -252,6 +252,63 @@ func TestMediaInsertUniqueViolationsDistinguishSentinels(t *testing.T) {
 	r.ErrorIs(err, errs.ErrAlreadyExists)
 }
 
+func TestMediaListAllReturnsEveryRow(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+
+	p := testOwner()
+	_, err := d.WriteDB().ExecContext(ctx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "sk-all", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	for i := range 3 {
+		m := baseMedia(uuid.NewString(), p)
+		m.Path = "2024/all-" + string(rune('a'+i)) + ".jpg"
+		m.Checksum = "cs-all-" + string(rune('a'+i))
+		r.NoError(repo.Insert(ctx, m))
+	}
+
+	rows, err := repo.ListAll(ctx, p)
+	r.NoError(err)
+	r.Len(rows, 3)
+}
+
+func TestMediaDeleteRemovesRow(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+
+	p := testOwner()
+	_, err := d.WriteDB().ExecContext(ctx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "sk-del", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	m := baseMedia(uuid.NewString(), p)
+	r.NoError(repo.Insert(ctx, m))
+
+	r.NoError(repo.Delete(ctx, m.ID))
+
+	_, err = repo.GetByID(ctx, m.ID)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestMediaDeleteUnknownIDReturnsErrNotFound(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+
+	err := repo.Delete(ctx, uuid.NewString())
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
 func TestMediaGetByOwnerChecksum(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()

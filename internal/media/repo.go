@@ -198,6 +198,42 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Media, error) {
 	return out, nil
 }
 
+// ListAll returns every media row for owner, paging through the database
+// in batches of defaultListLimit. It is intended for bulk operations such
+// as reconcile; user-facing queries should use List with an explicit Limit.
+func (r *Repo) ListAll(ctx context.Context, owner owners.Principal) ([]Media, error) {
+	var out []Media
+	offset := 0
+	for {
+		page, err := r.List(ctx, ListFilter{Owner: owner, Limit: defaultListLimit, Offset: offset})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page...)
+		if len(page) < defaultListLimit {
+			return out, nil
+		}
+		offset += defaultListLimit
+	}
+}
+
+// Delete removes the media row with the given id. Returns errs.ErrNotFound
+// if no such row exists.
+func (r *Repo) Delete(ctx context.Context, id string) error {
+	res, err := r.rw.ExecContext(ctx, `DELETE FROM media WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete media: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete media rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: media id=%s", errs.ErrNotFound, id)
+	}
+	return nil
+}
+
 // rowScanner is the common surface of *sql.Row and *sql.Rows for Scan.
 type rowScanner interface {
 	Scan(dest ...any) error
