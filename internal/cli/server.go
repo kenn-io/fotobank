@@ -24,6 +24,7 @@ import (
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service"
 	"github.com/wesm/fotobank/internal/storage"
+	"github.com/wesm/fotobank/internal/thumb"
 )
 
 // shutdownTimeout bounds how long graceful shutdown waits for in-flight
@@ -115,10 +116,18 @@ func runServer(ctx context.Context, opts serverOpts) error {
 
 	mediaSvc := service.NewMediaService(media.NewRepo(d.WriteDB(), d.ReadDB()), storeLayer)
 
+	thumbQueue := thumb.NewQueue(d.WriteDB(), d.ReadDB())
+	thumbSvc := service.NewThumbService(
+		media.NewRepo(d.WriteDB(), d.ReadDB()),
+		thumbQueue,
+		storeLayer,
+	)
+
 	handler, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: idp,
 		OwnerService:     ownerSvc,
 		MediaService:     mediaSvc,
+		ThumbService:     thumbSvc,
 	})
 	if err != nil {
 		return err
@@ -153,6 +162,17 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		}
 		go runFlashJanitor(sigCtx, flashCache, opts.stderr)
 	}
+
+	thumbWorker := thumb.NewWorker(thumbQueue, storeLayer, thumb.Config{
+		WorkerConcurrency: cfg.Thumbs.WorkerConcurrency,
+		PollInterval:      cfg.Thumbs.PollInterval,
+		LeaseTimeout:      cfg.Thumbs.LeaseTimeout,
+	})
+	go func() {
+		if err := thumbWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(opts.stderr, "thumb worker exited:", err)
+		}
+	}()
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -273,6 +293,10 @@ func buildStorageLayer(cfg *config.Config, keys map[owners.Principal]string) (st
 		OriginalsCacheDays:     cfg.Storage.OriginalsCacheDays,
 		OriginalsCacheMaxMedia: cfg.Storage.OriginalsCacheMaxMedia,
 	})
+	if cfg.Storage.ThumbsCacheEnabled {
+		thumbsCacheRoot := filepath.Join(cfg.Flash.Root, "thumbs")
+		fc.EnableThumbs(thumbsCacheRoot)
+	}
 	return fc, fc
 }
 

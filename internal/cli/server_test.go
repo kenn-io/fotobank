@@ -12,8 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/wesm/fotobank/internal/cli"
+	"github.com/wesm/fotobank/internal/db"
+	"github.com/wesm/fotobank/internal/media"
+	"github.com/wesm/fotobank/internal/owners"
 )
 
 func TestServerRespondsToHealthz(t *testing.T) {
@@ -69,6 +73,101 @@ listen_address = "127.0.0.1:0"
 	case <-time.After(5 * time.Second):
 		r.Fail("server did not shut down within 5s")
 	}
+}
+
+func TestServerDrainsPendingThumbRow(t *testing.T) {
+	// Smoke test: seed a ready JPEG row pre-import, boot the server,
+	// poll until thumb_status becomes 'ready' (worker has drained it).
+	// Uses the existing photo-with-timestamp fixture as the source.
+	r := require.New(t)
+	tmp := t.TempDir()
+	nasRoot := filepath.Join(tmp, "nas")
+	r.NoError(os.MkdirAll(filepath.Join(nasRoot, "u", "2024"), 0o700))
+	// Place a source JPEG where NASOnly expects it.
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "photo-with-timestamp.jpg"))
+	r.NoError(err)
+	srcPath := filepath.Join(nasRoot, "u", "2024", "a.jpg")
+	r.NoError(os.WriteFile(srcPath, fixture, 0o600))
+
+	cfgPath := filepath.Join(tmp, "c.toml")
+	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
+[nas]
+root = %q
+[flash]
+root = %q
+[identity]
+mode = "stub"
+[identity.stub]
+hub = "h"
+user_id = "u"
+[http]
+listen_address = "127.0.0.1:0"
+[thumbs]
+poll_interval = "20ms"
+worker_concurrency = 1
+`, nasRoot, filepath.Join(tmp, "flash")), 0o600))
+
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_CONFIG", cfgPath)
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	// Migrate the DB by opening+closing once, then insert a pending row.
+	d, err := db.Open(dbPath)
+	r.NoError(err)
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	_, err = d.WriteDB().ExecContext(context.Background(),
+		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "u", time.Now().UTC(),
+	)
+	r.NoError(err)
+	mediaID := uuid.NewString()
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	r.NoError(repo.Insert(context.Background(), media.Media{
+		ID: mediaID, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "2024/a.jpg", ImportedAt: time.Now().UTC(),
+		Size: int64(len(fixture)), Checksum: mediaID, ThumbStatus: "pending",
+	}))
+	_ = d.Close()
+
+	addrFile := filepath.Join(tmp, "addr")
+	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan int, 1)
+	go func() {
+		var out, eout bytes.Buffer
+		errCh <- cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &out, &eout)
+	}()
+
+	// Wait for boot.
+	for range 100 {
+		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Poll DB until the worker drains the row.
+	deadline := time.Now().Add(10 * time.Second)
+	d2, err := db.Open(dbPath)
+	r.NoError(err)
+	repo2 := media.NewRepo(d2.WriteDB(), d2.ReadDB())
+	for time.Now().Before(deadline) {
+		got, err := repo2.GetByID(context.Background(), mediaID)
+		r.NoError(err)
+		if got.ThumbStatus == "ready" {
+			_ = d2.Close()
+			cancel()
+			<-errCh
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	_ = d2.Close()
+	cancel()
+	<-errCh
+	r.Fail("worker did not drain pending row within 10s")
 }
 
 func TestFlashJanitorLeavesSiblingFlashStateAlone(t *testing.T) {
