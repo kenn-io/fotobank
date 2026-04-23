@@ -57,6 +57,14 @@ func newQueueFixture(t *testing.T, nRows int) queueFixture {
 	return queueFixture{q: q, rw: d.WriteDB(), owner: p, ids: ids}
 }
 
+func claimOne(t *testing.T, q *thumb.Queue) thumb.Claim {
+	t.Helper()
+	claims, err := q.ClaimBatch(context.Background(), 1)
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
+	return claims[0]
+}
+
 func TestClaimBatchReturnsRowsAndMarksWorking(t *testing.T) {
 	r := require.New(t)
 	fx := newQueueFixture(t, 3)
@@ -132,21 +140,17 @@ func TestMarkReadySucceedsWithMatchingToken(t *testing.T) {
 func TestMarkReadyReturnsErrClaimLostOnStaleToken(t *testing.T) {
 	r := require.New(t)
 	fx := newQueueFixture(t, 1)
-	claims, err := fx.q.ClaimBatch(context.Background(), 1)
-	r.NoError(err)
-	c := claims[0]
+	c := claimOne(t, fx.q)
 
 	stale := c.ClaimedAt.Add(-time.Hour)
-	err = fx.q.MarkReady(context.Background(), c.Media.ID, c.Media.ThumbVersion, stale)
+	err := fx.q.MarkReady(context.Background(), c.Media.ID, c.Media.ThumbVersion, stale)
 	r.ErrorIs(err, thumb.ErrClaimLost)
 }
 
 func TestSweepLeasesBumpsVersionAndResetsClaim(t *testing.T) {
 	r := require.New(t)
 	fx := newQueueFixture(t, 1)
-	claims, err := fx.q.ClaimBatch(context.Background(), 1)
-	r.NoError(err)
-	c := claims[0]
+	c := claimOne(t, fx.q)
 
 	n, err := fx.q.SweepLeases(context.Background(), 0)
 	r.NoError(err)
@@ -180,11 +184,9 @@ func TestEnqueueBumpsVersionForMatchingRows(t *testing.T) {
 func TestRegenerateWhileWorkingLosesClaim(t *testing.T) {
 	r := require.New(t)
 	fx := newQueueFixture(t, 1)
-	claims, err := fx.q.ClaimBatch(context.Background(), 1)
-	r.NoError(err)
-	c := claims[0]
+	c := claimOne(t, fx.q)
 
-	_, err = fx.q.Enqueue(context.Background(),
+	_, err := fx.q.Enqueue(context.Background(),
 		thumb.EnqueueFilter{IDs: []string{c.Media.ID}, Owner: fx.owner})
 	r.NoError(err)
 
@@ -201,9 +203,7 @@ func TestRegenerateWhileWorkingLosesClaim(t *testing.T) {
 func TestMarkNoPreviewSucceedsAndSetsStatus(t *testing.T) {
 	r := require.New(t)
 	fx := newQueueFixture(t, 1)
-	claims, err := fx.q.ClaimBatch(context.Background(), 1)
-	r.NoError(err)
-	c := claims[0]
+	c := claimOne(t, fx.q)
 
 	r.NoError(fx.q.MarkNoPreview(
 		context.Background(), c.Media.ID, c.Media.ThumbVersion, c.ClaimedAt))
@@ -213,9 +213,7 @@ func TestMarkNoPreviewSucceedsAndSetsStatus(t *testing.T) {
 func TestMarkFailedSucceedsAndSetsStatus(t *testing.T) {
 	r := require.New(t)
 	fx := newQueueFixture(t, 1)
-	claims, err := fx.q.ClaimBatch(context.Background(), 1)
-	r.NoError(err)
-	c := claims[0]
+	c := claimOne(t, fx.q)
 
 	r.NoError(fx.q.MarkFailed(
 		context.Background(), c.Media.ID, c.Media.ThumbVersion, c.ClaimedAt, nil))
