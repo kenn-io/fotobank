@@ -183,6 +183,34 @@ func TestRepoGetDetailByIDWithReadyCover(t *testing.T) {
 	r.Equal(3, got.Cover.ThumbVersion)
 }
 
+// TestRepoGetDetailByIDSkipsNewerPendingForOlderReady forces the
+// thumb_status = 'ready' filter to do work: without it, ROW_NUMBER OVER
+// (ORDER BY added_at DESC) would pick the newer pending row as cover.
+// With the filter, the older ready row is selected.
+func TestRepoGetDetailByIDSkipsNewerPendingForOlderReady(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	a := seedAlbum(t, repo, p, "Trip")
+
+	older := uuid.NewString()
+	newer := uuid.NewString()
+	seedMediaRow(t, d.WriteDB(), p, older, "cs-o", "ready", 2)
+	seedMediaRow(t, d.WriteDB(), p, newer, "cs-n", "pending", 0)
+	base := time.Now().UTC().Truncate(time.Second)
+	seedAlbumMedia(t, d.WriteDB(), a.ID, older, base)
+	seedAlbumMedia(t, d.WriteDB(), a.ID, newer, base.Add(time.Second))
+
+	got, err := repo.GetDetailByID(context.Background(), a.ID)
+	r.NoError(err)
+	r.Equal(2, got.ItemCount)
+	r.NotNil(got.Cover)
+	r.Equal(older, got.Cover.MediaID, "ready filter must exclude newer pending")
+	r.Equal(2, got.Cover.ThumbVersion)
+}
+
 func TestRepoGetDetailByIDPendingOnlyNilCover(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
