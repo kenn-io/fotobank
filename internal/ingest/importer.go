@@ -1,0 +1,281 @@
+package ingest
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/wesm/fotobank/internal/errs"
+	"github.com/wesm/fotobank/internal/exifread"
+	"github.com/wesm/fotobank/internal/media"
+	"github.com/wesm/fotobank/internal/owners"
+	"github.com/wesm/fotobank/internal/storage"
+)
+
+// maxPhotoSeqAttempts bounds how many times we retry a timestamped
+// photo path with a bumped sequence suffix before giving up. In
+// practice this limit is never reached under correct usage.
+const maxPhotoSeqAttempts = 16
+
+// Options controls an import run.
+type Options struct {
+	Owner             owners.Principal
+	ConcurrentWorkers int
+}
+
+// Result summarises an import run.
+type Result struct {
+	Imported       int
+	Duplicates     int
+	PathCollisions int
+	Failures       []error
+}
+
+// Importer wires discovery to extraction, storage, and the media repo.
+type Importer struct {
+	store storage.Store
+	repo  *media.Repo
+	now   func() time.Time
+}
+
+// NewImporter constructs an Importer with the default UTC wall clock.
+func NewImporter(store storage.Store, repo *media.Repo) *Importer {
+	return &Importer{store: store, repo: repo, now: func() time.Time { return time.Now().UTC() }}
+}
+
+// candidateOutcome is what a worker reports per candidate.
+type candidateOutcome struct {
+	imported      bool
+	duplicate     bool
+	pathCollision bool
+	err           error
+}
+
+// ImportDirectory walks root, imports every supported candidate, and
+// returns a summary. Callers must hold the import file lock before
+// invoking this.
+func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Options) (Result, error) {
+	var candidates []Candidate
+	if err := Discover(root, func(c Candidate) error {
+		candidates = append(candidates, c)
+		return nil
+	}); err != nil {
+		return Result{}, fmt.Errorf("discover: %w", err)
+	}
+	if len(candidates) == 0 {
+		return Result{}, nil
+	}
+
+	workers := max(opts.ConcurrentWorkers, 1)
+	jobs := make(chan Candidate, len(candidates))
+	results := make(chan candidateOutcome, len(candidates))
+
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() {
+			for c := range jobs {
+				if err := ctx.Err(); err != nil {
+					results <- candidateOutcome{err: err}
+					continue
+				}
+				results <- imp.processCandidate(ctx, c, opts.Owner)
+			}
+		})
+	}
+	for _, c := range candidates {
+		jobs <- c
+	}
+	close(jobs)
+	wg.Wait()
+	close(results)
+
+	var res Result
+	for out := range results {
+		switch {
+		case out.imported:
+			res.Imported++
+		case out.duplicate:
+			res.Duplicates++
+		case out.pathCollision:
+			res.PathCollisions++
+		}
+		if out.err != nil {
+			res.Failures = append(res.Failures, out.err)
+		}
+	}
+	return res, nil
+}
+
+// processCandidate runs the full per-file pipeline: checksum, dedup
+// lookup, extract, write, insert. It returns a candidateOutcome that
+// the caller accumulates into Result.
+func (imp *Importer) processCandidate(ctx context.Context, c Candidate, owner owners.Principal) candidateOutcome {
+	info, err := os.Stat(c.Path)
+	if err != nil {
+		return candidateOutcome{err: fmt.Errorf("stat %s: %w", c.Path, err)}
+	}
+	checksum, err := Checksum(c.Path)
+	if err != nil {
+		return candidateOutcome{err: fmt.Errorf("checksum %s: %w", c.Path, err)}
+	}
+	if _, err := imp.repo.GetByOwnerChecksum(ctx, owner, checksum); err == nil {
+		return candidateOutcome{duplicate: true}
+	} else if !errors.Is(err, errs.ErrNotFound) {
+		return candidateOutcome{err: fmt.Errorf("dedup lookup %s: %w", c.Path, err)}
+	}
+
+	meta := extractMetadata(c)
+
+	key, collided, err := imp.writeBytes(ctx, c, owner, meta.Timestamp, checksum)
+	if err != nil {
+		return candidateOutcome{err: fmt.Errorf("write %s: %w", c.Path, err)}
+	}
+	if collided {
+		return candidateOutcome{pathCollision: true, err: fmt.Errorf("path collision for %s", c.Path)}
+	}
+
+	m := buildMediaRow(c, owner, key, checksum, info.Size(), meta, imp.now())
+	if err := imp.repo.Insert(ctx, m); err != nil {
+		if errors.Is(err, errs.ErrAlreadyExists) {
+			_ = imp.store.Delete(ctx, owner, key)
+			return candidateOutcome{duplicate: true}
+		}
+		_ = imp.store.Delete(ctx, owner, key)
+		return candidateOutcome{err: fmt.Errorf("insert %s: %w", c.Path, err)}
+	}
+	return candidateOutcome{imported: true}
+}
+
+// extractMetadata calls the photo or video extractor and swallows any
+// extraction error — the master spec says a file with unreadable
+// metadata still imports with Timestamp=nil.
+func extractMetadata(c Candidate) exifread.Metadata {
+	switch c.Type {
+	case media.TypePhoto:
+		m, err := exifread.ExtractPhoto(c.Path)
+		if err != nil {
+			return exifread.Metadata{}
+		}
+		return m
+	case media.TypeVideo:
+		m, err := exifread.ExtractVideo(c.Path, c.MimeType)
+		if err != nil {
+			return exifread.Metadata{}
+		}
+		return m
+	}
+	return exifread.Metadata{}
+}
+
+// writeBytes resolves the canonical storage key and streams the source
+// file into the store. For photos it retries with a bumped sequence on
+// ErrPathOccupied; for videos it reports a collision so the caller can
+// flag it as a pathCollision outcome.
+func (imp *Importer) writeBytes(ctx context.Context, c Candidate, owner owners.Principal, ts *time.Time, checksum string) (string, bool, error) {
+	switch c.Type {
+	case media.TypeVideo:
+		key := resolveVideoPath(c.Path, checksum)
+		landed, err := imp.streamToStore(ctx, owner, key, c.Path)
+		if errors.Is(err, storage.ErrPathOccupied) {
+			return "", true, nil
+		}
+		if err != nil {
+			return "", false, err
+		}
+		return landed, false, nil
+	default:
+		for seq := range maxPhotoSeqAttempts {
+			key := resolvePhotoPath(c.Path, ts, seq)
+			landed, err := imp.streamToStore(ctx, owner, key, c.Path)
+			if err == nil {
+				return landed, false, nil
+			}
+			if !errors.Is(err, storage.ErrPathOccupied) {
+				return "", false, err
+			}
+		}
+		return "", true, nil
+	}
+}
+
+// streamToStore opens src and hands it to the Store.Write no-clobber
+// finalize. The file is closed before this function returns.
+func (imp *Importer) streamToStore(ctx context.Context, owner owners.Principal, key, src string) (string, error) {
+	f, err := os.Open(src)
+	if err != nil {
+		return "", fmt.Errorf("open source: %w", err)
+	}
+	defer f.Close()
+	return imp.store.Write(ctx, owner, key, f)
+}
+
+// buildMediaRow assembles the media row. Nullable metadata fields are
+// only populated when we actually have a value.
+func buildMediaRow(c Candidate, owner owners.Principal, key, checksum string, size int64, meta exifread.Metadata, importedAt time.Time) media.Media {
+	m := media.Media{
+		ID:               uuid.NewString(),
+		Owner:            owner,
+		Type:             c.Type,
+		MimeType:         c.MimeType,
+		Path:             key,
+		OriginalFilename: c.Path,
+		ImportedAt:       importedAt,
+		Timestamp:        meta.Timestamp,
+		Size:             size,
+		Checksum:         checksum,
+		Make:             meta.Make,
+		Model:            meta.Model,
+		FocalLength:      meta.FocalLength,
+		Shutter:          meta.ShutterSpeed,
+		ThumbStatus:      "pending",
+	}
+	if meta.Width > 0 {
+		w := meta.Width
+		m.Width = &w
+	}
+	if meta.Height > 0 {
+		h := meta.Height
+		m.Height = &h
+	}
+	if meta.ISO > 0 {
+		iso := meta.ISO
+		m.ISO = &iso
+	}
+	if meta.Aperture > 0 {
+		a := meta.Aperture
+		m.Aperture = &a
+	}
+	if meta.DurationMs > 0 {
+		d := meta.DurationMs
+		m.DurationMs = &d
+	}
+	return m
+}
+
+// resolvePhotoPath returns {YYYY}/{YYYYMMDD_HHMMSS_SEQ}.ext for a photo
+// with a known timestamp, or unknown_date/{basename_SEQ}.ext otherwise.
+// seq starts at 0; the caller bumps on ErrPathOccupied.
+func resolvePhotoPath(sourcePath string, ts *time.Time, seq int) string {
+	ext := filepath.Ext(sourcePath)
+	if ts != nil {
+		year := ts.UTC().Format("2006")
+		base := ts.UTC().Format("20060102_150405")
+		return path.Join(year, fmt.Sprintf("%s_%d%s", base, seq, ext))
+	}
+	name := strings.TrimSuffix(filepath.Base(sourcePath), ext)
+	return path.Join("unknown_date", fmt.Sprintf("%s_%d%s", name, seq, ext))
+}
+
+// resolveVideoPath returns movies/{md5}.{ext}.
+func resolveVideoPath(sourcePath, checksum string) string {
+	ext := filepath.Ext(sourcePath)
+	return path.Join("movies", checksum+ext)
+}
