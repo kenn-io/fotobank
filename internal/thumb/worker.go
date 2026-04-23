@@ -20,38 +20,39 @@ const defaultSweepInterval = time.Minute
 
 // Config tunes the Worker's scheduling knobs. Zero values are treated as
 // "use a conservative default" so callers can leave unused fields blank.
+// Defaults match the production values in the thumbnail plan.
 type Config struct {
 	// WorkerConcurrency caps how many rows are decoded/encoded
 	// concurrently inside drain. Each claim runs in its own goroutine
-	// bounded by a semaphore. Defaults to 1.
+	// bounded by a semaphore. Defaults to 4.
 	WorkerConcurrency int
 	// PollInterval is how often runPoll triggers a drain cycle.
-	// Defaults to 1s.
+	// Defaults to 5s.
 	PollInterval time.Duration
 	// LeaseTimeout is how long a working row may remain un-finalized
 	// before SweepLeases reclaims it. Per-item processing is bounded
 	// to LeaseTimeout/2 so the worker surrenders gracefully before a
-	// sweep bumps the version. Defaults to 5m.
+	// sweep bumps the version. Defaults to 10m.
 	LeaseTimeout time.Duration
 }
 
 func (c Config) concurrency() int {
 	if c.WorkerConcurrency <= 0 {
-		return 1
+		return 4
 	}
 	return c.WorkerConcurrency
 }
 
 func (c Config) pollInterval() time.Duration {
 	if c.PollInterval <= 0 {
-		return time.Second
+		return 5 * time.Second
 	}
 	return c.PollInterval
 }
 
 func (c Config) leaseTimeout() time.Duration {
 	if c.LeaseTimeout <= 0 {
-		return 5 * time.Minute
+		return 10 * time.Minute
 	}
 	return c.LeaseTimeout
 }
@@ -79,7 +80,9 @@ func NewWorker(q *Queue, store storage.Store, cfg Config) *Worker {
 // Run drives the worker until ctx is cancelled. Spawns two goroutines:
 // runPoll (drains on PollInterval) and runSweep (calls SweepLeases every
 // defaultSweepInterval). Sweep runs independently so a stuck decode in
-// drain cannot delay lease recovery. Returns nil on graceful shutdown.
+// drain cannot delay lease recovery. Returns ctx.Err() so callers can
+// distinguish context.Canceled (graceful shutdown) from
+// context.DeadlineExceeded (forced).
 func (w *Worker) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -92,7 +95,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		w.runSweep(ctx)
 	}()
 	wg.Wait()
-	return nil
+	return ctx.Err()
 }
 
 func (w *Worker) runPoll(ctx context.Context) {
@@ -131,6 +134,12 @@ func (w *Worker) runSweep(ctx context.Context) {
 // parallel, bounded by a semaphore. Per-item contexts cap each
 // processOne at LeaseTimeout/2 so a slow decoder releases its slot
 // before the sweep would bump its version.
+//
+// wg.Wait is deferred so early-return paths (ctx cancelled while the
+// loop is back-pressured on the semaphore) still wait for launched
+// goroutines to exit before drain returns. Without this, in-flight
+// processOne goroutines would outlive Run and keep references to the
+// SQL DB and Storage backend that the caller may be tearing down.
 func (w *Worker) drain(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
@@ -147,6 +156,7 @@ func (w *Worker) drain(ctx context.Context) {
 	itemTimeout := w.cfg.leaseTimeout() / 2
 	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup
+	defer wg.Wait()
 	for _, c := range claims {
 		select {
 		case <-ctx.Done():
@@ -162,7 +172,6 @@ func (w *Worker) drain(ctx context.Context) {
 			w.processOne(itemCtx, c)
 		}(c)
 	}
-	wg.Wait()
 }
 
 // processOne handles a single claim end-to-end: choose a decode path,
@@ -203,7 +212,14 @@ func (w *Worker) finalizeNoPreview(ctx context.Context, c Claim) {
 }
 
 func (w *Worker) finalizeFailed(ctx context.Context, c Claim, cause error) {
-	slog.Error("thumb: process failed", "id", c.Media.ID, "err", cause)
+	// Context errors during graceful shutdown are not operational
+	// failures — the sweep will re-queue the row. Log at Warn so we
+	// do not spam production ERROR logs on every cancellation.
+	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		slog.Warn("thumb: process interrupted", "id", c.Media.ID, "cause", cause)
+	} else {
+		slog.Error("thumb: process failed", "id", c.Media.ID, "err", cause)
+	}
 	err := w.q.MarkFailed(ctx, c.Media.ID, c.Media.ThumbVersion, c.ClaimedAt, cause)
 	if err != nil {
 		logClaimFinalize("mark failed", c.Media.ID, err)

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -233,4 +234,76 @@ func TestWorkerStaleWriteDoesNotCorruptReclaim(t *testing.T) {
 
 	cancel()
 	<-done
+}
+
+// TestWorkerRunReturnsOnlyAfterDrainGoroutinesExit is the regression
+// guard for the goroutine-leak on shutdown. Before the fix, drain's
+// early return on ctx.Done() did not wait for already-launched
+// processOne goroutines, so they would outlive Run and hold references
+// to the SQL DB and Storage backend past teardown.
+//
+// The test seeds many pending rows so drain is back-pressured on the
+// semaphore, cancels ctx mid-drain, waits for Run to return, then:
+//  1. Asserts Run surfaces context.Canceled (not nil).
+//  2. Verifies the DB handle is still usable by reading every seeded
+//     row — if an inflight goroutine had corrupted the handle, GetByID
+//     would error.
+//  3. Checks goroutine count has returned to baseline within a small
+//     tolerance — a missed wg.Wait would leave live processOne
+//     goroutines above baseline.
+func TestWorkerRunReturnsOnlyAfterDrainGoroutinesExit(t *testing.T) {
+	r := require.New(t)
+	fx := newWorkerFixture(t)
+
+	const nRows = 20
+	ids := make([]string, 0, nRows)
+	for range nRows {
+		ids = append(ids, seedPhotoRow(t, fx, "2024/s-"+uuid.NewString()+".jpg"))
+	}
+
+	baseline := runtime.NumGoroutine()
+
+	// Concurrency=2 with a 20-row batch guarantees the drain loop
+	// parks on the semaphore before the whole batch is launched,
+	// giving cancel() a chance to trigger the early-return path.
+	ctx, cancel := context.WithCancel(context.Background())
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+		WorkerConcurrency: 2,
+		PollInterval:      10 * time.Millisecond,
+		LeaseTimeout:      5 * time.Minute,
+	})
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	// Let the poll tick fire at least once so drain is mid-flight.
+	time.Sleep(30 * time.Millisecond)
+	cancel()
+
+	// Run must return within a reasonable window.
+	select {
+	case err := <-done:
+		r.ErrorIs(err, context.Canceled,
+			"Run must surface context.Canceled")
+	case <-time.After(5 * time.Second):
+		r.FailNow("Run did not return within 5s after ctx cancel")
+	}
+
+	// Prove the DB handle is alive: every seeded row must still be
+	// readable. If an inflight goroutine had closed or corrupted the
+	// handle, GetByID would error here.
+	for _, id := range ids {
+		_, err := fx.repo.GetByID(context.Background(), id)
+		r.NoError(err, "repo.GetByID(%s) after Run returned", id)
+	}
+
+	// Goroutine count should be back to baseline. Allow a small
+	// tolerance for transient runtime goroutines (finalizers, GC
+	// assist, etc.) that the scheduler may not have reaped yet.
+	// A missed wg.Wait would leave up to WorkerConcurrency=2
+	// processOne goroutines alive here.
+	const tolerance = 3
+	after := runtime.NumGoroutine()
+	r.LessOrEqualf(after, baseline+tolerance,
+		"goroutine leak: baseline=%d after=%d (tolerance=%d)",
+		baseline, after, tolerance)
 }
