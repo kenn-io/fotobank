@@ -478,7 +478,6 @@ func TestRepoDeleteMediaCascadesAlbumMedia(t *testing.T) {
 }
 
 func TestRepoListMediaSortModes(t *testing.T) {
-	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
@@ -516,7 +515,6 @@ func TestRepoListMediaSortModes(t *testing.T) {
 			require.Equal(t, tc.wantIDs, ids)
 		})
 	}
-	_ = r
 }
 
 func TestRepoListMediaPagination(t *testing.T) {
