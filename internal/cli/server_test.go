@@ -160,14 +160,22 @@ worker_concurrency = 1
 		if got.ThumbStatus == "ready" {
 			_ = d2.Close()
 			cancel()
-			<-errCh
+			select {
+			case <-errCh:
+			case <-time.After(5 * time.Second):
+				r.Fail("server did not shut down within 5s")
+			}
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	_ = d2.Close()
 	cancel()
-	<-errCh
+	select {
+	case <-errCh:
+	case <-time.After(5 * time.Second):
+		r.Fail("server did not shut down within 5s")
+	}
 	r.Fail("worker did not drain pending row within 10s")
 }
 

@@ -135,13 +135,18 @@ func buildFilter(cfg *config.Config, opts regenerateOpts) (thumb.EnqueueFilter, 
 }
 
 // runThumbsRegenerate loads the config, opens the DB, resolves the stub
-// owner, and drives thumb.Queue.Enqueue. Selector validation runs before
-// any I/O so a misuse fails fast without opening the database.
+// owner, and drives thumb.Queue.Enqueue. All selector validation —
+// including RFC3339 parsing of --since — runs before opening the
+// database so a misuse fails fast without touching the filesystem.
 func runThumbsRegenerate(ctx context.Context, opts regenerateOpts, stdout, _ io.Writer) error {
 	if err := validateSelectors(opts); err != nil {
 		return err
 	}
 	cfg, err := loadThumbsConfig(opts.cfgPath)
+	if err != nil {
+		return err
+	}
+	filter, err := buildFilter(cfg, opts)
 	if err != nil {
 		return err
 	}
@@ -151,10 +156,6 @@ func runThumbsRegenerate(ctx context.Context, opts regenerateOpts, stdout, _ io.
 	}
 	defer func() { _ = d.Close() }()
 
-	filter, err := buildFilter(cfg, opts)
-	if err != nil {
-		return err
-	}
 	q := thumb.NewQueue(d.WriteDB(), d.ReadDB())
 	n, err := q.Enqueue(ctx, filter)
 	if err != nil {
