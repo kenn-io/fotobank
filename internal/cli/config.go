@@ -25,7 +25,7 @@ func newConfigPathCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "path",
 		Short: "Print the resolved config file path",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			fmt.Fprintln(cmd.OutOrStdout(), config.DefaultConfigPath())
 			return nil
@@ -38,7 +38,7 @@ func newConfigValidateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Load the config and report any validation errors",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path := cfgPath
 			if path == "" {
@@ -60,7 +60,7 @@ func newConfigReadCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "read <dotted.key>",
 		Short: "Print the scalar value at a dotted TOML key",
-		Args:  cobra.ExactArgs(1),
+		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := cfgPath
 			if path == "" {

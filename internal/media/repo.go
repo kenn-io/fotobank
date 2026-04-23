@@ -144,7 +144,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Media, error) {
 
 	query := mediaSelect +
 		" WHERE " + strings.Join(conds, " AND ") +
-		" ORDER BY timestamp " + direction + " NULLS LAST, imported_at " + direction +
+		" ORDER BY timestamp " + direction + " NULLS LAST, imported_at " + direction + ", id " + direction +
 		" LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 

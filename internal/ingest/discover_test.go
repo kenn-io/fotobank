@@ -39,3 +39,26 @@ func TestDiscoverClassifies(t *testing.T) {
 	r.Equal(4, photos)
 	r.Equal(1, videos)
 }
+
+func TestDiscoverReturnsAbsoluteCandidatePaths(t *testing.T) {
+	// Candidate.Path is documented as absolute. Pin that contract by
+	// passing a relative root and asserting the callback sees absolute
+	// paths regardless of the caller's cwd.
+	r := require.New(t)
+	base := t.TempDir()
+	r.NoError(os.WriteFile(filepath.Join(base, "a.jpg"), []byte("x"), 0o600))
+
+	// Switch cwd to the temp dir so "a.jpg" resolves relative to it.
+	cwd, err := os.Getwd()
+	r.NoError(err)
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	r.NoError(os.Chdir(base))
+
+	var got []ingest.Candidate
+	r.NoError(ingest.Discover(".", func(c ingest.Candidate) error {
+		got = append(got, c)
+		return nil
+	}))
+	r.Len(got, 1)
+	r.True(filepath.IsAbs(got[0].Path), "expected absolute path, got %q", got[0].Path)
+}

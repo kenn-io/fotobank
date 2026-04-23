@@ -4,6 +4,7 @@
 package ingest
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,9 +21,15 @@ type Candidate struct {
 
 // Discover walks root and invokes visit for every supported file. Non-
 // supported files are skipped silently; errors from visit abort the
-// walk.
+// walk. The root is resolved to an absolute path before walking, so
+// Candidate.Path is always absolute even when callers pass a relative
+// root.
 func Discover(root string, visit func(Candidate) error) error {
-	return filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve root: %w", err)
+	}
+	return filepath.WalkDir(absRoot, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

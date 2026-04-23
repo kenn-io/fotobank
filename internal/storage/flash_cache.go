@@ -43,6 +43,9 @@ func (c *FlashCache) flashPath(p owners.Principal, key string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("storage: unknown owner %s", p)
 	}
+	if err := validateStorageKey(sk); err != nil {
+		return "", err
+	}
 	return filepath.Join(c.flashRoot, sk, filepath.FromSlash(key)), nil
 }
 

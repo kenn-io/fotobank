@@ -54,6 +54,12 @@ type Store interface {
 // has empty/"."/".." segments).
 var ErrInvalidKey = errors.New("storage: invalid key")
 
+// ErrInvalidStorageKey indicates an owner storage_key that would
+// unsafely join — empty, absolute, or containing any path separator
+// or traversal segment. Storage keys must be a single filesystem name
+// (e.g., a UUID), not a path.
+var ErrInvalidStorageKey = errors.New("storage: invalid storage key")
+
 // validateKey verifies that key is a relative POSIX path that cannot
 // escape its owner prefix via traversal. Keys must use forward slashes,
 // be non-empty, not absolute, and contain no "", ".", or ".." segments.
@@ -72,6 +78,22 @@ func validateKey(key string) error {
 		case "", ".", "..":
 			return fmt.Errorf("%w: invalid segment %q in %q", ErrInvalidKey, seg, key)
 		}
+	}
+	return nil
+}
+
+// validateStorageKey rejects anything that could make the per-owner
+// subdirectory escape its parent root. Storage keys are registered at
+// owner-creation time and are expected to be a single opaque name.
+func validateStorageKey(sk string) error {
+	switch sk {
+	case "":
+		return fmt.Errorf("%w: empty", ErrInvalidStorageKey)
+	case ".", "..":
+		return fmt.Errorf("%w: traversal %q", ErrInvalidStorageKey, sk)
+	}
+	if strings.ContainsAny(sk, "/\\") {
+		return fmt.Errorf("%w: contains path separator: %q", ErrInvalidStorageKey, sk)
 	}
 	return nil
 }

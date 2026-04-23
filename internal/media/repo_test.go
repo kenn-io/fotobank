@@ -151,6 +151,52 @@ func TestMediaGetByIDNotFoundReturnsErrNotFound(t *testing.T) {
 	r.ErrorIs(err, errs.ErrNotFound)
 }
 
+func TestMediaListPaginationIsStableOnTies(t *testing.T) {
+	// Rows with identical timestamp + imported_at must still paginate
+	// deterministically so successive pages don't skip or duplicate.
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+
+	p := testOwner()
+	_, err := d.WriteDB().ExecContext(ctx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "sk-page", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	ts := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	imp := time.Date(2024, 6, 15, 15, 0, 0, 0, time.UTC)
+	for i := range 5 {
+		m := baseMedia(uuid.NewString(), p)
+		m.Path = "tied/" + string(rune('a'+i)) + ".jpg"
+		m.Checksum = "cs-tie-" + string(rune('a'+i))
+		m.Timestamp = &ts
+		m.ImportedAt = imp
+		r.NoError(repo.Insert(ctx, m))
+	}
+
+	page1, err := repo.List(ctx, media.ListFilter{Owner: p, Limit: 2, Offset: 0})
+	r.NoError(err)
+	r.Len(page1, 2)
+	page2, err := repo.List(ctx, media.ListFilter{Owner: p, Limit: 2, Offset: 2})
+	r.NoError(err)
+	r.Len(page2, 2)
+	page3, err := repo.List(ctx, media.ListFilter{Owner: p, Limit: 2, Offset: 4})
+	r.NoError(err)
+	r.Len(page3, 1)
+
+	seen := map[string]bool{}
+	for _, pg := range [][]media.Media{page1, page2, page3} {
+		for _, m := range pg {
+			r.False(seen[m.ID], "row %s appeared in two pages", m.ID)
+			seen[m.ID] = true
+		}
+	}
+	r.Len(seen, 5)
+}
+
 func TestMediaGetByOwnerChecksum(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()

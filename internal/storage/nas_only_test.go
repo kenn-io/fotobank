@@ -104,6 +104,26 @@ func TestNASOnlyDeleteIsIdempotent(t *testing.T) {
 	r.ErrorIs(err, os.ErrNotExist)
 }
 
+func TestNASOnlyRejectsInvalidStorageKey(t *testing.T) {
+	// Storage keys are the per-owner subdirectory names. If the owners
+	// map is ever populated with a traversal or absolute value, every
+	// lookup must refuse it so media keys cannot escape the NAS root.
+	r := require.New(t)
+	root := t.TempDir()
+	p := owners.Principal{Hub: "h", UserID: "u"}
+
+	for _, sk := range []string{"", ".", "..", "../escape", "a/b", "a\\b"} {
+		s := storage.NewNASOnly(root, map[owners.Principal]string{p: sk})
+		_, err := s.Write(context.Background(), p, "a.jpg", bytes.NewReader([]byte("x")))
+		r.ErrorIs(err, storage.ErrInvalidStorageKey, "Write should reject storage key %q", sk)
+		_, err = s.Stat(context.Background(), p, "a.jpg")
+		r.ErrorIs(err, storage.ErrInvalidStorageKey, "Stat should reject storage key %q", sk)
+		_, err = s.ReadRange(context.Background(), p, "a.jpg", 0, -1)
+		r.ErrorIs(err, storage.ErrInvalidStorageKey, "ReadRange should reject storage key %q", sk)
+		r.ErrorIs(s.Delete(context.Background(), p, "a.jpg"), storage.ErrInvalidStorageKey, "Delete should reject storage key %q", sk)
+	}
+}
+
 func TestNASOnlyRejectsTraversalAndAbsoluteKeys(t *testing.T) {
 	r := require.New(t)
 	s, root, p := newNASStore(t)

@@ -42,12 +42,15 @@ func extractMP4(path string) (Metadata, error) {
 	for _, box := range boxes {
 		switch b := box.Payload.(type) {
 		case *mp4.Mvhd:
-			if secs := b.GetCreationTime(); secs != 0 {
+			if secs := b.GetCreationTime(); secs != 0 && !isMP4UnknownSentinel(b.Version, secs) {
 				ts := mp4Epoch.Add(time.Duration(secs) * time.Second)
 				m.Timestamp = &ts
 			}
 			if ts := b.Timescale; ts > 0 {
-				m.DurationMs = int64(b.GetDuration()) * 1000 / int64(ts)
+				dur := b.GetDuration()
+				if !isMP4UnknownSentinel(b.Version, dur) {
+					m.DurationMs = int64(dur) * 1000 / int64(ts)
+				}
 			}
 		case *mp4.Tkhd:
 			if w := int(b.GetWidthInt()); w > 0 && m.Width == 0 {
@@ -59,4 +62,14 @@ func extractMP4(path string) (Metadata, error) {
 		}
 	}
 	return m, nil
+}
+
+// isMP4UnknownSentinel reports whether a value should be treated as the
+// MP4 "unknown" marker for a version-0 (uint32 all-ones) or version-1
+// (uint64 all-ones) duration/creation-time field.
+func isMP4UnknownSentinel(version uint8, v uint64) bool {
+	if version == 0 {
+		return v == 0xFFFFFFFF
+	}
+	return v == 0xFFFFFFFFFFFFFFFF
 }

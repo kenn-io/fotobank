@@ -36,7 +36,7 @@ func newServerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "server",
 		Short: "Start the fotobank HTTP server",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runServer(cmd.Context(), serverOpts{
 				cfgPath: cfgPath,

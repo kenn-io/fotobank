@@ -38,6 +38,9 @@ func (s *NASOnly) ownerPath(p owners.Principal, key string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("storage: unknown owner %s", p)
 	}
+	if err := validateStorageKey(sk); err != nil {
+		return "", err
+	}
 	return filepath.Join(s.root, sk, filepath.FromSlash(key)), nil
 }
 

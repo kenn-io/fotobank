@@ -31,7 +31,7 @@ func newOwnersAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add",
 		Short: "Register a new owner (idempotent on identical --storage-key)",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if hub == "" || userID == "" || storageKey == "" {
 				return newUsageError("--hub, --user-id, and --storage-key are required")
@@ -67,7 +67,7 @@ func newOwnersListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List registered owners",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			svc, cleanup, err := clictx.LoadOwnerService()
 			if err != nil {
@@ -111,7 +111,7 @@ func newOwnersRemoveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remove",
 		Short: "Unregister an owner (refuses if media still references them)",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if hub == "" || userID == "" {
 				return newUsageError("--hub and --user-id are required")
