@@ -316,6 +316,108 @@ poll_interval = "100ms"
 		r.Equalf(http.StatusOK, status, "url=%s", url)
 	}
 
+	// --- Albums round-trip ---------------------------------------------------
+	// Create an album, add both photo rows, list albums and assert cover
+	// is populated, then delete the album and list again.
+	cBody, err := json.Marshal(map[string]string{"name": "E2E Trip"})
+	r.NoError(err)
+	cReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		base+"/api/v1/albums", bytes.NewReader(cBody))
+	r.NoError(err)
+	cReq.Header.Set("Content-Type", "application/json")
+	cResp, err := client.Do(cReq)
+	r.NoError(err)
+	var created struct {
+		ID string `json:"id"`
+	}
+	r.NoError(json.NewDecoder(cResp.Body).Decode(&created))
+	r.NoError(cResp.Body.Close())
+	r.Equal(http.StatusCreated, cResp.StatusCode)
+	r.NotEmpty(created.ID)
+
+	// photos was populated earlier when the two imported photo rows were
+	// drained to thumb_status='ready'. Build the add-media request from it.
+	photoIDs := make([]string, 0, len(photos))
+	for _, p := range photos {
+		photoIDs = append(photoIDs, p.ID)
+	}
+	addBody, err := json.Marshal(map[string]any{"media_ids": photoIDs})
+	r.NoError(err)
+	addReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		base+"/api/v1/albums/"+created.ID+"/media", bytes.NewReader(addBody))
+	r.NoError(err)
+	addReq.Header.Set("Content-Type", "application/json")
+	addResp, err := client.Do(addReq)
+	r.NoError(err)
+	var addOut struct {
+		Added          int `json:"added"`
+		AlreadyPresent int `json:"already_present"`
+	}
+	r.NoError(json.NewDecoder(addResp.Body).Decode(&addOut))
+	r.NoError(addResp.Body.Close())
+	r.Equal(http.StatusOK, addResp.StatusCode)
+	r.Equal(len(photoIDs), addOut.Added)
+
+	// By the time this code runs, earlier sections of the test have already
+	// waited for thumbs to reach 'ready' for both photos, so /api/v1/albums
+	// should return a non-nil cover on the first call. Keep a short bounded
+	// poll to tolerate one extra scheduling hop.
+	var sawCover bool
+	for range 20 {
+		listReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			base+"/api/v1/albums", nil)
+		r.NoError(err)
+		listResp, err := client.Do(listReq)
+		r.NoError(err)
+		var listOut struct {
+			Items []struct {
+				ID    string `json:"id"`
+				Cover *struct {
+					MediaID      string `json:"media_id"`
+					ThumbVersion int    `json:"thumb_version"`
+				} `json:"cover"`
+			} `json:"items"`
+		}
+		r.NoError(json.NewDecoder(listResp.Body).Decode(&listOut))
+		r.NoError(listResp.Body.Close())
+		for _, it := range listOut.Items {
+			if it.ID == created.ID && it.Cover != nil {
+				sawCover = true
+				break
+			}
+		}
+		if sawCover {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	r.True(sawCover, "cover should appear after thumbs reach 'ready'")
+
+	// Delete the album and confirm it leaves the list.
+	delReq, err := http.NewRequestWithContext(ctx, http.MethodDelete,
+		base+"/api/v1/albums/"+created.ID, nil)
+	r.NoError(err)
+	delResp, err := client.Do(delReq)
+	r.NoError(err)
+	r.NoError(delResp.Body.Close())
+	r.Equal(http.StatusNoContent, delResp.StatusCode)
+
+	listReq2, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		base+"/api/v1/albums", nil)
+	r.NoError(err)
+	listResp2, err := client.Do(listReq2)
+	r.NoError(err)
+	var listOut2 struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	r.NoError(json.NewDecoder(listResp2.Body).Decode(&listOut2))
+	r.NoError(listResp2.Body.Close())
+	for _, it := range listOut2.Items {
+		r.NotEqual(created.ID, it.ID, "album should be absent after delete")
+	}
+
 	// 6. Cancel and assert the server exits cleanly.
 	cancel()
 	select {

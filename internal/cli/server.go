@@ -17,6 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wesm/fotobank/internal/album"
 	"github.com/wesm/fotobank/internal/config"
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/httpapi"
@@ -117,6 +118,11 @@ func runServer(ctx context.Context, opts serverOpts) error {
 
 	mediaSvc := service.NewMediaService(media.NewRepo(d.WriteDB(), d.ReadDB()), storeLayer)
 
+	albumSvc := service.NewAlbumService(
+		album.NewRepo(d.WriteDB(), d.ReadDB()),
+		media.NewRepo(d.WriteDB(), d.ReadDB()),
+	)
+
 	thumbQueue := thumb.NewQueue(d.WriteDB(), d.ReadDB())
 	thumbSvc := service.NewThumbService(
 		media.NewRepo(d.WriteDB(), d.ReadDB()),
@@ -128,6 +134,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		IdentityProvider: idp,
 		OwnerService:     ownerSvc,
 		MediaService:     mediaSvc,
+		AlbumService:     albumSvc,
 		ThumbService:     thumbSvc,
 	})
 	if err != nil {
