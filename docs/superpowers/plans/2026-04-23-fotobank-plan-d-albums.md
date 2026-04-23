@@ -1362,7 +1362,6 @@ package service
 
 import (
     "context"
-    "errors"
     "fmt"
     "strings"
     "time"
@@ -1459,7 +1458,6 @@ import (
     "testing"
     "time"
 
-    "github.com/google/uuid"
     "github.com/stretchr/testify/require"
 
     "github.com/wesm/fotobank/internal/album"
@@ -1758,6 +1756,8 @@ git commit -m "Add AlbumService CRUD + Get/GetDetail/List"
 
 - [ ] **Step 1: Append AddMedia to album_service.go**
 
+Add `"errors"` to the import block at the top of `album_service.go` (used below by `errors.Is`).
+
 ```go
 // AddMedia validates the album is caller-owned, deduplicates input IDs
 // (preserving first-seen order), length-checks the deduped batch, then
@@ -1827,6 +1827,8 @@ func dedupeStrings(ids []string) []string {
 ```
 
 - [ ] **Step 2: Add AddMedia tests**
+
+Add `"github.com/google/uuid"` to the import block at the top of `album_service_test.go` (used below by `uuid.NewString()`).
 
 Append to `album_service_test.go`:
 
@@ -2372,7 +2374,8 @@ func registerAlbumsCRUD(api huma.API, svc *service.AlbumService) {
             return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
         }
         limit := clampLimit(in.Limit, albumsListDefaultLimit, albumsListMaxLimit)
-        rows, err := svc.List(ctx, id.Principal.OwnersPrincipal(), limit+1, in.Offset)
+        offset := max(in.Offset, 0)
+        rows, err := svc.List(ctx, id.Principal.OwnersPrincipal(), limit+1, offset)
         if err != nil {
             return nil, translateAlbumError(err)
         }
@@ -2380,7 +2383,7 @@ func registerAlbumsCRUD(api huma.API, svc *service.AlbumService) {
         hasMore := len(rows) > limit
         if hasMore {
             rows = rows[:limit]
-            next := in.Offset + limit
+            next := offset + limit
             out.Body.NextOffset = &next
         }
         out.Body.Items = make([]albumDTO, 0, len(rows))
@@ -2758,9 +2761,10 @@ func registerAlbumMedia(api huma.API, svc *service.AlbumService) {
             return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
         }
         limit := clampLimit(in.Limit, albumsListDefaultLimit, albumsListMaxLimit)
+        offset := max(in.Offset, 0)
         filter := album.AlbumMediaFilter{
             Limit:   limit + 1,
-            Offset:  in.Offset,
+            Offset:  offset,
             SortBy:  in.SortBy,
             SortAsc: in.SortAsc,
         }
@@ -2772,7 +2776,7 @@ func registerAlbumMedia(api huma.API, svc *service.AlbumService) {
         hasMore := len(rows) > limit
         if hasMore {
             rows = rows[:limit]
-            next := in.Offset + limit
+            next := offset + limit
             out.Body.NextOffset = &next
         }
         out.Body.Items = make([]mediaDTO, 0, len(rows))
