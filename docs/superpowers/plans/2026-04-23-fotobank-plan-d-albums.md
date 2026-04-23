@@ -1502,24 +1502,6 @@ func seedOwnerSvc(t *testing.T, rw *sql.DB, p owners.Principal, sk string) {
     require.NoError(t, err)
 }
 
-// seedMediaSvc inserts a minimal media row directly.
-func seedMediaSvc(t *testing.T, rw *sql.DB, p owners.Principal, id, checksum string) {
-    t.Helper()
-    _, err := rw.ExecContext(context.Background(), `
-INSERT INTO media (
-    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-    imported_at, timestamp, size, checksum,
-    make, model, focal_length, shutter, width, height, iso, aperture,
-    duration_ms,
-    thumb_status, thumb_version, thumb_updated_at
-) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          'ready', 1, NULL)`,
-        id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), checksum,
-    )
-    require.NoError(t, err)
-}
-
 func TestAlbumServiceCreateReturnsListItem(t *testing.T) {
     r := require.New(t)
     fx := newAlbumSvcFixture(t)
@@ -1830,9 +1812,27 @@ func dedupeStrings(ids []string) []string {
 
 Add `"github.com/google/uuid"` to the import block at the top of `album_service_test.go` (used below by `uuid.NewString()`).
 
-Append to `album_service_test.go`:
+Append to `album_service_test.go` — first the `seedMediaSvc` helper (new in this task; Task 6 had no tests that needed media rows), then the tests:
 
 ```go
+// seedMediaSvc inserts a minimal media row directly.
+func seedMediaSvc(t *testing.T, rw *sql.DB, p owners.Principal, id, checksum string) {
+    t.Helper()
+    _, err := rw.ExecContext(context.Background(), `
+INSERT INTO media (
+    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
+    imported_at, timestamp, size, checksum,
+    make, model, focal_length, shutter, width, height, iso, aperture,
+    duration_ms,
+    thumb_status, thumb_version, thumb_updated_at
+) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+          'ready', 1, NULL)`,
+        id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), checksum,
+    )
+    require.NoError(t, err)
+}
+
 func TestAlbumServiceAddMediaHappyPath(t *testing.T) {
     r := require.New(t)
     fx := newAlbumSvcFixture(t)
