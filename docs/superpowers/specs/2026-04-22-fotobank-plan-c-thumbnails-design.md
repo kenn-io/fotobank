@@ -84,10 +84,14 @@ Ingest already writes `pending` for new rows. No change there.
 
 ---
 
-## 4. New package: `internal/thumbs`
+## 4. New package: `internal/thumb`
+
+Name aligns with master spec §3 (`internal/thumb/`). The CLI
+subcommand is still `fotobank thumbs regenerate` — that's a
+user-facing noun, unrelated to the Go package name.
 
 ```
-internal/thumbs/
+internal/thumb/
 ├── queue.go       – Queue: ClaimBatch, SweepLeases, Enqueue, MarkReady,
 │                    MarkNoPreview, MarkFailed (DB-only)
 ├── queue_test.go
@@ -112,8 +116,8 @@ enqueue-bumps-version) don't need real encoders; tests of the decode
 path don't need the DB. Clean split.
 
 **Naming:** avoiding `Service` in this package because `internal/
-service/` is the app/auth layer (see §11). `thumbs.Queue` and
-`thumbs.Worker` make the separation unambiguous.
+service/` is the app/auth layer (see §11). `thumb.Queue` and
+`thumb.Worker` make the separation unambiguous.
 
 ---
 
@@ -122,17 +126,47 @@ service/` is the app/auth layer (see §11). `thumbs.Queue` and
 ```go
 const sweepInterval = 1 * time.Minute
 
+// Run starts the poll and sweep loops in independent goroutines and
+// blocks until ctx is cancelled. Sweep MUST run on its own goroutine
+// so a stuck decode inside drain cannot keep leases from being
+// reclaimed.
 func (w *Worker) Run(ctx context.Context) error {
-    poll  := time.NewTicker(w.cfg.PollInterval)
-    sweep := time.NewTicker(sweepInterval)
-    defer poll.Stop(); defer sweep.Stop()
+    var wg sync.WaitGroup
+    wg.Add(2)
+    go func() { defer wg.Done(); w.runPoll(ctx) }()
+    go func() { defer wg.Done(); w.runSweep(ctx) }()
+    wg.Wait()
+    return ctx.Err()
+}
+
+// runPoll ticks at PollInterval and fires drain at most one at a
+// time. A still-running drain absorbs additional ticks via the
+// single-flight guard so we never stack overlapping claims.
+func (w *Worker) runPoll(ctx context.Context) {
+    t := time.NewTicker(w.cfg.PollInterval)
+    defer t.Stop()
     for {
         select {
         case <-ctx.Done():
-            return ctx.Err()
-        case <-poll.C:
+            return
+        case <-t.C:
+            if !w.drainLock.TryLock() { continue }
             w.drain(ctx)
-        case <-sweep.C:
+            w.drainLock.Unlock()
+        }
+    }
+}
+
+// runSweep runs independent of drain so a hung decode cannot block
+// lease reclamation.
+func (w *Worker) runSweep(ctx context.Context) {
+    t := time.NewTicker(sweepInterval)
+    defer t.Stop()
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-t.C:
             if err := w.queue.SweepLeases(ctx, w.cfg.LeaseTimeout); err != nil {
                 w.logErr("sweep", err)
             }
@@ -150,12 +184,31 @@ func (w *Worker) drain(ctx context.Context) {
         wg.Add(1)
         go func(row media.Media) {
             defer wg.Done(); defer func() { <-sem }()
-            w.processOne(ctx, row)
+            // Per-item ceiling so a single pathological source file
+            // cannot starve the worker pool. Claim rows whose decode
+            // exceeds this get marked failed; SweepLeases is the
+            // second line of defense if the goroutine itself wedges.
+            cctx, cancel := context.WithTimeout(ctx, w.cfg.LeaseTimeout/2)
+            defer cancel()
+            w.processOne(cctx, row)
         }(r)
     }
     wg.Wait()
 }
 ```
+
+**Why the dual-goroutine split:** if `Run` were a single select loop
+with `drain` called synchronously, a hung decode inside `drain` would
+prevent the sweep tick from firing and nothing would ever reclaim
+stale `working` rows — they'd stay claimed until the server restarts.
+Splitting gives us three independent guarantees:
+
+1. `runSweep` always makes progress (no shared state with decode).
+2. `runPoll` can skip a tick if drain is still running
+   (single-flight via `drainLock sync.Mutex` field on Worker).
+3. `processOne` itself runs under `context.WithTimeout(ctx,
+   LeaseTimeout/2)` so one pathological input cannot hang a pool
+   slot forever.
 
 **Config defaults (all from `cfg.Thumbs`, present since Plan A):**
 - `WorkerConcurrency` = 4
@@ -180,7 +233,7 @@ UPDATE media
       ORDER BY imported_at ASC, id ASC
       LIMIT ?
  )
-RETURNING id, owner_hub, owner_user_id, type, mime_type, path,
+RETURNING id, owner_hub, owner_user_id, media_type, mime_type, path,
           thumb_version, checksum;
 ```
 
@@ -203,9 +256,6 @@ UPDATE media
  WHERE thumb_status = 'working'
    AND thumb_claimed_at < ?
 ```
-
-The sweep runs independently of poll so a stuck goroutine inside
-`drain` cannot block lease reclamation.
 
 ---
 
@@ -279,16 +329,22 @@ preserved):
 
 | Name     | Max edge | Expected size | Purpose                       |
 |----------|----------|---------------|-------------------------------|
-| grid     | 320 px   | 10–40 KB      | Browse grid (many per page)   |
+| grid     | 256 px   | 8–30 KB       | Browse grid (many per page)   |
 | preview  | 1024 px  | 80–250 KB     | Medium view, pre-lightbox     |
 | lightbox | 2048 px  | 300–800 KB    | Full-screen viewer            |
+
+These match the vision spec (`docs/superpowers/specs/2026-04-22-
+fotobank-vision.md` §12) so one canonical size list stays honest
+across docs.
 
 **WebP quality:** `75` (pragmatic default; Google's reference encoder
 hits perceptually transparent for most photos in this range).
 
-**Resize algorithm:** Lanczos3. We'll use `golang.org/x/image/draw`
-with `draw.CatmullRom` as a first pass (pure Go, reasonable quality)
-and revisit if output looks poor.
+**Resize algorithm:** `draw.CatmullRom` from `golang.org/x/image/
+draw` — bicubic, pure Go, well-maintained, good quality for
+downscaling in this range. If output looks soft at the grid size we
+can bump to a custom Lanczos kernel, but CatmullRom is the default
+ship-worthy choice for the first revision.
 
 ### 7.1 WebP encoder — PRIMARY UNCERTAINTY
 
@@ -339,10 +395,10 @@ and bump the master spec §7.4 accordingly.
 
 ## 8. Storage layer
 
-`storage.Store` already supports `Read`, `Write`, `Delete`, and the
-`owner + key` addressing model. Thumbnail writes reuse this interface
-— `.thumbs/{id}/grid.webp` is just another key, owned by the same
-principal as the source media.
+`storage.Store` already supports `ReadRange`, `Write`, `Delete`, and
+the `owner + key` addressing model. Thumbnail writes reuse this
+interface — `.thumbs/{id}/grid.webp` is just another key, owned by
+the same principal as the source media.
 
 **ThumbsCache wiring.** `cfg.Storage.ThumbsCacheEnabled` exists since
 Plan A but is currently unwired. In Plan C, when both
@@ -376,45 +432,60 @@ call sites land on the same primitive.
 
 `GET /api/v1/media/{id}/thumb?size=grid|preview|lightbox&v={N}`
 
-- `size` defaults to `grid` when omitted.
-- `v` is optional and informational only — the server always serves
-  the current `thumb_version`'s bytes. Clients append `v` to enable
-  aggressive caching (see §9.3).
-- Unknown `size` values → `400 Bad Request`.
+- `size` defaults to `grid` when omitted. Unknown `size` → `400 Bad
+  Request`.
+- `v` is **validated against the row's current `thumb_version`**. It
+  is NOT informational: it makes the URL the identity of a specific
+  version's bytes, which is what enables aggressive, immutable
+  caching (§9.3). Omitted / mismatched / unparseable → `404 Not
+  Found`. Clients obtain `v` from the list/detail endpoint (which
+  now includes `thumb_version`) and include it in `<img src>`.
 
 ### 9.2 Status handling
 
-| `thumb_status` | Response                                       |
-|----------------|------------------------------------------------|
-| `ready`        | `200 OK`, bytes from storage                   |
-| `pending`, `working` | `404 Not Found`                          |
-| `no_preview`   | `404 Not Found`                                |
-| `failed`       | `404 Not Found`                                |
+| `thumb_status` | `v` present? | Response                        |
+|----------------|--------------|---------------------------------|
+| `ready`        | matches      | `200 OK`, bytes from storage    |
+| `ready`        | missing/mismatch | `404 Not Found`             |
+| `pending`, `working` | any    | `404 Not Found`                 |
+| `no_preview`   | any          | `404 Not Found`                 |
+| `failed`       | any          | `404 Not Found`                 |
 
 404-on-not-ready matches the user's preference from brainstorming.
 Simpler for web clients than distinguishing "try again later" from
 "never"; the list endpoint already exposes `thumb_status` if the
-client wants to skip thumb requests pre-emptively.
+client wants to skip thumb requests pre-emptively. 404 on version
+mismatch is also cheap — the client will already have re-fetched the
+media detail to pick up the new version and retries with the new URL.
 
 **Auth/scope:** same as `/original` in Plan B — caller principal must
 own the media row, else 404 (not 403; don't leak existence).
 
-### 9.3 Caching headers (from master §9)
+### 9.3 Caching headers
+
+Because `v` is validated, the URL is *immutable* for its version — a
+response for `/thumb?size=grid&v=5` will never change content for the
+same row. We therefore get to serve aggressive cache headers:
 
 ```
-ETag:           W/"{media_id}-{size}-v{thumb_version}"
+ETag:           "{media_id}-{size}-v{thumb_version}"
 Last-Modified:  {thumb_updated_at as HTTP-date}
-Cache-Control:  private, max-age=86400, must-revalidate
+Cache-Control:  private, max-age=31536000, immutable
 ```
 
-The weak ETag is correct even if the encoder output shifts slightly
-between runs at the same `thumb_version` (e.g., library upgrade) —
-content-equivalence is preserved.
+This is a deliberate *tightening* of the master spec's §9 guidance
+(which was `must-revalidate, max-age=86400` with a weak ETag), made
+possible by the URL-identity choice above. The strong ETag is now
+correct because version validation guarantees byte-identity for a
+given version — if we change encoders, that's a new `thumb_version`
+(bumped via `Enqueue`) and a new URL. The list endpoint includes the
+current `thumb_version` so clients always get the latest URL.
 
-`If-None-Match` on the ETag yields cheap 304s. The list endpoint will
-start including `thumb_version` in the media DTO (new field) so that
-clients can append `?v=N` to image src URLs, which gives them safe
-immutable caching under the `must-revalidate` directive.
+**Why not rely on ETag revalidation alone** (i.e., drop `v`, use
+only `must-revalidate`): every thumbnail request becomes a
+conditional GET, and at hundreds of grid thumbs per page that's a
+measurable per-load latency tax over NFS-backed metadata reads.
+URL-versioning lets us be `immutable` and skip revalidation entirely.
 
 ---
 
@@ -460,26 +531,26 @@ poll the media detail endpoint themselves. YAGNI.
 
 ## 11. Service API sketch (`internal/service/thumb_service.go`)
 
-Service layer sits between HTTP handlers and `internal/thumbs`. Wraps
-the `thumbs.Queue` with auth scoping (owner principal) and pulls in
+Service layer sits between HTTP handlers and `internal/thumb`. Wraps
+the `thumb.Queue` with auth scoping (owner principal) and pulls in
 the storage layer for the Read path.
 
 ```go
 type ThumbService struct {
     repo  *media.Repo
-    queue *thumbs.Queue
+    queue *thumb.Queue
     store storage.Store
 }
 
 func (s *ThumbService) Get(
     ctx context.Context,
-    id string, size thumbs.Size, principal owners.Principal,
+    id string, size thumb.Size, principal owners.Principal,
 ) (io.ReadCloser, media.Media, error)
 
 func (s *ThumbService) Enqueue(
     ctx context.Context,
     principal owners.Principal,
-    filter thumbs.EnqueueFilter,  // {All, IDs, Type, Status, Since}
+    filter thumb.EnqueueFilter,  // {All, IDs, Type, Status, Since}
 ) (rowsEnqueued int, err error)
 ```
 
@@ -635,7 +706,13 @@ that case the plan stops and escalates to the user before proceeding.
 
 ## 17. Out of scope for Plan C (deferred explicitly)
 
-- Video poster frames (future plan; Plan C: `no_preview`).
+- **Video poster frames** — deferred to **Plan E** (after Plan D
+  ships albums + sharing). Plan C: `no_preview`. This is a
+  narrowing of master spec §2's Phase 1 scope, which originally
+  bundled video posters with thumbnails; the master spec's §1
+  "Planning note" has been amended to reflect the Plan B/C/D/E
+  split. The master §11.2 design for poster extraction still
+  stands and will drive Plan E.
 - HEIC/HEIF decode (future; Plan C: `no_preview`; requires CGO).
 - Animated WebP for GIFs (future).
 - Per-owner worker quotas (future; current design round-robins by

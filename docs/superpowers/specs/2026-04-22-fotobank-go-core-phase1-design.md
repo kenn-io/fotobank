@@ -46,7 +46,11 @@ interfaces, and the exact behaviour of each CLI and HTTP endpoint.
   logged warning.
 - Asynchronous thumbnail worker with DB-backed queue (master §10),
   three WebP sizes, RAW embedded-preview path, video poster
-  extraction.
+  extraction. *(Execution note — 2026-04-22: the thumbnail pipeline
+  ships in Plan C with photos + RAW only; video poster extraction is
+  split out to Plan E. See `2026-04-22-fotobank-plan-c-thumbnails-
+  design.md` §17. The worker/queue/storage design in §11 below still
+  stands; Plan E picks up the §11.2 poster path.)*
 - Albums: CRUD in the service layer, CLI surface, and HTTP API.
   Owner-consistency trigger on `album_media`.
 - Shares: scope mint / list / retry / revoke in the service layer,
