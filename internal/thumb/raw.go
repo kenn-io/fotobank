@@ -8,7 +8,6 @@ import (
 	"io"
 
 	"github.com/dsoprea/go-exif/v3"
-	exifcommon "github.com/dsoprea/go-exif/v3/common"
 )
 
 // ExtractPreview walks the TIFF/EXIF IFDs in src and returns the
@@ -31,7 +30,7 @@ func ExtractPreview(src io.Reader) (image.Image, error) {
 	if !found {
 		return nil, fmt.Errorf("%w: no JPEGInterchangeFormat tag in IFDs", ErrNoPreview)
 	}
-	if int(offset)+int(length) > len(bs) {
+	if uint64(offset)+uint64(length) > uint64(len(bs)) {
 		return nil, fmt.Errorf(
 			"thumb: preview bytes (offset=%d len=%d) exceed file size %d",
 			offset, length, len(bs),
@@ -44,62 +43,26 @@ func ExtractPreview(src io.Reader) (image.Image, error) {
 	return img, nil
 }
 
-// findPreviewTags scans every IFD (IFD0 and any SubIFDs) for the
+// findPreviewTags scans the flat list of EXIF entries (which the go-exif
+// walker produces by descending into every reachable IFD) for the
 // (JPEGInterchangeFormat, JPEGInterchangeFormatLength) pair that
 // points to an embedded JPEG. Returns (offset, length, found, err).
+// A parse error is treated as "no preview" so callers see ErrNoPreview
+// rather than a confusing lower-level message.
 func findPreviewTags(bs []byte) (offset uint32, length uint32, found bool, err error) {
-	im, err := exifcommon.NewIfdMappingWithStandard()
-	if err != nil {
-		return 0, 0, false, fmt.Errorf("ifd mapping: %w", err)
-	}
-	ti := exif.NewTagIndex()
-
 	entries, _, err := exif.GetFlatExifDataUniversalSearch(bs, nil, false)
 	if err != nil {
-		return findPreviewTagsTIFF(bs, im, ti)
+		return 0, 0, false, nil
 	}
 	for _, e := range entries {
 		switch e.TagId {
 		case 513:
-			if vs, ok := e.Value.([]uint32); ok && len(vs) > 0 {
-				offset = vs[0]
+			if v, ok := firstU32(e.Value); ok {
+				offset = v
 			}
 		case 514:
-			if vs, ok := e.Value.([]uint32); ok && len(vs) > 0 {
-				length = vs[0]
-			}
-		}
-	}
-	if offset > 0 && length > 0 {
-		return offset, length, true, nil
-	}
-	return findPreviewTagsTIFF(bs, im, ti)
-}
-
-func findPreviewTagsTIFF(
-	bs []byte,
-	im *exifcommon.IfdMapping,
-	ti *exif.TagIndex,
-) (offset uint32, length uint32, found bool, err error) {
-	_, index, err := exif.Collect(im, ti, bs)
-	if err != nil {
-		return 0, 0, false, nil
-	}
-	for _, ifd := range index.Ifds {
-		for _, ite := range ifd.Entries() {
-			if ite.TagId() == 513 {
-				if vs, err := ite.Value(); err == nil {
-					if u32s, ok := vs.([]uint32); ok && len(u32s) > 0 {
-						offset = u32s[0]
-					}
-				}
-			}
-			if ite.TagId() == 514 {
-				if vs, err := ite.Value(); err == nil {
-					if u32s, ok := vs.([]uint32); ok && len(u32s) > 0 {
-						length = u32s[0]
-					}
-				}
+			if v, ok := firstU32(e.Value); ok {
+				length = v
 			}
 		}
 	}
@@ -107,4 +70,13 @@ func findPreviewTagsTIFF(
 		return offset, length, true, nil
 	}
 	return 0, 0, false, nil
+}
+
+// firstU32 returns the first uint32 in a slice-typed EXIF value, or
+// (0, false) when the value is not a non-empty []uint32.
+func firstU32(v any) (uint32, bool) {
+	if vs, ok := v.([]uint32); ok && len(vs) > 0 {
+		return vs[0], true
+	}
+	return 0, false
 }
