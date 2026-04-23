@@ -244,6 +244,12 @@ poll_interval = "100ms"
 		r.Greater(len(body), 100, "thumb body suspiciously small")
 	}
 
+	// Record each row's version before regenerate so we can detect the bump.
+	oldVersions := map[string]int{}
+	for _, it := range items {
+		oldVersions[it.ID] = it.ThumbVersion
+	}
+
 	// 9. Regenerate everything. All 3 rows get bumped (the video re-settles
 	// to no_preview at the new version, but still counts as enqueued).
 	{
@@ -265,25 +271,50 @@ poll_interval = "100ms"
 	r.Equal("no-store", staleResp.Header.Get("Cache-Control"),
 		"404 must be no-store to avoid stale caching")
 
-	// 11. New URL (v+1): eventually 200 after worker reprocesses at the
-	// bumped version.
-	newVer := photos[0].Version + 1
-	newURL := base + "/api/v1/media/" + photos[0].ID +
-		"/thumb?size=grid&v=" + strconv.Itoa(newVer)
-	newReadyDeadline := time.Now().Add(15 * time.Second)
-	newReady := false
-	for time.Now().Before(newReadyDeadline) {
-		resp, err := client.Get(newURL)
+	// 11. All rows: eventually each lands at v+1 with the expected terminal
+	// status. This catches photos[1] and the video not re-draining.
+	waitAllRebumped := func() []mediaItem {
+		deadline := time.Now().Add(15 * time.Second)
+		for time.Now().Before(deadline) {
+			resp, err := client.Get(base + "/api/v1/media")
+			r.NoError(err)
+			var body listBody
+			decErr := json.NewDecoder(resp.Body).Decode(&body)
+			_ = resp.Body.Close()
+			r.NoError(decErr)
+			allRebumped := len(body.Items) == 3
+			for _, it := range body.Items {
+				wantTerminal := "ready"
+				if it.Type == "video" {
+					wantTerminal = "no_preview"
+				}
+				if it.ThumbStatus != wantTerminal || it.ThumbVersion != oldVersions[it.ID]+1 {
+					allRebumped = false
+					break
+				}
+			}
+			if allRebumped {
+				return body.Items
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		r.Fail("not all rows re-drained at v+1 within 15s")
+		return nil
+	}
+	rebumped := waitAllRebumped()
+
+	// 12. Fetch new thumb URL for each photo; assert 200.
+	for _, it := range rebumped {
+		if it.Type != "photo" {
+			continue
+		}
+		url := base + "/api/v1/media/" + it.ID + "/thumb?size=grid&v=" + strconv.Itoa(it.ThumbVersion)
+		resp, err := client.Get(url)
 		r.NoError(err)
 		status := resp.StatusCode
 		_ = resp.Body.Close()
-		if status == http.StatusOK {
-			newReady = true
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
+		r.Equalf(http.StatusOK, status, "url=%s", url)
 	}
-	r.Truef(newReady, "new thumb version never became ready url=%s", newURL)
 
 	// 6. Cancel and assert the server exits cleanly.
 	cancel()
