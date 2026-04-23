@@ -251,6 +251,13 @@ func loadStorageKeys(ctx context.Context, ownerSvc *service.OwnerService) (map[o
 	return keys, nil
 }
 
+// flashCacheSubdir is the subdirectory of cfg.Flash.Root that holds
+// cached originals. Isolating the cache from cfg.Flash.Root keeps the
+// FlashCache janitor (which walks its root and deletes stale entries)
+// from ever touching sibling state files such as the sqlite DB, WAL,
+// or shm files that live directly under cfg.Flash.Root.
+const flashCacheSubdir = "originals"
+
 // buildStorageLayer assembles the Store implementation dictated by
 // cfg.Storage.Mode. When mode is "flash_cache" the returned *FlashCache
 // is non-nil so the caller can drive its daily janitor; otherwise it's
@@ -261,7 +268,8 @@ func buildStorageLayer(cfg *config.Config, keys map[owners.Principal]string) (st
 	if cfg.Storage.Mode != "flash_cache" {
 		return nasStore, nil
 	}
-	fc := storage.NewFlashCache(nasStore, cfg.Flash.Root, keys, storage.FlashCacheOptions{
+	cacheRoot := filepath.Join(cfg.Flash.Root, flashCacheSubdir)
+	fc := storage.NewFlashCache(nasStore, cacheRoot, keys, storage.FlashCacheOptions{
 		OriginalsCacheDays:     cfg.Storage.OriginalsCacheDays,
 		OriginalsCacheMaxMedia: cfg.Storage.OriginalsCacheMaxMedia,
 	})

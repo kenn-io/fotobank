@@ -184,6 +184,25 @@ func TestGetMediaNotFoundForUnknownID(t *testing.T) {
 	r.Equal(http.StatusNotFound, resp.StatusCode)
 }
 
+func TestListMediaOmitsNextOffsetAtExactPageBoundary(t *testing.T) {
+	// Regression: when the result set ends exactly at Limit the handler
+	// must NOT return a next_offset; otherwise clients follow the hint
+	// and fetch an empty page.
+	r := require.New(t)
+	fx := newMediaAPITest(t)
+
+	seedMedia(t, fx.repo, fx.owner, "2024/a.jpg", "cs-a", media.TypePhoto)
+	seedMedia(t, fx.repo, fx.owner, "2024/b.jpg", "cs-b", media.TypePhoto)
+
+	resp, err := http.Get(fx.srv.URL + "/api/v1/media?limit=2")
+	r.NoError(err)
+	defer resp.Body.Close()
+	r.Equal(http.StatusOK, resp.StatusCode)
+	body := decodeList(t, resp)
+	r.Len(body.Items, 2)
+	r.Nil(body.NextOffset, "next_offset must be nil when the page exhausts the result set")
+}
+
 func TestListMediaIncludesNextOffsetOnFullPage(t *testing.T) {
 	r := require.New(t)
 	fx := newMediaAPITest(t)

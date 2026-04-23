@@ -88,28 +88,39 @@ const (
 	listMediaMaxLimit     = 1000
 )
 
-// registerMedia wires the /api/v1/media list and detail routes onto api
-// when svc is non-nil. Callers that don't need media HTTP access (for
-// example the OpenAPI spec dumper or tests that only exercise /me) pass
-// a Deps without a MediaService; this function then returns without
-// registering anything.
+// registerMedia wires the /api/v1/media list and detail routes onto api.
+// Operations are registered unconditionally so the generated OpenAPI
+// spec documents them even for callers (OpenAPISpec dumper, tests) that
+// pass a nil MediaService. When svc is nil the handlers answer 503
+// Service Unavailable, which keeps the schema honest without requiring
+// a real service.
 func registerMedia(api huma.API, svc *service.MediaService) {
-	if svc == nil {
-		return
-	}
 	huma.Register(api, huma.Operation{
 		OperationID: "list-media",
 		Method:      http.MethodGet,
 		Path:        "/api/v1/media",
 		Summary:     "List media visible to the caller",
 	}, func(ctx context.Context, in *listMediaInput) (*listMediaOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("media service not configured")
+		}
 		id, ok := IdentityFromContext(ctx)
 		if !ok {
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
 		}
+		limit := in.Limit
+		if limit <= 0 {
+			limit = listMediaDefaultLimit
+		}
+		if limit > listMediaMaxLimit {
+			limit = listMediaMaxLimit
+		}
+		// Fetch one extra row so we can emit next_offset only when a
+		// real continuation row exists, not merely because the page was
+		// full by coincidence.
 		filter := media.ListFilter{
 			Owner:    id.Principal.OwnersPrincipal(),
-			Limit:    in.Limit,
+			Limit:    limit + 1,
 			Offset:   in.Offset,
 			SortDesc: in.SortDesc,
 		}
@@ -117,24 +128,20 @@ func registerMedia(api huma.API, svc *service.MediaService) {
 			t := media.Type(in.MediaType)
 			filter.Type = &t
 		}
-		if filter.Limit <= 0 {
-			filter.Limit = listMediaDefaultLimit
-		}
-		if filter.Limit > listMediaMaxLimit {
-			filter.Limit = listMediaMaxLimit
-		}
 		rows, err := svc.List(ctx, filter, id.Principal.OwnersPrincipal())
 		if err != nil {
 			return nil, err
 		}
 		out := &listMediaOutput{}
+		hasMore := len(rows) > limit
+		if hasMore {
+			rows = rows[:limit]
+			next := in.Offset + limit
+			out.Body.NextOffset = &next
+		}
 		out.Body.Items = make([]mediaDTO, 0, len(rows))
 		for _, m := range rows {
 			out.Body.Items = append(out.Body.Items, toMediaDTO(m))
-		}
-		if len(rows) == filter.Limit {
-			next := filter.Offset + filter.Limit
-			out.Body.NextOffset = &next
 		}
 		return out, nil
 	})
@@ -145,6 +152,9 @@ func registerMedia(api huma.API, svc *service.MediaService) {
 		Path:        "/api/v1/media/{id}",
 		Summary:     "Return the detail for a single media item",
 	}, func(ctx context.Context, in *getMediaInput) (*getMediaOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("media service not configured")
+		}
 		id, ok := IdentityFromContext(ctx)
 		if !ok {
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
