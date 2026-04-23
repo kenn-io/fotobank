@@ -2,12 +2,15 @@ package ingest_test
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/wesm/fotobank/internal/ingest"
@@ -181,6 +184,189 @@ func TestImportSkipsUnsupportedFiles(t *testing.T) {
 	r.Equal(0, res.Duplicates)
 	r.Equal(0, res.PathCollisions)
 	r.Empty(res.Failures)
+}
+
+// md5Of returns the hex MD5 of the file at path — used by collision
+// tests that need to know the canonical video path before import.
+func md5Of(t *testing.T, path string) string {
+	t.Helper()
+	r := require.New(t)
+	f, err := os.Open(path)
+	r.NoError(err)
+	defer f.Close()
+	h := md5.New()
+	_, err = io.Copy(h, f)
+	r.NoError(err)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func TestImportPhantomPhotoPathBumpsSeq(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	f := newImporterFixture(t)
+	src := seedSource(t, "photo-with-timestamp.jpg")
+
+	// Seed a phantom media row: path claimed, checksum unrelated to the
+	// incoming file. The NAS is empty so writeBytes succeeds at seq=0,
+	// but the subsequent Insert hits a (owner, path) UNIQUE violation.
+	ts := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	phantom := media.Media{
+		ID:               uuid.NewString(),
+		Owner:            f.owner,
+		Type:             media.TypePhoto,
+		MimeType:         "image/jpeg",
+		Path:             "2024/20240615_143022_0.jpg",
+		OriginalFilename: "phantom.jpg",
+		ImportedAt:       time.Now().UTC(),
+		Timestamp:        &ts,
+		Size:             123,
+		Checksum:         "phantom-cs",
+		ThumbStatus:      "pending",
+	}
+	r.NoError(f.repo.Insert(ctx, phantom))
+
+	imp := ingest.NewImporter(f.store, f.repo)
+	res, err := imp.ImportDirectory(ctx, src, ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
+	r.NoError(err)
+	r.Equal(1, res.Imported)
+	r.Equal(0, res.Duplicates)
+	r.Equal(0, res.PathCollisions)
+	r.Empty(res.Failures)
+
+	// The import landed at _1 and the phantom row is untouched.
+	r.FileExists(filepath.Join(f.nas, testStorageKey, "2024", "20240615_143022_1.jpg"))
+	// No bytes at _0 because the phantom only claimed the DB row.
+	_, statErr := os.Stat(filepath.Join(f.nas, testStorageKey, "2024", "20240615_143022_0.jpg"))
+	r.ErrorIs(statErr, os.ErrNotExist)
+
+	rows, err := f.repo.List(ctx, media.ListFilter{Owner: f.owner})
+	r.NoError(err)
+	r.Len(rows, 2)
+
+	var landed media.Media
+	for _, m := range rows {
+		if m.Checksum != "phantom-cs" {
+			landed = m
+		}
+	}
+	r.Equal("2024/20240615_143022_1.jpg", landed.Path)
+
+	phantomRow, err := f.repo.GetByID(ctx, phantom.ID)
+	r.NoError(err)
+	r.Equal("phantom-cs", phantomRow.Checksum)
+}
+
+func TestImportSkipsMatchRowWhenNASBytesAbsent(t *testing.T) {
+	// A media row exists for (owner, checksum) with NAS bytes missing.
+	// Dedup by checksum must still fire — healing the NAS is a reconcile
+	// concern, not an import concern. The import must count this as a
+	// duplicate without writing bytes or inserting a new row.
+	r := require.New(t)
+	ctx := context.Background()
+	f := newImporterFixture(t)
+	src := seedSource(t, "photo-with-timestamp.jpg")
+
+	sum, err := ingest.Checksum(filepath.Join(fixtureDir(t), "photo-with-timestamp.jpg"))
+	r.NoError(err)
+
+	ts := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	match := media.Media{
+		ID:               uuid.NewString(),
+		Owner:            f.owner,
+		Type:             media.TypePhoto,
+		MimeType:         "image/jpeg",
+		Path:             "2024/20240615_143022_0.jpg",
+		OriginalFilename: "orig.jpg",
+		ImportedAt:       time.Now().UTC(),
+		Timestamp:        &ts,
+		Size:             42,
+		Checksum:         sum,
+		ThumbStatus:      "pending",
+	}
+	r.NoError(f.repo.Insert(ctx, match))
+
+	imp := ingest.NewImporter(f.store, f.repo)
+	res, err := imp.ImportDirectory(ctx, src, ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
+	r.NoError(err)
+	r.Equal(0, res.Imported)
+	r.Equal(1, res.Duplicates)
+	r.Equal(0, res.PathCollisions)
+	r.Empty(res.Failures)
+
+	// No bytes were written and the row count is unchanged.
+	_, statErr := os.Stat(filepath.Join(f.nas, testStorageKey, "2024", "20240615_143022_0.jpg"))
+	r.ErrorIs(statErr, os.ErrNotExist)
+	rows, err := f.repo.List(ctx, media.ListFilter{Owner: f.owner})
+	r.NoError(err)
+	r.Len(rows, 1)
+}
+
+func TestImportAdoptsVideoOrphan(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	f := newImporterFixture(t)
+	src := seedSource(t, "video.mp4")
+
+	// Pre-seed the NAS with identical bytes at movies/{md5}.mp4 but NO
+	// media row. The importer must adopt the orphan: insert the row,
+	// reuse the bytes, and count it as an import (not a collision).
+	sum := md5Of(t, filepath.Join(src, "video.mp4"))
+	moviesDir := filepath.Join(f.nas, testStorageKey, "movies")
+	r.NoError(os.MkdirAll(moviesDir, 0o700))
+	orphanPath := filepath.Join(moviesDir, sum+".mp4")
+	in, err := os.ReadFile(filepath.Join(src, "video.mp4"))
+	r.NoError(err)
+	r.NoError(os.WriteFile(orphanPath, in, 0o600))
+
+	imp := ingest.NewImporter(f.store, f.repo)
+	res, err := imp.ImportDirectory(ctx, src, ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
+	r.NoError(err)
+	r.Equal(1, res.Imported)
+	r.Equal(0, res.Duplicates)
+	r.Equal(0, res.PathCollisions)
+	r.Empty(res.Failures)
+
+	rows, err := f.repo.List(ctx, media.ListFilter{Owner: f.owner})
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.Equal("movies/"+sum+".mp4", rows[0].Path)
+	r.Equal(media.TypeVideo, rows[0].Type)
+
+	// Bytes at the adopted location are still the original orphan bytes.
+	r.FileExists(orphanPath)
+}
+
+func TestImportVideoCollisionWithDifferentBytesReportsPathCollision(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	f := newImporterFixture(t)
+	src := seedSource(t, "video.mp4")
+
+	// Pre-seed movies/{md5}.mp4 with DIFFERENT bytes. Adoption must not
+	// fire; the importer must report a path collision and leave the
+	// pre-existing bytes alone.
+	sum := md5Of(t, filepath.Join(src, "video.mp4"))
+	moviesDir := filepath.Join(f.nas, testStorageKey, "movies")
+	r.NoError(os.MkdirAll(moviesDir, 0o700))
+	squatterPath := filepath.Join(moviesDir, sum+".mp4")
+	r.NoError(os.WriteFile(squatterPath, []byte("unrelated content"), 0o600))
+
+	imp := ingest.NewImporter(f.store, f.repo)
+	res, err := imp.ImportDirectory(ctx, src, ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
+	r.NoError(err)
+	r.Equal(0, res.Imported)
+	r.Equal(0, res.Duplicates)
+	r.Equal(1, res.PathCollisions)
+	r.NotEmpty(res.Failures)
+
+	// Squatter bytes untouched.
+	got, err := os.ReadFile(squatterPath)
+	r.NoError(err)
+	r.Equal([]byte("unrelated content"), got)
+
+	rows, err := f.repo.List(ctx, media.ListFilter{Owner: f.owner})
+	r.NoError(err)
+	r.Empty(rows)
 }
 
 func TestImportReturnsCtxErrOnCancellation(t *testing.T) {

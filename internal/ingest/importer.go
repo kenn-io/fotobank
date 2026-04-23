@@ -2,8 +2,11 @@ package ingest
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -133,25 +136,115 @@ func (imp *Importer) processCandidate(ctx context.Context, c Candidate, owner ow
 	}
 
 	meta := extractMetadata(c)
-
-	key, collided, err := imp.writeBytes(ctx, c, owner, meta.Timestamp, checksum)
-	if err != nil {
-		return candidateOutcome{err: fmt.Errorf("write %s: %w", c.Path, err)}
+	switch c.Type {
+	case media.TypeVideo:
+		return imp.processVideo(ctx, c, owner, checksum, info.Size(), meta)
+	default:
+		return imp.processPhoto(ctx, c, owner, checksum, info.Size(), meta)
 	}
-	if collided {
-		return candidateOutcome{pathCollision: true, err: fmt.Errorf("path collision for %s", c.Path)}
-	}
+}
 
-	m := buildMediaRow(c, owner, key, checksum, info.Size(), meta, imp.now())
-	if err := imp.repo.Insert(ctx, m); err != nil {
-		if errors.Is(err, errs.ErrAlreadyExists) {
-			_ = imp.store.Delete(ctx, owner, key)
-			return candidateOutcome{duplicate: true}
+// processPhoto handles the photo branch: write-insert-retry with a
+// bumped seq on either NAS path collision or DB phantom row.
+func (imp *Importer) processPhoto(ctx context.Context, c Candidate, owner owners.Principal, checksum string, size int64, meta exifread.Metadata) candidateOutcome {
+	for seq := range maxPhotoSeqAttempts {
+		key := resolvePhotoPath(c.Path, meta.Timestamp, seq)
+		landed, err := imp.streamToStore(ctx, owner, key, c.Path)
+		if errors.Is(err, storage.ErrPathOccupied) {
+			continue
 		}
-		_ = imp.store.Delete(ctx, owner, key)
+		if err != nil {
+			return candidateOutcome{err: fmt.Errorf("write %s: %w", c.Path, err)}
+		}
+
+		m := buildMediaRow(c, owner, landed, checksum, size, meta, imp.now())
+		switch err := imp.repo.Insert(ctx, m); {
+		case err == nil:
+			return candidateOutcome{imported: true}
+		case errors.Is(err, media.ErrDuplicateChecksum):
+			// A concurrent worker imported the same bytes first.
+			_ = imp.store.Delete(ctx, owner, landed)
+			return candidateOutcome{duplicate: true}
+		case errors.Is(err, media.ErrDuplicatePath):
+			// Phantom row: DB claims this path but we just wrote fresh
+			// bytes at it. Delete our bytes and retry at seq+1.
+			_ = imp.store.Delete(ctx, owner, landed)
+			continue
+		default:
+			_ = imp.store.Delete(ctx, owner, landed)
+			return candidateOutcome{err: fmt.Errorf("insert %s: %w", c.Path, err)}
+		}
+	}
+	return candidateOutcome{pathCollision: true, err: fmt.Errorf("path collision for %s", c.Path)}
+}
+
+// processVideo handles the video branch: content-addressed path,
+// orphan adoption when NAS bytes already match, pathCollision when they
+// don't.
+func (imp *Importer) processVideo(ctx context.Context, c Candidate, owner owners.Principal, checksum string, size int64, meta exifread.Metadata) candidateOutcome {
+	key := resolveVideoPath(c.Path, checksum)
+	landed, writeErr := imp.streamToStore(ctx, owner, key, c.Path)
+	switch {
+	case writeErr == nil:
+		// Fresh write: insert normally.
+	case errors.Is(writeErr, storage.ErrPathOccupied):
+		// NAS has bytes at this path. Adopt if their checksum matches
+		// (orphan); otherwise report a path collision.
+		adopted, err := imp.tryAdoptVideoOrphan(ctx, owner, key, checksum)
+		if err != nil {
+			return candidateOutcome{err: fmt.Errorf("adopt orphan %s: %w", c.Path, err)}
+		}
+		if !adopted {
+			return candidateOutcome{pathCollision: true, err: fmt.Errorf("path collision for %s", c.Path)}
+		}
+		landed = key
+	default:
+		return candidateOutcome{err: fmt.Errorf("write %s: %w", c.Path, writeErr)}
+	}
+
+	m := buildMediaRow(c, owner, landed, checksum, size, meta, imp.now())
+	switch err := imp.repo.Insert(ctx, m); {
+	case err == nil:
+		return candidateOutcome{imported: true}
+	case errors.Is(err, media.ErrDuplicateChecksum):
+		if writeErr == nil {
+			_ = imp.store.Delete(ctx, owner, landed)
+		}
+		return candidateOutcome{duplicate: true}
+	case errors.Is(err, media.ErrDuplicatePath):
+		// Either a race with another worker or a phantom row. Either way
+		// the bytes on NAS are content-addressed — if we wrote them, we
+		// can drop them; if we adopted them, leave them for reconcile.
+		if writeErr == nil {
+			_ = imp.store.Delete(ctx, owner, landed)
+		}
+		return candidateOutcome{pathCollision: true, err: fmt.Errorf("path collision for %s", c.Path)}
+	default:
+		if writeErr == nil {
+			_ = imp.store.Delete(ctx, owner, landed)
+		}
 		return candidateOutcome{err: fmt.Errorf("insert %s: %w", c.Path, err)}
 	}
-	return candidateOutcome{imported: true}
+}
+
+// tryAdoptVideoOrphan inspects the existing NAS bytes at key and returns
+// true iff their checksum matches the expected value. The caller uses
+// this result to decide between orphan adoption (insert) and
+// pathCollision (report and fail).
+func (imp *Importer) tryAdoptVideoOrphan(ctx context.Context, owner owners.Principal, key, expected string) (bool, error) {
+	if _, err := imp.store.Stat(ctx, owner, key); err != nil {
+		return false, fmt.Errorf("stat orphan: %w", err)
+	}
+	rc, err := imp.store.ReadRange(ctx, owner, key, 0, -1)
+	if err != nil {
+		return false, fmt.Errorf("open orphan: %w", err)
+	}
+	defer rc.Close()
+	h := md5.New()
+	if _, err := io.Copy(h, rc); err != nil {
+		return false, fmt.Errorf("checksum orphan: %w", err)
+	}
+	return hex.EncodeToString(h.Sum(nil)) == expected, nil
 }
 
 // extractMetadata calls the photo or video extractor and swallows any
@@ -173,37 +266,6 @@ func extractMetadata(c Candidate) exifread.Metadata {
 		return m
 	}
 	return exifread.Metadata{}
-}
-
-// writeBytes resolves the canonical storage key and streams the source
-// file into the store. For photos it retries with a bumped sequence on
-// ErrPathOccupied; for videos it reports a collision so the caller can
-// flag it as a pathCollision outcome.
-func (imp *Importer) writeBytes(ctx context.Context, c Candidate, owner owners.Principal, ts *time.Time, checksum string) (string, bool, error) {
-	switch c.Type {
-	case media.TypeVideo:
-		key := resolveVideoPath(c.Path, checksum)
-		landed, err := imp.streamToStore(ctx, owner, key, c.Path)
-		if errors.Is(err, storage.ErrPathOccupied) {
-			return "", true, nil
-		}
-		if err != nil {
-			return "", false, err
-		}
-		return landed, false, nil
-	default:
-		for seq := range maxPhotoSeqAttempts {
-			key := resolvePhotoPath(c.Path, ts, seq)
-			landed, err := imp.streamToStore(ctx, owner, key, c.Path)
-			if err == nil {
-				return landed, false, nil
-			}
-			if !errors.Is(err, storage.ErrPathOccupied) {
-				return "", false, err
-			}
-		}
-		return "", true, nil
-	}
 }
 
 // streamToStore opens src and hands it to the Store.Write no-clobber

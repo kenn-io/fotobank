@@ -12,6 +12,19 @@ import (
 	"github.com/wesm/fotobank/internal/owners"
 )
 
+// ErrDuplicateChecksum wraps errs.ErrAlreadyExists and indicates that
+// the (owner, checksum) UNIQUE constraint fired on Insert. Callers that
+// already treat this as a dedup race can keep using errors.Is against
+// errs.ErrAlreadyExists; callers that need to distinguish it from a
+// path collision should use errors.Is against ErrDuplicateChecksum.
+var ErrDuplicateChecksum = fmt.Errorf("%w: duplicate checksum", errs.ErrAlreadyExists)
+
+// ErrDuplicatePath wraps errs.ErrAlreadyExists and indicates that the
+// (owner, path) UNIQUE constraint fired on Insert. The importer treats
+// this as a phantom-row collision (DB has a row claiming the path but
+// the NAS bytes are for different content).
+var ErrDuplicatePath = fmt.Errorf("%w: duplicate path", errs.ErrAlreadyExists)
+
 // Repo is a SQLite-backed store of media rows. It uses a split
 // read/write pool: writes go through rw and reads through ro.
 type Repo struct {
@@ -67,9 +80,9 @@ func (r *Repo) Insert(ctx context.Context, m Media) error {
 		nullTime(m.ThumbUpdatedAt),
 	)
 	if err != nil {
-		if isUniqueViolation(err) {
+		if kind := uniqueViolationKind(err); kind != nil {
 			return fmt.Errorf("%w: media (owner=%s, checksum=%s, path=%s)",
-				errs.ErrAlreadyExists, m.Owner, m.Checksum, m.Path)
+				kind, m.Owner, m.Checksum, m.Path)
 		}
 		return fmt.Errorf("insert media: %w", err)
 	}
@@ -103,6 +116,23 @@ func (r *Repo) GetByOwnerChecksum(ctx context.Context, p owners.Principal, check
 	}
 	if err != nil {
 		return Media{}, fmt.Errorf("get media by checksum: %w", err)
+	}
+	return m, nil
+}
+
+// GetByOwnerPath returns the media row for (owner, path). Returns
+// errs.ErrNotFound if no such row exists.
+func (r *Repo) GetByOwnerPath(ctx context.Context, p owners.Principal, path string) (Media, error) {
+	row := r.ro.QueryRowContext(ctx,
+		mediaSelect+" WHERE owner_hub = ? AND owner_user_id = ? AND path = ?",
+		p.Hub, p.UserID, path,
+	)
+	m, err := scanMedia(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Media{}, fmt.Errorf("%w: media owner=%s path=%s", errs.ErrNotFound, p, path)
+	}
+	if err != nil {
+		return Media{}, fmt.Errorf("get media by path: %w", err)
 	}
 	return m, nil
 }
@@ -290,6 +320,26 @@ func nullTime(p *time.Time) sql.NullTime {
 	return sql.NullTime{Time: *p, Valid: true}
 }
 
-func isUniqueViolation(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+// uniqueViolationKind inspects a SQLite error and returns the matching
+// sentinel (ErrDuplicateChecksum or ErrDuplicatePath) when the error is
+// a UNIQUE constraint violation on the media table. It returns nil for
+// any other error so the caller can distinguish a real SQL failure.
+func uniqueViolationKind(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "UNIQUE constraint failed") {
+		return nil
+	}
+	switch {
+	case strings.Contains(msg, "media.checksum"):
+		return ErrDuplicateChecksum
+	case strings.Contains(msg, "media.path"):
+		return ErrDuplicatePath
+	default:
+		// Unknown UNIQUE violation — fall back to the generic sentinel so
+		// callers using errors.Is(errs.ErrAlreadyExists) still match.
+		return errs.ErrAlreadyExists
+	}
 }

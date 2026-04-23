@@ -197,6 +197,61 @@ func TestMediaListPaginationIsStableOnTies(t *testing.T) {
 	r.Len(seen, 5)
 }
 
+func TestMediaGetByOwnerPath(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+
+	p := testOwner()
+	_, err := d.WriteDB().ExecContext(ctx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "sk-path", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	m := baseMedia(uuid.NewString(), p)
+	r.NoError(repo.Insert(ctx, m))
+
+	got, err := repo.GetByOwnerPath(ctx, p, "2024/a.jpg")
+	r.NoError(err)
+	r.Equal(m.ID, got.ID)
+
+	_, err = repo.GetByOwnerPath(ctx, p, "2024/missing.jpg")
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestMediaInsertUniqueViolationsDistinguishSentinels(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+
+	p := testOwner()
+	_, err := d.WriteDB().ExecContext(ctx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "sk-kinds", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	first := baseMedia(uuid.NewString(), p)
+	r.NoError(repo.Insert(ctx, first))
+
+	// Same checksum, different path → ErrDuplicateChecksum.
+	dupChecksum := baseMedia(uuid.NewString(), p)
+	dupChecksum.Path = "2024/other.jpg"
+	err = repo.Insert(ctx, dupChecksum)
+	r.ErrorIs(err, media.ErrDuplicateChecksum)
+	r.ErrorIs(err, errs.ErrAlreadyExists)
+
+	// Same path, different checksum → ErrDuplicatePath.
+	dupPath := baseMedia(uuid.NewString(), p)
+	dupPath.Checksum = "cs-other"
+	err = repo.Insert(ctx, dupPath)
+	r.ErrorIs(err, media.ErrDuplicatePath)
+	r.ErrorIs(err, errs.ErrAlreadyExists)
+}
+
 func TestMediaGetByOwnerChecksum(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
