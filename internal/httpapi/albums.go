@@ -73,7 +73,6 @@ func toAlbumDTO(it album.AlbumListItem) albumDTO {
 // the OpenAPI spec dumper can pass an empty Deps.
 func registerAlbums(api huma.API, svc *service.AlbumService) {
 	registerAlbumsCRUD(api, svc)
-	registerAlbumMedia(api, svc)
 }
 
 const (
@@ -138,6 +137,14 @@ func clampLimit(in, def, maxCap int) int {
 }
 
 func registerAlbumsCRUD(api huma.API, svc *service.AlbumService) {
+	registerListAlbums(api, svc)
+	registerCreateAlbum(api, svc)
+	registerGetAlbum(api, svc)
+	registerRenameAlbum(api, svc)
+	registerDeleteAlbum(api, svc)
+}
+
+func registerListAlbums(api huma.API, svc *service.AlbumService) {
 	huma.Register(api, huma.Operation{
 		OperationID: "list-albums",
 		Method:      http.MethodGet,
@@ -170,7 +177,9 @@ func registerAlbumsCRUD(api huma.API, svc *service.AlbumService) {
 		}
 		return out, nil
 	})
+}
 
+func registerCreateAlbum(api huma.API, svc *service.AlbumService) {
 	huma.Register(api, huma.Operation{
 		OperationID:   "create-album",
 		Method:        http.MethodPost,
@@ -191,7 +200,9 @@ func registerAlbumsCRUD(api huma.API, svc *service.AlbumService) {
 		}
 		return &createAlbumOutput{Status: http.StatusCreated, Body: toAlbumDTO(it)}, nil
 	})
+}
 
+func registerGetAlbum(api huma.API, svc *service.AlbumService) {
 	huma.Register(api, huma.Operation{
 		OperationID: "get-album",
 		Method:      http.MethodGet,
@@ -211,7 +222,9 @@ func registerAlbumsCRUD(api huma.API, svc *service.AlbumService) {
 		}
 		return &getAlbumOutput{Body: toAlbumDTO(it)}, nil
 	})
+}
 
+func registerRenameAlbum(api huma.API, svc *service.AlbumService) {
 	huma.Register(api, huma.Operation{
 		OperationID: "rename-album",
 		Method:      http.MethodPatch,
@@ -231,7 +244,9 @@ func registerAlbumsCRUD(api huma.API, svc *service.AlbumService) {
 		}
 		return &getAlbumOutput{Body: toAlbumDTO(it)}, nil
 	})
+}
 
+func registerDeleteAlbum(api huma.API, svc *service.AlbumService) {
 	huma.Register(api, huma.Operation{
 		OperationID:   "delete-album",
 		Method:        http.MethodDelete,
@@ -251,12 +266,6 @@ func registerAlbumsCRUD(api huma.API, svc *service.AlbumService) {
 		}
 		return &deleteAlbumOutput{Status: http.StatusNoContent}, nil
 	})
-}
-
-// Placeholder used by Task 9 (album_media routes).
-func registerAlbumMedia(api huma.API, svc *service.AlbumService) {
-	_ = api
-	_ = svc
 }
 
 // TranslateAlbumErrorForTest is an internal-only export so albums_test
