@@ -29,32 +29,32 @@ const tmpMarker = ".tmp-"
 
 // Report lists the drift between NAS bytes and the media table.
 type Report struct {
-	Orphans      []Orphan
-	Missing      []media.Media
-	SizeMismatch []SizeMismatch
-	StaleTemps   []string
+	Orphans      []Orphan       `json:"orphans"`
+	Missing      []media.Media  `json:"missing"`
+	SizeMismatch []SizeMismatch `json:"size_mismatch"`
+	StaleTemps   []string       `json:"stale_temps"`
 	// DeletedRows is the number of Missing rows removed when
 	// Options.CommitDeletes is true.
-	DeletedRows int
+	DeletedRows int `json:"deleted_rows"`
 	// DeletedTemps is the number of StaleTemps files removed when
 	// Options.CommitTemps is true.
-	DeletedTemps int
+	DeletedTemps int `json:"deleted_temps"`
 }
 
 // Orphan identifies bytes under the owner's NAS root that no media row
 // claims.
 type Orphan struct {
 	// Path is the storage-key-relative POSIX path (e.g., "2024/a.jpg").
-	Path string
-	Size int64
+	Path string `json:"path"`
+	Size int64  `json:"size"`
 }
 
 // SizeMismatch identifies a media row whose recorded size disagrees with
 // the file currently on disk.
 type SizeMismatch struct {
-	MediaID    string
-	DBSize     int64
-	OnDiskSize int64
+	MediaID    string `json:"media_id"`
+	DBSize     int64  `json:"db_size"`
+	OnDiskSize int64  `json:"on_disk_size"`
 }
 
 // Options drives a Reconcile run.
