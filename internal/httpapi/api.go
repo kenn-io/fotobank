@@ -60,6 +60,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerHealthz(api)
 	registerMe(api)
 	registerMedia(api, deps.MediaService)
+	registerMediaOriginal(mux, deps.MediaService)
 	return mux, api
 }
 
