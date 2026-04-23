@@ -34,7 +34,8 @@ internal/album/
 └── repo.go             — *album.Repo: CRUD + AddMedia/RemoveMedia/ListMedia/ListByOwner
 
 internal/db/migrations/
-└── 000002_album_indexes.up.sql   — two new indexes (see "New indexes" in §5)
+├── 000002_album_indexes.up.sql   — two new indexes (see "New indexes" in §5)
+└── 000002_album_indexes.down.sql — DROP INDEX IF EXISTS for both (up/down pair required by project migration policy)
 
 internal/service/album_service.go
                         — *AlbumService: auth-scoped wrapper, forces caller-owner everywhere
@@ -167,20 +168,29 @@ SELECT oa.id, oa.owner_hub, oa.owner_user_id, oa.name, oa.created_at, oa.updated
       JOIN media m ON m.id = am.media_id
      WHERE am.album_id IN (SELECT id FROM owner_albums)
        AND m.thumb_status = 'ready'
-  ) cv ON cv.album_id = oa.id AND cv.rn = 1;
+  ) cv ON cv.album_id = oa.id AND cv.rn = 1
+ ORDER BY oa.updated_at DESC, oa.id ASC;
 ```
+
+The outer `ORDER BY` repeats the CTE's ordering. SQLite does not guarantee row order from a CTE once it's used as a join source in an outer query, so the final sort must be declared explicitly. The CTE's `ORDER BY ... LIMIT ... OFFSET` still controls *which* albums are in the page; the outer `ORDER BY` controls what order they come back in.
 
 Cover is null for empty albums or albums whose only members are still `pending`/`working`.
 
 #### `AddMedia` idempotency and input dedupe
 
-1. Service deduplicates `mediaIDs` on entry (preserving first-seen order). A request like `[X, X, Y]` is treated as `[X, Y]`. The caller's intent is "these items should be in the album"; duplicating an ID in the request body is not meaningful.
-2. Single batched `INSERT INTO album_media(album_id, media_id, added_at) VALUES (?,?,?), ... ON CONFLICT (album_id, media_id) DO NOTHING`. Reports `added = RowsAffected()`; `alreadyPresent = len(deduped) - added`.
-3. Empty input is a no-op returning `(0, 0, nil)`.
+Dedupe, validation, and the actual INSERT are split across layers so each layer is unsurprising in isolation:
+
+- **Service** deduplicates `mediaIDs` on entry (preserving first-seen order). A request like `[X, X, Y]` is treated as `[X, Y]`. The caller's intent is "these items should be in the album"; duplicating an ID in the request body is not meaningful.
+- **Service** then validates the deduped batch against 1 ≤ len ≤ 500. Empty or oversized → `album.ErrInvalidBatch`. This is what the HTTP/CLI layers rely on; a user who POSTs `{"media_ids": []}` gets 400, not 200 with `(0, 0)`.
+- **Service** runs the per-ID ownership pre-flight, then calls into the repo.
+- **Repo `AddMedia`** is tolerant of empty input: `len(mediaIDs) == 0` returns `(0, 0, nil)` without touching the database. This keeps the repo safe to call from other futures (e.g. a sweeper that might pass in an empty slice) and makes the contract purely mechanical. The "empty = invalid" rule lives at the auth/validation boundary, not at the SQL boundary.
+- **Repo** then issues a single batched `INSERT INTO album_media(album_id, media_id, added_at) VALUES (?,?,?), ... ON CONFLICT (album_id, media_id) DO NOTHING`. Reports `added = RowsAffected()`; `alreadyPresent = len(mediaIDs) - added`.
 
 #### New indexes (Plan D migration)
 
-The existing `albums_owner_idx(owner_hub, owner_user_id, name)` and `album_media` primary key do not cover the Plan D query patterns. Two new indexes land as `internal/db/migrations/000002_album_indexes.up.sql`:
+The existing `albums_owner_idx(owner_hub, owner_user_id, name)` and `album_media` primary key do not cover the Plan D query patterns. Two new indexes land as an up/down pair:
+
+`internal/db/migrations/000002_album_indexes.up.sql`:
 
 ```sql
 -- Covers ListByOwner's ORDER BY updated_at DESC, id after owner filter.
@@ -193,7 +203,25 @@ CREATE INDEX album_media_album_added_idx
     ON album_media(album_id, added_at DESC);
 ```
 
-`ListMedia` with `sort_by=imported` uses the existing `media_owner_imported_idx` after joining on `album_media(album_id, ...)`.
+`internal/db/migrations/000002_album_indexes.down.sql`:
+
+```sql
+DROP INDEX IF EXISTS album_media_album_added_idx;
+DROP INDEX IF EXISTS albums_owner_updated_idx;
+```
+
+**`ListMedia` with `sort_by=imported` query plan.** No added index covers this case. The planner should use the existing `album_media` PK `(album_id, media_id)` to find the album's members, join to `media` via the `media(id)` PK, then sort the (small per-album) result set in memory by `imported_at`:
+
+```sql
+SELECT m.*
+  FROM album_media am
+  JOIN media m ON m.id = am.media_id
+ WHERE am.album_id = ?
+ ORDER BY m.imported_at DESC, m.id ASC
+ LIMIT ? OFFSET ?;
+```
+
+The existing `media_owner_imported_idx(owner_hub, owner_user_id, imported_at DESC)` does **not** help this query: it's keyed on owner, and the plan is already constrained to album members via `album_media.album_id`. A future optimization could add `album_media(album_id) INCLUDE imported_at` if it becomes a hotspot — tracked in §11 as out-of-scope for Plan D. For typical album sizes (tens to low thousands of members) the in-memory sort is fine.
 
 ## 6. Service surface
 
@@ -244,7 +272,7 @@ func (s *AlbumService) List(
 //     does not exist, OR if any media_id exists but belongs to a different
 //     owner. Mixed-owner input is reported as ErrNotFound so the response
 //     does not leak existence of rows the caller does not own.
-//   - errs.ErrInvalidBatch if the deduped batch is empty or > 500.
+//   - album.ErrInvalidBatch if the deduped batch is empty or > 500.
 //
 // errs.ErrOwnerMismatch is reserved for the DB trigger path (defence in
 // depth): if the pre-flight somehow misses a cross-owner row, the trigger
@@ -279,10 +307,10 @@ func (s *AlbumService) ListMedia(
 
 ### Validation rules
 
-- `name`: trimmed; 1 ≤ len ≤ 200 chars after trim. Empty or oversized → `ErrInvalidName`.
+- `name`: trimmed; 1 ≤ len ≤ 200 chars after trim. Empty or oversized → `album.ErrInvalidName`.
 - Duplicate names within one owner are **allowed**. Humans reuse names ("Dog photos", "Trip"). No unique constraint.
-- `mediaIDs` batch: the service deduplicates the input slice (preserving first-seen order) before length-checking. After dedupe, 1 ≤ len ≤ 500. Empty or > 500 → `ErrInvalidBatch`. A request with 10 IDs that collapse to 3 distinct IDs is a valid 3-ID batch.
-- `SortBy`: `"added"` or `"imported"`. Anything else → `ErrInvalidSort` at the service boundary (the HTTP layer translates to 400).
+- `mediaIDs` batch: the service deduplicates the input slice (preserving first-seen order) before length-checking. After dedupe, 1 ≤ len ≤ 500. Empty or > 500 → `album.ErrInvalidBatch`. A request with 10 IDs that collapse to 3 distinct IDs is a valid 3-ID batch.
+- `SortBy`: `"added"` or `"imported"`. Anything else → `album.ErrInvalidSort` at the service boundary (the HTTP layer translates to 400).
 
 ### Ownership checks
 
@@ -353,13 +381,52 @@ Invalid `sort_by` → 400. Invalid `limit` (out of range) → clamped silently, 
 | Service error | HTTP | Body |
 |---|---|---|
 | `errs.ErrNotFound` | 404 | `{"detail": "album not found"}` or `{"detail": "media not in album"}` |
-| `ErrInvalidName` | 400 | `{"detail": "name must be 1..200 chars"}` |
-| `ErrInvalidBatch` | 400 | `{"detail": "batch size must be 1..500"}` |
-| `ErrInvalidSort` | 400 | `{"detail": "sort_by must be added or imported"}` |
+| `album.ErrInvalidName` | 400 | `{"detail": "name must be 1..200 chars"}` |
+| `album.ErrInvalidBatch` | 400 | `{"detail": "batch size must be 1..500"}` |
+| `album.ErrInvalidSort` | 400 | `{"detail": "sort_by must be added or imported"}` |
 | `errs.ErrOwnerMismatch` | 500 | generic (internal invariant violation, logged; should never reach users if the pre-flight check is correct) |
 | anything else | 500 | generic |
 
 The albums surface deliberately has **no user-facing 403s**: cross-owner access returns 404 on every endpoint, so the API cannot be used as an existence oracle for another user's media IDs or album IDs. Identity missing → 401. Caller without stub identity → handled by existing middleware.
+
+### Album-specific error translator
+
+The existing `httpapi.Translate` (at `internal/httpapi/errors.go`) maps `errs.ErrOwnerMismatch` → **403**, which is the right call for the scopes/sharing surface (Plan E) but violates Plan D's "no user-facing 403s" rule. Plan D introduces a thin wrapper used only by the album handlers:
+
+```go
+// internal/httpapi/albums.go (or albums_errors.go)
+
+// translateAlbumError maps a service-layer error into a huma.StatusError
+// using rules that differ from the global Translate for this surface:
+//
+//   * errs.ErrOwnerMismatch → 500 + logged. In the albums surface this
+//     means the AlbumService pre-flight ownership check missed a row
+//     and the DB trigger fired — an internal invariant violation, not
+//     a user error. The global Translate would return 403, which would
+//     leak existence of rows the caller does not own.
+//   * album.ErrInvalidName / ErrInvalidBatch / ErrInvalidSort → 400
+//     with the sentinel's message.
+//   * Everything else delegates to the shared httpapi.Translate.
+//
+// The log call happens inside the handler before returning, so the
+// wrapper itself only maps; it does not perform I/O.
+func translateAlbumError(err error) huma.StatusError {
+    switch {
+    case errors.Is(err, errs.ErrOwnerMismatch):
+        return huma.Error500InternalServerError(http.StatusText(http.StatusInternalServerError))
+    case errors.Is(err, album.ErrInvalidName):
+        return huma.Error400BadRequest(album.ErrInvalidName.Error())
+    case errors.Is(err, album.ErrInvalidBatch):
+        return huma.Error400BadRequest(album.ErrInvalidBatch.Error())
+    case errors.Is(err, album.ErrInvalidSort):
+        return huma.Error400BadRequest(album.ErrInvalidSort.Error())
+    default:
+        return Translate(err)
+    }
+}
+```
+
+**Test requirement**: an HTTP-level test (`albums_test.go`) forces the trigger path by inserting a cross-owner `album_media` row via the service (after monkey-patching the pre-flight to skip — or by injecting a fake `media.Repo` that lies about ownership) and asserts the response is **500**, not 403. The same test verifies `httpapi.Translate`'s own behaviour is unchanged (ErrOwnerMismatch → 403 via the Plan B/C/E surfaces).
 
 ## 8. CLI surface
 
