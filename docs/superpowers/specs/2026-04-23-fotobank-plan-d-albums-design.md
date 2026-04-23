@@ -22,7 +22,7 @@ Ship owner-scoped albums: lightweight, manually curated collections of the calle
 
 ## 2. Prior art already in the tree
 
-The `albums` and `album_media` tables plus owner-consistency triggers (insert + update) were landed in Plan A's initial migration. Plan D adds Go code, HTTP routes, and a CLI — no new migrations, no schema changes. The trigger already aborts any insert where the album and media have different owners; Plan D's `AlbumService` performs the same check in Go as defence-in-depth so callers get a clean `ErrForbidden` rather than a raw SQLite trigger error.
+The `albums` and `album_media` tables plus owner-consistency triggers (insert + update) were landed in Plan A's initial migration. Plan D adds Go code, HTTP routes, a CLI, and **two new indexes** (see "New indexes" in §5) — no table or trigger changes. The trigger already aborts any insert where the album and media have different owners. In Plan D, `AlbumService` is the primary ownership guard (a pre-flight `media.Repo.GetByID` per ID, returning `errs.ErrNotFound` for any miss or cross-owner row); the SQLite trigger is the last-line defence-in-depth in case the pre-flight misses a row, in which case the repo wraps the raw trigger error as `errs.ErrOwnerMismatch` and the HTTP layer logs + returns 500. See §6 for the full rationale.
 
 ## 3. Architecture and package layout
 
@@ -30,28 +30,29 @@ New files, all mirroring existing patterns established in Plans B and C:
 
 ```
 internal/album/
-├── album.go            — Album, AlbumListItem, CoverRef, AlbumMediaEntry
+├── album.go            — Album, AlbumListItem, CoverRef, AlbumMediaEntry, package sentinels
 └── repo.go             — *album.Repo: CRUD + AddMedia/RemoveMedia/ListMedia/ListByOwner
+
+internal/db/migrations/
+└── 000002_album_indexes.up.sql   — two new indexes (see "New indexes" in §5)
 
 internal/service/album_service.go
                         — *AlbumService: auth-scoped wrapper, forces caller-owner everywhere
 
 internal/httpapi/albums.go
-                        — huma-registered CRUD routes (list/create/get/rename/delete)
-internal/httpapi/album_media.go
-                        — raw mux routes for the paginated list + batch add + single delete
+                        — huma-registered routes: CRUD + album-media list/add/remove
 
 internal/cli/albums.go
                         — cobra subcommands (create/rename/delete/list/show/add/remove)
 ```
 
 Layering identical to the media stack:
-- `album.Repo` is DB-only. No auth, no identity plumbing.
-- `service.AlbumService` is the auth boundary. Every exported method takes `caller owners.Principal` and either scopes queries to that principal or returns `errs.ErrNotFound` for cross-owner access.
+- `album.Repo` is DB-only. No auth, no identity plumbing. Every method takes `id`-style arguments without knowing which owner they should belong to.
+- `service.AlbumService` is the auth boundary. Every exported method takes `caller owners.Principal` and either scopes queries to that principal or returns `errs.ErrNotFound` for cross-owner access. **Both the HTTP handlers and the CLI go through `AlbumService`** — the CLI does not touch `album.Repo` directly, because repo methods do not enforce ownership. A bug or CLI argument typo (e.g. feeding in a UUID that belongs to a different owner) must not let stub user A mutate user B's rows.
 - HTTP handlers marshal request/response DTOs and delegate.
-- CLI commands use the repo directly (same pattern as `thumbs regenerate`), scoped to `cfg.Identity.Stub.{Hub,UserID}`.
+- CLI commands construct `caller` from `cfg.Identity.Stub.{Hub,UserID}` and pass it into every `AlbumService` method.
 
-`AlbumService` takes `*album.Repo` and `*media.Repo` (the latter for the pre-flight ownership check on `AddMedia`). No new background goroutines.
+`AlbumService` takes `*album.Repo` and `*media.Repo` (the latter for the pre-flight ownership check on `AddMedia`). All routes are huma-registered, matching the JSON+OpenAPI pattern established by `/api/v1/media` CRUD. No new background goroutines.
 
 ## 4. Domain types
 
@@ -136,40 +137,63 @@ type AlbumMediaFilter struct {
 
 #### `ListByOwner` cover derivation
 
-Computed in one SQL statement using a correlated subquery over `album_media` JOIN `media`, picking the most recently added `media.thumb_status='ready'` row per album. Pseudo-SQL:
+One SQL statement. The outer CTE filters `albums` to the caller's rows **first** so the count/cover subqueries only see the tiny per-owner set, not the global `album_media` table. Covers and counts are derived via correlated window subqueries:
 
 ```sql
-SELECT a.id, a.owner_hub, a.owner_user_id, a.name, a.created_at, a.updated_at,
-       COALESCE(ic.cnt, 0) AS item_count,
+WITH owner_albums AS (
+  SELECT id, owner_hub, owner_user_id, name, created_at, updated_at
+    FROM albums
+   WHERE owner_hub = ? AND owner_user_id = ?
+   ORDER BY updated_at DESC, id ASC
+   LIMIT ? OFFSET ?
+)
+SELECT oa.id, oa.owner_hub, oa.owner_user_id, oa.name, oa.created_at, oa.updated_at,
+       COALESCE(cnt.n, 0) AS item_count,
        cv.media_id, cv.thumb_version
-FROM albums a
-LEFT JOIN (
-  SELECT album_id, COUNT(*) AS cnt FROM album_media GROUP BY album_id
-) ic ON ic.album_id = a.id
-LEFT JOIN (
-  SELECT am.album_id, am.media_id, m.thumb_version,
-         ROW_NUMBER() OVER (
-           PARTITION BY am.album_id
-           ORDER BY am.added_at DESC, am.media_id ASC
-         ) AS rn
-    FROM album_media am
-    JOIN media m ON m.id = am.media_id
-   WHERE m.thumb_status = 'ready'
-) cv ON cv.album_id = a.id AND cv.rn = 1
-WHERE a.owner_hub = ? AND a.owner_user_id = ?
-ORDER BY a.updated_at DESC, a.id ASC
-LIMIT ? OFFSET ?;
+  FROM owner_albums oa
+  LEFT JOIN (
+    SELECT album_id, COUNT(*) AS n
+      FROM album_media
+     WHERE album_id IN (SELECT id FROM owner_albums)
+     GROUP BY album_id
+  ) cnt ON cnt.album_id = oa.id
+  LEFT JOIN (
+    SELECT am.album_id, am.media_id, m.thumb_version,
+           ROW_NUMBER() OVER (
+             PARTITION BY am.album_id
+             ORDER BY am.added_at DESC, am.media_id ASC
+           ) AS rn
+      FROM album_media am
+      JOIN media m ON m.id = am.media_id
+     WHERE am.album_id IN (SELECT id FROM owner_albums)
+       AND m.thumb_status = 'ready'
+  ) cv ON cv.album_id = oa.id AND cv.rn = 1;
 ```
 
-Scans null values for empty albums or albums whose only members are still `pending`/`working`. No secondary query per album.
+Cover is null for empty albums or albums whose only members are still `pending`/`working`.
 
-#### `AddMedia` idempotency
+#### `AddMedia` idempotency and input dedupe
 
-Single `INSERT INTO album_media(album_id, media_id, added_at) VALUES (?,?,?), (?,?,?), ...  ON CONFLICT (album_id, media_id) DO NOTHING`. Reports `added = RowsAffected()`; `alreadyPresent = len(mediaIDs) - added`. Empty input is a no-op returning `(0, 0, nil)`.
+1. Service deduplicates `mediaIDs` on entry (preserving first-seen order). A request like `[X, X, Y]` is treated as `[X, Y]`. The caller's intent is "these items should be in the album"; duplicating an ID in the request body is not meaningful.
+2. Single batched `INSERT INTO album_media(album_id, media_id, added_at) VALUES (?,?,?), ... ON CONFLICT (album_id, media_id) DO NOTHING`. Reports `added = RowsAffected()`; `alreadyPresent = len(deduped) - added`.
+3. Empty input is a no-op returning `(0, 0, nil)`.
 
-#### Index use
+#### New indexes (Plan D migration)
 
-Existing indexes (`albums_owner_idx`, `media_owner_imported_idx`) cover the list queries. `album_media` has an implicit index from its `PRIMARY KEY (album_id, media_id)` which covers the cover subquery's `album_id` lookup and `ListMedia`'s album-scoped scan. No new indexes.
+The existing `albums_owner_idx(owner_hub, owner_user_id, name)` and `album_media` primary key do not cover the Plan D query patterns. Two new indexes land as `internal/db/migrations/000002_album_indexes.up.sql`:
+
+```sql
+-- Covers ListByOwner's ORDER BY updated_at DESC, id after owner filter.
+CREATE INDEX albums_owner_updated_idx
+    ON albums(owner_hub, owner_user_id, updated_at DESC, id);
+
+-- Covers the cover subquery and ListMedia's sort_by=added path
+-- (most-recent-added-first per album).
+CREATE INDEX album_media_album_added_idx
+    ON album_media(album_id, added_at DESC);
+```
+
+`ListMedia` with `sort_by=imported` uses the existing `media_owner_imported_idx` after joining on `album_media(album_id, ...)`.
 
 ## 6. Service surface
 
@@ -183,15 +207,22 @@ type AlbumService struct {
 
 func NewAlbumService(a *album.Repo, m *media.Repo) *AlbumService
 
-// Create returns the new album. Name is trimmed + length-validated.
-func (s *AlbumService) Create(ctx context.Context, caller owners.Principal, name string) (album.Album, error)
+// Create returns the new album with derived fields (ItemCount=0, Cover=nil).
+// Name is trimmed + length-validated.
+func (s *AlbumService) Create(ctx context.Context, caller owners.Principal, name string) (album.AlbumListItem, error)
 
-// Get returns the album; ErrNotFound if missing OR not owned by caller.
+// Get returns the bare album; ErrNotFound if missing OR not owned by caller.
 func (s *AlbumService) Get(ctx context.Context, id string, caller owners.Principal) (album.Album, error)
 
-// Rename validates the new name and updates the row; ErrNotFound
-// if the album does not belong to the caller.
-func (s *AlbumService) Rename(ctx context.Context, id, name string, caller owners.Principal) error
+// GetDetail returns the album with ItemCount + Cover — the shape used by
+// HTTP detail endpoints and the response body after a successful Rename.
+// ErrNotFound if missing OR not owned by caller.
+func (s *AlbumService) GetDetail(ctx context.Context, id string, caller owners.Principal) (album.AlbumListItem, error)
+
+// Rename validates the new name, updates the row, and returns the updated
+// detail (with current ItemCount + Cover). ErrNotFound if the album does
+// not belong to the caller.
+func (s *AlbumService) Rename(ctx context.Context, id, name string, caller owners.Principal) (album.AlbumListItem, error)
 
 // Delete removes the album (album_media cascades). ErrNotFound for
 // cross-owner or missing.
@@ -204,10 +235,22 @@ func (s *AlbumService) List(
     limit, offset int,
 ) ([]album.AlbumListItem, error)
 
-// AddMedia validates the album is caller-owned AND every media_id is
-// caller-owned (pre-flight, before the DB trigger). Returns counts.
-// errs.ErrOwnerMismatch if any media belongs to a different owner.
-// errs.ErrNotFound if any media_id does not exist.
+// AddMedia validates the album is caller-owned AND every deduped media_id
+// exists AND belongs to the caller (pre-flight, before the DB trigger).
+// Returns counts of inserted vs. already-present rows.
+//
+// Errors:
+//   - errs.ErrNotFound if the album is missing/cross-owner, if any media_id
+//     does not exist, OR if any media_id exists but belongs to a different
+//     owner. Mixed-owner input is reported as ErrNotFound so the response
+//     does not leak existence of rows the caller does not own.
+//   - errs.ErrInvalidBatch if the deduped batch is empty or > 500.
+//
+// errs.ErrOwnerMismatch is reserved for the DB trigger path (defence in
+// depth): if the pre-flight somehow misses a cross-owner row, the trigger
+// aborts the insert and the repo wraps the raw SQLite error as
+// ErrOwnerMismatch. This is an internal invariant violation, not a user
+// error — it maps to HTTP 500, not 403.
 func (s *AlbumService) AddMedia(
     ctx context.Context,
     albumID string,
@@ -238,26 +281,33 @@ func (s *AlbumService) ListMedia(
 
 - `name`: trimmed; 1 ≤ len ≤ 200 chars after trim. Empty or oversized → `ErrInvalidName`.
 - Duplicate names within one owner are **allowed**. Humans reuse names ("Dog photos", "Trip"). No unique constraint.
-- `mediaIDs` batch: 1 ≤ len ≤ 500. Zero or >500 → `ErrInvalidBatch`.
+- `mediaIDs` batch: the service deduplicates the input slice (preserving first-seen order) before length-checking. After dedupe, 1 ≤ len ≤ 500. Empty or > 500 → `ErrInvalidBatch`. A request with 10 IDs that collapse to 3 distinct IDs is a valid 3-ID batch.
 - `SortBy`: `"added"` or `"imported"`. Anything else → `ErrInvalidSort` at the service boundary (the HTTP layer translates to 400).
 
 ### Ownership checks
 
-`AddMedia` fetches each `media_id`'s owner via `media.Repo.GetByID` before the insert. Mixed-owner input returns `errs.ErrOwnerMismatch` (HTTP 403) — this is one of two places where 403 leaks that the IDs exist at all, and it's intentional: the caller already proved ownership of *some* rows in the batch, so hiding existence of the rest gains nothing. `errs.ErrNotFound` is used everywhere else to avoid cross-owner existence leaks.
+`AddMedia` fetches each deduped `media_id`'s owner via `media.Repo.GetByID` before the insert. Any miss (row does not exist) or cross-owner row returns `errs.ErrNotFound`. The endpoint must not reveal whether an unknown `media_id` is missing, belongs to another user, or is a typo — all three collapse to the same 404.
+
+`errs.ErrOwnerMismatch` is reserved for defence-in-depth: if the pre-flight check misses a cross-owner row (race, bug, future refactor), the SQLite trigger aborts the INSERT and `album.Repo.AddMedia` wraps the raw error as `ErrOwnerMismatch`. A user request should never see this — it means the service-layer invariant is violated, and the HTTP layer maps it to 500 plus a log line, not 403.
+
+`Get`, `GetDetail`, `Rename`, `Delete`, `RemoveMedia`, and `ListMedia` all return `ErrNotFound` for cross-owner IDs. There are no user-facing 403s anywhere in the albums surface.
 
 ## 7. HTTP API surface
 
-### Huma-registered routes (JSON CRUD)
+All routes are huma-registered. The only endpoints on fotobank's HTTP surface that *aren't* huma are the ones that stream raw bytes (`/original`, `/thumb`); everything album-related is JSON in, JSON out, so there is no reason to drop out of huma. Going all-huma means the routes appear in `/openapi.json` (the web app's client-gen source of truth) and use the project-wide huma error shape via `huma.Error{4,5}xx` constructors.
 
 | Method | Path | Behavior |
 |---|---|---|
 | `GET` | `/api/v1/albums?limit=&offset=` | list albums w/ cover |
-| `POST` | `/api/v1/albums` | create; body `{"name": "..."}` |
+| `POST` | `/api/v1/albums` | create; body `{"name": "..."}`; returns 201 + `albumDTO` |
 | `GET` | `/api/v1/albums/{id}` | detail; 404 if missing or cross-owner |
-| `PATCH` | `/api/v1/albums/{id}` | rename; body `{"name": "..."}` |
-| `DELETE` | `/api/v1/albums/{id}` | delete (cascades album_media) |
+| `PATCH` | `/api/v1/albums/{id}` | rename; body `{"name": "..."}`; returns 200 + `albumDTO` |
+| `DELETE` | `/api/v1/albums/{id}` | delete (cascades album_media); returns 204 |
+| `GET` | `/api/v1/albums/{id}/media?limit=&offset=&sort_by=&sort_desc=` | paginated `mediaDTO` list |
+| `POST` | `/api/v1/albums/{id}/media` | batch add, body `{"media_ids": [...]}`; returns 200 + add-result |
+| `DELETE` | `/api/v1/albums/{id}/media/{media_id}` | remove one; 404 if not in album; returns 204 |
 
-Response DTOs:
+### Response DTOs
 
 ```go
 type albumDTO struct {
@@ -275,15 +325,10 @@ type coverDTO struct {
 }
 ```
 
-Detail response omits `cover` only when the album is empty or no member has `thumb_status='ready'` yet.
-
-### Raw-mux routes (paginated list + binary-ish semantics)
-
-| Method | Path | Behavior |
-|---|---|---|
-| `GET` | `/api/v1/albums/{id}/media?limit=&offset=&sort_by=&sort_desc=` | paginated `mediaDTO` list |
-| `POST` | `/api/v1/albums/{id}/media` | batch add, body `{"media_ids": [...]}` |
-| `DELETE` | `/api/v1/albums/{id}/media/{media_id}` | remove one; 404 if not in album |
+- `GET /api/v1/albums/{id}`: handler calls `AlbumService.GetDetail` and marshals the returned `AlbumListItem` into `albumDTO`.
+- `PATCH /api/v1/albums/{id}`: handler calls `AlbumService.Rename`, which performs the update and returns the refreshed `AlbumListItem`; the handler marshals it into `albumDTO` and returns 200. This keeps the read-your-write contract without a second round-trip.
+- `POST /api/v1/albums`: `AlbumService.Create` returns an `AlbumListItem` (ItemCount=0, Cover=nil) so the response shape matches PATCH and GET.
+- `cover` is omitted when the album is empty or no member has `thumb_status='ready'`.
 
 Batch-add response:
 
@@ -308,13 +353,13 @@ Invalid `sort_by` → 400. Invalid `limit` (out of range) → clamped silently, 
 | Service error | HTTP | Body |
 |---|---|---|
 | `errs.ErrNotFound` | 404 | `{"detail": "album not found"}` or `{"detail": "media not in album"}` |
-| `errs.ErrOwnerMismatch` | 403 | `{"detail": "media belongs to a different owner"}` (mixed-owner batch only) |
 | `ErrInvalidName` | 400 | `{"detail": "name must be 1..200 chars"}` |
 | `ErrInvalidBatch` | 400 | `{"detail": "batch size must be 1..500"}` |
 | `ErrInvalidSort` | 400 | `{"detail": "sort_by must be added or imported"}` |
+| `errs.ErrOwnerMismatch` | 500 | generic (internal invariant violation, logged; should never reach users if the pre-flight check is correct) |
 | anything else | 500 | generic |
 
-Identity missing → 401. Caller without stub identity → handled by existing middleware.
+The albums surface deliberately has **no user-facing 403s**: cross-owner access returns 404 on every endpoint, so the API cannot be used as an existence oracle for another user's media IDs or album IDs. Identity missing → 401. Caller without stub identity → handled by existing middleware.
 
 ## 8. CLI surface
 
@@ -334,7 +379,8 @@ Patterns carried forward from `thumbs regenerate` and `reconcile`:
 - `FOTOBANK_DB_PATH` override, falling back to `{cfg.Flash.Root}/fotobank.sqlite`.
 - Stub-mode identity guard; any other mode rejected with a clear error.
 - Usage errors (empty name, bad args) exit with code 2 via `newUsageError`.
-- Each subcommand goes through `album.Repo` directly — no HTTP round-trip — for the same reason `thumbs regenerate` does: operator tooling shouldn't depend on the HTTP listener being up.
+- Each subcommand constructs a caller `owners.Principal` from `cfg.Identity.Stub.{Hub,UserID}` and goes through `AlbumService` — not `album.Repo` directly. The repo is ID-based and does not enforce ownership; a CLI typo (wrong UUID copy-pasted in a terminal) must not let stub user A mutate user B's rows, even in a single-user dev environment where only one owner is expected. Routing through the service keeps the auth check exactly one place.
+- No HTTP round-trip — same reason `thumbs regenerate` has none: operator tooling shouldn't depend on the HTTP listener being up. The CLI opens the DB directly and wires up `AlbumService` in-process.
 - `add` accepts multiple media IDs as positional args (idempotent batch).
 - `show` paginates via `--limit` / `--offset` flags (defaults 100 / 0).
 
@@ -373,19 +419,22 @@ Bypass the service, insert `album_media` via raw SQL where album and media have 
 
 ### Service tests (`internal/service/album_service_test.go`)
 
-- Cross-owner `Get` → `ErrNotFound` (not 403).
-- Cross-owner `Rename` / `Delete` / `ListMedia` → `ErrNotFound`.
-- `AddMedia` with mixed-owner IDs → `errs.ErrOwnerMismatch` BEFORE any DB write.
-- `AddMedia` with non-existent media ID → `ErrNotFound`.
+- Cross-owner `Get`, `GetDetail`, `Rename`, `Delete`, `RemoveMedia`, `ListMedia` → all return `errs.ErrNotFound` (not 403).
+- `AddMedia` with mixed-owner IDs → `errs.ErrNotFound` BEFORE any DB write (not `ErrOwnerMismatch`, so the endpoint cannot be used as an existence oracle).
+- `AddMedia` with non-existent media ID → `errs.ErrNotFound`.
+- `AddMedia` with duplicate input IDs (`[X, X, Y]`) dedupes to `[X, Y]`; first call returns `(2, 0)`, second call returns `(0, 2)`.
 - `AddMedia` happy path returns counts.
+- `Rename` happy path returns the updated `AlbumListItem` with fresh `UpdatedAt` and the cover/count computed at read time.
+- `Create` returns an `AlbumListItem` with ItemCount=0 and Cover=nil.
+- `GetDetail` derives ItemCount + Cover correctly for a seeded album.
 - `List` happy path returns owner's albums only.
 - Name validation: empty, whitespace-only, > 200 chars → `ErrInvalidName`.
-- Batch validation: 0 or 501 ids → `ErrInvalidBatch`.
+- Batch validation: 0 ids → `ErrInvalidBatch`; 501 distinct ids → `ErrInvalidBatch`; 502 ids with 2 duplicates (dedupes to 500) → accepted, proving dedupe runs before the length check.
 
 ### HTTP tests
 
-- `albums_test.go`: each CRUD route's 200 / 401 / 404 paths. Create returns 201 with the new album body. Rename returns 200 with the updated row. Delete returns 204.
-- `album_media_test.go`: list pagination (next_offset boundary cases), sort-by query param, batch-add response shape (`{added, already_present}`), 403 on mixed-owner batch, 400 on oversized batch, 404 on remove-not-in-album.
+- `albums_test.go`: each CRUD route's 200 / 401 / 404 paths. Create returns 201 with an `albumDTO` (ItemCount=0, no cover). Rename returns 200 with the updated `albumDTO` (freshly computed ItemCount + cover). Delete returns 204. Test that `GET /api/v1/albums/{id}` on a cross-owner album returns 404, not 403.
+- `album_media_test.go`: list pagination (next_offset boundary cases), sort-by query param, batch-add response shape (`{added, already_present}`), **404 (not 403) on mixed-owner batch**, 404 on unknown-media batch, 400 on oversized batch, 404 on remove-not-in-album. Test that duplicate input IDs in the batch POST collapse to distinct rows (request `[X, X, Y]` with album empty → response `{added: 2, already_present: 0}`).
 
 ### CLI tests (`internal/cli/albums_test.go`)
 
@@ -405,9 +454,7 @@ After the existing thumb round-trip section: create an album, `POST /api/v1/albu
 
 ## 12. Open points
 
-None blocking. One item to confirm at implementation time:
-
-- Huma-vs-raw-mux boundary: the current split (JSON CRUD via huma, paginated-list/batch-endpoint via raw mux) mirrors Plan B+C. If huma's streaming/list ergonomics have improved since Plan B, the album_media routes could migrate to huma. Not a Plan D decision.
+None. The huma-vs-raw-mux question is resolved in §7: every albums endpoint is JSON and every one is huma-registered, so OpenAPI stays complete and there is no second error-mapping path to maintain.
 
 ## 13. Success criteria
 
