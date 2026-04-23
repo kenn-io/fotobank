@@ -73,6 +73,7 @@ func toAlbumDTO(it album.AlbumListItem) albumDTO {
 // the OpenAPI spec dumper can pass an empty Deps.
 func registerAlbums(api huma.API, svc *service.AlbumService) {
 	registerAlbumsCRUD(api, svc)
+	registerAlbumMedia(api, svc)
 }
 
 const (
@@ -265,6 +266,138 @@ func registerDeleteAlbum(api huma.API, svc *service.AlbumService) {
 			return nil, translateAlbumError(err)
 		}
 		return &deleteAlbumOutput{Status: http.StatusNoContent}, nil
+	})
+}
+
+type listAlbumMediaInput struct {
+	AlbumID string `path:"id"`
+	Limit   int    `query:"limit" doc:"max rows to return (default 100, cap 1000)"`
+	Offset  int    `query:"offset" doc:"pagination offset"`
+	SortBy  string `query:"sort_by" doc:"added (default) or imported"`
+	SortAsc bool   `query:"sort_asc" doc:"invert the default DESC sort when true"`
+}
+
+type listAlbumMediaOutput struct {
+	Body struct {
+		Items      []mediaDTO `json:"items"`
+		NextOffset *int       `json:"next_offset,omitempty"`
+	}
+}
+
+type addAlbumMediaInput struct {
+	AlbumID string `path:"id"`
+	Body    struct {
+		MediaIDs []string `json:"media_ids"`
+	}
+}
+
+type addAlbumMediaOutput struct {
+	Body struct {
+		Added          int `json:"added"`
+		AlreadyPresent int `json:"already_present"`
+	}
+}
+
+type removeAlbumMediaInput struct {
+	AlbumID string `path:"id"`
+	MediaID string `path:"media_id"`
+}
+
+type removeAlbumMediaOutput struct {
+	Status int
+}
+
+func registerAlbumMedia(api huma.API, svc *service.AlbumService) {
+	registerListAlbumMedia(api, svc)
+	registerAddAlbumMedia(api, svc)
+	registerRemoveAlbumMedia(api, svc)
+}
+
+func registerListAlbumMedia(api huma.API, svc *service.AlbumService) {
+	huma.Register(api, huma.Operation{
+		OperationID: "list-album-media",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/albums/{id}/media",
+		Summary:     "List media in an album",
+	}, func(ctx context.Context, in *listAlbumMediaInput) (*listAlbumMediaOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("album service not configured")
+		}
+		id, ok := IdentityFromContext(ctx)
+		if !ok {
+			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
+		}
+		limit := clampLimit(in.Limit, albumsListDefaultLimit, albumsListMaxLimit)
+		offset := max(in.Offset, 0)
+		filter := album.AlbumMediaFilter{
+			Limit:   limit + 1,
+			Offset:  offset,
+			SortBy:  in.SortBy,
+			SortAsc: in.SortAsc,
+		}
+		rows, err := svc.ListMedia(ctx, in.AlbumID, filter, id.Principal.OwnersPrincipal())
+		if err != nil {
+			return nil, translateAlbumError(err)
+		}
+		out := &listAlbumMediaOutput{}
+		hasMore := len(rows) > limit
+		if hasMore {
+			rows = rows[:limit]
+			next := offset + limit
+			out.Body.NextOffset = &next
+		}
+		out.Body.Items = make([]mediaDTO, 0, len(rows))
+		for _, m := range rows {
+			out.Body.Items = append(out.Body.Items, toMediaDTO(m))
+		}
+		return out, nil
+	})
+}
+
+func registerAddAlbumMedia(api huma.API, svc *service.AlbumService) {
+	huma.Register(api, huma.Operation{
+		OperationID: "add-album-media",
+		Method:      http.MethodPost,
+		Path:        "/api/v1/albums/{id}/media",
+		Summary:     "Add media to an album (idempotent, deduped)",
+	}, func(ctx context.Context, in *addAlbumMediaInput) (*addAlbumMediaOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("album service not configured")
+		}
+		id, ok := IdentityFromContext(ctx)
+		if !ok {
+			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
+		}
+		added, already, err := svc.AddMedia(ctx, in.AlbumID, in.Body.MediaIDs, id.Principal.OwnersPrincipal())
+		if err != nil {
+			return nil, translateAlbumError(err)
+		}
+		out := &addAlbumMediaOutput{}
+		out.Body.Added = added
+		out.Body.AlreadyPresent = already
+		return out, nil
+	})
+}
+
+func registerRemoveAlbumMedia(api huma.API, svc *service.AlbumService) {
+	huma.Register(api, huma.Operation{
+		OperationID:   "remove-album-media",
+		Method:        http.MethodDelete,
+		Path:          "/api/v1/albums/{id}/media/{media_id}",
+		Summary:       "Remove a media row from an album",
+		DefaultStatus: http.StatusNoContent,
+	}, func(ctx context.Context, in *removeAlbumMediaInput) (*removeAlbumMediaOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("album service not configured")
+		}
+		id, ok := IdentityFromContext(ctx)
+		if !ok {
+			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
+		}
+		if err := svc.RemoveMedia(ctx, in.AlbumID, in.MediaID, id.Principal.OwnersPrincipal()); err != nil {
+			return nil, translateAlbumError(err)
+		}
+		return &removeAlbumMediaOutput{Status: http.StatusNoContent}, nil
 	})
 }
 
