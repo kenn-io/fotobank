@@ -14,7 +14,12 @@ import (
 // pass through unchanged — upscaling produces blurry thumbnails and
 // wastes bytes. The kernel is draw.CatmullRom (bicubic), which is the
 // Go team's default good-quality downscaler.
+// Returns the source unchanged when it's already within budget (or
+// when maxEdge <= 0); otherwise returns a fresh *image.RGBA.
 func Resize(src image.Image, maxEdge int) image.Image {
+	if maxEdge <= 0 {
+		return src
+	}
 	b := src.Bounds()
 	srcW, srcH := b.Dx(), b.Dy()
 	if srcW <= maxEdge && srcH <= maxEdge {
@@ -27,6 +32,12 @@ func Resize(src image.Image, maxEdge int) image.Image {
 	} else {
 		dstH = maxEdge
 		dstW = srcW * maxEdge / srcH
+	}
+	if dstW < 1 {
+		dstW = 1
+	}
+	if dstH < 1 {
+		dstH = 1
 	}
 	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
 	draw.CatmullRom.Scale(dst, dst.Bounds(), src, b, draw.Over, nil)

@@ -63,3 +63,20 @@ func TestEncodeJPEGRejectsBadQuality(t *testing.T) {
 	require.Error(t, thumb.EncodeJPEG(&buf, src, 0))
 	require.Error(t, thumb.EncodeJPEG(&buf, src, 101))
 }
+
+func TestResizeZeroMaxEdgeReturnsSourceUnchanged(t *testing.T) {
+	// Size.MaxEdge() returns 0 for unknown Size values; Resize must
+	// not silently produce a zero-dimension image downstream.
+	src := newGradient(100, 75)
+	out := thumb.Resize(src, 0)
+	require.Equal(t, 100, out.Bounds().Dx())
+	require.Equal(t, 75, out.Bounds().Dy())
+}
+
+func TestResizeExtremeAspectClampsMinimumOnePixel(t *testing.T) {
+	// A 10000x1 image scaled to maxEdge=256 has dstH = 1*256/10000 = 0
+	// under naive math. Clamp to >=1 so the output is always encodable.
+	out := thumb.Resize(newGradient(10000, 1), 256)
+	require.Equal(t, 256, out.Bounds().Dx())
+	require.GreaterOrEqual(t, out.Bounds().Dy(), 1)
+}
