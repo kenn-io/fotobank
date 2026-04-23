@@ -35,6 +35,10 @@ type Deps struct {
 	// isn't registered; tests and the OpenAPI spec dumper that don't
 	// need thumb serving can pass Deps without a ThumbService.
 	ThumbService *service.ThumbService
+	// AlbumService backs /api/v1/albums CRUD and nested album_media
+	// routes. Nil means those handlers answer 503 Service Unavailable so
+	// the OpenAPI dumper can still emit the schema.
+	AlbumService *service.AlbumService
 }
 
 // New constructs the Fotobank HTTP handler: a net/http.ServeMux with a
@@ -66,6 +70,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerMedia(api, deps.MediaService)
 	registerMediaOriginal(mux, deps.MediaService)
 	registerMediaThumb(mux, deps.ThumbService)
+	registerAlbums(api, deps.AlbumService)
 	return mux, api
 }
 
