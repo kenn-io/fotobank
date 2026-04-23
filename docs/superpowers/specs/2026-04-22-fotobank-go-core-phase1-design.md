@@ -1403,9 +1403,12 @@ parameter binding from struct tags; each handler lives in a
 - `GET  /api/v1/media/{id}` — detail.
 - `GET  /api/v1/media/{id}/original` — streams bytes. Range-aware.
   Applies `allow_download` gating for grantees.
-- `GET  /api/v1/media/{id}/thumb?size=grid|preview|lightbox` —
-  streams WebP. 404 if not in visible set; 409 if
-  `thumb_status != ready`.
+- `GET  /api/v1/media/{id}/thumb?size=grid|preview|lightbox&v={N}` —
+  streams WebP. 404 if not in visible set, not `ready`, or if `v`
+  is missing/mismatched. (2026-04-22 execution note: the earlier
+  "409 if thumb_status != ready" guidance has been superseded by
+  Plan C, which uses validated `?v=` + 404 for everything not
+  ready. See `2026-04-22-fotobank-plan-c-thumbnails-design.md` §9.)
 - `GET  /api/v1/albums` — paginated.
 - `GET  /api/v1/albums/{id}` — detail, including ordered media.
 - `GET  /api/v1/shares` — list scopes visible to the caller: owner
@@ -1464,9 +1467,18 @@ caching is safe:
 - `Last-Modified`: `imported_at`.
 - `Cache-Control: private, max-age=31536000, immutable`.
 
-**Thumbnails** — can be regenerated at the same URL when sizing
-policy changes or a generation bug is fixed. Aggressive caching
-without a versioning handle would leave stale bytes in browsers.
+**Thumbnails** — *(2026-04-22 execution note: the scheme below was
+Plan A/B's guidance. Plan C elects a stronger model where `?v={N}`
+is validated against the row and on-disk keys are versioned
+(`.thumbs/{id}/v{N}/{size}.webp`). With URL-identity guaranteed,
+the cache headers in Plan C upgrade to a strong ETag and
+`max-age=31536000, immutable`. Details: `2026-04-22-fotobank-plan-
+c-thumbnails-design.md` §9.3 and §7.1. The original Plan A/B
+guidance below is preserved for historical context.)*
+
+Can be regenerated at the same URL when sizing policy changes or
+a generation bug is fixed. Aggressive caching without a versioning
+handle would leave stale bytes in browsers.
 
 - `ETag`: `W/"{media_id}-{size}-v{thumb_version}"`. Weak ETag
   because the same `thumb_version` may re-encode to slightly

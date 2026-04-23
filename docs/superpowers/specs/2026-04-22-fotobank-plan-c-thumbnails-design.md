@@ -175,23 +175,23 @@ func (w *Worker) runSweep(ctx context.Context) {
 }
 
 func (w *Worker) drain(ctx context.Context) {
-    rows, err := w.queue.ClaimBatch(ctx, 2*w.cfg.WorkerConcurrency)
+    claims, err := w.queue.ClaimBatch(ctx, 2*w.cfg.WorkerConcurrency)
     if err != nil { w.logErr("claim", err); return }
     sem := make(chan struct{}, w.cfg.WorkerConcurrency)
     var wg sync.WaitGroup
-    for _, r := range rows {
+    for _, c := range claims {
         sem <- struct{}{}
         wg.Add(1)
-        go func(row media.Media) {
+        go func(claim Claim) {
             defer wg.Done(); defer func() { <-sem }()
             // Per-item ceiling so a single pathological source file
-            // cannot starve the worker pool. Claim rows whose decode
+            // cannot starve the worker pool. Claims whose decode
             // exceeds this get marked failed; SweepLeases is the
             // second line of defense if the goroutine itself wedges.
             cctx, cancel := context.WithTimeout(ctx, w.cfg.LeaseTimeout/2)
             defer cancel()
-            w.processOne(cctx, row)
-        }(r)
+            w.processOne(cctx, claim)
+        }(c)
     }
     wg.Wait()
 }
@@ -234,7 +234,7 @@ UPDATE media
       LIMIT ?
  )
 RETURNING id, owner_hub, owner_user_id, media_type, mime_type, path,
-          thumb_version, checksum;
+          thumb_version, checksum, thumb_claimed_at;
 ```
 
 SQLite ≥ 3.35 supports `UPDATE … RETURNING`. `go.mod` pins
@@ -246,6 +246,44 @@ claim order, and in theory the same row could be claimed twice across
 concurrent workers if the deterministic ordering broke. `UPDATE … IN
 (SELECT … LIMIT n)` already serializes the claim inside one SQLite
 write, but the tie-breaker is free insurance.
+
+### 5.1 Claim fencing
+
+Every row in the claim result comes with its `thumb_claimed_at`
+timestamp, which acts as a **claim token**. Every terminal update
+(`MarkReady`, `MarkNoPreview`, `MarkFailed`) carries this token and
+includes it in the `WHERE` clause:
+
+```sql
+UPDATE media
+   SET thumb_status = 'ready', thumb_updated_at = ?, thumb_claimed_at = NULL
+ WHERE id = ? AND thumb_version = ? AND thumb_claimed_at = ?
+```
+
+If the row's `thumb_claimed_at` no longer matches (because
+`SweepLeases` reset it to `NULL`, or another worker re-claimed and
+set a new timestamp, or `Enqueue` bumped `thumb_version` out from
+under us), `RowsAffected == 0`. The queue method returns a sentinel
+`ErrClaimLost`; the worker logs-and-discards rather than retrying —
+whoever owns the current claim is responsible for finishing the job.
+
+**Why this is race-safe without a separate nonce column:** all state
+transitions (claim, sweep, terminal mark, enqueue) take the SQLite
+write lock, which serializes them. Inside one transition we set
+`thumb_claimed_at = time.Now()` at the Go side. Two ClaimBatch calls
+cannot interleave to produce the same timestamp because each takes
+a write lock; between them, `time.Now()` advances by at least one
+nanosecond on every platform we support. SweepLeases explicitly sets
+`thumb_claimed_at = NULL`, which is a value no legitimate claim can
+ever produce, so post-sweep claims begin from a distinct state.
+
+**Why we still also check `thumb_version`:** regenerate bumps
+`thumb_version` and sets `thumb_status='pending'` but it does *not*
+touch `thumb_claimed_at` on rows that happen to be `ready`. So if a
+worker just picked up a row, started processing, and concurrently a
+regenerate enqueues it, both `thumb_version` and `thumb_claimed_at`
+could shift between claim and terminal — checking both in the WHERE
+clause keeps us honest.
 
 **SweepLeases SQL:**
 
@@ -261,37 +299,52 @@ UPDATE media
 
 ## 6. `processOne` — per-row pipeline
 
+Each claim is a `Claim{Media, ClaimedAt time.Time}` where `ClaimedAt`
+is the fencing token from §5.1. Terminal calls thread it back in.
+
 ```go
-func (w *Worker) processOne(ctx context.Context, m media.Media) {
+func (w *Worker) processOne(ctx context.Context, c Claim) {
+    m, token := c.Media, c.ClaimedAt
+
     // Hard skip types we don't decode in Plan C.
     if m.Type == media.TypeVideo || isHEIC(m.MimeType) {
-        w.queue.MarkNoPreview(ctx, m.ID, m.ThumbVersion)
-        return
+        w.markNoPreview(ctx, m, token); return
     }
 
-    src, err := w.fetchSource(ctx, m)   // io.ReadCloser via storage.ReadRange
-    if err != nil { w.markFailed(ctx, m, err); return }
+    src, err := w.fetchSource(ctx, m)
+    if err != nil { w.markFailed(ctx, m, token, err); return }
     defer src.Close()
 
     img, err := w.decode(m, src)        // image.Image, EXIF-oriented
     if err != nil {
         if errors.Is(err, errNoEmbeddedPreview) {
-            w.queue.MarkNoPreview(ctx, m.ID, m.ThumbVersion); return
+            w.markNoPreview(ctx, m, token); return
         }
-        w.markFailed(ctx, m, err); return
+        w.markFailed(ctx, m, token, err); return
     }
 
     for _, size := range allSizes {     // grid, preview, lightbox
         buf, err := encodeWebP(resize(img, size.maxEdge), webpQuality)
-        if err != nil { w.markFailed(ctx, m, err); return }
-        key := thumbKey(m.ID, size.name) // .thumbs/{id}/{size}.webp
+        if err != nil { w.markFailed(ctx, m, token, err); return }
+        // Versioned key — writes never collide with prior versions
+        // or sibling retries; see §7 for the scheme.
+        key := thumbKey(m.ID, m.ThumbVersion, size.name)
         if err := w.store.Write(ctx, m.Owner, key, bytes.NewReader(buf)); err != nil {
-            w.markFailed(ctx, m, err); return
+            w.markFailed(ctx, m, token, err); return
         }
     }
-    w.queue.MarkReady(ctx, m.ID, m.ThumbVersion)
+    if err := w.queue.MarkReady(ctx, m.ID, m.ThumbVersion, token); err != nil {
+        // ErrClaimLost is the only expected error here: sweep or
+        // regenerate won the race. Nothing to do; the winning
+        // claim owns the finish.
+        if !errors.Is(err, thumb.ErrClaimLost) { w.logErr("mark ready", err) }
+    }
 }
 ```
+
+`markNoPreview` / `markFailed` are thin helpers that call the
+equivalent `Queue` method with `(id, version, token)` and swallow
+`ErrClaimLost` the same way.
 
 **Source fetch:** reuses `storage.Store.ReadRange(ctx, owner, path, 0,
 -1)` from Plan B. In flash-cache mode this means the original is
@@ -346,7 +399,49 @@ downscaling in this range. If output looks soft at the grid size we
 can bump to a custom Lanczos kernel, but CatmullRom is the default
 ship-worthy choice for the first revision.
 
-### 7.1 WebP encoder — PRIMARY UNCERTAINTY
+### 7.1 Key scheme — versioned, write-once
+
+Thumbnails live at:
+
+```
+.thumbs/{media_id}/v{thumb_version}/{size}.webp
+```
+
+Every `(media_id, thumb_version, size)` triple has its own unique
+object on disk. This matters for two reasons:
+
+1. **Plan B's `Store.Write` is no-clobber.** `NASOnly` finalizes via
+   `os.Link` into the final path and returns `ErrPathOccupied` if
+   the path already exists (see `internal/storage/storage.go:35`).
+   Stable keys like `.thumbs/{id}/grid.webp` would fail on every
+   regenerate after the first. Versioned keys make each write the
+   *only* write to that path — ever.
+2. **Retry-after-partial-failure is safe.** If encoding `grid`
+   succeeds but `preview` fails at `size=1024`, the worker marks
+   `failed` under the current version; the operator runs
+   `regenerate --status failed`, which bumps `thumb_version` and
+   sets `pending`. The re-run writes under a fresh version
+   directory; the half-complete prior-version dir is harmlessly
+   orphaned on disk.
+
+**HTTP endpoint (§9)** computes the key from the row's current
+`thumb_version`, so clients always see the latest. The immutable
+URL model from §9.3 works end-to-end because URL identity (`v=N`)
+matches on-disk identity (`v{N}/`).
+
+**Cost on disk:** each regenerate leaves one stale thumb trio
+behind (~1 MB total per photo at default sizes). On a 100k-photo
+library with 5 regenerations lifetime that's ~500 MB of orphaned
+thumbs. Acceptable for Plan C; an eviction pass that prunes
+`v{N < current}` directories is deferred to the same future plan
+that adds thumb-cache eviction (master §4.4).
+
+**Orphan cleanup can also be added to reconcile** — it already
+walks the NAS tree and knows current `thumb_version` per row; a
+later plan can teach it to delete `.thumbs/{id}/v{N}/` whenever
+`N != current_version`. Not in scope for Plan C.
+
+### 7.2 WebP encoder — PRIMARY UNCERTAINTY
 
 This is the biggest open question in Plan C and deserves its own
 investigation before the main implementation begins.
@@ -397,8 +492,8 @@ and bump the master spec §7.4 accordingly.
 
 `storage.Store` already supports `ReadRange`, `Write`, `Delete`, and
 the `owner + key` addressing model. Thumbnail writes reuse this
-interface — `.thumbs/{id}/grid.webp` is just another key, owned by
-the same principal as the source media.
+interface — `.thumbs/{id}/v{N}/grid.webp` (per §7.1) is just another
+key, owned by the same principal as the source media.
 
 **ThumbsCache wiring.** `cfg.Storage.ThumbsCacheEnabled` exists since
 Plan A but is currently unwired. In Plan C, when both
@@ -460,6 +555,12 @@ media detail to pick up the new version and retries with the new URL.
 
 **Auth/scope:** same as `/original` in Plan B — caller principal must
 own the media row, else 404 (not 403; don't leak existence).
+
+**Key lookup:** the handler maps `(id, size, v)` to the on-disk key
+`.thumbs/{id}/v{v}/{size}.webp` (per §7.1) only after the DB
+confirms `thumb_version == v AND thumb_status == 'ready'`. Reading
+the versioned key directly is safe because versioned paths are
+write-once.
 
 ### 9.3 Caching headers
 
@@ -542,9 +643,13 @@ type ThumbService struct {
     store storage.Store
 }
 
+// Get reads the (id, size, version) thumb for principal. The handler
+// must pass version from the validated ?v= param; Get returns ErrNotFound
+// if version disagrees with the DB (the client will have raced a
+// regenerate and needs to refetch the list to pick up the new v).
 func (s *ThumbService) Get(
     ctx context.Context,
-    id string, size thumb.Size, principal owners.Principal,
+    id string, size thumb.Size, version int, principal owners.Principal,
 ) (io.ReadCloser, media.Media, error)
 
 func (s *ThumbService) Enqueue(
@@ -553,6 +658,24 @@ func (s *ThumbService) Enqueue(
     filter thumb.EnqueueFilter,  // {All, IDs, Type, Status, Since}
 ) (rowsEnqueued int, err error)
 ```
+
+**`thumb.Queue` surface** (for reference — details in §5.1):
+
+```go
+type Claim struct { Media media.Media; ClaimedAt time.Time }
+
+func (q *Queue) ClaimBatch(ctx context.Context, n int) ([]Claim, error)
+func (q *Queue) SweepLeases(ctx context.Context, after time.Duration) (int, error)
+func (q *Queue) MarkReady(ctx context.Context, id string, version int, token time.Time) error
+func (q *Queue) MarkNoPreview(ctx context.Context, id string, version int, token time.Time) error
+func (q *Queue) MarkFailed(ctx context.Context, id string, version int, token time.Time, cause error) error
+func (q *Queue) Enqueue(ctx context.Context, filter EnqueueFilter) (int, error)
+
+var ErrClaimLost = errors.New("thumb: claim lost (sweep or regenerate won)")
+```
+
+All terminal Mark* methods return `ErrClaimLost` if the WHERE clause
+on `(id, thumb_version, thumb_claimed_at)` matches zero rows.
 
 `Enqueue`'s `principal` is used for authorization scoping on the HTTP
 path (a user can only regenerate their own media). The CLI bypasses
@@ -566,9 +689,19 @@ pattern as `fotobank reconcile`.
 **Unit tests:**
 - `ClaimBatch` under concurrent callers (two goroutines calling
   simultaneously must not double-claim a row).
-- `SweepLeases` (stale rows reset, fresh rows untouched).
+- `ClaimBatch` returns a distinct `ClaimedAt` token for each batch.
+- Terminal calls (`MarkReady`, `MarkNoPreview`, `MarkFailed`) are
+  fenced: marking with a stale token returns `ErrClaimLost` and
+  does not modify the row.
+- `SweepLeases` (stale rows reset, fresh rows untouched); after
+  sweep, the prior claim's token is invalid and `MarkReady` with
+  that token returns `ErrClaimLost`.
 - `Enqueue` (version bumps, status resets, multiple filters
   compose correctly).
+- Regenerate-while-working race: start processing, call
+  `Enqueue` to bump version mid-flight, verify `MarkReady` with
+  the original version returns `ErrClaimLost` and the new version
+  is picked up on the next poll.
 - EXIF orientation: decode a test JPEG with orientation=6, verify
   output dimensions swap.
 - RAW preview extraction: table-driven test per format
@@ -580,12 +713,20 @@ pattern as `fotobank reconcile`.
 **Integration tests:**
 - Full worker loop: seed `pending` rows, start worker with short
   intervals, assert rows reach `ready` within a deadline, assert
-  bytes exist at `.thumbs/{id}/grid.webp`, assert ETag in HTTP
+  bytes exist at `.thumbs/{id}/v{N}/grid.webp`, assert ETag in HTTP
   response matches `thumb_version`.
 - Crash-recovery: start worker, mark row `working` with an old
   `thumb_claimed_at`, run sweep, assert row returns to `pending`.
+  Verify the orphaned worker goroutine's eventual `MarkReady` gets
+  `ErrClaimLost` and does not corrupt the re-claimed row.
+- Regenerate overwrites safely: start with a ready thumb, run
+  `fotobank thumbs regenerate --id X`, wait for worker; assert the
+  old `v{N-1}/` directory still exists on disk (orphaned, harmless)
+  and the new `v{N}/` directory holds the new bytes.
 - Regenerate flow: `fotobank thumbs regenerate --id X` bumps version;
-  subsequent HTTP `GET /thumb` returns new bytes after worker poll.
+  subsequent HTTP `GET /thumb?v={new}` returns new bytes; `GET
+  /thumb?v={old}` returns 404 (the write-once prior version is on
+  disk but the handler only serves current).
 - Flash-cache wiring: with `ThumbsCacheEnabled=true`, first GET
   populates flash, second GET served without NAS hit (assert via a
   NAS stat probe or an injected Store spy).
@@ -631,7 +772,7 @@ subsequent plan needs it.
 - `golang.org/x/image/webp` (pure-Go WebP *decoder* — needed only in
   tests to round-trip the encoder's output).
 
-**New, pending WebP encoder decision (§7.1):**
+**New, pending WebP encoder decision (§7.2):**
 - `github.com/HugoSmits86/nativewebp` — if Task 1 validation
   passes.
 - Alternative paths (CGO libwebp or JPEG fallback) documented but
@@ -658,7 +799,7 @@ that case the plan stops and escalates to the user before proceeding.
 
 ## 16. Critical uncertainties — flagged for review
 
-1. **WebP encoder choice (§7.1)** — the single biggest risk. Task 1
+1. **WebP encoder choice (§7.2)** — the single biggest risk. Task 1
    of implementation validates `nativewebp` on a sample set. If it
    fails, we pause to decide: accept CGO via `chai2010/webp`, or fall
    back to JPEG encoding. The rest of the plan assumes `nativewebp`
