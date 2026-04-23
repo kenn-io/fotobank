@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/media"
@@ -59,8 +60,14 @@ func (s *ThumbService) Get(
 	key := thumb.ThumbKey(id, version, size)
 	rc, err := s.store.ReadRange(ctx, m.Owner, key, 0, -1)
 	if err != nil {
-		if errors.Is(err, errs.ErrNotFound) {
-			return nil, media.Media{}, err
+		// A regenerate can bump thumb_version between our repo read and
+		// our store read — the old blob gets deleted while our reader
+		// still holds the stale version. Translating os.ErrNotExist (raw
+		// filesystem) and errs.ErrNotFound (future translating Stores)
+		// to ErrNotFound tells the handler "gone, retry" → 404, not 500.
+		if errors.Is(err, errs.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
+			return nil, media.Media{}, fmt.Errorf("%w: media id=%s thumb blob missing",
+				errs.ErrNotFound, id)
 		}
 		return nil, media.Media{}, fmt.Errorf("read thumb: %w", err)
 	}
