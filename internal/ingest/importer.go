@@ -206,19 +206,14 @@ func (imp *Importer) processVideo(ctx context.Context, c Candidate, owner owners
 	switch err := imp.repo.Insert(ctx, m); {
 	case err == nil:
 		return candidateOutcome{imported: true}
-	case errors.Is(err, media.ErrDuplicateChecksum):
-		if writeErr == nil {
-			_ = imp.store.Delete(ctx, owner, landed)
-		}
+	case errors.Is(err, errs.ErrAlreadyExists):
+		// Video paths are content-addressed (movies/{md5}.ext). Any row
+		// that collides on checksum OR path references these same bytes,
+		// so the insert race winner — not this worker — owns them.
+		// Never delete: tryAdoptVideoOrphan already verified the bytes
+		// match our checksum before we reached the insert, and for a
+		// fresh write our bytes are equivalent to any other worker's.
 		return candidateOutcome{duplicate: true}
-	case errors.Is(err, media.ErrDuplicatePath):
-		// Either a race with another worker or a phantom row. Either way
-		// the bytes on NAS are content-addressed — if we wrote them, we
-		// can drop them; if we adopted them, leave them for reconcile.
-		if writeErr == nil {
-			_ = imp.store.Delete(ctx, owner, landed)
-		}
-		return candidateOutcome{pathCollision: true, err: fmt.Errorf("path collision for %s", c.Path)}
 	default:
 		if writeErr == nil {
 			_ = imp.store.Delete(ctx, owner, landed)

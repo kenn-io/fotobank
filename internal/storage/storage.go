@@ -82,10 +82,13 @@ func validateKey(key string) error {
 	return nil
 }
 
-// validateStorageKey rejects anything that could make the per-owner
+// ValidateStorageKey rejects anything that could make the per-owner
 // subdirectory escape its parent root. Storage keys are registered at
-// owner-creation time and are expected to be a single opaque name.
-func validateStorageKey(sk string) error {
+// owner-creation time and are expected to be a single opaque filesystem
+// name (empty, ".", "..", or any path separator is refused). Exported
+// so sibling packages (reconcile, cli) can apply the same check before
+// joining storage keys into filesystem paths.
+func ValidateStorageKey(sk string) error {
 	switch sk {
 	case "":
 		return fmt.Errorf("%w: empty", ErrInvalidStorageKey)

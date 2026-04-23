@@ -15,6 +15,7 @@ import (
 
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
+	"github.com/wesm/fotobank/internal/storage"
 )
 
 // defaultTempGrace is the minimum age a ".tmp-…" file must reach before
@@ -88,6 +89,12 @@ var skipFiles = map[string]struct{}{
 // StaleTemps files are removed from disk. The report always reflects the
 // state observed at walk time, even after commit actions run.
 func Reconcile(ctx context.Context, mediaRepo *media.Repo, opts Options) (Report, error) {
+	if opts.NASRoot == "" {
+		return Report{}, fmt.Errorf("reconcile: NASRoot is empty")
+	}
+	if err := storage.ValidateStorageKey(opts.StorageKey); err != nil {
+		return Report{}, fmt.Errorf("reconcile: %w", err)
+	}
 	grace := opts.TempGrace
 	if grace <= 0 {
 		grace = defaultTempGrace

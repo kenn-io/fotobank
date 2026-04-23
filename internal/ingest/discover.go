@@ -23,8 +23,12 @@ type Candidate struct {
 // supported files are skipped silently; errors from visit abort the
 // walk. The root is resolved to an absolute path before walking, so
 // Candidate.Path is always absolute even when callers pass a relative
-// root.
+// root. An empty root is rejected so a caller that forgot to pass one
+// does not accidentally scan the process's current working directory.
 func Discover(root string, visit func(Candidate) error) error {
+	if root == "" {
+		return fmt.Errorf("discover: root is empty")
+	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return fmt.Errorf("resolve root: %w", err)

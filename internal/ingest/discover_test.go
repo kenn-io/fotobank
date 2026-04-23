@@ -40,6 +40,11 @@ func TestDiscoverClassifies(t *testing.T) {
 	r.Equal(1, videos)
 }
 
+func TestDiscoverRejectsEmptyRoot(t *testing.T) {
+	err := ingest.Discover("", func(ingest.Candidate) error { return nil })
+	require.Error(t, err)
+}
+
 func TestDiscoverReturnsAbsoluteCandidatePaths(t *testing.T) {
 	// Candidate.Path is documented as absolute. Pin that contract by
 	// passing a relative root and asserting the callback sees absolute

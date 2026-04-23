@@ -14,6 +14,7 @@ import (
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/reconcile"
+	"github.com/wesm/fotobank/internal/storage"
 	"github.com/wesm/fotobank/internal/testutil"
 )
 
@@ -91,6 +92,24 @@ func (f *reconcileFixture) defaultOptions() reconcile.Options {
 		StorageKey: testStorageKey,
 		NASRoot:    f.nasRoot,
 	}
+}
+
+func TestReconcileRejectsInvalidStorageKey(t *testing.T) {
+	f := newReconcileFixture(t)
+	for _, sk := range []string{"", ".", "..", "../escape", "a/b"} {
+		opts := f.defaultOptions()
+		opts.StorageKey = sk
+		_, err := reconcile.Reconcile(f.ctx, f.repo, opts)
+		require.ErrorIs(t, err, storage.ErrInvalidStorageKey, "StorageKey %q must be rejected", sk)
+	}
+}
+
+func TestReconcileRejectsEmptyNASRoot(t *testing.T) {
+	f := newReconcileFixture(t)
+	opts := f.defaultOptions()
+	opts.NASRoot = ""
+	_, err := reconcile.Reconcile(f.ctx, f.repo, opts)
+	require.Error(t, err)
 }
 
 func TestReconcileReportsOrphansAndMissing(t *testing.T) {
