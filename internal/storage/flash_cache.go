@@ -2,15 +2,22 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/wesm/fotobank/internal/owners"
 )
+
+// errThumbCacheDisabled signals that a .thumbs/* key was routed through
+// the flash cache but no thumbs root has been enabled; callers treat it
+// as "skip cache, use NAS".
+var errThumbCacheDisabled = errors.New("storage: thumbs flash cache disabled")
 
 // FlashCacheOptions tunes the recency janitor.
 type FlashCacheOptions struct {
@@ -24,7 +31,8 @@ type FlashCacheOptions struct {
 // flash on the way back.
 type FlashCache struct {
 	nas         Store
-	flashRoot   string
+	flashRoot   string // originals root
+	thumbsRoot  string // "" when disabled
 	storageKeys map[owners.Principal]string
 	opts        FlashCacheOptions
 }
@@ -33,6 +41,13 @@ type FlashCache struct {
 // to the wrapped Store so the cache can compute its own file paths.
 func NewFlashCache(nas Store, flashRoot string, storageKeys map[owners.Principal]string, opts FlashCacheOptions) *FlashCache {
 	return &FlashCache{nas: nas, flashRoot: flashRoot, storageKeys: storageKeys, opts: opts}
+}
+
+// EnableThumbs activates the thumbs sibling cache at the given root.
+// Calling this is how cfg.Storage.ThumbsCacheEnabled takes effect; when
+// never called, .thumbs/* keys bypass the flash tier entirely.
+func (c *FlashCache) EnableThumbs(thumbsRoot string) {
+	c.thumbsRoot = thumbsRoot
 }
 
 func (c *FlashCache) flashPath(p owners.Principal, key string) (string, error) {
@@ -46,7 +61,14 @@ func (c *FlashCache) flashPath(p owners.Principal, key string) (string, error) {
 	if err := ValidateStorageKey(sk); err != nil {
 		return "", err
 	}
-	return filepath.Join(c.flashRoot, sk, filepath.FromSlash(key)), nil
+	root := c.flashRoot
+	if strings.HasPrefix(key, ".thumbs/") {
+		if c.thumbsRoot == "" {
+			return "", errThumbCacheDisabled
+		}
+		root = c.thumbsRoot
+	}
+	return filepath.Join(root, sk, filepath.FromSlash(key)), nil
 }
 
 // Stat returns authoritative metadata from NAS but reports TierFlash
