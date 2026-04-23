@@ -1,4 +1,6 @@
-// internal/album/album.go
+// Package album defines the album and album_media domain types,
+// validation sentinels, and size limits used by the album repo and
+// service.
 package album
 
 import (
