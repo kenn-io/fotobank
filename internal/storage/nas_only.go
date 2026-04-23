@@ -31,6 +31,9 @@ func NewNASOnly(root string, storageKeys map[owners.Principal]string) *NASOnly {
 }
 
 func (s *NASOnly) ownerPath(p owners.Principal, key string) (string, error) {
+	if err := validateKey(key); err != nil {
+		return "", err
+	}
 	sk, ok := s.storageKeys[p]
 	if !ok {
 		return "", fmt.Errorf("storage: unknown owner %s", p)

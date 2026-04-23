@@ -104,6 +104,39 @@ func TestNASOnlyDeleteIsIdempotent(t *testing.T) {
 	r.ErrorIs(err, os.ErrNotExist)
 }
 
+func TestNASOnlyRejectsTraversalAndAbsoluteKeys(t *testing.T) {
+	r := require.New(t)
+	s, root, p := newNASStore(t)
+
+	// Seed a file the traversal would be aimed at — proves the guard
+	// blocks the access rather than merely failing for other reasons.
+	target := filepath.Join(root, "secret.txt")
+	r.NoError(os.WriteFile(target, []byte("do not read"), 0o600))
+
+	for _, key := range []string{
+		"../secret.txt",
+		"a/../../secret.txt",
+		"/etc/passwd",
+		"a//b",
+		"a/./b",
+		"a\\b",
+		"",
+	} {
+		_, err := s.Write(context.Background(), p, key, bytes.NewReader([]byte("x")))
+		r.ErrorIs(err, storage.ErrInvalidKey, "Write should reject key %q", key)
+		_, err = s.ReadRange(context.Background(), p, key, 0, -1)
+		r.ErrorIs(err, storage.ErrInvalidKey, "ReadRange should reject key %q", key)
+		_, err = s.Stat(context.Background(), p, key)
+		r.ErrorIs(err, storage.ErrInvalidKey, "Stat should reject key %q", key)
+		r.ErrorIs(s.Delete(context.Background(), p, key), storage.ErrInvalidKey, "Delete should reject key %q", key)
+	}
+
+	// Seeded file untouched.
+	b, err := os.ReadFile(target)
+	r.NoError(err)
+	r.Equal("do not read", string(b))
+}
+
 func TestNASOnlyConcurrentWriteResolvesToSingleWinner(t *testing.T) {
 	// Two goroutines racing on the same canonical path. Exactly one
 	// should win with a nil error; the other must see ErrPathOccupied.

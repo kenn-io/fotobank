@@ -71,7 +71,10 @@ var errFlagParse = errors.New("flag parse error")
 
 // isUsageError reports whether err is a usage-style error that should
 // map to exit code 2 rather than 1. Covers our own usageError, wrapped
-// pflag errors, and cobra's "unknown command"/"unknown flag" messages.
+// pflag errors, cobra's "unknown command"/"unknown flag" messages, and
+// cobra's positional-arg validators (ExactArgs, MinimumNArgs,
+// MaximumNArgs, RangeArgs) which all format their messages using
+// "arg(s)".
 func isUsageError(err error) bool {
 	var u usageError
 	if errors.As(err, &u) {
@@ -81,9 +84,12 @@ func isUsageError(err error) bool {
 		return true
 	}
 	msg := err.Error()
-	return strings.HasPrefix(msg, "unknown command") ||
+	if strings.HasPrefix(msg, "unknown command") ||
 		strings.HasPrefix(msg, "unknown flag") ||
-		strings.HasPrefix(msg, "unknown shorthand flag")
+		strings.HasPrefix(msg, "unknown shorthand flag") {
+		return true
+	}
+	return strings.Contains(msg, "arg(s)")
 }
 
 func newRootCmd() *cobra.Command {

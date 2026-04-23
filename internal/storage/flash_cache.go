@@ -36,6 +36,9 @@ func NewFlashCache(nas Store, flashRoot string, storageKeys map[owners.Principal
 }
 
 func (c *FlashCache) flashPath(p owners.Principal, key string) (string, error) {
+	if err := validateKey(key); err != nil {
+		return "", err
+	}
 	sk, ok := c.storageKeys[p]
 	if !ok {
 		return "", fmt.Errorf("storage: unknown owner %s", p)

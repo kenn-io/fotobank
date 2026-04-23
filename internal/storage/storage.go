@@ -8,7 +8,9 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/wesm/fotobank/internal/owners"
@@ -45,4 +47,31 @@ type Store interface {
 	ReadRange(ctx context.Context, owner owners.Principal, key string, offset, length int64) (io.ReadCloser, error)
 	Write(ctx context.Context, owner owners.Principal, key string, src io.Reader) (string, error)
 	Delete(ctx context.Context, owner owners.Principal, key string) error
+}
+
+// ErrInvalidKey indicates a storage key that could escape its owner
+// prefix (absolute path, contains "..", contains backslash, empty, or
+// has empty/"."/".." segments).
+var ErrInvalidKey = errors.New("storage: invalid key")
+
+// validateKey verifies that key is a relative POSIX path that cannot
+// escape its owner prefix via traversal. Keys must use forward slashes,
+// be non-empty, not absolute, and contain no "", ".", or ".." segments.
+func validateKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("%w: empty", ErrInvalidKey)
+	}
+	if strings.ContainsRune(key, '\\') {
+		return fmt.Errorf("%w: contains backslash: %q", ErrInvalidKey, key)
+	}
+	if strings.HasPrefix(key, "/") {
+		return fmt.Errorf("%w: absolute path: %q", ErrInvalidKey, key)
+	}
+	for seg := range strings.SplitSeq(key, "/") {
+		switch seg {
+		case "", ".", "..":
+			return fmt.Errorf("%w: invalid segment %q in %q", ErrInvalidKey, seg, key)
+		}
+	}
+	return nil
 }

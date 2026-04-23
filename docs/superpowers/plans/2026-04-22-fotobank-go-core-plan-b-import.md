@@ -2159,7 +2159,7 @@ Flow:
 2. Open DB.
 3. Resolve owner from stub config (Plan B single-owner assumption).
 4. Build storage + repo.
-5. `ingest.Acquire(lockPath, cfg.Imports.LockWait)` — default 0 until user supplies `--wait`.
+5. Resolve `wait := cfg.Imports.LockWait` and override with the `--wait` flag when the user set it. Call `ingest.Acquire(ctx, lockPath, wait)` — `ctx` is `cmd.Context()` so Ctrl-C while the lock is contended cancels cleanly.
 6. `ingest.NewImporter(...).ImportDirectory(...)`.
 7. Print summary: `{imported, duplicates, path_collisions, failures}`.
 8. Exit 1 if any failures; 0 otherwise.
