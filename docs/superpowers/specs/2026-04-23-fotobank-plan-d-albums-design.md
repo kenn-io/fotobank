@@ -30,7 +30,7 @@ New files, all mirroring existing patterns established in Plans B and C:
 
 ```
 internal/album/
-├── album.go            — Album, AlbumListItem, CoverRef, AlbumMediaEntry, package sentinels
+├── album.go            — Album, AlbumListItem, CoverRef, AlbumMediaFilter, package sentinels
 └── repo.go             — *album.Repo: CRUD + AddMedia/RemoveMedia/ListMedia/ListByOwner
 
 internal/db/migrations/
@@ -100,6 +100,11 @@ func (r *Repo) GetByID(ctx context.Context, id string) (Album, error)           
 func (r *Repo) Rename(ctx context.Context, id, name string, now time.Time) error // updates updated_at
 func (r *Repo) Delete(ctx context.Context, id string) error                       // cascades album_media
 
+// GetDetailByID returns one album with derived ItemCount + Cover, using
+// the same count/cover subquery shape as ListByOwner so both paths agree
+// about "ready" covers and counts. ErrNotFound on miss.
+func (r *Repo) GetDetailByID(ctx context.Context, id string) (AlbumListItem, error)
+
 // List albums for one owner with derived ItemCount and Cover.
 func (r *Repo) ListByOwner(
     ctx context.Context,
@@ -127,10 +132,14 @@ func (r *Repo) ListMedia(
 ) ([]media.Media, error)
 
 type AlbumMediaFilter struct {
-    Limit    int
-    Offset   int
-    SortBy   string // "added" (default) | "imported"
-    SortDesc bool   // default true
+    Limit  int
+    Offset int
+    SortBy string // "added" (default) | "imported"
+    // SortAsc inverts the default (DESC) sort. Plain bool so the HTTP
+    // layer can bind it directly from ?sort_asc=true without pointers;
+    // a client that omits the flag gets DESC, which is what the UI
+    // expects. See §7 query params.
+    SortAsc bool
 }
 ```
 
@@ -175,6 +184,37 @@ SELECT oa.id, oa.owner_hub, oa.owner_user_id, oa.name, oa.created_at, oa.updated
 The outer `ORDER BY` repeats the CTE's ordering. SQLite does not guarantee row order from a CTE once it's used as a join source in an outer query, so the final sort must be declared explicitly. The CTE's `ORDER BY ... LIMIT ... OFFSET` still controls *which* albums are in the page; the outer `ORDER BY` controls what order they come back in.
 
 Cover is null for empty albums or albums whose only members are still `pending`/`working`.
+
+#### `GetDetailByID`
+
+The same count/cover-derivation subqueries, scoped to a single album. Written as a dedicated statement (not "reuse ListByOwner with a WHERE id=?" — that would fight the CTE's `ORDER BY ... LIMIT`):
+
+```sql
+SELECT a.id, a.owner_hub, a.owner_user_id, a.name, a.created_at, a.updated_at,
+       COALESCE(cnt.n, 0) AS item_count,
+       cv.media_id, cv.thumb_version
+  FROM albums a
+  LEFT JOIN (
+    SELECT album_id, COUNT(*) AS n
+      FROM album_media
+     WHERE album_id = ?
+     GROUP BY album_id
+  ) cnt ON cnt.album_id = a.id
+  LEFT JOIN (
+    SELECT am.album_id, am.media_id, m.thumb_version,
+           ROW_NUMBER() OVER (
+             PARTITION BY am.album_id
+             ORDER BY am.added_at DESC, am.media_id ASC
+           ) AS rn
+      FROM album_media am
+      JOIN media m ON m.id = am.media_id
+     WHERE am.album_id = ?
+       AND m.thumb_status = 'ready'
+  ) cv ON cv.album_id = a.id AND cv.rn = 1
+ WHERE a.id = ?;
+```
+
+`album_id` is bound three times (one per correlated reference); the query planner folds these into `album_media_album_added_idx` lookups. Zero rows → `errs.ErrNotFound`. Ownership check happens in the service layer on the returned row's `Owner`.
 
 #### `AddMedia` idempotency and input dedupe
 
@@ -331,7 +371,7 @@ All routes are huma-registered. The only endpoints on fotobank's HTTP surface th
 | `GET` | `/api/v1/albums/{id}` | detail; 404 if missing or cross-owner |
 | `PATCH` | `/api/v1/albums/{id}` | rename; body `{"name": "..."}`; returns 200 + `albumDTO` |
 | `DELETE` | `/api/v1/albums/{id}` | delete (cascades album_media); returns 204 |
-| `GET` | `/api/v1/albums/{id}/media?limit=&offset=&sort_by=&sort_desc=` | paginated `mediaDTO` list |
+| `GET` | `/api/v1/albums/{id}/media?limit=&offset=&sort_by=&sort_asc=` | paginated `mediaDTO` list |
 | `POST` | `/api/v1/albums/{id}/media` | batch add, body `{"media_ids": [...]}`; returns 200 + add-result |
 | `DELETE` | `/api/v1/albums/{id}/media/{media_id}` | remove one; 404 if not in album; returns 204 |
 
@@ -372,7 +412,7 @@ Batch-add response:
 - `limit`: default 100, cap 1000 (matches `/media`).
 - `offset`: default 0.
 - `sort_by`: `added` (default) or `imported`.
-- `sort_desc`: `true` (default) or `false`.
+- `sort_asc`: `false` (default — i.e. DESC) or `true`. Inverted from the intuitive name so a plain Go `bool` can represent it without pointer-plumbing: an omitted query param binds to `false`, which is exactly the DESC default the UI wants. Clients that explicitly want oldest-first pass `?sort_asc=true`.
 
 Invalid `sort_by` → 400. Invalid `limit` (out of range) → clamped silently, same as `/media`.
 
@@ -405,7 +445,10 @@ The existing `httpapi.Translate` (at `internal/httpapi/errors.go`) maps `errs.Er
 //     a user error. The global Translate would return 403, which would
 //     leak existence of rows the caller does not own.
 //   * album.ErrInvalidName / ErrInvalidBatch / ErrInvalidSort → 400
-//     with the sentinel's message.
+//     with an explicit user-facing message. We do NOT pass
+//     sentinel.Error() through because the sentinels include an
+//     "album: ..." developer prefix for log context; wire bodies are
+//     written without the prefix.
 //   * Everything else delegates to the shared httpapi.Translate.
 //
 // The log call happens inside the handler before returning, so the
@@ -415,18 +458,24 @@ func translateAlbumError(err error) huma.StatusError {
     case errors.Is(err, errs.ErrOwnerMismatch):
         return huma.Error500InternalServerError(http.StatusText(http.StatusInternalServerError))
     case errors.Is(err, album.ErrInvalidName):
-        return huma.Error400BadRequest(album.ErrInvalidName.Error())
+        return huma.Error400BadRequest("name must be 1..200 chars")
     case errors.Is(err, album.ErrInvalidBatch):
-        return huma.Error400BadRequest(album.ErrInvalidBatch.Error())
+        return huma.Error400BadRequest("batch size must be 1..500")
     case errors.Is(err, album.ErrInvalidSort):
-        return huma.Error400BadRequest(album.ErrInvalidSort.Error())
+        return huma.Error400BadRequest("sort_by must be added or imported")
     default:
         return Translate(err)
     }
 }
 ```
 
-**Test requirement**: an HTTP-level test (`albums_test.go`) forces the trigger path by inserting a cross-owner `album_media` row via the service (after monkey-patching the pre-flight to skip — or by injecting a fake `media.Repo` that lies about ownership) and asserts the response is **500**, not 403. The same test verifies `httpapi.Translate`'s own behaviour is unchanged (ErrOwnerMismatch → 403 via the Plan B/C/E surfaces).
+**Test strategy** — the trigger-path scenario cannot be exercised end-to-end because Go has no monkey-patching and `AlbumService` takes concrete `*album.Repo` / `*media.Repo` (deliberately — there are no interfaces to mock). Coverage is split into two independent tests:
+
+1. **Unit test on `translateAlbumError`** (`internal/httpapi/albums_test.go`): table-driven, asserts the mapping for each sentinel. For `errs.ErrOwnerMismatch`, the test asserts the returned `huma.StatusError.GetStatus()` is `500` and the body does not leak the sentinel's message. Also asserts that `httpapi.Translate(errs.ErrOwnerMismatch)` still returns `403` — i.e. the albums wrapper overrides the default without mutating it (Plan B/C/E behaviour unchanged).
+
+2. **Repo-level integration test** (`internal/album/trigger_test.go`): seeds album A under owner1 and media M under owner2, then calls `album.Repo.AddMedia(ctx, A, []string{M}, now)` directly — no service in the path. Asserts the returned error satisfies `errors.Is(err, errs.ErrOwnerMismatch)`, proving the repo correctly wraps the raw SQLite trigger error. This is the existing Plan D trigger test, now doing double duty as the producer-side coverage.
+
+Together these cover every moving part of the defence-in-depth path: the repo wraps the trigger error correctly (test 2), and the handler translator converts that wrapped error into a 500 response without a 403 leak (test 1). The two layers meet at a boundary whose contract (`errors.Is(err, errs.ErrOwnerMismatch)`) is explicit and trivially verifiable.
 
 ## 8. CLI surface
 
@@ -472,12 +521,14 @@ Reuses existing `errs.ErrNotFound` and `errs.ErrOwnerMismatch` from the cross-cu
 - `Rename` updates `updated_at`.
 - `Delete` cascades `album_media` (two members pre-seed; after delete, `album_media` empty).
 - Media delete cascade: deleting a `media` row drops it from every `album_media` (verifies the schema-level FK cascade works).
+- `GetDetailByID` happy path: ItemCount + Cover derived correctly for a seeded album with mixed `ready`/`pending` members.
+- `GetDetailByID` missing ID → `errs.ErrNotFound`.
 - `ListByOwner` derives `ItemCount` correctly for 0/1/many members.
 - `ListByOwner` cover derivation: empty album → nil, album with only pending thumbs → nil, album with mixed states → picks most recently added `ready` row.
 - `AddMedia` idempotency: same batch twice → second call returns (0, N).
-- `AddMedia` empty input → (0, 0, nil).
+- `AddMedia` empty input → (0, 0, nil) at the repo level (service rejects, but repo is mechanical).
 - `AddMedia` over 500 → currently rejected at the service; repo test proves the INSERT scales to the batch size cap.
-- `ListMedia` sort modes: `added_desc`, `added_asc`, `imported_desc`, `imported_asc`.
+- `ListMedia` sort modes: cover both SortBy values (`added`, `imported`) × both SortAsc values (`false`=DESC, `true`=ASC).
 - `ListMedia` pagination: `limit=2&offset=1` returns the middle slice of three.
 
 ### Trigger test (`internal/album/trigger_test.go`)
@@ -500,8 +551,9 @@ Bypass the service, insert `album_media` via raw SQL where album and media have 
 
 ### HTTP tests
 
-- `albums_test.go`: each CRUD route's 200 / 401 / 404 paths. Create returns 201 with an `albumDTO` (ItemCount=0, no cover). Rename returns 200 with the updated `albumDTO` (freshly computed ItemCount + cover). Delete returns 204. Test that `GET /api/v1/albums/{id}` on a cross-owner album returns 404, not 403.
-- `album_media_test.go`: list pagination (next_offset boundary cases), sort-by query param, batch-add response shape (`{added, already_present}`), **404 (not 403) on mixed-owner batch**, 404 on unknown-media batch, 400 on oversized batch, 404 on remove-not-in-album. Test that duplicate input IDs in the batch POST collapse to distinct rows (request `[X, X, Y]` with album empty → response `{added: 2, already_present: 0}`).
+- `albums_test.go` — **route-level tests**: each CRUD route's 200 / 401 / 404 paths. Create returns 201 with an `albumDTO` (ItemCount=0, no cover). Rename returns 200 with the updated `albumDTO` (freshly computed ItemCount + cover). Delete returns 204. Test that `GET /api/v1/albums/{id}` on a cross-owner album returns 404, not 403.
+- `albums_test.go` — **`translateAlbumError` unit test**: table-driven, covers `errs.ErrOwnerMismatch → 500` (body does not leak `errs.ErrOwnerMismatch.Error()`), `album.ErrInvalidName → 400` with the explicit wire string (not the sentinel's prefixed message), `album.ErrInvalidBatch → 400`, `album.ErrInvalidSort → 400`, pass-through of `errs.ErrNotFound → 404` via the shared `Translate`. Also asserts `httpapi.Translate(errs.ErrOwnerMismatch) == 403` remains unchanged (the albums wrapper overrides locally, not globally).
+- `album_media_test.go`: list pagination (next_offset boundary cases), sort-by query param (with default `sort_asc=false` returning DESC order), batch-add response shape (`{added, already_present}`), **404 (not 403) on mixed-owner batch**, 404 on unknown-media batch, 400 on oversized batch, 404 on remove-not-in-album. Test that duplicate input IDs in the batch POST collapse to distinct rows (request `[X, X, Y]` with album empty → response `{added: 2, already_present: 0}`).
 
 ### CLI tests (`internal/cli/albums_test.go`)
 
