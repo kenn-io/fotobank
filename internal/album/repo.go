@@ -253,6 +253,16 @@ func (r *Repo) AddMedia(
 		` ON CONFLICT (album_id, media_id) DO NOTHING`
 	res, err := r.rw.ExecContext(ctx, q, args...)
 	if err != nil {
+		// The album_media owner-consistency trigger raises with text
+		// "album and media must share owner" when the album and media
+		// belong to different owners. The service layer's pre-flight
+		// should catch this first; hitting it here means the service
+		// invariant is violated. Wrap as ErrOwnerMismatch so the HTTP
+		// layer can translate it to 500 + log.
+		if isAlbumMediaOwnerMismatch(err) {
+			return 0, 0, fmt.Errorf("%w: album=%s media=%v",
+				errs.ErrOwnerMismatch, albumID, mediaIDs)
+		}
 		return 0, 0, fmt.Errorf("add album media: %w", err)
 	}
 	n, err := res.RowsAffected()
@@ -262,6 +272,14 @@ func (r *Repo) AddMedia(
 	added = int(n)
 	alreadyPresent = len(mediaIDs) - added
 	return added, alreadyPresent, nil
+}
+
+// isAlbumMediaOwnerMismatch reports whether err is the SQLite trigger
+// error raised by album_media_owner_consistency_{insert,update}. The
+// trigger uses RAISE(ABORT, 'album and media must share owner') so the
+// surface is stable and string-matchable.
+func isAlbumMediaOwnerMismatch(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "album and media must share owner")
 }
 
 // RemoveMedia removes one media_id from an album. ErrNotFound if the
