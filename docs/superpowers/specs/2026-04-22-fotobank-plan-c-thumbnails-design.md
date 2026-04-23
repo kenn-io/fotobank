@@ -77,8 +77,15 @@ CREATE INDEX media_thumb_pending_idx ON media(thumb_status, thumb_claimed_at)
 **Status machine:**
 - `pending` → `working` (via `ClaimBatch`)
 - `working` → `ready` | `no_preview` | `failed` (via `processOne`)
-- `working` → `pending` (via `SweepLeases` when lease expired)
-- `ready` → `pending` (via `Enqueue` / regenerate)
+- `working` → `pending` (via `SweepLeases` — also bumps
+  `thumb_version`, see §5.1)
+- `ready` / `failed` / `no_preview` → `pending` (via `Enqueue` /
+  regenerate — also bumps `thumb_version`)
+
+Both transitions into `pending` (sweep and regenerate) bump
+`thumb_version`. This keeps on-disk keys and HTTP cache URLs in
+sync with state: every time a row goes back into the queue, its
+next set of thumbs lands under a fresh `v{N}/` directory.
 
 Ingest already writes `pending` for new rows. No change there.
 
@@ -252,7 +259,7 @@ write, but the tie-breaker is free insurance.
 Every row in the claim result comes with its `thumb_claimed_at`
 timestamp, which acts as a **claim token**. Every terminal update
 (`MarkReady`, `MarkNoPreview`, `MarkFailed`) carries this token and
-includes it in the `WHERE` clause:
+matches on the full `(id, thumb_version, thumb_claimed_at)` triple:
 
 ```sql
 UPDATE media
@@ -260,40 +267,64 @@ UPDATE media
  WHERE id = ? AND thumb_version = ? AND thumb_claimed_at = ?
 ```
 
-If the row's `thumb_claimed_at` no longer matches (because
-`SweepLeases` reset it to `NULL`, or another worker re-claimed and
-set a new timestamp, or `Enqueue` bumped `thumb_version` out from
-under us), `RowsAffected == 0`. The queue method returns a sentinel
-`ErrClaimLost`; the worker logs-and-discards rather than retrying —
-whoever owns the current claim is responsible for finishing the job.
+If any field no longer matches, `RowsAffected == 0`, the queue method
+returns `ErrClaimLost`, and the worker logs-and-discards — whoever
+owns the current claim is responsible for finishing the job.
 
-**Why this is race-safe without a separate nonce column:** all state
-transitions (claim, sweep, terminal mark, enqueue) take the SQLite
-write lock, which serializes them. Inside one transition we set
-`thumb_claimed_at = time.Now()` at the Go side. Two ClaimBatch calls
-cannot interleave to produce the same timestamp because each takes
-a write lock; between them, `time.Now()` advances by at least one
-nanosecond on every platform we support. SweepLeases explicitly sets
-`thumb_claimed_at = NULL`, which is a value no legitimate claim can
-ever produce, so post-sweep claims begin from a distinct state.
-
-**Why we still also check `thumb_version`:** regenerate bumps
-`thumb_version` and sets `thumb_status='pending'` but it does *not*
-touch `thumb_claimed_at` on rows that happen to be `ready`. So if a
-worker just picked up a row, started processing, and concurrently a
-regenerate enqueues it, both `thumb_version` and `thumb_claimed_at`
-could shift between claim and terminal — checking both in the WHERE
-clause keeps us honest.
-
-**SweepLeases SQL:**
+**SweepLeases SQL — bumps `thumb_version`:**
 
 ```sql
 UPDATE media
    SET thumb_status     = 'pending',
-       thumb_claimed_at = NULL
+       thumb_claimed_at = NULL,
+       thumb_version    = thumb_version + 1,
+       thumb_updated_at = ?
  WHERE thumb_status = 'working'
    AND thumb_claimed_at < ?
 ```
+
+This is load-bearing. An earlier design had sweep only reset
+`thumb_status` and `thumb_claimed_at`. That left a hole:
+
+1. Worker A claims row at version `v=5`, writes `.thumbs/{id}/v5/
+   grid.webp` successfully, then hangs before writing `preview.webp`.
+2. `SweepLeases` times out A's lease, sets `pending` without bumping
+   version.
+3. Worker B claims the same row at `v=5`, starts writing under the
+   *same* `v5/` directory. `Store.Write`'s no-clobber finalize
+   (`internal/storage/storage.go:35`) rejects `grid.webp` with
+   `ErrPathOccupied` — B fails the whole row and marks it `failed`.
+4. When A eventually wakes up, its `MarkReady(id, v=5, T_A)` now
+   returns `ErrClaimLost` (token mismatch from the sweep/reclaim)
+   but the damage is done: the row is stuck `failed` until an
+   operator runs `regenerate`.
+
+**Bumping version on sweep fixes this cleanly:** the reclaimer sees
+`v=6`, writes under a fresh `.thumbs/{id}/v6/` directory, and A's
+partial `v5/` directory becomes an orphan (same harmless orphan we
+already accept after regenerate). Sweep is effectively a
+machine-driven regeneration trigger and should behave like one —
+consistent with the master spec §9.6 invariant that "version bumps
+happen at the start of the regeneration lifecycle."
+
+**Why the `(id, version, thumb_claimed_at)` triple is sufficient
+for fencing, not just version:** the stale worker's WHERE clause
+pins version to the *old* `v=5`, so a stale `MarkReady` after a
+sweep-plus-reclaim matches zero rows regardless of what
+`thumb_claimed_at` is. Version by itself is enough to catch
+sweep-then-reclaim races. We still include `thumb_claimed_at` in
+the WHERE clause as defense in depth for the narrower case where
+two claims happen at the same version (e.g., someone adds a future
+feature that replaces a ready row's working claim without bumping
+version) — it's a cheap extra column to check and removes a class
+of future footguns. The timestamp's nanosecond-uniqueness
+*microbehavior* is no longer a correctness pillar; version is.
+
+**Storage note:** SQLite stores `TIMESTAMP` as RFC3339 text at the
+driver level (master §4.3), which truncates sub-microsecond
+resolution. This was a concern in the previous revision of this
+spec when token uniqueness was the correctness story; it is not a
+concern now that version bumping carries that weight.
 
 ---
 
@@ -696,6 +727,9 @@ pattern as `fotobank reconcile`.
 - `SweepLeases` (stale rows reset, fresh rows untouched); after
   sweep, the prior claim's token is invalid and `MarkReady` with
   that token returns `ErrClaimLost`.
+- `SweepLeases` bumps `thumb_version` and `thumb_updated_at`: pre-
+  sweep version `v=N`, post-sweep version `v=N+1`. The next claim
+  returns `v=N+1`.
 - `Enqueue` (version bumps, status resets, multiple filters
   compose correctly).
 - Regenerate-while-working race: start processing, call
@@ -716,9 +750,15 @@ pattern as `fotobank reconcile`.
   bytes exist at `.thumbs/{id}/v{N}/grid.webp`, assert ETag in HTTP
   response matches `thumb_version`.
 - Crash-recovery: start worker, mark row `working` with an old
-  `thumb_claimed_at`, run sweep, assert row returns to `pending`.
-  Verify the orphaned worker goroutine's eventual `MarkReady` gets
-  `ErrClaimLost` and does not corrupt the re-claimed row.
+  `thumb_claimed_at`, run sweep, assert row returns to `pending`
+  with `thumb_version` bumped. Verify the orphaned worker
+  goroutine's eventual `MarkReady` gets `ErrClaimLost` and does
+  not corrupt the re-claimed row.
+- Same-version lease-retry never hits `ErrPathOccupied`: seed
+  `.thumbs/{id}/v5/grid.webp` on disk to simulate a partial write
+  from a swept claim, then run another claim→finish cycle; assert
+  the new writes land under `v6/` (not `v5/`) and succeed
+  end-to-end.
 - Regenerate overwrites safely: start with a ready thumb, run
   `fotobank thumbs regenerate --id X`, wait for worker; assert the
   old `v{N-1}/` directory still exists on disk (orphaned, harmless)

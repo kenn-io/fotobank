@@ -845,9 +845,13 @@ For a media `row`:
 - Photos: `row.path` — e.g. `2024/20240615_143022_0.jpg` or
   `unknown_date/IMG_0001.jpg`.
 - Videos: `movies/{md5}.{ext}` — stored as the `row.path`.
-- Thumbnails: `.thumbs/{media_id}/grid.webp` (plus
-  `preview.webp`, `lightbox.webp`). Computed by the thumbnail
-  service, not stored on the `media` row.
+- Thumbnails: `.thumbs/{media_id}/v{thumb_version}/grid.webp`
+  (plus `preview.webp`, `lightbox.webp`). Computed by the
+  thumbnail service, not stored on the `media` row. *(2026-04-22
+  execution note: versioned `v{N}/` subdirectory added in Plan C
+  so writes never collide with `Store.Write`'s no-clobber finalize
+  on regenerate / lease-sweep retry. See `2026-04-22-fotobank-
+  plan-c-thumbnails-design.md` §7.1.)*
 
 The storage layer prepends `{nas.root}/{storage_key}/` for NAS or
 `{flash.root}/{storage_key}/` for flash and appends the key as-is.
@@ -1044,6 +1048,17 @@ worker and state machine exist so Phase 2's `exec.BrokerRegistrar`
 swap is a one-line change in `main.go`.
 
 ### 9.6 ThumbService
+
+*(2026-04-22 execution note — Plan C supersedes several particulars
+below: (a) regenerate-while-working is no longer a no-op, it bumps
+`thumb_version` and the next claim picks up the new version; (b)
+`SweepLeases` also bumps `thumb_version` so reclaimed rows write
+under a fresh versioned directory; (c) the caller-facing status
+code for a regenerating thumb is `404`, not `409`, with URL
+identity established via a validated `?v=` param. Details:
+`2026-04-22-fotobank-plan-c-thumbnails-design.md` §3, §5.1, §9.
+The original Plan A/B guidance below is preserved for historical
+context.)*
 
 Thumbnail lifecycle: the version bumps at the **start** of each
 lifecycle (enqueue), not at the terminal transitions. This keeps
