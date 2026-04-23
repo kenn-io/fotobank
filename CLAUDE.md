@@ -1,187 +1,89 @@
-# CLAUDE.md - Fotobank Development Guide
+# CLAUDE.md — fotobank
 
-## Project Overview
+Personal photo management. A self-hosted alternative to cloud photo services: deduplication, consistent file naming, a metadata registry, and (in progress) thumbnails, albums, and sharing.
 
-Fotobank is a personal photo management system designed to give photographers complete control over their photo libraries without dependence on cloud services. It provides deduplication, consistent file organization, and a metadata registry while coexisting with tools like Adobe Lightroom Classic.
+This is a **Go project**. An earlier Python prototype was deleted at 2026-04-23; don't look for `.py` files.
 
-**Philosophy**: Your photos are irreplaceable. Fotobank aims to be the foundation for a self-hosted, future-proof photo archive that you control completely.
-
-## Quick Reference
+## Quick reference
 
 ```bash
-# Install dependencies
-uv sync
-
-# Run CLI commands
-uv run fotobank import -D ~/photo_archive ~/new_photos
-uv run fotobank sync-metadata -D ~/photo_archive
-
-# Development
-uv run ipython              # Interactive shell
-uv run flake8 fotobank/     # Lint code
+make build            # debug binary → bin/fotobank
+make build-release    # release binary
+make install          # copy to ~/.local/bin or $GOBIN
+make dev              # live-reload via air (runs `server`)
+make test             # go test ./... -shuffle=on
+make test-short       # short tests only
+make lint             # golangci-lint --fix + testify-helper-check
+make nilaway          # pre-push tier
+make tidy             # go mod tidy
+make api-generate     # regenerate openapi.json
+make install-hooks    # install prek git hooks
 ```
 
-## Architecture
+## Layout
 
 ```
-fotobank/
-├── cli.py       # Click CLI entry points (import, sync-metadata)
-├── common.py    # Domain models (Photo, ImageMetadata, BasePhoto)
-├── store.py     # PhotoStore class - database & file operations
-└── util.py      # Utilities (checksum, file discovery, path helpers)
+cmd/
+├── fotobank/              — CLI entry; main wires into internal/cli
+└── fotobank-openapi/      — generates openapi.json from the huma API
+
+internal/
+├── album/                 — albums domain (Plan D; in design)
+├── broker/                — sharing broker stub (Plan E)
+├── cli/                   — cobra subcommands (server, import, thumbs, …)
+├── config/                — YAML config loader + defaults
+├── db/                    — sqlx wrapper + migrations
+│   └── migrations/        — golang-migrate SQL files (up/down pairs)
+├── errs/                  — cross-cutting sentinel errors
+├── exifread/              — pure-Go EXIF reader
+├── httpapi/               — huma/v2 REST API
+├── identity/              — stub-mode identity (phase 1)
+├── ingest/                — import pipeline
+├── media/                 — media domain + repo
+├── migrate/               — runs db/migrations at boot
+├── owners/                — owner principal type
+├── reconcile/             — on-disk ↔ DB reconciler
+├── service/               — auth-scoped wrappers over repos
+├── share/                 — scopes domain (Plan E)
+├── storage/               — NAS + flash cache
+├── testutil/              — shared test helpers
+├── thumb/                 — thumbnail pipeline (Plan C)
+└── version/               — build-metadata globals set from ldflags
 ```
 
-**Data Flow**: CLI -> PhotoStore -> (SQLite registry + filesystem)
+## Layering
 
-**EXIF Extraction**: Uses `exifread` (pure Python) with automatic fallback to `exiftool` if installed.
+Three tiers per domain: **repo → service → transport**.
 
-## Database Schema
+- **Repo** (`internal/<domain>/repo.go`) is DB-only. No auth, no identity plumbing. Takes IDs, returns rows.
+- **Service** (`internal/service/*.go`) is the auth boundary. Every exported method takes `caller owners.Principal` and either scopes queries to that principal or returns `errs.ErrNotFound`.
+- **Transport** is either `internal/httpapi/` (huma routes, mounted on `http.ServeMux`) or `internal/cli/` (cobra subcommands). Both go through service — CLI must not call repos directly because the repos don't enforce ownership.
 
-SQLite database at `{base_path}/registry.sqlite` with single `photos` table:
+Background workers (e.g. `internal/thumb/worker.go`) follow the same rule: they're driven from a queue populated via repo/service calls, not by fan-out from a transport.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| path | String | Relative path in store |
-| original_filename | String | Source path before import |
-| timestamp | DateTime | Photo creation date (EXIF) |
-| size | Integer | File size in bytes |
-| checksum | String | MD5 hash (primary dedup key) |
-| make/model | String | Camera info |
-| width/height | Integer | Dimensions |
-| focal_length | String | Lens focal length |
-| iso | Integer | ISO sensitivity |
-| shutter | String | Shutter speed |
-| aperture | Float | F-number |
+## Conventions
 
-## File Organization
+- Errors: sentinels in `internal/errs/errs.go` (ErrNotFound, ErrOwnerMismatch, ErrPermissionDenied, ErrAlreadyExists, ErrInvalidArgument, ErrConcurrentImport, ErrIdentityMissing, ErrBrokerUnavailable, ErrDirectAccessBlocked). HTTP mapping in `internal/httpapi/errors.go::Translate`. Wrap with `fmt.Errorf("doing X: %w", err)`.
+- Tests use `testify/require`. `testutil.OpenTestDB(t)` spins a fresh migrated SQLite DB per test.
+- Migrations: every `NNNNNN_name.up.sql` has a matching `.down.sql`. Never edit a migration that's already on main (prek hook enforces this).
+- HTTP: JSON routes use huma. Byte-streaming routes (`/original`, `/thumb`) use raw `http.HandlerFunc` on the same mux.
+- Identity: phase 1 is stub mode — one principal per config, set via `identity.mode = "stub"`. Other modes are rejected by the CLI tooling that mutates DB state.
+- Runtime: pure Go, no CGO. SQLite via `modernc.org/sqlite`.
 
-```
-{base_path}/
-├── registry.sqlite          # Metadata database
-├── movies/                  # Videos stored as {md5}.{ext}
-├── 2020/                    # Year-based photo directories
-│   ├── 20200615_143022_0.jpg
-│   └── 20200615_143022_1.jpg  # Sequence for same-second
-├── 2021/
-└── unknown_date/            # Photos without valid timestamp
-```
+## Plans
 
-**Naming Convention**: `YYYYMMDD_HHMMSS_{seq}.{ext}`
+Design docs live in `docs/superpowers/specs/`, plans in `docs/superpowers/plans/`.
 
-## Supported Formats
+- **Plan A** — DB foundation, migrations, principals, storage. **Done.**
+- **Plan B** — Import pipeline, reconcile, media HTTP CRUD. **Done.**
+- **Plan C** — Thumbnail pipeline (queue, worker, flash cache subdir, `/thumb` endpoint). **Done.**
+- **Plan D** — Albums (CRUD service + HTTP + CLI; no sharing). **In design.**
+- **Plan E** — Sharing: scopes, broker registration, outbox worker, cross-owner reads. **Deferred.**
 
-- **Photos** (EXIF extracted): JPG, JPEG, GIF, ARW, RAF, DNG, CR2
-- **Movies** (checksum only): MP4, AVI, MOV, MP2, MPG
+## Instructions for agents
 
-## Key Code Patterns
-
-### EXIF Extraction
-Two-tier extraction strategy in `common.py`:
-1. **Primary**: `exifread` library (pure Python, no external dependencies)
-2. **Fallback**: `exiftool` subprocess (if exifread fails and exiftool is installed)
-
-The fallback is automatic and transparent. Both implementations handle multiple field name variants (e.g., `ShutterSpeed` vs `ShutterSpeedValue`, `DateTimeOriginal` vs `CreateDate`).
-
-Key functions:
-- `read_exif(path)` - Main entry point, handles fallback logic
-- `_read_exif_exifread(path)` - Pure Python implementation
-- `_read_exif_exiftool(path)` - Subprocess fallback
-- `ExifReadError` - Custom exception for EXIF failures
-
-### Deduplication
-MD5 checksum-based. Photos already in registry (by checksum) are skipped with optional verbose logging.
-
-### Property-based Metadata Access
-`BasePhoto` uses `_get_metadata_field()` to dynamically access EXIF data stored in `ImageMetadata` container.
-
-## CLI Commands
-
-### `fotobank import <directory>`
-Recursively imports photos/videos from source directory.
-
-Options:
-- `-D, --database PATH`: Store location (or set `FOTOBANK_DEFAULT_PATH`)
-- `-d, --dry-run`: Preview without changes
-- `-m, --move`: Move files instead of copying
-- `-v, --verbose`: Show duplicate messages
-
-### `fotobank sync-metadata`
-Removes database entries for files no longer on disk.
-
-Options:
-- `-D, --database PATH`: Store location
-- `-d, --dry-run`: Preview deletions
-
-## Development Notes
-
-### Testing
-No formal test suite exists. `MockPhoto` class available for manual testing. The `script.py` file contains ad-hoc development experiments.
-
-### Error Handling
-- Missing EXIF fields return sensible defaults ('unknown', None)
-- Permission errors during sync are caught and logged
-- Directory listing is cached for performance on network storage
-
-### Recent Changes
-- Switched EXIF extraction to `exifread` (pure Python) with `exiftool` fallback
-- Migrated to `uv` for dependency management
-- Fixed SQLAlchemy deprecated syntax
-- Added directory caching for sync_metadata performance
-- Using `copyfile` instead of `copy` to not preserve permissions
-
-## Vision & Roadmap
-
-Fotobank aspires to be a complete self-hosted photo management platform for amateur photographers who want:
-
-1. **Complete data ownership** - No cloud vendor lock-in
-2. **Reliable backups** - Never lose 20 years of memories
-3. **Rich browsing experience** - View and organize without Lightroom
-4. **Future-proof storage** - Work with any NAS or storage solution
-
-### Planned Features
-
-**Near-term**:
-- [ ] Transactional metadata changes with undo capability
-- [ ] Database merging (combine multiple archives)
-- [ ] Database splitting (cold storage for old photos)
-- [ ] Thumbnail generation for fast browsing
-
-**Gallery Web App**:
-- [ ] FastAPI/Flask backend serving photo metadata
-- [ ] React/Vue frontend for browsing by date, camera, location
-- [ ] Lazy-loading image grid with virtual scrolling
-- [ ] EXIF-based filtering and search
-- [ ] Album/collection support
-
-**Backup & Sync**:
-- [ ] rsync wrapper for NAS backup with verification
-- [ ] Backup manifest tracking (what's backed up where)
-- [ ] Multi-destination sync (local NAS + offsite)
-- [ ] Integrity checking (detect bit rot)
-- [ ] Incremental backup reports
-
-**Advanced Features**:
-- [ ] Face detection/recognition (local ML models)
-- [ ] Location extraction and map view
-- [ ] Duplicate detection beyond checksum (perceptual hashing)
-- [ ] RAW + JPEG pairing
-- [ ] Lightroom catalog sync/import
-- [ ] Mobile app for on-the-go access
-
-## Integration with Lightroom
-
-Fotobank is designed to coexist with Lightroom Classic:
-1. Import photos to Fotobank archive
-2. Point Lightroom's watched folder at the Fotobank base path
-3. Lightroom detects new imports and adds to catalog
-4. Both tools see the same organized file structure
-
-## Contributing
-
-When adding features:
-- Keep modules focused (cli, store, common, util pattern)
-- Use Click for new CLI commands
-- Add to SQLAlchemy schema if storing new metadata
-- Handle missing EXIF fields gracefully
-- Support dry-run mode for destructive operations
-- Cache filesystem operations when iterating over network storage
+- Commit directly to master. No feature branches, no worktrees.
+- When adding a migration, always add the down pair.
+- When touching HTTP routes, run `make api-generate` (the prek hook does this automatically on commit).
+- Prefer `require.ErrorIs` for sentinel checks; raw `==` comparison misses wrapped errors.
+- The existing `httpapi.Translate` maps `errs.ErrOwnerMismatch → 403`, which matches the scopes/sharing surface but not the albums surface. If a surface needs a different mapping, write a local translator that overrides the sentinels it cares about and delegates the rest to `Translate`.
