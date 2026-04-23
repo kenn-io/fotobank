@@ -76,10 +76,12 @@ func seedMedia(t *testing.T, repo *media.Repo, p owners.Principal, path, checksu
 
 type listMediaResponse struct {
 	Items []struct {
-		ID       string `json:"id"`
-		Type     string `json:"type"`
-		Path     string `json:"path"`
-		Checksum string `json:"checksum"`
+		ID           string `json:"id"`
+		Type         string `json:"type"`
+		Path         string `json:"path"`
+		Checksum     string `json:"checksum"`
+		ThumbStatus  string `json:"thumb_status"`
+		ThumbVersion int    `json:"thumb_version"`
 	} `json:"items"`
 	NextOffset *int `json:"next_offset"`
 	Total      *int `json:"total"`
