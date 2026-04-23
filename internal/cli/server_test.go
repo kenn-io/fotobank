@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -168,6 +169,121 @@ worker_concurrency = 1
 	cancel()
 	<-errCh
 	r.Fail("worker did not drain pending row within 10s")
+}
+
+func TestServerShutdownWaitsForThumbWorker(t *testing.T) {
+	// Regression: runServer must join its background thumb-worker
+	// goroutine before returning, otherwise the deferred d.Close races
+	// a per-claim processOne that still holds a *sql.DB reference.
+	//
+	// Strategy: seed many pending rows, boot the server with a tiny
+	// poll interval so drain is mid-flight when we cancel, then assert
+	// that after RunContext returns the goroutine count is back to the
+	// pre-run baseline. Without the WaitGroup join, up to
+	// worker_concurrency processOne goroutines survive RunContext and
+	// the test observes the leak.
+	r := require.New(t)
+	tmp := t.TempDir()
+	nasRoot := filepath.Join(tmp, "nas")
+	r.NoError(os.MkdirAll(filepath.Join(nasRoot, "u", "2024"), 0o700))
+
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "photo-with-timestamp.jpg"))
+	r.NoError(err)
+
+	cfgPath := filepath.Join(tmp, "c.toml")
+	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
+[nas]
+root = %q
+[flash]
+root = %q
+[identity]
+mode = "stub"
+[identity.stub]
+hub = "h"
+user_id = "u"
+[http]
+listen_address = "127.0.0.1:0"
+[thumbs]
+poll_interval = "10ms"
+worker_concurrency = 4
+`, nasRoot, filepath.Join(tmp, "flash")), 0o600))
+
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_CONFIG", cfgPath)
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	// Seed many pending rows so drain is back-pressured on the
+	// concurrency semaphore when cancel fires.
+	const nRows = 20
+	d, err := db.Open(dbPath)
+	r.NoError(err)
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	_, err = d.WriteDB().ExecContext(context.Background(),
+		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "u", time.Now().UTC(),
+	)
+	r.NoError(err)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	for i := range nRows {
+		id := uuid.NewString()
+		rel := fmt.Sprintf("2024/row-%03d.jpg", i)
+		srcPath := filepath.Join(nasRoot, "u", rel)
+		r.NoError(os.WriteFile(srcPath, fixture, 0o600))
+		r.NoError(repo.Insert(context.Background(), media.Media{
+			ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+			Path: rel, ImportedAt: time.Now().UTC(),
+			Size: int64(len(fixture)), Checksum: id, ThumbStatus: "pending",
+		}))
+	}
+	_ = d.Close()
+
+	addrFile := filepath.Join(tmp, "addr")
+	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
+
+	baseline := runtime.NumGoroutine()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	errCh := make(chan int, 1)
+	go func() {
+		var out, eout bytes.Buffer
+		errCh <- cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &out, &eout)
+	}()
+
+	// Wait for boot so the worker is live and drain has started.
+	var booted bool
+	for range 200 {
+		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
+			booted = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	r.True(booted, "server never published its bind address")
+
+	// Let at least one poll tick fire so drain is mid-flight and
+	// processOne goroutines are running inside the worker's semaphore.
+	time.Sleep(40 * time.Millisecond)
+	cancel()
+
+	select {
+	case code := <-errCh:
+		r.Equal(0, code)
+	case <-time.After(5 * time.Second):
+		r.FailNow("server did not shut down within 5s")
+	}
+
+	// If the WaitGroup join is wired correctly, every thumb-worker
+	// goroutine has exited by the time RunContext returns. Allow a
+	// small tolerance for transient runtime goroutines (finalizers,
+	// GC assist, sqlite driver threads) that the scheduler may not
+	// have reaped yet. A missed join would leave at least
+	// worker_concurrency=4 processOne goroutines alive here.
+	const tolerance = 5
+	after := runtime.NumGoroutine()
+	r.LessOrEqualf(after, baseline+tolerance,
+		"thumb worker goroutines leaked past RunContext: baseline=%d after=%d (tolerance=%d)",
+		baseline, after, tolerance)
 }
 
 func TestFlashJanitorLeavesSiblingFlashStateAlone(t *testing.T) {

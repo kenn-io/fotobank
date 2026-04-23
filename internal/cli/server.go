@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -153,6 +154,14 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// bgWG joins every goroutine that holds references to d (SQL) or
+	// storeLayer so runServer does not return — and thus `defer d.Close`
+	// does not fire — until all of them have observed sigCtx.Done and
+	// exited. Without this, a per-claim processOne goroutine mid-SQL
+	// would race against d.Close, surfacing as "sql: database is closed"
+	// log spam or WAL corruption.
+	var bgWG sync.WaitGroup
+
 	// Run one eviction synchronously before Serve so a freshly booted
 	// server with a stale flash cache doesn't wait a full interval for
 	// cleanup, and so a fatal bug in Evict is visible at boot.
@@ -160,7 +169,9 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		if err := flashCache.Evict(sigCtx); err != nil {
 			fmt.Fprintln(opts.stderr, "initial flash eviction failed:", err)
 		}
-		go runFlashJanitor(sigCtx, flashCache, opts.stderr)
+		bgWG.Go(func() {
+			runFlashJanitor(sigCtx, flashCache, opts.stderr)
+		})
 	}
 
 	thumbWorker := thumb.NewWorker(thumbQueue, storeLayer, thumb.Config{
@@ -168,11 +179,11 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		PollInterval:      cfg.Thumbs.PollInterval,
 		LeaseTimeout:      cfg.Thumbs.LeaseTimeout,
 	})
-	go func() {
+	bgWG.Go(func() {
 		if err := thumbWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
 			fmt.Fprintln(opts.stderr, "thumb worker exited:", err)
 		}
-	}()
+	})
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -185,6 +196,11 @@ func runServer(ctx context.Context, opts serverOpts) error {
 
 	select {
 	case err := <-serveErr:
+		// Serve exited on its own (bind loss, unrecoverable error).
+		// Cancel sigCtx so background workers unwind, then join them
+		// before returning so deferred d.Close cannot race.
+		stop()
+		bgWG.Wait()
 		return err
 	case <-sigCtx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -195,9 +211,15 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			// runs. Drain the serve goroutine to avoid a leak.
 			_ = srv.Close()
 			<-serveErr
+			// Must join before returning: deferred d.Close runs as
+			// soon as runServer returns, and a mid-flight processOne
+			// must not hit a closed DB handle.
+			bgWG.Wait()
 			return err
 		}
 		<-serveErr
+		// Must join before returning: see comment above.
+		bgWG.Wait()
 		return nil
 	}
 }
@@ -278,6 +300,11 @@ func loadStorageKeys(ctx context.Context, ownerSvc *service.OwnerService) (map[o
 // or shm files that live directly under cfg.Flash.Root.
 const flashCacheSubdir = "originals"
 
+// flashThumbsSubdir is the sibling subdirectory of flashCacheSubdir that
+// holds cached thumbnail bytes. Kept adjacent to flashCacheSubdir so the
+// FlashCache directory layout lives in one place.
+const flashThumbsSubdir = "thumbs"
+
 // buildStorageLayer assembles the Store implementation dictated by
 // cfg.Storage.Mode. When mode is "flash_cache" the returned *FlashCache
 // is non-nil so the caller can drive its daily janitor; otherwise it's
@@ -294,7 +321,7 @@ func buildStorageLayer(cfg *config.Config, keys map[owners.Principal]string) (st
 		OriginalsCacheMaxMedia: cfg.Storage.OriginalsCacheMaxMedia,
 	})
 	if cfg.Storage.ThumbsCacheEnabled {
-		thumbsCacheRoot := filepath.Join(cfg.Flash.Root, "thumbs")
+		thumbsCacheRoot := filepath.Join(cfg.Flash.Root, flashThumbsSubdir)
 		fc.EnableThumbs(thumbsCacheRoot)
 	}
 	return fc, fc
