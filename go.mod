@@ -6,7 +6,6 @@ tool go.uber.org/nilaway/cmd/nilaway
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/abema/go-mp4 v1.5.0
 	github.com/danielgtaylor/huma/v2 v2.37.3
 	github.com/dsoprea/go-exif/v3 v3.0.1
 	github.com/golang-migrate/migrate/v4 v4.19.1

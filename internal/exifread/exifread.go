@@ -4,13 +4,6 @@ package exifread
 
 import (
 	"time"
-
-	// Blank imports retain the EXIF and MP4 dependencies in go.mod
-	// while this package contains only type scaffolding. Tasks 6 and 7
-	// replace these with concrete usages in the photo and video
-	// extractors.
-	_ "github.com/abema/go-mp4"
-	_ "github.com/dsoprea/go-exif/v3"
 )
 
 // Metadata is the normalised output of the EXIF/container extractors.
