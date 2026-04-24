@@ -441,14 +441,17 @@ func (s *SharedReadService) OpenOriginal(
 ) (io.ReadCloser, media.Media, error)
 
 // OpenThumb returns the thumb reader, gated only by
-// CheckMediaAccess (thumbs ignore allow_download). The underlying
-// thumb cache lookup is re-used from the existing owner path.
+// CheckMediaAccess (thumbs ignore allow_download). The signature
+// mirrors ThumbService.Get: the media row comes back alongside the
+// reader so the handler can derive ETag/Last-Modified headers
+// without a second repo round-trip. size and version come from the
+// query string; a mismatch returns errs.ErrNotFound, same as owner.
 func (s *SharedReadService) OpenThumb(
     ctx context.Context,
     caller owners.Principal,
     headerScopes []string,
-    mediaID string,
-) (io.ReadCloser, thumb.Info, error)
+    mediaID string, size thumb.Size, version int,
+) (io.ReadCloser, media.Media, error)
 ```
 
 Result structs (`SharedScope`, `SharedAlbum`, `SharedMedia`, …) are
@@ -499,11 +502,13 @@ type SharedAlbum struct {
     CanDownload bool
 }
 
+// SharedAlbumDetail is the full view of a shared album. For E2 it
+// adds no fields over SharedAlbum — it's a distinct type so the
+// listing and detail response shapes stay separately versionable
+// and the detail handler can add fields later (per-grantee
+// listing cursor, etc.) without widening the listing payload.
 type SharedAlbumDetail struct {
     SharedAlbum
-    // Description is the album's description, already-set by the
-    // owner. Shared verbatim.
-    Description string
 }
 
 type SharedAlbumCover struct {
@@ -558,60 +563,92 @@ already knows who shared with them from the external system).
 **No new migrations.** E2's queries fit onto existing tables and
 indexes.
 
-Index audit: the new grantee-side queries join `scope_media` on
-`media_id` and `album_media` on `media_id`.
+Index audit against the schema in `000001_initial_schema.up.sql`:
 
-- `scope_media` is already keyed by `(scope_uuid, media_id)` with a
-  `media_id` index in the initial schema (check at review; if absent,
-  E2 adds one).
-- `album_media` is keyed by `(album_id, media_id)` (PK) with no
-  standalone `media_id` index. E2 queries **always** scope
-  `album_media` scans by a set of album_ids first (the grantee's
-  album_live set), so the PK is the correct index. No index change
-  needed.
-- `scopes_grantee_idx` (from Plan A) is `(grantee_hub,
-  grantee_user_id) WHERE revoked_at IS NULL`. E2's
-  `ValidateHeaderScopes` SELECT is `WHERE uuid IN (?, ?, …) AND
-  grantee_hub = ? AND grantee_user_id = ? AND revoked_at IS NULL AND
-  (expires_at IS NULL OR expires_at > ?)`. Since the `IN` list is
-  capped at 100 and the grantee index narrows the search, this is
-  fine without a new composite.
-
-If profiling during implementation surfaces a hot scan, E2 may add
-an index, but the design commits to zero mandatory migrations.
+- `scope_media` has PK `(scope_uuid, media_id)` and no secondary
+  index. E2's scope_media queries always predicate on
+  `scope_uuid` first (the validated set), so the PK fully covers
+  `WHERE scope_uuid = ? AND media_id = ?` lookups and
+  `scope_uuid IN (...)` scans. No new index.
+- `album_media` has PK `(album_id, media_id)` and no standalone
+  `media_id` index. E2 queries always scope `album_media` scans
+  by a set of album_ids first (the grantee's album_live target
+  set), so the PK is the correct index. No new index.
+- `scopes_grantee_idx` is `(grantee_hub, grantee_user_id) WHERE
+  revoked_at IS NULL` (from Plan A). E2's `ValidateHeaderScopes`
+  SELECT is `WHERE uuid IN (?, ?, …) AND grantee_hub = ? AND
+  grantee_user_id = ? AND revoked_at IS NULL AND broker_status =
+  'active' AND (expires_at IS NULL OR expires_at > ?)`. Since the
+  `IN` list is capped at 100 and the grantee index narrows the
+  search, this is fine without a new composite. If profiling
+  during implementation surfaces a hot scan we may revisit; the
+  design commits to zero migrations at the spec level.
 
 ## 6. Resolver internals
 
 ### 6.1 Single-owner invariant
 
-Every validated scope must share an owner. If header scopes point at
-more than one owner, the resolver picks the owner of the first valid
-scope in ID-sort order and drops all other scopes silently. **This is
-a simplification, not a security property.** Rationale:
+Every validated scope returned by the resolver shares a single
+owner. **The production contract is that the reverse proxy
+presents exactly one owner's scopes per request.** A grantee who
+legitimately holds scopes from two owners must make two requests
+with two different `X-Auth-Scopes` presentations (or the proxy
+routes differently per owner). This is the expected shape of the
+token-to-header rewrite in vision §6.2.
 
-- Each `/api/v1/shared/*` response is inherently one-owner because
-  the cross-owner scope UUIDs were already dropped by
-  `ValidateHeaderScopes`, which only matches rows where
-  `grantee_hub = ? AND grantee_user_id = ?`.
-- A grantee who legitimately holds scopes from *two* owners can still
-  reach both — they make two requests with two different
-  `X-Auth-Scopes` presentations. The client (or proxy) is expected to
-  scope per-request.
-- This removes a whole class of joins ("media ids per owner") from the
-  hot path.
+`ValidateHeaderScopes` filters by grantee but **not** by owner
+(`WHERE uuid IN (...) AND grantee_hub = ? AND grantee_user_id = ?
+AND revoked_at IS NULL AND broker_status = 'active' AND (...)`).
+Nothing in that SQL would refuse a correctly-minted cross-owner
+presentation. If the proxy is ever misconfigured and injects
+scopes from multiple owners, the resolver applies the following
+graceful-degradation rule in Go code, not in SQL:
 
-The single-owner invariant is visible on `ResolvedScopes.Owner` and
-enforced by the resolver's SQL: the validation SELECT groups rows by
-`(owner_hub, owner_user_id)` and `LIMIT 1` after sort; follow-up
-queries thread that owner through every predicate.
+1. Collect the distinct `(owner_hub, owner_user_id)` tuples across
+   the validated rows.
+2. If exactly one owner remains, proceed normally.
+3. If more than one owner remains, **select the owner with the
+   lexicographically smallest `(owner_hub, owner_user_id)` tuple**
+   and drop every scope belonging to the other owners.
+4. Log a `warn` with the caller principal, the dropped owner
+   tuples, and the retained owner tuple.
 
-### 6.2 Expiry
+Rationale: arbitrary silent selection would hide valid grants
+randomly per request; lexicographic order is deterministic, so the
+same grantee with the same header always sees the same subset, and
+ops can reproduce and fix the proxy config. The dropped-owners log
+is the operator signal.
 
-Expired scopes (`expires_at < now()`) are treated as "not live" by
-the resolver and silently dropped during validation. This is
-unilateral — it does not require the outbox worker to have revoked
-the broker-side grant. E1 explicitly left expiry un-enforced; E2
-enforces it for reads only.
+This rule is visible on `ResolvedScopes.Owner`. Follow-up queries
+(listing, per-item checks) thread that single owner through every
+predicate. The invariant is not a security property — cross-owner
+presentation never leaks data; it only constrains which of the
+caller's legitimately-granted scopes they see in one request.
+
+### 6.2 What counts as "live"
+
+The resolver's live-scope predicate is:
+
+- `revoked_at IS NULL`, **and**
+- `broker_status = 'active'`, **and**
+- `expires_at IS NULL OR expires_at > now()`.
+
+All three must hold. A scope that is `pending` (broker hasn't
+confirmed yet), `failed`, `revoking`, or `revoked_remote` is
+treated as not-live and silently dropped during validation; the
+grantee sees the same 404 / empty-list they would see for a scope
+they don't hold at all. Expiry is the same — an expired scope is
+dropped. This is unilateral: expiry does not require the outbox
+worker to have revoked the broker-side grant. E1 explicitly left
+expiry un-enforced; E2 enforces it for reads only.
+
+Rationale for gating on `broker_status = 'active'`: a `pending`
+scope cannot be vouched for by the broker, so the reverse proxy
+would refuse to mint a token containing it anyway. Admitting
+`pending` rows at the resolver would require the fotobank instance
+to decide a policy the broker already owns. Safer and simpler to
+require the broker-side confirmation that E1's state machine
+already produces.
 
 ### 6.3 `CheckMediaAccess` SQL shape
 
@@ -624,6 +661,7 @@ WITH validated AS (
       AND grantee_hub = ?
       AND grantee_user_id = ?
       AND revoked_at IS NULL
+      AND broker_status = 'active'
       AND (expires_at IS NULL OR expires_at > ?)
 )
 SELECT v.uuid, v.target_type, v.target_album_id, v.allow_download
@@ -760,7 +798,6 @@ type sharedAlbumDTO struct {
     CreatedAt   time.Time           `json:"created_at"`
     UpdatedAt   time.Time           `json:"updated_at"`
     CanDownload bool                `json:"can_download"`
-    Description string              `json:"description,omitempty"` // detail only
 }
 
 type sharedMediaDTO struct {
@@ -814,9 +851,17 @@ rows that the caller's scope already reveals. Anything else is 404.
 | Authorised read but `allow_download=false` on all paths (original only) | 403 |
 | Malformed path params (not a UUID) | 404 (not 400 — same reason) |
 | Malformed `X-Auth-Scopes` tokens | silently dropped, no error |
-| No `Identity` on request (guard rejected or header missing) | 401 |
-| Header-mode disabled (stub mode) | 404 from every `/shared/*` route (see §9.7) |
+| Identity headers missing (`ErrIdentityMissing`) | 401 |
+| Direct-access guard rejected (`ErrDirectAccessBlocked`) | 403 |
+| Stub mode, empty `Identity.Scopes` (list routes) | 200 with `{"items": []}` |
+| Stub mode, empty `Identity.Scopes` (detail/bytes routes) | 404 |
 | Internal error | 500 |
+
+The split between 401 and 403 for identity failures is already
+implemented by `WithMiddleware`
+(`internal/httpapi/middleware.go:23`): `ErrIdentityMissing` maps
+to 401, `ErrDirectAccessBlocked` maps to 403. The E2 surface
+inherits this behaviour.
 
 The "403 only when authorised-but-not-downloadable" distinction
 matters: returning 403 for "unknown uuid" would leak existence. The
@@ -1001,13 +1046,26 @@ pulls in guard setup and header parsing for no gain.
 
 ### 9.1 `writeOriginalResponse` and `writeThumbResponse`
 
-Extracted from `internal/httpapi/media.go`'s existing handlers.
-Signatures:
+Extracted from `internal/httpapi/media_original.go` and
+`internal/httpapi/media_thumb.go`. The helpers own only the
+body-streaming semantics (Range parsing, `Content-Range` / 206 /
+416 for originals; plain copy for thumbs). **They do not set
+`Cache-Control`, `Vary`, `Content-Type`, `ETag`, or
+`Last-Modified`** — those are caller responsibilities. Each
+handler sets its own cache policy before invoking the helper, so
+the owner path can keep `private, max-age=31536000, immutable`
+and the shared path can pick something tighter.
 
 ```go
-// writeOriginalResponse handles HTTP Range + 206 Partial Content
-// for a media's original bytes. Caller has already performed auth.
-// open is a closure that returns the (offset, length)-sliced reader.
+// writeOriginalResponse streams the original bytes, honouring an
+// HTTP Range request when present. Caller has already performed
+// auth, written ETag/Last-Modified/Cache-Control/Content-Type
+// headers, and handled any If-None-Match short-circuit. open is
+// called exactly once after Range parsing succeeds; it returns the
+// (offset, length)-sliced reader. length < 0 means "to EOF".
+//
+// Sets only Content-Length, Content-Range (206), Accept-Ranges
+// (if not already set by caller), and the response status.
 func writeOriginalResponse(
     w http.ResponseWriter,
     r *http.Request,
@@ -1015,20 +1073,34 @@ func writeOriginalResponse(
     open func(offset, length int64) (io.ReadCloser, error),
 )
 
-// writeThumbResponse serves cached thumb bytes. Caller has already
-// authorised; open returns the full-file reader (thumbs are small
-// enough to avoid Range support).
+// writeThumbResponse streams cached thumb bytes. Caller has
+// already performed auth and written all response headers. Thumbs
+// are small enough that Range is not honoured; on success the
+// helper sets Content-Length (if the reader's size is known) and
+// 200, then io.Copy.
 func writeThumbResponse(
     w http.ResponseWriter,
     r *http.Request,
-    info thumb.Info,
     open func() (io.ReadCloser, error),
 )
 ```
 
-Both helpers set `Cache-Control: private, max-age=0, must-revalidate`
-and `Vary: Authorization, X-Auth-Scopes` so a shared cache between
-grantees never crosses scope lines.
+Caller-side `Cache-Control` for the shared routes:
+
+- `/shared/media/{id}/original`: `private, max-age=31536000,
+  immutable` + `Vary: X-Auth-Scopes`. The URL carries no `?v=`
+  parameter; bytes for a given media id never change (the
+  checksum column is the physical-bytes identity), so `immutable`
+  is safe. The `Vary` ensures a shared HTTP cache (reverse proxy,
+  CDN, browser) never serves another grantee's cached body.
+- `/shared/media/{id}/thumb`: `private, max-age=31536000,
+  immutable` + `Vary: X-Auth-Scopes`. Version comes in on `?v=`
+  (same as the owner route), so regenerates force a new URL.
+
+The owner routes keep their existing `Cache-Control: private,
+max-age=31536000, immutable` with no `Vary` header — nothing
+changes in `media_original.go` or `media_thumb.go` beyond the
+body-streaming extraction.
 
 ### 9.2 `/shared/media` default sort and cursor
 
@@ -1050,9 +1122,10 @@ media_set also covers the item). The UI is expected to use album
 
 ### 9.4 Thumb content type
 
-`/api/v1/shared/media/{id}/thumb` returns `image/webp` (the cache
-format). The owner path uses the same content-type logic and the
-extracted helper inherits it; no per-caller variance.
+`/api/v1/shared/media/{id}/thumb` returns `Content-Type:
+image/jpeg`, matching the owner route. The helper extraction
+(§9.1) leaves Content-Type as a caller responsibility; both
+handlers set it to `image/jpeg` before invoking the helper.
 
 ### 9.5 Thumb-vs-original symmetry
 
@@ -1063,12 +1136,21 @@ but downloading originals is the thing `allow_download` governs.
 
 ### 9.6 Stub-mode behaviour of `/shared/*`
 
-In stub mode the `Stub` provider always returns the same principal
-with `Scopes == nil`. Every `/shared/*` request therefore produces
-an empty `ResolvedScopes` and 404s on detail routes / empty lists
-on list routes. No special-casing in the handlers. `NewStubWithScopes`
-is only used by tests that want to exercise the grantee path
-without spinning up header-mode.
+In stub mode the `Stub` provider returns the same principal with
+`Scopes == nil` on every request. Every `/shared/*` request
+therefore produces an empty `ResolvedScopes`:
+
+- List routes (`/shared/scopes`, `/shared/albums`,
+  `/shared/media`, `/shared/albums/{id}/media`) return `200` with
+  an empty `items` array.
+- Detail and bytes routes (`/shared/scopes/{uuid}`,
+  `/shared/albums/{id}`, `/shared/media/{id}`, and the thumb /
+  original byte routes) return `404`.
+
+No special-casing in the handlers — the behaviour falls out of
+the resolver returning an empty validated set.
+`NewStubWithScopes` is only used by tests that want to exercise
+the grantee path without spinning up header-mode.
 
 ### 9.7 Expiry surfacing
 
@@ -1108,14 +1190,18 @@ logic of `ValidateHeaderScopes` / `ResolveAll` / `CheckMediaAccess`
 - duplicate authorization rows — same media id covered by two
   scopes, must appear exactly once in `ListSharedMediaIDs`
   (verifies `GROUP BY media_id`)
+- multi-owner presentation — header carries live scopes from two
+  owners; resolver keeps only the lexicographically smallest
+  `(owner_hub, owner_user_id)` tuple's scopes, drops the rest,
+  emits a `warn` log (verifies §6.1 degradation rule)
 
 Filter cases for `filters_non_active` (note: E1's enum does not
 have a `publishing` state; test only the statuses that exist):
-`pending`, `active`, `failed`, `revoking`, `revoked_remote`. The
-resolver treats all non-active-and-non-revoked states as "not live"
-for read; only `active` actually authorises. (This matches the
-vision doc: `pending` is "broker has not confirmed yet"; only
-`active` means "the broker can vouch for the grant.")
+one row each for `pending`, `failed`, `revoking`, `revoked_remote`,
+and one control row for `active`. The resolver must return only
+the `active` row and drop the others. This matches the pinned
+live predicate in §6.2: `broker_status = 'active'` is required;
+every other status is not-live.
 
 `repo_test.go` adds coverage for the new query methods
 (`ValidateHeaderScopes`, `ListSharedMediaIDs`, `ListSharedAlbumIDs`,
@@ -1247,16 +1333,7 @@ should not have one. Preview uses a dedicated expansion path
 privacy grounds — see §6.1. Clients that need aggregation do it
 themselves.
 
-### 11.6 A new migration for `scope_media(media_id)`
-
-**Deferred:** at review time, if `scope_media` does not already
-have a `media_id` index, E2 adds `scope_media_media_id_idx` in a
-new migration. Current expectation is that the initial schema
-already carries it. Confirm during implementation; add only if
-missing. Spec carries "no new migrations" as the target, with
-this documented exception.
-
-### 11.7 Media-set scope implies album visibility
+### 11.6 Media-set scope implies album visibility
 
 **Rejected:** letting a `media_set` scope expose the set's *album*
 (`GetAlbum` would return album metadata if any media_set covered
@@ -1266,13 +1343,6 @@ these items came from." `CheckAlbumAccess` is album_live only.
 
 ## 12. Open questions and followups
 
-- **Broker status gating at read time.** Today the resolver checks
-  `revoked_at IS NULL` and `expires_at > now()`. It does *not*
-  check `broker_status = 'active'`. Rationale: we want the
-  grantee to be able to *try* a scope even if the broker hasn't
-  returned `active` yet. Defer this decision to E2's integration
-  testing; if the reverse proxy would block a `pending` scope at
-  the edge anyway, this is moot.
 - **Scope-level `item_count` cache.** `SharedScope.ItemCount` is
   computed per request (sub-query per scope). If the inbox grows
   big enough to matter, denormalise onto `scopes.item_count` as
