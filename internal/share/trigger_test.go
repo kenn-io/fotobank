@@ -2,7 +2,6 @@ package share_test
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -49,7 +48,4 @@ func TestOwnerConsistencyTriggerOnScopeMedia(t *testing.T) {
 	var n int
 	r.NoError(row.Scan(&n))
 	r.Equal(0, n)
-
-	// Hush unused-import linter when this is the only DB-level test.
-	_ = sql.ErrNoRows
 }

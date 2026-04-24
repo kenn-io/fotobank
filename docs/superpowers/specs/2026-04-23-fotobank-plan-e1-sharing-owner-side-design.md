@@ -1198,7 +1198,7 @@ const (
 // Backoff returns the delay AFTER attempt n has failed, before
 // attempt n+1. Worker calls Backoff(scope.BrokerAttempts + 1) on
 // a just-failed attempt: n=1 after the first failure (waits 30s
-// before attempt 2); n=2 after the second (60s); n=7 reaches the
+// before attempt 2); n=2 after the second (60s); n=8 reaches the
 // hour cap (3600s); n=9 is the last delay applied (before attempt
 // 10). Attempt 10 is terminal — Backoff(10) is never used.
 //

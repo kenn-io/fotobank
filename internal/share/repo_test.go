@@ -3,14 +3,12 @@ package share_test
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/album"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
@@ -146,9 +144,3 @@ func TestRepoInsertRoundtripsAllColumns(t *testing.T) {
 	r.NotNil(got.ExpiresAt)
 	r.True(got.ExpiresAt.Equal(expires))
 }
-
-// Ensure the album import is used so goimports keeps it; pinned reference.
-var _ = album.NameMaxLen
-
-// Silence ctx/errors unused-import warnings until state-transition tests arrive.
-var _ = errors.New

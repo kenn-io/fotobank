@@ -814,14 +814,12 @@ package share_test
 import (
     "context"
     "database/sql"
-    "errors"
     "testing"
     "time"
 
     "github.com/google/uuid"
     "github.com/stretchr/testify/require"
 
-    "github.com/wesm/fotobank/internal/album"
     "github.com/wesm/fotobank/internal/errs"
     "github.com/wesm/fotobank/internal/media"
     "github.com/wesm/fotobank/internal/owners"
@@ -957,11 +955,6 @@ func TestRepoInsertRoundtripsAllColumns(t *testing.T) {
     r.NotNil(got.ExpiresAt)
     r.True(got.ExpiresAt.Equal(expires))
 }
-
-// Make sure the album import is actually used so goimports doesn't drop it.
-var _ = album.NameMaxLen
-// Silence ctx/errors unused-import warnings until state-transition tests arrive.
-var _ = errors.New
 ```
 
 Create `internal/share/trigger_test.go`:
@@ -971,7 +964,6 @@ package share_test
 
 import (
     "context"
-    "database/sql"
     "strings"
     "testing"
     "time"
@@ -1018,9 +1010,6 @@ func TestOwnerConsistencyTriggerOnScopeMedia(t *testing.T) {
     var n int
     r.NoError(row.Scan(&n))
     r.Equal(0, n)
-
-    // Hush unused-import linter when this is the only DB-level test.
-    _ = sql.ErrNoRows
 }
 ```
 
@@ -1234,25 +1223,9 @@ func nullTime(t *time.Time) any {
     }
     return *t
 }
-
-// statusPlaceholders is used by later tasks for IN (?,?,?) query builds.
-// Returning both the placeholder string and the []any args keeps the
-// caller site short.
-func statusPlaceholders(statuses []BrokerStatus) (string, []any) {
-    if len(statuses) == 0 {
-        return "", nil
-    }
-    parts := make([]string, len(statuses))
-    args := make([]any, len(statuses))
-    for i, s := range statuses {
-        parts[i] = "?"
-        args[i] = string(s)
-    }
-    return strings.Join(parts, ","), args
-}
 ```
 
-Add this import line at the top with the others:
+Imports for `internal/share/repo.go`:
 
 ```go
 import (
@@ -1260,12 +1233,14 @@ import (
     "database/sql"
     "errors"
     "fmt"
-    "strings"
     "time"
 
     "github.com/wesm/fotobank/internal/errs"
 )
 ```
+
+(`strings` and a `statusPlaceholders` helper land in Task 6 with their
+first caller; leaving them unused here would trip the linter.)
 
 - [ ] **Step 4: Run the tests**
 
@@ -1568,6 +1543,40 @@ func (r *Repo) ListReady(ctx context.Context, now time.Time, limit int) ([]Scope
     }
     return out, rows.Err()
 }
+
+// statusPlaceholders renders `IN (?,?,?)` argument tuples. Returns the
+// placeholder string and the []any args, both empty when the input is
+// empty. Used here by ListByOwner and in later tasks for filtered
+// UPDATEs.
+func statusPlaceholders(statuses []BrokerStatus) (string, []any) {
+    if len(statuses) == 0 {
+        return "", nil
+    }
+    parts := make([]string, len(statuses))
+    args := make([]any, len(statuses))
+    for i, s := range statuses {
+        parts[i] = "?"
+        args[i] = string(s)
+    }
+    return strings.Join(parts, ","), args
+}
+```
+
+Update the import block at the top of `internal/share/repo.go` to
+include `"strings"` (needed by both `strings.Builder` above and
+`statusPlaceholders`):
+
+```go
+import (
+    "context"
+    "database/sql"
+    "errors"
+    "fmt"
+    "strings"
+    "time"
+
+    "github.com/wesm/fotobank/internal/errs"
+)
 ```
 
 - [ ] **Step 4: Run the tests**
@@ -3216,7 +3225,8 @@ func TestShareCreateMediaSetHappyPath(t *testing.T) {
     }, fx.owner)
     r.NoError(err)
 
-    det, err := fx.svc.Get(context.Background(), got.UUID, fx.owner)
+    // ShareService.Get lands in Task 14 — read membership via the repo here.
+    det, err := fx.shares.GetByUUID(context.Background(), got.UUID)
     r.NoError(err)
     r.ElementsMatch([]string{m1, m2}, det.MediaIDs)
 }
@@ -3946,12 +3956,16 @@ Import additions for the test file (add if not already present):
 `"github.com/wesm/fotobank/internal/share"`, `"github.com/wesm/fotobank/internal/testutil"`,
 `"github.com/google/uuid"`, etc.
 
-All **existing** Plan-D AlbumService tests must also be updated: every
-call to `service.NewAlbumService(albums, media)` needs to become
-`service.NewAlbumService(albums, media, shares, d)` where `shares`
+All **existing** callers of `service.NewAlbumService(albums, media)`
+must also be updated to the new four-arg form
+`service.NewAlbumService(albums, media, shares, d)`, where `shares`
 comes from `share.NewRepo(d.WriteDB(), d.ReadDB())` and `d` is the
-testutil DB handle. Apply a sweeping edit across
-`internal/service/album_service_test.go` — see Step 5's checklist.
+testutil DB handle. Apply a sweeping edit across:
+
+- `internal/service/album_service_test.go`
+- `internal/httpapi/albums_test.go` (the `newAlbumsAPIFixture` helper)
+
+See Step 5's checklist.
 
 - [ ] **Step 2: Run the failing tests**
 
@@ -4098,6 +4112,19 @@ albumSvc := service.NewAlbumService(
 Add `"github.com/wesm/fotobank/internal/share"` to that file's imports.
 `sharesRepo` will be re-used in Task 17 for the share HTTP surface.
 
+Edit `internal/httpapi/albums_test.go`: the `newAlbumsAPIFixture` helper
+constructs an `AlbumService` with the old two-arg form. Update it to
+the four-arg form:
+
+```go
+aRepo := album.NewRepo(d.WriteDB(), d.ReadDB())
+mRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
+sRepo := share.NewRepo(d.WriteDB(), d.ReadDB())
+svc := service.NewAlbumService(aRepo, mRepo, sRepo, d)
+```
+
+Add `"github.com/wesm/fotobank/internal/share"` to that file's imports.
+
 - [ ] **Step 6: Run the full test suite**
 
 Run: `go test ./... -count=1`
@@ -4109,7 +4136,8 @@ Expected: PASS across the board (share service + updated album service tests + C
 git add internal/service/album_service.go \
         internal/service/album_service_test.go \
         internal/cli/albums.go \
-        internal/cli/server.go
+        internal/cli/server.go \
+        internal/httpapi/albums_test.go
 git commit -m "Wire AlbumService.Delete through db.Tx + PrepareAlbumDeleteTx"
 ```
 
@@ -4199,6 +4227,7 @@ import (
     "github.com/stretchr/testify/require"
 
     "github.com/wesm/fotobank/internal/album"
+    "github.com/wesm/fotobank/internal/db"
     "github.com/wesm/fotobank/internal/httpapi"
     "github.com/wesm/fotobank/internal/identity"
     "github.com/wesm/fotobank/internal/media"
@@ -4214,6 +4243,7 @@ type sharesHTTPFixture struct {
     shares *service.ShareService
     albums *service.AlbumService
     media  *media.Repo
+    db     *db.DB
 }
 
 func newSharesHTTPFixture(t *testing.T) *sharesHTTPFixture {
@@ -4233,12 +4263,15 @@ func newSharesHTTPFixture(t *testing.T) *sharesHTTPFixture {
     shareSvc := service.NewShareService(shareRepo, albumsRepo, mediaRepo)
 
     h, err := httpapi.New(httpapi.Deps{
-        IdentityProvider: &identity.Static{Principal: owner},
+        IdentityProvider: identity.NewStub(owner, "Test User"),
         AlbumService:     albumSvc,
         ShareService:     shareSvc,
     })
     require.NoError(t, err)
-    return &sharesHTTPFixture{h: h, owner: owner, shares: shareSvc, albums: albumSvc, media: mediaRepo}
+    return &sharesHTTPFixture{
+        h: h, owner: owner, shares: shareSvc, albums: albumSvc,
+        media: mediaRepo, db: d,
+    }
 }
 
 func (fx *sharesHTTPFixture) seedAlbumWithMedia(t *testing.T) string {
@@ -4353,20 +4386,15 @@ func TestSharesListDefaultHidesRevokedRemote(t *testing.T) {
         Grantee: owners.Principal{Hub: "h", UserID: "hidden"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
     }, fx.owner)
     r.NoError(err)
-    // Flip hidden → revoked_remote directly.
+    // Flip hidden → revoked_remote directly via the fixture's DB handle.
     now := time.Now().UTC()
-    d, _ := httpapi.TestOpenUnderlyingDBHook(fx.h) // helper omitted — easier: re-open SQL through service
-    _ = d
-    _ = now
-    _ = hidden
-    // Instead of poking internals, call the service: revoke then drive worker done.
-    _, err = fx.shares.Revoke(context.Background(), hidden.UUID, fx.owner)
+    _, err = fx.db.WriteDB().ExecContext(context.Background(),
+        `UPDATE scopes SET broker_status='revoked_remote', revoked_at=?, broker_revoked_at=? WHERE uuid=?`,
+        now, now, hidden.UUID)
     r.NoError(err)
-    // We don't run a worker here; instead the list under status=revoked_remote
-    // explicitly filters it in. This confirms default vs explicit semantics.
 
-    // Default: visible + hidden (revoking) both present; revoked_remote
-    // absent (none exist here yet).
+    // Default: only `visible` is returned — `hidden` is in revoked_remote
+    // and the default view suppresses that terminal purge-eligible state.
     req := httptest.NewRequest(http.MethodGet, "/api/v1/shares", nil)
     rec := httptest.NewRecorder()
     fx.h.ServeHTTP(rec, req)
@@ -4375,16 +4403,16 @@ func TestSharesListDefaultHidesRevokedRemote(t *testing.T) {
         Items []map[string]any `json:"items"`
     }
     r.NoError(json.Unmarshal(rec.Body.Bytes(), &resp))
-    r.Len(resp.Items, 2)
+    r.Len(resp.Items, 1)
 
-    // status=revoked_remote: zero (since no row reached that state in test).
+    // status=revoked_remote: the explicit filter surfaces `hidden`.
     req = httptest.NewRequest(http.MethodGet, "/api/v1/shares?status=revoked_remote", nil)
     rec = httptest.NewRecorder()
     fx.h.ServeHTTP(rec, req)
     r.Equal(http.StatusOK, rec.Code)
     resp = struct{ Items []map[string]any `json:"items"` }{}
     r.NoError(json.Unmarshal(rec.Body.Bytes(), &resp))
-    r.Len(resp.Items, 0)
+    r.Len(resp.Items, 1)
 }
 
 func TestSharesListUnknownStatus400(t *testing.T) {
@@ -4396,12 +4424,6 @@ func TestSharesListUnknownStatus400(t *testing.T) {
     r.Equal(http.StatusBadRequest, rec.Code)
 }
 ```
-
-Note: the `httpapi.TestOpenUnderlyingDBHook` reference in
-`TestSharesListDefaultHidesRevokedRemote` was the author's draft; the
-final test body skips that call entirely (the `_ =` lines exist only
-to keep unused-variable warnings at bay). Simplify further if the
-linter still complains by deleting the unused variables.
 
 - [ ] **Step 6: Run the failing tests**
 
@@ -4556,7 +4578,7 @@ func callerFromCtx(ctx context.Context) (owners.Principal, error) {
     if !ok {
         return owners.Principal{}, errs.ErrIdentityMissing
     }
-    return id.Principal, nil
+    return id.Principal.OwnersPrincipal(), nil
 }
 
 // registerShares wires /api/v1/shares. svc == nil answers 503 so the
