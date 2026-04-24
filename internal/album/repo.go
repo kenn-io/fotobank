@@ -70,10 +70,32 @@ func (r *Repo) Rename(ctx context.Context, id, name string, now time.Time) error
 	return nil
 }
 
-// Delete removes the album. album_media is cascaded by the FK ON DELETE
-// CASCADE in the schema. ErrNotFound if missing.
+// Delete removes the album. album_media is cascaded by the FK
+// ON DELETE CASCADE in the schema. ErrNotFound if missing.
+//
+// This is a convenience wrapper that opens a one-shot transaction on
+// the rw pool and calls DeleteTx. Callers that need to combine the
+// delete with other writes (e.g. share-purge) use DeleteTx directly
+// inside their own tx.
 func (r *Repo) Delete(ctx context.Context, id string) error {
-	res, err := r.rw.ExecContext(ctx, `DELETE FROM albums WHERE id = ?`, id)
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	if err := r.DeleteTx(ctx, tx, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeleteTx executes the album delete within an existing transaction.
+// album_media rows cascade via the schema FK. Returns errs.ErrNotFound
+// if the album does not exist. Plan-E1 AlbumService.Delete wraps this
+// with share-purge/block under one db.Tx so the two writes commit
+// atomically.
+func (r *Repo) DeleteTx(ctx context.Context, tx *sql.Tx, id string) error {
+	res, err := tx.ExecContext(ctx, `DELETE FROM albums WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete album: %w", err)
 	}

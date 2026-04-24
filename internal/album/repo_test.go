@@ -542,6 +542,60 @@ func TestRepoListMediaPagination(t *testing.T) {
 	r.Equal(ids[0], got[1].ID)
 }
 
+func TestRepoDeleteTxCommitRemovesAlbum(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	a := album.Album{
+		ID: uuid.NewString(), Owner: owner,
+		Name: "t", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	r.NoError(repo.Insert(context.Background(), a))
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	r.NoError(repo.DeleteTx(context.Background(), tx, a.ID))
+	r.NoError(tx.Commit())
+
+	_, err = repo.GetByID(context.Background(), a.ID)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestRepoDeleteTxRollbackLeavesAlbum(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	a := album.Album{
+		ID: uuid.NewString(), Owner: owner,
+		Name: "t", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	r.NoError(repo.Insert(context.Background(), a))
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	r.NoError(repo.DeleteTx(context.Background(), tx, a.ID))
+	r.NoError(tx.Rollback())
+
+	got, err := repo.GetByID(context.Background(), a.ID)
+	r.NoError(err)
+	r.Equal(a.ID, got.ID)
+}
+
+func TestRepoDeleteTxNotFound(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	err = repo.DeleteTx(context.Background(), tx, uuid.NewString())
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
 func TestRepoListMediaImportedSort(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
