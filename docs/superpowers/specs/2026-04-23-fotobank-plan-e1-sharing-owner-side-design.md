@@ -246,12 +246,13 @@ type ScopeFilter struct {
     // Status filters by broker_status. Treated as "empty" when
     // len(Status) == 0 (nil and []BrokerStatus{} are equivalent).
     // Empty + IncludeSettled=false → default "owner-actionable"
-    // view (§9.4). Non-empty → exact IN (...) filter.
+    // view (hides revoked_remote; see §9.4). Non-empty → exact
+    // IN (...) filter.
     Status []BrokerStatus
     // IncludeSettled has effect only when len(Status) == 0. When
-    // true, the default owner-actionable predicate is dropped and
-    // all rows are returned. When Status is non-empty this field
-    // is ignored.
+    // true, the revoked_remote rows are included too; when false,
+    // the default hides revoked_remote. Ignored when Status is
+    // non-empty.
     IncludeSettled bool
     Limit          int
     Offset         int
@@ -349,14 +350,14 @@ Key refinements from the vision sketch:
   still records `broker_registered_at` and `broker_granted_at`
   (via `MarkPublished`, §7) because a real grant now exists on
   the broker; the row's `broker_status` stays `revoking`. This
-  invariant is load-bearing for the album-delete purge predicate
-  (§8.3): `broker_granted_at IS NULL` must accurately mean
-  "publish never succeeded." Without this, a worker crash between
-  PublishScope and MarkPublished — followed by owner Revoke
-  winning the race on the next tick — could leave a row whose
-  local state says "never granted" while the broker has a live
-  grant, so an album delete would purge the row and orphan the
-  grant.
+  is best-effort honesty for the owner-facing UI (so a row that
+  *was* granted shows "granted" rather than silently looking
+  never-granted) — it is **not** relied on for the album-delete
+  purge decision, because a worker crash between `PublishScope`
+  returning success and `MarkPublished` running can still leave
+  a row that was published remotely but has `broker_granted_at
+  IS NULL` locally. §8.3's purge predicate is conservative and
+  does not lean on this column being truthful.
 
 ## 5. Database changes
 
@@ -428,13 +429,15 @@ type BrokerClient interface {
 broker protocol (`RegisterScope` then `CreateGrant`) tracked by two
 columns (`broker_registered_at`, `broker_granted_at`). E1 fuses
 both into a single `PublishScope` call for simplicity, but keeps
-both columns and sets them together on success. The column
-distinction is load-bearing for the album-delete purge predicate
-(§8.3): `broker_granted_at IS NULL` means "publish never succeeded,"
-which is the only `failed AND revoked_at IS NOT NULL` row that can
-be safely purged without orphaning a remote grant. Keeping both
-columns also preserves the upgrade path to a native two-step broker
-client later.
+both columns and sets them together on success. This is for two
+reasons: owner-UI honesty (`broker_granted_at` lets a failed-revoke
+row surface "this grant did reach the broker once"), and forward
+compatibility with a future native two-step broker client that
+may want to distinguish the steps. The columns are **not** used
+by the album-delete purge decision — §8.3 relies only on
+`broker_status` for that, so a crash between `PublishScope`
+returning success and `MarkPublished` writing cannot mislead the
+purge.
 
 ```go
 var (
@@ -485,10 +488,9 @@ func (r *Repo) GetByUUID(ctx context.Context, uuid string) (ScopeDetail, error)
 
 // ListByOwner returns scopes owned by this principal, filtered and
 // paginated. When len(filter.Status) == 0 and filter.IncludeSettled
-// is false, SQL applies the default "owner-actionable" predicate
-// defined in §9.4 (hides revoked_remote AND the safely-abandoned
-// failed case). When len(filter.Status) > 0, only those statuses
-// are included and IncludeSettled is ignored.
+// is false, SQL filters out broker_status = 'revoked_remote' and
+// returns every other row (§9.4). When len(filter.Status) > 0, only
+// those statuses are included and IncludeSettled is ignored.
 func (r *Repo) ListByOwner(ctx context.Context, owner owners.Principal, filter ScopeFilter) ([]Scope, error)
 
 // ListReady returns up to `limit` scopes that the worker should
@@ -501,14 +503,19 @@ func (r *Repo) ListByOwner(ctx context.Context, owner owners.Principal, filter S
 func (r *Repo) ListReady(ctx context.Context, now time.Time, limit int) ([]Scope, error)
 
 // MarkPublished records a successful PublishScope. Registration /
-// grant timestamps are recorded UNCONDITIONALLY so that the
-// album-delete purge predicate (§8.3) can distinguish
-// "publish never succeeded" from "publish succeeded but revoke
-// stalled." Only the broker_status transition to 'active' is
-// fenced to broker_status = 'pending' — if owner Revoke already
-// moved the row to 'revoking', status stays 'revoking' but the
-// timestamps land, so a later failedR purge cannot orphan a real
-// remote grant.
+// grant timestamps are recorded even when the row has already
+// moved to 'revoking' (owner-Revoke raced the worker between
+// ListReady and here), so the owner-facing UI shows "was granted"
+// rather than looking never-granted. Only the broker_status
+// transition to 'active' is fenced to broker_status = 'pending';
+// if the row is already 'revoking', status stays 'revoking' and
+// the worker will issue RevokeScope on the next tick.
+//
+// NOTE: this is best-effort, not a correctness invariant. A worker
+// crash between PublishScope returning success and MarkPublished
+// running leaves broker_granted_at NULL while a real remote grant
+// exists, which is why §8.3's purge decision does not depend on
+// broker_granted_at.
 //
 //   UPDATE scopes
 //      SET broker_registered_at = COALESCE(broker_registered_at, ?),
@@ -618,22 +625,26 @@ func (r *Repo) RetryPublish(ctx context.Context, uuid string) (int64, error)
 func (r *Repo) RetryRevoke(ctx context.Context, uuid string) (int64, error)
 
 // PrepareAlbumDeleteTx is the tx-bound entry point for album delete.
-// It purges safely-terminal scopes linked to the album (see §8.3
-// purge predicate) and then verifies no blocking scopes remain
-// (see §8.3 block predicate). Returns ErrAlbumHasLiveScopes if
-// any blocking scope remains; on success the purge has been
+// It purges scopes that are terminally settled with the broker, then
+// verifies no blocking scopes remain. Returns ErrAlbumHasLiveScopes
+// if any blocking scope remains; on success the purge has been
 // staged in the caller's tx and must be committed atomically with
 // the album row delete. Must be called with a write tx from the
 // rw pool (obtained via db.DB.Tx, see §8.3).
 //
+// Plan E1 is conservative: the only status that is safe to purge
+// without risking an orphaned remote grant is 'revoked_remote'
+// (the broker has confirmed revoke). Every other status — including
+// all 'failed' sub-cases — blocks album delete and requires the
+// owner to Retry or drive the row to 'revoked_remote' first. See
+// §8.3 for the crash-window rationale.
+//
 // Implementation runs, in order on `tx`:
-//   1. DELETE FROM scopes WHERE target_album_id = ?
-//        AND (broker_status = 'revoked_remote'
-//             OR (broker_status = 'failed'
-//                 AND revoked_at IS NOT NULL
-//                 AND broker_granted_at IS NULL))
-//   2. SELECT 1 FROM scopes WHERE target_album_id = ?
-//        AND NOT (<same predicate as step 1>) LIMIT 1
+//   1. DELETE FROM scopes
+//       WHERE target_album_id = ? AND broker_status = 'revoked_remote'
+//   2. SELECT 1 FROM scopes
+//       WHERE target_album_id = ? AND broker_status != 'revoked_remote'
+//       LIMIT 1
 //      If a row is returned → return ErrAlbumHasLiveScopes.
 func (r *Repo) PrepareAlbumDeleteTx(ctx context.Context, tx *sql.Tx, albumID string) error
 
@@ -641,8 +652,8 @@ func (r *Repo) PrepareAlbumDeleteTx(ctx context.Context, tx *sql.Tx, albumID str
 // part of the album-delete path (which requires a tx; use
 // PrepareAlbumDeleteTx). Usable by the CLI or by future UI
 // affordances that want to preview whether a delete would block.
-// Returns true if any scope pointing at the album is NOT in the
-// safe-to-purge set above.
+// Returns true if any scope pointing at the album has broker_status
+// other than 'revoked_remote'.
 func (r *Repo) HasBlockingScopesForAlbum(ctx context.Context, albumID string) (bool, error)
 ```
 
@@ -688,9 +699,11 @@ type CreateShareRequest struct {
 func (s *ShareService) Create(ctx context.Context, req CreateShareRequest, caller owners.Principal) (share.Scope, error)
 
 // Revoke marks the scope as revoked locally and schedules broker
-// revocation. Returns the updated scope. Idempotent on "already
-// revoked" (returns ErrScopeAlreadyRevoked, which HTTP maps to 409
-// or 204 — see §9.5).
+// revocation. Returns the updated scope. On a row that was already
+// revoked, returns ErrScopeAlreadyRevoked (HTTP maps to 409 — see
+// §9.5); callers that want idempotent "revoke or noop" semantics
+// should check errors.Is(err, share.ErrScopeAlreadyRevoked) and
+// treat it as success.
 func (s *ShareService) Revoke(ctx context.Context, uuid string, caller owners.Principal) (share.Scope, error)
 
 // Retry re-enables a StatusFailed scope. Chooses pending or
@@ -703,18 +716,11 @@ func (s *ShareService) Retry(ctx context.Context, uuid string, caller owners.Pri
 func (s *ShareService) Get(ctx context.Context, uuid string, caller owners.Principal) (share.ScopeDetail, error)
 
 // List returns scopes owned by the caller. The default
-// (len(filter.Status) == 0 && !filter.IncludeSettled) returns the
-// owner-actionable view described in §9.4:
-//   - pending, active, revoking
-//   - failed with revoked_at IS NULL (publish-side stall)
-//   - failed with revoked_at IS NOT NULL AND broker_granted_at
-//     IS NOT NULL (revoke-side stall over a live grant)
-// Hidden by default:
-//   - revoked_remote (terminal)
-//   - failed with revoked_at IS NOT NULL AND broker_granted_at
-//     IS NULL (safely abandoned; purgeable via album delete)
-// len(filter.Status) > 0 bypasses the default and applies an
-// exact IN (...) filter.
+// (len(filter.Status) == 0 && !filter.IncludeSettled) returns every
+// row except broker_status = 'revoked_remote'. Every other status,
+// including all failed sub-cases, is owner-actionable and surfaced.
+// IncludeSettled=true drops the default hide; len(Status) > 0
+// bypasses the default entirely and applies an exact IN (...) filter.
 func (s *ShareService) List(ctx context.Context, filter share.ScopeFilter, caller owners.Principal) ([]share.Scope, error)
 ```
 
@@ -845,54 +851,71 @@ unauthorised callers. A race where a second caller deletes the
 album between pre-flight and tx is benign: `DeleteTx` returns
 `errs.ErrNotFound` (0 rows affected) and the tx rolls back cleanly.
 
-**Auto-purge predicate** (executed inside
-`PrepareAlbumDeleteTx`):
+**Why only `revoked_remote` is purgeable.** The natural instinct is
+to also auto-purge `failed` rows with `revoked_at IS NOT NULL AND
+broker_granted_at IS NULL` (publish-side stall that the owner has
+already chosen to abandon, where the broker should have no grant
+record). That would work in the common case but is unsafe across
+a specific crash window:
+
+1. Worker calls `PublishScope` — broker registers the grant.
+2. Worker process crashes BEFORE `MarkPublished` runs. Locally
+   the row is still `pending` with `broker_granted_at = NULL`;
+   remotely the grant exists.
+3. Owner issues `Revoke`: row becomes `revoking`, `revoked_at`
+   set, `broker_granted_at` still `NULL`.
+4. Worker restarts, calls `RevokeScope`. Under a permanent
+   broker error (or `MaxBrokerAttempts` transient failures),
+   the row flips to `failed` with `revoked_at NOT NULL` and
+   `broker_granted_at` still `NULL`.
+5. This row is indistinguishable from an abandoned-never-granted
+   row, but the broker holds a live grant.
+
+Purging it on album delete would orphan a real remote grant. Fixing
+this cleanly would require a durable "publish attempted" marker
+written before `PublishScope` is called (extra column + state
+transitions), which is more complexity than E1 should carry. E1
+takes the conservative path: **only `broker_status = 'revoked_remote'`
+is purged; everything else blocks album delete**. Owners drive
+stuck `failed` rows to `revoked_remote` via `Retry`; if retries are
+permanently hopeless, they are blocked until an operator-level
+escape hatch is built (deferred, see §13).
+
+**Auto-purge predicate** (executed inside `PrepareAlbumDeleteTx`
+step 1):
 
 ```sql
 DELETE FROM scopes
  WHERE target_album_id = ?
-   AND (
-         broker_status = 'revoked_remote'
-      OR (broker_status = 'failed'
-          AND revoked_at IS NOT NULL
-          AND broker_granted_at IS NULL)
-       )
+   AND broker_status = 'revoked_remote'
 ```
 
-The **blocking predicate** used by both `PrepareAlbumDeleteTx`
-(step 2) and the read-only `HasBlockingScopesForAlbum` helper is
-"any row pointing at this album that is NOT in the purge set." In
-SQL:
+**Blocking predicate** used by `PrepareAlbumDeleteTx` step 2 and
+by the read-only `HasBlockingScopesForAlbum` helper:
 
 ```sql
 SELECT 1 FROM scopes
  WHERE target_album_id = ?
-   AND NOT (
-         broker_status = 'revoked_remote'
-      OR (broker_status = 'failed'
-          AND revoked_at IS NOT NULL
-          AND broker_granted_at IS NULL)
-       )
+   AND broker_status != 'revoked_remote'
  LIMIT 1
 ```
 
-Spelled out: what's safe to purge and what blocks:
+Spelled out per status:
 
-| `broker_status`     | `revoked_at` | `broker_granted_at` | Action         | Reason |
-|---------------------|--------------|---------------------|----------------|--------|
-| `pending`           | NULL         | any                 | **BLOCK**      | Publish not yet attempted or retrying; the grant may still land and owner must explicitly revoke. |
-| `active`            | NULL         | set                 | **BLOCK**      | Live grant outstanding; even if locally expired (expires_at < now), the broker still thinks it's granted until revoked. E1 does not treat expiry as implicit revocation. |
-| `failed`            | NULL         | any                 | **BLOCK**      | Publish failed but could be retried; safer to force explicit revoke. |
-| `failed`            | NOT NULL     | NULL                | PURGE          | Publish never succeeded, owner has already chosen to revoke, and the revoke cannot be delivered. Broker has no grant record. Dropping the local row is safe. |
-| `failed`            | NOT NULL     | set                 | **BLOCK**      | Publish succeeded once (grant exists on broker), owner asked to revoke, revoke stalled. Purging the local row would orphan the remote grant. Owner must retry the revoke or manually clean up. |
-| `revoking`          | NOT NULL     | any                 | **BLOCK**      | Revocation in flight; wait for `revoked_remote`. |
-| `revoked_remote`    | NOT NULL     | any                 | PURGE          | Fully settled; broker confirmed revoke. |
+| `broker_status`     | Action    | Reason |
+|---------------------|-----------|--------|
+| `pending`           | **BLOCK** | Publish may still land; owner must explicitly revoke first. |
+| `active`            | **BLOCK** | Live grant outstanding; even if locally expired (`expires_at < now`) the broker still thinks it's granted until revoked. E1 does not treat expiry as implicit revocation. |
+| `revoking`          | **BLOCK** | Revocation in flight; wait for `revoked_remote`. |
+| `failed` (any sub-case) | **BLOCK** | See crash-window rationale above. Owner must `Retry` until the row lands in `revoked_remote`. |
+| `revoked_remote`    | PURGE     | Fully settled; broker confirmed revoke. |
 
 The "block" path returns `ErrAlbumHasLiveScopes`. The HTTP layer
 maps this to 409; the owner-facing message is *"this album has
-outstanding shares; revoke them from the shares UI first."* A
-future UI flag `?force=true` could mass-revoke and wait, but E1
-does not ship that.
+outstanding shares; revoke or retry them from the shares UI first."*
+A future UI flag `?force=true` could mass-revoke and wait, and an
+operator-level escape hatch could force-drop `failed` rows whose
+broker is provably gone; E1 ships neither.
 
 ### 8.4 Retry dispatch
 
@@ -995,43 +1018,27 @@ POST on a sub-path mirrors the thumbnails retry route style
 ### 9.4 List semantics
 
 The default view is "rows that still need the owner's attention."
-The only rows the owner *cannot* act on further are:
+With E1's conservative purge (§8.3), the only terminal state is
+`revoked_remote` — every other status is owner-actionable:
 
-- `revoked_remote` — broker has confirmed revoke; terminal.
-- `failed AND revoked_at IS NOT NULL AND broker_granted_at IS NULL` —
-  publish never succeeded, owner revoked locally, revoke cannot be
-  delivered because there is nothing to revoke. Purged on album
-  delete by `PrepareAlbumDeleteTx` (§8.3); safely abandoned.
-
-Everything else is owner-actionable, including the two `failed`
-sub-cases that matter:
-
-- `failed AND revoked_at IS NULL` — publish-side stall; owner can
-  `Retry` to re-publish or `Revoke` to abandon.
-- `failed AND revoked_at IS NOT NULL AND broker_granted_at IS NOT NULL` —
-  revoke-side stall over a **live** remote grant; owner MUST see
-  this row to `Retry` the revoke; hiding it would silently leave
-  grants outstanding.
+- `pending`, `active`, `revoking` — in-flight.
+- `failed` (every sub-case) — owner must `Retry` to drive it to
+  `revoked_remote` or (when it stabilises) `active`. Hiding any
+  `failed` row would silently leave the owner's attention off a
+  stuck grant.
 
 Default SQL predicate (when `len(Status) == 0` AND
 `IncludeSettled == false`):
 
 ```sql
-NOT (
-  broker_status = 'revoked_remote'
-  OR (broker_status = 'failed'
-      AND revoked_at IS NOT NULL
-      AND broker_granted_at IS NULL)
-)
+broker_status != 'revoked_remote'
 ```
 
 Overrides:
 - `len(Status) == 0 AND IncludeSettled == true` → no status filter;
-  all rows returned.
+  all rows returned (including historical `revoked_remote`).
 - `len(Status) > 0` → exact `broker_status IN (...)` filter;
-  `IncludeSettled` is ignored. Clients that want to see only the
-  safely-abandoned or fully-settled rows pass an explicit status
-  list.
+  `IncludeSettled` is ignored.
 
 Sort order: `created_at DESC`. There is no configurable sort in E1.
 
@@ -1289,10 +1296,15 @@ Test plan highlights:
   - Every fenced UPDATE: call with the wrong predicate →
     rows-affected = 0, no state change.
   - `PrepareAlbumDeleteTx` and `HasBlockingScopesForAlbum`
-    exercised across all 8 rows of the §8.3 table. For
-    `PrepareAlbumDeleteTx`, a blocking row returns
-    `ErrAlbumHasLiveScopes` AND no purge is committed (tx
-    rolled back by the caller).
+    exercised over every `broker_status` value (table in §8.3):
+    only `revoked_remote` rows are purged; all others return
+    `ErrAlbumHasLiveScopes`. On the blocking path, no purge is
+    committed (tx rolled back by the caller). Sanity case: an
+    album with mixed `pending` + `revoked_remote` + `failed`
+    rows → blocking returned, caller rolls back, all three
+    rows remain. After driving the non-terminal rows to
+    `revoked_remote` and retrying → `PrepareAlbumDeleteTx`
+    succeeds, all rows are deleted, block check returns empty.
 - `ShareService` tests:
   - Cross-owner `Get`/`Revoke`/`Retry` → `errs.ErrNotFound`.
   - Grantee validation: empty fields, caller==grantee, oversized
@@ -1316,18 +1328,21 @@ Test plan highlights:
   - **Publish-success-then-Revoke race.** Arrange a `pending` scope;
     simulate `SetRevoking` landing between `PublishScope` returning
     success and `MarkPublished` running; assert that
-    `broker_registered_at` and `broker_granted_at` are NOT NULL and
-    `broker_status = 'revoking'`. Then let the worker tick again
-    with a Noop-successful `RevokeScope`; assert terminal state is
-    `revoked_remote` with both publish and revoke timestamps
-    populated. This is the load-bearing invariant for §8.3 — a
-    later failedR purge must never see `broker_granted_at IS NULL`
-    on a row whose publish actually succeeded.
-- HTTP tests: one end-to-end per endpoint; error surfaces for the
-  three 409 sentinels; status-filter parsing rejects unknown values.
-- Album-delete integration: album with pending, active, failed∅,
-  failedR (with and without `broker_granted_at`), revoking,
-  `revoked_remote` scopes → verifies the block/purge table of §8.3.
+    `broker_registered_at` and `broker_granted_at` are NOT NULL
+    and `broker_status = 'revoking'`. Then let the worker tick
+    again with a Noop-successful `RevokeScope`; assert terminal
+    state is `revoked_remote` with both publish and revoke
+    timestamps populated. This is a best-effort UX honesty test,
+    not a correctness invariant (§4.1, §8.3).
+- HTTP tests: one end-to-end per endpoint; error surfaces for
+  the three 409 sentinels; status-filter parsing rejects unknown
+  values.
+- Album-delete integration: album with one scope in each of
+  `pending`, `active`, `failed` (both revoked and not-revoked
+  sub-cases), `revoking`, and `revoked_remote` → block-check
+  returns blocking in every case except the all-`revoked_remote`
+  case; successful delete clears both the album and its
+  `revoked_remote` scopes; `album_media` cascades via FK.
 
 Assertion style: `require` (testify), with project-wide
 `r := require.New(t)` per the `testify-helper-check` lint. Sentinel
@@ -1346,6 +1361,22 @@ None that block implementation. Explicitly deferred:
   flag can be added if a real use case appears.
 - **Album-snapshot target_type.** Listed as "future variant" in
   the vision doc; remains deferred.
+- **Force-drop stuck `failed` rows.** §8.3's conservative purge
+  blocks album delete on any non-`revoked_remote` scope, which
+  means a `failed` scope whose broker is permanently unreachable
+  can wedge the album. A future operator-level escape hatch
+  (probably a `fotobank shares force-drop <uuid>` CLI gated by a
+  config flag or flag-file proof-of-intent) will let an admin
+  acknowledge an orphan and drop the local row. Not needed until
+  a real broker is wired; `NoopBroker` never produces stuck rows.
+- **Durable "publish attempted" marker.** An alternative to the
+  conservative purge above: write a `broker_publish_attempted_at`
+  column before calling `PublishScope`, and purge
+  `failed AND revoked_at IS NOT NULL AND broker_publish_attempted_at
+  IS NULL`. This would let abandoned-never-published rows be
+  dropped on album delete while still refusing to orphan a real
+  remote grant. Not worth the state-machine complexity until we
+  have real data on how common this case is.
 
 ---
 
