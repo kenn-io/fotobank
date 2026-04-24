@@ -28,7 +28,6 @@ func writeOriginalResponse(
 ) {
 	size := m.Size
 	h := w.Header()
-	h.Set("Accept-Ranges", "bytes")
 
 	offset, length, partial, err := parseRangeHeader(r.Header.Get("Range"), size)
 	if err != nil {
@@ -37,6 +36,10 @@ func writeOriginalResponse(
 		// Content-Range: bytes */SIZE hint. Emitting 400 here would
 		// diverge the shared byte route from the owner byte route and
 		// break the "byte-identical" invariant the spec pins.
+		// Success cache headers set by the caller would otherwise
+		// stick to this 416; overwrite them with no-store so clients
+		// don't cache the "unsatisfiable" answer.
+		h.Set("Cache-Control", "no-store")
 		h.Set("Content-Range", fmt.Sprintf("bytes */%d", size))
 		http.Error(w, http.StatusText(http.StatusRequestedRangeNotSatisfiable),
 			http.StatusRequestedRangeNotSatisfiable)
@@ -46,6 +49,10 @@ func writeOriginalResponse(
 	rc, err := open(offset, length)
 	if err != nil {
 		slog.Error("open original bytes", "err", err, "id", m.ID)
+		// Same reason as the 416 path above: the caller already
+		// committed to a long-lived Cache-Control assuming success;
+		// a transient storage/read failure must not inherit that.
+		h.Set("Cache-Control", "no-store")
 		http.Error(w, http.StatusText(http.StatusInternalServerError),
 			http.StatusInternalServerError)
 		return

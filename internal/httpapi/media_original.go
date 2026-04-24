@@ -47,6 +47,10 @@ func registerMediaOriginal(mux *http.ServeMux, svc *service.MediaService) {
 		h.Set("Last-Modified", m.ImportedAt.UTC().Format(http.TimeFormat))
 		h.Set("Cache-Control", "private, max-age=31536000, immutable")
 		h.Set("Content-Type", m.MimeType)
+		// Set Accept-Ranges before the If-None-Match early return so
+		// 304 responses continue to advertise range support, matching
+		// the pre-helper owner contract.
+		h.Set("Accept-Ranges", "bytes")
 
 		if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" && etagMatches(ifNoneMatch, etag) {
 			w.WriteHeader(http.StatusNotModified)
