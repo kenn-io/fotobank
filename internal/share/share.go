@@ -5,6 +5,8 @@ package share
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wesm/fotobank/internal/owners"
@@ -100,3 +102,30 @@ var (
 	ErrRetryNotApplicable  = errors.New("share: retry only applies to failed scopes")
 	ErrAlbumHasLiveScopes  = errors.New("share: album has outstanding broker grants; revoke them first")
 )
+
+// ParseStatusFilter parses a comma-separated BrokerStatus list.
+// Whitespace-only tokens are skipped; empty input returns (nil, nil).
+// Unknown statuses return an error naming the offending token —
+// callers wrap with their transport-specific error type (huma.Error400,
+// CLI newUsageError, etc.).
+func ParseStatusFilter(raw string) ([]BrokerStatus, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]BrokerStatus, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		switch BrokerStatus(p) {
+		case StatusPending, StatusActive, StatusFailed,
+			StatusRevoking, StatusRevokedRemote:
+			out = append(out, BrokerStatus(p))
+		default:
+			return nil, fmt.Errorf("unknown status: %s", p)
+		}
+	}
+	return out, nil
+}

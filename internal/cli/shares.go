@@ -124,8 +124,11 @@ type sharesCreateOpts struct {
 }
 
 func runSharesCreate(ctx context.Context, o sharesCreateOpts) error {
-	if (o.albumID == "") == (o.mediaCSV == "") {
+	if o.albumID == "" && o.mediaCSV == "" {
 		return newUsageError("exactly one of --album or --media is required")
+	}
+	if o.albumID != "" && o.mediaCSV != "" {
+		return newUsageError("--album and --media are mutually exclusive")
 	}
 	grantee, err := parseHubUser(o.granteeRaw)
 	if err != nil {
@@ -217,7 +220,7 @@ func runSharesList(ctx context.Context, o sharesListOpts) error {
 		return err
 	}
 	defer sctx.close()
-	statuses, err := parseCLIStatusFilter(o.statusRaw)
+	statuses, err := share.ParseStatusFilter(o.statusRaw)
 	if err != nil {
 		return newUsageError("%s", err.Error())
 	}
@@ -325,6 +328,10 @@ func newSharesRetryCmd() *cobra.Command {
 			}
 			defer sctx.close()
 			s, err := sctx.svc.Retry(cmd.Context(), args[0], sctx.caller)
+			if errors.Is(err, share.ErrRetryNotApplicable) {
+				fmt.Fprintln(cmd.OutOrStdout(), "retry not applicable")
+				return nil
+			}
 			if err != nil {
 				return err
 			}
@@ -367,26 +374,4 @@ func shortUUID(s string) string {
 		return s
 	}
 	return s[:4] + ".." + s[len(s)-4:]
-}
-
-func parseCLIStatusFilter(raw string) ([]share.BrokerStatus, error) {
-	if raw == "" {
-		return nil, nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]share.BrokerStatus, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		switch share.BrokerStatus(p) {
-		case share.StatusPending, share.StatusActive, share.StatusFailed,
-			share.StatusRevoking, share.StatusRevokedRemote:
-			out = append(out, share.BrokerStatus(p))
-		default:
-			return nil, fmt.Errorf("unknown status: %s", p)
-		}
-	}
-	return out, nil
 }

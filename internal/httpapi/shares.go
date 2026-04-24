@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -217,9 +216,9 @@ func registerSharesList(api huma.API, svc *service.ShareService) {
 		if err != nil {
 			return nil, translateShareError(err)
 		}
-		statuses, err := parseStatusFilter(in.Status)
+		statuses, err := share.ParseStatusFilter(in.Status)
 		if err != nil {
-			return nil, err
+			return nil, huma.Error400BadRequest(err.Error())
 		}
 		limit := clampLimit(in.Limit, sharesListDefaultLimit, sharesListMaxLimit)
 		filter := share.ScopeFilter{
@@ -241,28 +240,6 @@ func registerSharesList(api huma.API, svc *service.ShareService) {
 		}
 		return out, nil
 	})
-}
-
-func parseStatusFilter(raw string) ([]share.BrokerStatus, error) {
-	if raw == "" {
-		return nil, nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]share.BrokerStatus, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		switch share.BrokerStatus(p) {
-		case share.StatusPending, share.StatusActive, share.StatusFailed,
-			share.StatusRevoking, share.StatusRevokedRemote:
-			out = append(out, share.BrokerStatus(p))
-		default:
-			return nil, huma.Error400BadRequest("unknown status: " + p)
-		}
-	}
-	return out, nil
 }
 
 type scopeUUIDParam struct {
