@@ -15,6 +15,7 @@ import (
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service"
+	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/testutil"
 )
 
@@ -34,10 +35,11 @@ func newAlbumSvcFixture(t *testing.T) albumSvcFixture {
 	d := testutil.OpenTestDB(t)
 	aRepo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	mRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	sRepo := share.NewRepo(d.WriteDB(), d.ReadDB())
 	caller := owners.Principal{Hub: "h", UserID: "u"}
 	seedOwnerSvc(t, d.WriteDB(), caller, "sk")
 	return albumSvcFixture{
-		svc:    service.NewAlbumService(aRepo, mRepo),
+		svc:    service.NewAlbumService(aRepo, mRepo, sRepo, d),
 		albums: aRepo,
 		media:  mRepo,
 		rw:     d.WriteDB(),
@@ -433,4 +435,86 @@ func TestAlbumServiceListMediaHappyPath(t *testing.T) {
 		album.AlbumMediaFilter{SortBy: "added"}, fx.caller)
 	r.NoError(err)
 	r.Len(got, 2)
+}
+
+func TestAlbumDeleteBlocksWhenLiveScopes(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	_, err := d.WriteDB().ExecContext(ctx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "sk", time.Now().UTC())
+	r.NoError(err)
+	albums := album.NewRepo(d.WriteDB(), d.ReadDB())
+	shares := share.NewRepo(d.WriteDB(), d.ReadDB())
+	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	svc := service.NewAlbumService(albums, mediaRepo, shares, d)
+	shareSvc := service.NewShareService(shares, albums, mediaRepo)
+
+	a, err := svc.Create(ctx, owner, "Trip")
+	r.NoError(err)
+	m := media.Media{
+		ID: uuid.NewString(), Owner: owner, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/t.jpg",
+		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
+		Size: 100, Checksum: "cs", ThumbStatus: "pending",
+	}
+	r.NoError(mediaRepo.Insert(ctx, m))
+	_, _, err = svc.AddMedia(ctx, a.ID, []string{m.ID}, owner)
+	r.NoError(err)
+
+	_, err = shareSvc.Create(ctx, service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "a"}, TargetType: share.TargetAlbumLive, AlbumID: a.ID,
+	}, owner)
+	r.NoError(err)
+
+	err = svc.Delete(ctx, a.ID, owner)
+	r.ErrorIs(err, share.ErrAlbumHasLiveScopes)
+	_, err = albums.GetByID(ctx, a.ID)
+	r.NoError(err)
+}
+
+func TestAlbumDeletePurgesRevokedRemote(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	_, err := d.WriteDB().ExecContext(ctx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "sk", time.Now().UTC())
+	r.NoError(err)
+	albums := album.NewRepo(d.WriteDB(), d.ReadDB())
+	shares := share.NewRepo(d.WriteDB(), d.ReadDB())
+	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	svc := service.NewAlbumService(albums, mediaRepo, shares, d)
+	shareSvc := service.NewShareService(shares, albums, mediaRepo)
+
+	a, err := svc.Create(ctx, owner, "Trip")
+	r.NoError(err)
+	m := media.Media{
+		ID: uuid.NewString(), Owner: owner, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/t.jpg",
+		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
+		Size: 100, Checksum: "cs", ThumbStatus: "pending",
+	}
+	r.NoError(mediaRepo.Insert(ctx, m))
+	_, _, err = svc.AddMedia(ctx, a.ID, []string{m.ID}, owner)
+	r.NoError(err)
+
+	s, err := shareSvc.Create(ctx, service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "a"}, TargetType: share.TargetAlbumLive, AlbumID: a.ID,
+	}, owner)
+	r.NoError(err)
+	now := time.Now().UTC()
+	_, err = d.WriteDB().ExecContext(ctx,
+		`UPDATE scopes SET broker_status='revoked_remote', revoked_at=?, broker_revoked_at=? WHERE uuid=?`,
+		now, now, s.UUID)
+	r.NoError(err)
+
+	r.NoError(svc.Delete(ctx, a.ID, owner))
+	_, err = albums.GetByID(ctx, a.ID)
+	r.ErrorIs(err, errs.ErrNotFound)
+	_, err = shares.GetByUUID(ctx, s.UUID)
+	r.ErrorIs(err, errs.ErrNotFound)
 }

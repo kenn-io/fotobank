@@ -25,6 +25,7 @@ import (
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service"
+	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/storage"
 	"github.com/wesm/fotobank/internal/thumb"
 )
@@ -118,9 +119,12 @@ func runServer(ctx context.Context, opts serverOpts) error {
 
 	mediaSvc := service.NewMediaService(media.NewRepo(d.WriteDB(), d.ReadDB()), storeLayer)
 
+	sharesRepo := share.NewRepo(d.WriteDB(), d.ReadDB())
 	albumSvc := service.NewAlbumService(
 		album.NewRepo(d.WriteDB(), d.ReadDB()),
 		media.NewRepo(d.WriteDB(), d.ReadDB()),
+		sharesRepo,
+		d,
 	)
 
 	thumbQueue := thumb.NewQueue(d.WriteDB(), d.ReadDB())

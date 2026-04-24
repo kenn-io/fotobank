@@ -17,6 +17,7 @@ import (
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service"
+	"github.com/wesm/fotobank/internal/share"
 )
 
 // albumCtx bundles the dependencies every `fotobank albums` subcommand
@@ -58,6 +59,8 @@ func loadAlbumCtx(cfgPath string) (*albumCtx, error) {
 		svc: service.NewAlbumService(
 			album.NewRepo(d.WriteDB(), d.ReadDB()),
 			media.NewRepo(d.WriteDB(), d.ReadDB()),
+			share.NewRepo(d.WriteDB(), d.ReadDB()),
+			d,
 		),
 		caller: owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID},
 		close:  func() { _ = d.Close() },

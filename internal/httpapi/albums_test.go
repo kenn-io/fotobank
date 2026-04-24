@@ -20,6 +20,7 @@ import (
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service"
+	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/testutil"
 )
 
@@ -80,7 +81,8 @@ func newAlbumsAPIFixture(t *testing.T) albumsAPIFixture {
 	require.NoError(t, err)
 	aRepo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	mRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
-	svc := service.NewAlbumService(aRepo, mRepo)
+	sRepo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	svc := service.NewAlbumService(aRepo, mRepo, sRepo, d)
 	idp := identity.NewStub(p, "Test User")
 	h, err := httpapi.New(httpapi.Deps{IdentityProvider: idp, AlbumService: svc})
 	require.NoError(t, err)

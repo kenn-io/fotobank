@@ -7,6 +7,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,25 +16,34 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/wesm/fotobank/internal/album"
+	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
+	"github.com/wesm/fotobank/internal/share"
 )
 
 // AlbumService orchestrates album CRUD on top of album.Repo. The media
 // repo is wired in now because later tasks (AddMedia / ListMedia) need
-// it for owner-consistency checks and row materialisation.
+// it for owner-consistency checks and row materialisation. The share
+// repo and *db.DB are wired in so Delete can run share-purge +
+// block-check + album-delete in a single transaction.
 type AlbumService struct {
 	albums *album.Repo
 	media  *media.Repo
+	shares *share.Repo
+	db     *db.DB
 	now    func() time.Time
 }
 
 // NewAlbumService constructs an AlbumService. The clock defaults to
 // time.Now().UTC(); tests that need determinism can construct an
 // instance directly.
-func NewAlbumService(a *album.Repo, m *media.Repo) *AlbumService {
-	return &AlbumService{albums: a, media: m, now: func() time.Time { return time.Now().UTC() }}
+func NewAlbumService(a *album.Repo, m *media.Repo, s *share.Repo, d *db.DB) *AlbumService {
+	return &AlbumService{
+		albums: a, media: m, shares: s, db: d,
+		now: func() time.Time { return time.Now().UTC() },
+	}
 }
 
 // Create persists a new album owned by caller and returns the initial
@@ -117,8 +127,14 @@ func (s *AlbumService) Rename(
 	return s.albums.GetDetailByID(ctx, id)
 }
 
-// Delete removes the album. The album_media rows are cascaded by the
-// FK. ErrNotFound if the album is missing or cross-owner.
+// Delete removes the album. Share purge + block-check run in the same
+// tx as the album row delete so a concurrent mutation cannot slip a
+// blocking scope in between the check and the delete. The album_media
+// rows are cascaded by the FK.
+// ErrNotFound if the album is missing or cross-owner.
+// share.ErrAlbumHasLiveScopes if any non-revoked_remote scope points
+// at the album; the album row and all scope rows remain unchanged in
+// that case.
 func (s *AlbumService) Delete(
 	ctx context.Context,
 	id string,
@@ -127,7 +143,12 @@ func (s *AlbumService) Delete(
 	if _, err := s.Get(ctx, id, caller); err != nil {
 		return err
 	}
-	return s.albums.Delete(ctx, id)
+	return s.db.Tx(ctx, func(tx *sql.Tx) error {
+		if err := s.shares.PrepareAlbumDeleteTx(ctx, tx, id); err != nil {
+			return err
+		}
+		return s.albums.DeleteTx(ctx, tx, id)
+	})
 }
 
 // List returns the caller's albums with derived ItemCount + Cover.
