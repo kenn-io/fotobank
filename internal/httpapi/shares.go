@@ -43,6 +43,11 @@ func translateShareError(err error) huma.StatusError {
 	}
 }
 
+const (
+	sharesListDefaultLimit = 100
+	sharesListMaxLimit     = 500
+)
+
 // principalDTO / scopeDTO / scopeDetailDTO are the wire shapes.
 type principalDTO struct {
 	Hub    string `json:"hub"`
@@ -216,18 +221,13 @@ func registerSharesList(api huma.API, svc *service.ShareService) {
 		if err != nil {
 			return nil, err
 		}
-		if in.Limit <= 0 {
-			in.Limit = 100
-		}
-		if in.Limit > 500 {
-			in.Limit = 500
-		}
+		limit := clampLimit(in.Limit, sharesListDefaultLimit, sharesListMaxLimit)
 		filter := share.ScopeFilter{
 			AlbumID:        in.AlbumID,
 			Grantee:        owners.Principal{Hub: in.GranteeHub, UserID: in.GranteeUserID},
 			Status:         statuses,
 			IncludeSettled: in.IncludeSettled,
-			Limit:          in.Limit,
+			Limit:          limit,
 			Offset:         in.Offset,
 		}
 		rows, err := svc.List(ctx, filter, caller)

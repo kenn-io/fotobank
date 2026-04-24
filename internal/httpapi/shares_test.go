@@ -125,6 +125,39 @@ func TestSharesGet404WhenCrossOwner(t *testing.T) {
 	r.Equal(http.StatusNotFound, rec.Code)
 }
 
+func TestSharesGet404WhenCrossOwnerExistingScope(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	fx := newSharesHTTPFixture(t)
+	// Seed a second owner + album + scope owned by that other owner.
+	other := owners.Principal{Hub: "h", UserID: "other"}
+	_, err := fx.db.WriteDB().ExecContext(ctx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		other.Hub, other.UserID, "sk2", time.Now().UTC())
+	r.NoError(err)
+	otherAlbumID := uuid.NewString()
+	now := time.Now().UTC()
+	_, err = fx.db.WriteDB().ExecContext(ctx,
+		`INSERT INTO albums(id, owner_hub, owner_user_id, name, created_at, updated_at)
+		 VALUES(?,?,?,?,?,?)`,
+		otherAlbumID, other.Hub, other.UserID, "T", now, now)
+	r.NoError(err)
+	// Insert a scope directly so we don't need a ShareService scoped to other.
+	scopeUUID := uuid.NewString()
+	_, err = fx.db.WriteDB().ExecContext(ctx,
+		`INSERT INTO scopes(uuid, owner_hub, owner_user_id, grantee_hub, grantee_user_id,
+		                    target_type, target_album_id, created_at, broker_status)
+		 VALUES(?,?,?,?,?,?,?,?,?)`,
+		scopeUUID, other.Hub, other.UserID, "h", "a", "album_live", otherAlbumID, now, "pending")
+	r.NoError(err)
+
+	// fx.owner calls GET /api/v1/shares/{scopeUUID} — must see 404, not 403.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares/"+scopeUUID, nil)
+	rec := httptest.NewRecorder()
+	fx.h.ServeHTTP(rec, req)
+	r.Equal(http.StatusNotFound, rec.Code)
+}
+
 func TestSharesRevoke201ThenAlreadyRevoked409(t *testing.T) {
 	r := require.New(t)
 	fx := newSharesHTTPFixture(t)
@@ -138,6 +171,9 @@ func TestSharesRevoke201ThenAlreadyRevoked409(t *testing.T) {
 	rec := httptest.NewRecorder()
 	fx.h.ServeHTTP(rec, req)
 	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+	var first map[string]any
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &first))
+	r.Equal("revoking", first["broker_status"])
 
 	// Second call -> 409.
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/shares/"+s.UUID+"/revoke", nil)
@@ -164,7 +200,7 @@ func TestSharesListDefaultHidesRevokedRemote(t *testing.T) {
 	r := require.New(t)
 	fx := newSharesHTTPFixture(t)
 	albumID := fx.seedAlbumWithMedia(t)
-	_, err := fx.shares.Create(context.Background(), service.CreateShareRequest{
+	visible, err := fx.shares.Create(context.Background(), service.CreateShareRequest{
 		Grantee: owners.Principal{Hub: "h", UserID: "visible"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
 	}, fx.owner)
 	r.NoError(err)
@@ -190,6 +226,7 @@ func TestSharesListDefaultHidesRevokedRemote(t *testing.T) {
 	}
 	r.NoError(json.Unmarshal(rec.Body.Bytes(), &resp))
 	r.Len(resp.Items, 1)
+	r.Equal(visible.UUID, resp.Items[0]["uuid"])
 
 	// status=revoked_remote: the explicit filter surfaces `hidden`.
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/shares?status=revoked_remote", nil)
@@ -201,12 +238,22 @@ func TestSharesListDefaultHidesRevokedRemote(t *testing.T) {
 	}{}
 	r.NoError(json.Unmarshal(rec.Body.Bytes(), &resp))
 	r.Len(resp.Items, 1)
+	r.Equal(hidden.UUID, resp.Items[0]["uuid"])
 }
 
 func TestSharesListUnknownStatus400(t *testing.T) {
 	r := require.New(t)
 	fx := newSharesHTTPFixture(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares?status=bogus", nil)
+	rec := httptest.NewRecorder()
+	fx.h.ServeHTTP(rec, req)
+	r.Equal(http.StatusBadRequest, rec.Code)
+}
+
+func TestSharesListMixedInvalidStatus400(t *testing.T) {
+	r := require.New(t)
+	fx := newSharesHTTPFixture(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares?status=pending,bogus", nil)
 	rec := httptest.NewRecorder()
 	fx.h.ServeHTTP(rec, req)
 	r.Equal(http.StatusBadRequest, rec.Code)
