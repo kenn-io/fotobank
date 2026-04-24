@@ -22,8 +22,9 @@ type Repo struct {
 // NewRepo constructs a Repo. rw must be the writer pool, ro the reader.
 func NewRepo(rw, ro *sql.DB) *Repo { return &Repo{rw: rw, ro: ro} }
 
-// All scope columns in a canonical order used by SELECT and Scan.
-const scopeSelect = `
+// scopeColumns lists all scope columns in a canonical order shared by
+// every SELECT in this file and by scanScope.
+const scopeColumns = `
     uuid, owner_hub, owner_user_id, grantee_hub, grantee_user_id,
     target_type, target_album_id, allow_download, label,
     created_at, expires_at, revoked_at,
@@ -78,7 +79,7 @@ func (r *Repo) Insert(ctx context.Context, s Scope, mediaIDs []string) error {
 // Returns errs.ErrNotFound when no row exists.
 func (r *Repo) GetByUUID(ctx context.Context, uuidStr string) (ScopeDetail, error) {
 	row := r.ro.QueryRowContext(ctx,
-		`SELECT `+scopeSelect+` FROM scopes WHERE uuid = ?`, uuidStr)
+		`SELECT `+scopeColumns+` FROM scopes WHERE uuid = ?`, uuidStr)
 	s, err := scanScope(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ScopeDetail{}, fmt.Errorf("%w: scope uuid=%s", errs.ErrNotFound, uuidStr)
@@ -215,7 +216,7 @@ func (r *Repo) ListByOwner(ctx context.Context, owner owners.Principal, filter S
 		sb   strings.Builder
 		args []any
 	)
-	sb.WriteString(`SELECT ` + scopeSelect + ` FROM scopes WHERE owner_hub = ? AND owner_user_id = ?`)
+	sb.WriteString(`SELECT ` + scopeColumns + ` FROM scopes WHERE owner_hub = ? AND owner_user_id = ?`)
 	args = append(args, owner.Hub, owner.UserID)
 
 	switch {
@@ -270,7 +271,7 @@ func (r *Repo) ListReady(ctx context.Context, now time.Time, limit int) ([]Scope
 		limit = 20
 	}
 	rows, err := r.ro.QueryContext(ctx,
-		`SELECT `+scopeSelect+` FROM scopes
+		`SELECT `+scopeColumns+` FROM scopes
           WHERE broker_status IN ('pending', 'revoking')
             AND (broker_next_attempt_at IS NULL OR broker_next_attempt_at <= ?)
             AND broker_attempts < ?
@@ -523,6 +524,52 @@ func (r *Repo) HasBlockingScopesForAlbum(ctx context.Context, albumID string) (b
 	default:
 		return true, nil
 	}
+}
+
+// ValidateHeaderScopes returns the live, grantee-matching subset of
+// uuids. Live means revoked_at IS NULL AND broker_status = 'active' AND
+// (expires_at IS NULL OR expires_at > now). Order of returned rows is
+// unspecified; callers who need a stable order sort themselves. Empty
+// uuids returns (nil, nil) without a query.
+func (r *Repo) ValidateHeaderScopes(
+	ctx context.Context,
+	caller owners.Principal,
+	uuids []string,
+	now time.Time,
+) ([]Scope, error) {
+	if len(uuids) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(uuids))
+	placeholders = placeholders[:len(placeholders)-1]
+	q := `SELECT ` + scopeColumns + `
+  FROM scopes
+ WHERE uuid IN (` + placeholders + `)
+   AND grantee_hub = ?
+   AND grantee_user_id = ?
+   AND revoked_at IS NULL
+   AND broker_status = 'active'
+   AND (expires_at IS NULL OR expires_at > ?)`
+	args := make([]any, 0, len(uuids)+3)
+	for _, u := range uuids {
+		args = append(args, u)
+	}
+	args = append(args, caller.Hub, caller.UserID, now)
+
+	rows, err := r.ro.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("validate header scopes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Scope
+	for rows.Next() {
+		s, err := scanScope(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan validated scope: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // statusPlaceholders renders `IN (?,?,?)` argument tuples. Returns the

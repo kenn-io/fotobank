@@ -1072,3 +1072,86 @@ func TestRepoPrepareAlbumDeleteTxDoesNotBlockOnLiveMediaSet(t *testing.T) {
 	_, err = repo.GetByUUID(context.Background(), s.UUID)
 	r.NoError(err, "live media_set scope should not be blocked by album-delete")
 }
+
+// bumpActive flips a freshly-inserted scope's broker_status to 'active'
+// and stamps the broker timestamps, mirroring a successful PublishScope
+// without going through the worker.
+func bumpActive(t *testing.T, d dbDB, uuidStr string, at time.Time) {
+	t.Helper()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='active', broker_granted_at=?, broker_registered_at=? WHERE uuid=?`,
+		at, at, uuidStr)
+	require.NoError(t, err)
+}
+
+// makeMediaSetScope inserts a pending media_set scope owned by owner and
+// granted to grantee. Seeds a fresh media row so the scope has a valid
+// membership entry; returns the inserted Scope.
+func makeMediaSetScope(t *testing.T, d dbDB, repo *share.Repo,
+	owner, grantee owners.Principal, expiresAt *time.Time, now time.Time,
+) share.Scope {
+	t.Helper()
+	mediaID := seedMedia(t, d.WriteDB(), owner, uuid.NewString())
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner, Grantee: grantee,
+		TargetType:   share.TargetMediaSet,
+		CreatedAt:    now,
+		ExpiresAt:    expiresAt,
+		BrokerStatus: share.StatusPending,
+	}
+	require.NoError(t, repo.Insert(context.Background(), s, []string{mediaID}))
+	return s
+}
+
+func TestValidateHeaderScopesFiltersByGranteeAndLivePredicate(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	charlie := owners.Principal{Hub: "h", UserID: "charlie"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	seedOwner(t, d.WriteDB(), charlie, "skc")
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	// 1. live + granted to bob — kept.
+	live := makeMediaSetScope(t, d, repo, alice, bob, nil, now)
+	bumpActive(t, d, live.UUID, now)
+
+	// 2. revoked — dropped.
+	revoked := makeMediaSetScope(t, d, repo, alice, bob, nil, now)
+	bumpActive(t, d, revoked.UUID, now)
+	_, err := repo.SetRevoking(context.Background(), revoked.UUID, now)
+	r.NoError(err)
+
+	// 3. pending (not active yet) — dropped.
+	pending := makeMediaSetScope(t, d, repo, alice, bob, nil, now)
+
+	// 4. expired — dropped.
+	past := now.Add(-time.Hour)
+	expired := makeMediaSetScope(t, d, repo, alice, bob, &past, now)
+	bumpActive(t, d, expired.UUID, now)
+
+	// 5. granted to someone else — dropped.
+	other := makeMediaSetScope(t, d, repo, alice, charlie, nil, now)
+	bumpActive(t, d, other.UUID, now)
+
+	got, err := repo.ValidateHeaderScopes(context.Background(), bob,
+		[]string{live.UUID, revoked.UUID, pending.UUID, expired.UUID, other.UUID},
+		now)
+	r.NoError(err)
+	r.Len(got, 1)
+	r.Equal(live.UUID, got[0].UUID)
+}
+
+func TestValidateHeaderScopesEmptyInputReturnsEmpty(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	got, err := repo.ValidateHeaderScopes(context.Background(),
+		owners.Principal{Hub: "h", UserID: "bob"}, nil, time.Now())
+	r.NoError(err)
+	r.Empty(got)
+}
