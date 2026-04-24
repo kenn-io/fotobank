@@ -666,6 +666,26 @@ func TestRepoMarkRevokedRejectsOtherStates(t *testing.T) {
 	r.Equal(int64(0), n)
 }
 
+// A row in 'revoking' without revoked_at is a broken invariant
+// (SetRevoking always sets both). MarkRevoked refuses to transition
+// such a row rather than silently producing a revoked_remote scope
+// with no local revoke timestamp.
+func TestRepoMarkRevokedRejectsRevokingWithoutRevokedAt(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	// Force the invariant violation: revoking without revoked_at.
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoking' WHERE uuid=?`, uuidStr)
+	r.NoError(err)
+
+	n, err := repo.MarkRevoked(context.Background(), uuidStr, time.Now().UTC())
+	r.NoError(err)
+	r.Equal(int64(0), n)
+}
+
 func TestRepoRetryPublishOnlyFailedWithoutRevokedAt(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
@@ -985,4 +1005,70 @@ func TestRepoPrepareAlbumDeleteTxIgnoresMediaSetScopes(t *testing.T) {
 
 	_, err = repo.GetByUUID(context.Background(), s.UUID)
 	r.NoError(err, "media_set scope should not be purged by album-delete")
+}
+
+// The blocking SELECT must filter by target_album_id as well: a live
+// scope on a *different* album must not cause PrepareAlbumDeleteTx
+// for the target album to return ErrAlbumHasLiveScopes. This pins the
+// predicate on the block path (its companion above exercises the
+// purge path).
+func TestRepoPrepareAlbumDeleteTxDoesNotBlockOnOtherAlbumLive(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumA := seedAlbum(t, d.WriteDB(), owner)
+	albumB := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	// Pending (live) scope on album B; deleting album A must succeed.
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumB,
+		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		BrokerStatus:  share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s, nil))
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	r.NoError(repo.PrepareAlbumDeleteTx(context.Background(), tx, albumA))
+	r.NoError(tx.Commit())
+
+	_, err = repo.GetByUUID(context.Background(), s.UUID)
+	r.NoError(err, "live scope on another album should survive")
+}
+
+// A live media_set scope (target_album_id IS NULL) must not block a
+// separate album-delete. Pins that the blocking SELECT's
+// target_album_id = ? predicate excludes NULL targets.
+func TestRepoPrepareAlbumDeleteTxDoesNotBlockOnLiveMediaSet(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	mediaID := seedMedia(t, d.WriteDB(), owner, "c1")
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:      owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:   share.TargetMediaSet,
+		CreatedAt:    time.Now().UTC().Truncate(time.Second),
+		BrokerStatus: share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s, []string{mediaID}))
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	r.NoError(repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID))
+	r.NoError(tx.Commit())
+
+	_, err = repo.GetByUUID(context.Background(), s.UUID)
+	r.NoError(err, "live media_set scope should not be blocked by album-delete")
 }

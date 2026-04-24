@@ -403,7 +403,12 @@ func (r *Repo) SetRevoking(ctx context.Context, uuidStr string, at time.Time) (i
 }
 
 // MarkRevoked transitions a revoking scope to revoked_remote after a
-// successful RevokeScope call. Fenced to broker_status = 'revoking'.
+// successful RevokeScope call. Fenced to broker_status = 'revoking'
+// AND revoked_at IS NOT NULL — both invariants are established by
+// SetRevoking, so a row that satisfies the status fence without a
+// revoked_at is a bug upstream; we refuse to transition rather than
+// silently producing a revoked_remote row with no local revoke
+// timestamp.
 func (r *Repo) MarkRevoked(ctx context.Context, uuidStr string, at time.Time) (int64, error) {
 	res, err := r.rw.ExecContext(ctx,
 		`UPDATE scopes
@@ -411,7 +416,9 @@ func (r *Repo) MarkRevoked(ctx context.Context, uuidStr string, at time.Time) (i
                 broker_revoked_at = COALESCE(broker_revoked_at, ?),
                 broker_last_error = '',
                 broker_next_attempt_at = NULL
-          WHERE uuid = ? AND broker_status = 'revoking'`,
+          WHERE uuid = ?
+            AND broker_status = 'revoking'
+            AND revoked_at IS NOT NULL`,
 		at, uuidStr)
 	if err != nil {
 		return 0, fmt.Errorf("mark revoked: %w", err)
