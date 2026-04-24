@@ -837,6 +837,114 @@ SELECT m.id,
 	return out, rows.Err()
 }
 
+// SharedAlbumRow is one row from ListSharedAlbumIDs.
+type SharedAlbumRow struct {
+	AlbumID     string
+	CanDownload bool
+}
+
+// ListSharedAlbumIDs returns distinct album ids authorised by the
+// album_live subset of validated, with MAX(allow_download) collapsed
+// per album. Media_set scopes are silently ignored (grantees see those
+// as media, not albums). The owner-hub / owner-user_id predicate on
+// albums is a belt-and-braces guard against resolver bugs.
+func (r *Repo) ListSharedAlbumIDs(
+	ctx context.Context,
+	validated []Scope,
+	owner owners.Principal,
+) ([]SharedAlbumRow, error) {
+	if len(validated) == 0 {
+		return nil, nil
+	}
+	live := make([]Scope, 0, len(validated))
+	for _, s := range validated {
+		if s.TargetType == TargetAlbumLive && s.TargetAlbumID != nil {
+			live = append(live, s)
+		}
+	}
+	if len(live) == 0 {
+		return nil, nil
+	}
+	valRows := make([]string, 0, len(live))
+	args := make([]any, 0, len(live)*3+2)
+	for _, s := range live {
+		valRows = append(valRows, "(?, ?, ?)")
+		args = append(args, s.UUID, *s.TargetAlbumID, boolToInt(s.AllowDownload))
+	}
+	args = append(args, owner.Hub, owner.UserID)
+
+	q := `
+WITH validated(uuid, target_album_id, allow_download) AS (
+    VALUES ` + strings.Join(valRows, ",") + `
+)
+SELECT a.id, MAX(v.allow_download)
+  FROM validated v
+  JOIN albums a ON a.id = v.target_album_id
+ WHERE a.owner_hub = ? AND a.owner_user_id = ?
+ GROUP BY a.id
+`
+	rows, err := r.ro.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list shared album ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]SharedAlbumRow, 0, len(live))
+	for rows.Next() {
+		var (
+			row      SharedAlbumRow
+			allowInt int
+		)
+		if err := rows.Scan(&row.AlbumID, &allowInt); err != nil {
+			return nil, fmt.Errorf("scan shared album row: %w", err)
+		}
+		row.CanDownload = allowInt != 0
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// CountSharedMediaByScope returns the number of media covered by the
+// scope: scope_media rows for media_set, album_media rows for
+// album_live. Returns errs.ErrNotFound if the scope row does not exist.
+func (r *Repo) CountSharedMediaByScope(ctx context.Context, scopeUUID string) (int, error) {
+	var (
+		targetType TargetType
+		albumID    sql.NullString
+	)
+	err := r.ro.QueryRowContext(ctx,
+		`SELECT target_type, target_album_id FROM scopes WHERE uuid = ?`, scopeUUID,
+	).Scan(&targetType, &albumID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("%w: scope uuid=%s", errs.ErrNotFound, scopeUUID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("count scope media: load scope: %w", err)
+	}
+	switch targetType {
+	case TargetMediaSet:
+		var n int
+		if err := r.ro.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM scope_media WHERE scope_uuid = ?`, scopeUUID,
+		).Scan(&n); err != nil {
+			return 0, fmt.Errorf("count scope_media: %w", err)
+		}
+		return n, nil
+	case TargetAlbumLive:
+		if !albumID.Valid {
+			return 0, fmt.Errorf("album_live scope %s missing target_album_id", scopeUUID)
+		}
+		var n int
+		if err := r.ro.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM album_media WHERE album_id = ?`, albumID.String,
+		).Scan(&n); err != nil {
+			return 0, fmt.Errorf("count album_media: %w", err)
+		}
+		return n, nil
+	default:
+		return 0, fmt.Errorf("unknown target_type %q", string(targetType))
+	}
+}
+
 // parseSQLiteTimeString parses the string representation modernc.org/sqlite
 // returns for COALESCE'd TIMESTAMP columns. The driver serializes time.Time
 // using Go's default Time.String() format, which is the layout below. When

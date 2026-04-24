@@ -1434,3 +1434,86 @@ func TestListSharedMediaIDsTieBreakOnId(t *testing.T) {
 	r.Len(page2, 1)
 	r.Equal(hi, page2[0].MediaID)
 }
+
+func TestListSharedAlbumIDsReturnsAlbumLiveOnly(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	albumID, mediaIDs := seedAlbumWithMedia(t, d, alice, 2)
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	// Two album_live scopes over the same album; one download=false,
+	// one download=true. The listing must return the album once with
+	// CanDownload=true (MAX(allow_download)).
+	sA1 := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, sA1.UUID, now)
+	sA2 := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, true)
+	bumpActive(t, d, sA2.UUID, now)
+
+	// A media_set scope over the same album's media should NOT surface
+	// in an album listing.
+	sMedia := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, true, mediaIDs...)
+	bumpActive(t, d, sMedia.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob,
+		[]string{sA1.UUID, sA2.UUID, sMedia.UUID})
+	r.NoError(err)
+
+	rows, err := repo.ListSharedAlbumIDs(context.Background(),
+		resolved.Validated, resolved.Owner)
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.Equal(albumID, rows[0].AlbumID)
+	r.True(rows[0].CanDownload)
+}
+
+func TestCountSharedMediaByScopeAlbumLive(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	albumID, _ := seedAlbumWithMedia(t, d, alice, 3)
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, s.UUID, now)
+
+	n, err := repo.CountSharedMediaByScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(3, n)
+}
+
+func TestCountSharedMediaByScopeMediaSet(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	m1 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2)
+	bumpActive(t, d, s.UUID, now)
+
+	n, err := repo.CountSharedMediaByScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(2, n)
+}
