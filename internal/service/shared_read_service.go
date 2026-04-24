@@ -1,10 +1,10 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"time"
 
 	"github.com/wesm/fotobank/internal/album"
@@ -76,8 +76,8 @@ func (s *SharedReadService) ListScopes(
 	if len(resolved.Validated) == 0 {
 		return nil, nil
 	}
-	sort.Slice(resolved.Validated, func(i, j int) bool {
-		return resolved.Validated[i].UUID < resolved.Validated[j].UUID
+	slices.SortFunc(resolved.Validated, func(a, b share.Scope) int {
+		return cmp.Compare(a.UUID, b.UUID)
 	})
 	out := make([]SharedScope, 0, len(resolved.Validated))
 	for _, sc := range resolved.Validated {
