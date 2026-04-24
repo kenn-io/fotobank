@@ -158,3 +158,83 @@ func dedupeMediaIDs(ids []string) ([]string, error) {
 	}
 	return out, nil
 }
+
+// Get returns the scope detail if caller is its owner, else
+// errs.ErrNotFound. The scope's MediaIDs are populated for media_set
+// targets.
+func (s *ShareService) Get(ctx context.Context, uuidStr string, caller owners.Principal) (share.ScopeDetail, error) {
+	det, err := s.shares.GetByUUID(ctx, uuidStr)
+	if err != nil {
+		return share.ScopeDetail{}, err
+	}
+	if det.Owner != caller {
+		return share.ScopeDetail{}, fmt.Errorf("%w: scope uuid=%s", errs.ErrNotFound, uuidStr)
+	}
+	return det, nil
+}
+
+// List returns the caller's scopes. filter is passed through verbatim
+// after Owner is forced to caller (defence-in-depth against a filter
+// that set Grantee==caller or similar).
+func (s *ShareService) List(ctx context.Context, filter share.ScopeFilter, caller owners.Principal) ([]share.Scope, error) {
+	return s.shares.ListByOwner(ctx, caller, filter)
+}
+
+// Revoke marks the scope revoked locally and schedules broker
+// revocation. Always idempotent from the worker's point of view; the
+// service returns ErrScopeAlreadyRevoked if the row was already
+// revoked (or has completed revoke).
+func (s *ShareService) Revoke(ctx context.Context, uuidStr string, caller owners.Principal) (share.Scope, error) {
+	det, err := s.shares.GetByUUID(ctx, uuidStr)
+	if err != nil {
+		return share.Scope{}, err
+	}
+	if det.Owner != caller {
+		return share.Scope{}, fmt.Errorf("%w: scope uuid=%s", errs.ErrNotFound, uuidStr)
+	}
+	n, err := s.shares.SetRevoking(ctx, uuidStr, s.now())
+	if err != nil {
+		return share.Scope{}, err
+	}
+	if n == 0 {
+		return share.Scope{}, share.ErrScopeAlreadyRevoked
+	}
+	fresh, err := s.shares.GetByUUID(ctx, uuidStr)
+	if err != nil {
+		return share.Scope{}, err
+	}
+	return fresh.Scope, nil
+}
+
+// Retry reopens a failed scope. Whether the retry routes through
+// pending or revoking depends on whether the row was mid-publish or
+// mid-revoke when it failed (encoded by revoked_at).
+func (s *ShareService) Retry(ctx context.Context, uuidStr string, caller owners.Principal) (share.Scope, error) {
+	det, err := s.shares.GetByUUID(ctx, uuidStr)
+	if err != nil {
+		return share.Scope{}, err
+	}
+	if det.Owner != caller {
+		return share.Scope{}, fmt.Errorf("%w: scope uuid=%s", errs.ErrNotFound, uuidStr)
+	}
+	if det.BrokerStatus != share.StatusFailed {
+		return share.Scope{}, share.ErrRetryNotApplicable
+	}
+	var n int64
+	if det.RevokedAt == nil {
+		n, err = s.shares.RetryPublish(ctx, uuidStr)
+	} else {
+		n, err = s.shares.RetryRevoke(ctx, uuidStr)
+	}
+	if err != nil {
+		return share.Scope{}, err
+	}
+	if n == 0 {
+		return share.Scope{}, share.ErrRetryNotApplicable
+	}
+	fresh, err := s.shares.GetByUUID(ctx, uuidStr)
+	if err != nil {
+		return share.Scope{}, err
+	}
+	return fresh.Scope, nil
+}

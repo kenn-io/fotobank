@@ -299,3 +299,155 @@ func TestShareCreateValidatesMediaSetSize(t *testing.T) {
 	}, fx.owner)
 	r.ErrorIs(err, share.ErrInvalidMediaSet)
 }
+
+func TestShareGetReturnsOwnedScope(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 1)
+	s, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee:    owners.Principal{Hub: "h", UserID: "a"},
+		TargetType: share.TargetAlbumLive,
+		AlbumID:    albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	got, err := fx.svc.Get(context.Background(), s.UUID, fx.owner)
+	r.NoError(err)
+	r.Equal(s.UUID, got.UUID)
+}
+
+func TestShareGetCrossOwnerNotFound(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 1)
+	s, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee:    owners.Principal{Hub: "h", UserID: "a"},
+		TargetType: share.TargetAlbumLive,
+		AlbumID:    albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	intruder := owners.Principal{Hub: "h", UserID: "intruder"}
+	_, err = fx.svc.Get(context.Background(), s.UUID, intruder)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestShareListScopedToCaller(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 1)
+	s1, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "a"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	got, err := fx.svc.List(context.Background(), share.ScopeFilter{}, fx.owner)
+	r.NoError(err)
+	found := false
+	for _, s := range got {
+		if s.UUID == s1.UUID {
+			found = true
+		}
+	}
+	r.True(found)
+
+	intruder := owners.Principal{Hub: "h", UserID: "intruder"}
+	got, err = fx.svc.List(context.Background(), share.ScopeFilter{}, intruder)
+	r.NoError(err)
+	r.Empty(got)
+}
+
+func TestShareRevokeTransitionsPendingToRevoking(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 1)
+	s, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "a"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	got, err := fx.svc.Revoke(context.Background(), s.UUID, fx.owner)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.NotNil(got.RevokedAt)
+}
+
+func TestShareRevokeIdempotentError(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 1)
+	s, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "a"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	_, err = fx.svc.Revoke(context.Background(), s.UUID, fx.owner)
+	r.NoError(err)
+	_, err = fx.svc.Revoke(context.Background(), s.UUID, fx.owner)
+	r.ErrorIs(err, share.ErrScopeAlreadyRevoked)
+}
+
+func TestShareRevokeCrossOwnerNotFound(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 1)
+	s, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "a"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	intruder := owners.Principal{Hub: "h", UserID: "intruder"}
+	_, err = fx.svc.Revoke(context.Background(), s.UUID, intruder)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestShareRetryPublishRoutesFailedToPending(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 1)
+	s, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "a"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+	_, err = fx.rw.ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='failed', broker_attempts=10, broker_last_error='x' WHERE uuid=?`,
+		s.UUID)
+	r.NoError(err)
+
+	got, err := fx.svc.Retry(context.Background(), s.UUID, fx.owner)
+	r.NoError(err)
+	r.Equal(share.StatusPending, got.BrokerStatus)
+	r.Equal(0, got.BrokerAttempts)
+}
+
+func TestShareRetryRevokeRoutesFailedToRevoking(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 1)
+	s, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "a"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+	now := time.Now().UTC()
+	_, err = fx.rw.ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='failed', broker_attempts=10, revoked_at=? WHERE uuid=?`,
+		now, s.UUID)
+	r.NoError(err)
+
+	got, err := fx.svc.Retry(context.Background(), s.UUID, fx.owner)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+}
+
+func TestShareRetryRejectsNonFailed(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 1)
+	s, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "a"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	_, err = fx.svc.Retry(context.Background(), s.UUID, fx.owner)
+	r.ErrorIs(err, share.ErrRetryNotApplicable)
+}
