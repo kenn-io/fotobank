@@ -776,7 +776,7 @@ func TestRepoPrepareAlbumDeleteTxPurgesOnlyRevokedRemote(t *testing.T) {
 		r.NoError(repo.Insert(context.Background(), s, nil))
 		_, err := d.WriteDB().ExecContext(context.Background(),
 			`UPDATE scopes SET broker_status=?, revoked_at=?, broker_granted_at=? WHERE uuid=?`,
-			string(status), nullablePtr(revokedAt), nullablePtr(brokerGrantedAt), s.UUID)
+			string(status), nullableTime(revokedAt), nullableTime(brokerGrantedAt), s.UUID)
 		r.NoError(err)
 		return s.UUID
 	}
@@ -818,7 +818,7 @@ func TestRepoPrepareAlbumDeleteTxMixedPurgeAndBlock(t *testing.T) {
 		r.NoError(repo.Insert(context.Background(), s, nil))
 		_, err := d.WriteDB().ExecContext(context.Background(),
 			`UPDATE scopes SET broker_status=?, revoked_at=? WHERE uuid=?`,
-			string(status), nullablePtr(revokedAt), s.UUID)
+			string(status), nullableTime(revokedAt), s.UUID)
 		r.NoError(err)
 		return s.UUID
 	}
@@ -916,10 +916,73 @@ func TestRepoHasBlockingScopesForAlbum(t *testing.T) {
 	r.True(blocking)
 }
 
-// nullablePtr is the write-side equivalent of nullableTime used above.
-func nullablePtr(t *time.Time) any {
-	if t == nil {
-		return nil
+func TestRepoPrepareAlbumDeleteTxDoesNotTouchOtherAlbums(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumA := seedAlbum(t, d.WriteDB(), owner)
+	albumB := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	// revoked_remote scope on album B — should survive a Prepare on album A.
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumB,
+		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		BrokerStatus:  share.StatusPending,
 	}
-	return *t
+	r.NoError(repo.Insert(context.Background(), s, nil))
+	now := time.Now().UTC()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoked_remote', revoked_at=? WHERE uuid=?`,
+		now, s.UUID)
+	r.NoError(err)
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	r.NoError(repo.PrepareAlbumDeleteTx(context.Background(), tx, albumA))
+	r.NoError(tx.Commit())
+
+	// Album B's scope still present.
+	_, err = repo.GetByUUID(context.Background(), s.UUID)
+	r.NoError(err)
+}
+
+func TestRepoPrepareAlbumDeleteTxIgnoresMediaSetScopes(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	mediaID := seedMedia(t, d.WriteDB(), owner, "c1")
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	// media_set scope with broker_status = revoked_remote. target_album_id
+	// is NULL, so no album-delete should touch it.
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:      owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:   share.TargetMediaSet,
+		CreatedAt:    time.Now().UTC().Truncate(time.Second),
+		BrokerStatus: share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s, []string{mediaID}))
+	now := time.Now().UTC()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoked_remote', revoked_at=? WHERE uuid=?`,
+		now, s.UUID)
+	r.NoError(err)
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	r.NoError(repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID))
+	r.NoError(tx.Commit())
+
+	_, err = repo.GetByUUID(context.Background(), s.UUID)
+	r.NoError(err, "media_set scope should not be purged by album-delete")
 }
