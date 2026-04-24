@@ -147,14 +147,8 @@ file_lock_path = %q
 	r.Equal("pending", scope.BrokerStatus)
 
 	// Poll until the NoopBroker-backed worker flips to active.
-	// We fetch the scope via /api/v1/shares?album_id=... (list shape is
-	// flat scopeDTO) rather than GET /api/v1/shares/{uuid}: the detail
-	// endpoint's wire shape embeds scopeDTO, which huma's schema
-	// generator does not expand — so its response body contains only a
-	// $schema pointer. Using list avoids that while still round-tripping
-	// the worker transition under test.
 	pollStatus := func() (string, string) {
-		r2, err := client.Get(base + "/api/v1/shares?album_id=" + album.ID + "&include_settled=true")
+		r2, err := client.Get(base + "/api/v1/shares/" + scope.UUID)
 		if err != nil || r2.StatusCode != http.StatusOK {
 			if r2 != nil {
 				_ = r2.Body.Close()
@@ -163,19 +157,11 @@ file_lock_path = %q
 		}
 		defer r2.Body.Close()
 		buf, _ := io.ReadAll(r2.Body)
-		var list struct {
-			Items []struct {
-				UUID         string `json:"uuid"`
-				BrokerStatus string `json:"broker_status"`
-			} `json:"items"`
+		var det struct {
+			BrokerStatus string `json:"broker_status"`
 		}
-		_ = json.Unmarshal(buf, &list)
-		for _, it := range list.Items {
-			if it.UUID == scope.UUID {
-				return it.BrokerStatus, string(buf)
-			}
-		}
-		return "", string(buf)
+		_ = json.Unmarshal(buf, &det)
+		return det.BrokerStatus, string(buf)
 	}
 	var lastBody, lastStatus string
 	gotActive := false
@@ -205,7 +191,7 @@ file_lock_path = %q
 	r.NoError(resp.Body.Close())
 	r.Equal(http.StatusOK, resp.StatusCode)
 
-	// Poll until worker revokes remotely. Same shape-reason as above.
+	// Poll until worker revokes remotely.
 	gotRevoked := false
 	for range 100 {
 		lastStatus, lastBody = pollStatus()

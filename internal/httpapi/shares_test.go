@@ -158,6 +158,63 @@ func TestSharesGet404WhenCrossOwnerExistingScope(t *testing.T) {
 	r.Equal(http.StatusNotFound, rec.Code)
 }
 
+func TestSharesGetReturnsScopeBody(t *testing.T) {
+	r := require.New(t)
+	fx := newSharesHTTPFixture(t)
+	albumID := fx.seedAlbumWithMedia(t)
+	s, err := fx.shares.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "alice"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares/"+s.UUID, nil)
+	rec := httptest.NewRecorder()
+	fx.h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var body map[string]any
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	r.Equal(s.UUID, body["uuid"])
+	r.Equal("pending", body["broker_status"])
+	r.Equal(albumID, body["target_album_id"])
+	grantee, _ := body["grantee"].(map[string]any)
+	r.NotNil(grantee)
+	r.Equal("alice", grantee["user_id"])
+}
+
+func TestSharesGetMediaSetReturnsMediaIDs(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	fx := newSharesHTTPFixture(t)
+	// Seed one media owned by fx.owner so the scope has something to point at.
+	m := media.Media{
+		ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
+		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
+		Size: 100, Checksum: "cs" + uuid.NewString(), ThumbStatus: "pending",
+	}
+	r.NoError(fx.media.Insert(ctx, m))
+
+	s, err := fx.shares.Create(ctx, service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "alice"}, TargetType: share.TargetMediaSet,
+		MediaIDs: []string{m.ID},
+	}, fx.owner)
+	r.NoError(err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares/"+s.UUID, nil)
+	rec := httptest.NewRecorder()
+	fx.h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var body map[string]any
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	r.Equal("media_set", body["target_type"])
+	ids, ok := body["media_ids"].([]any)
+	r.True(ok, "media_ids should be an array")
+	r.Len(ids, 1)
+	r.Equal(m.ID, ids[0])
+}
+
 func TestSharesRevoke201ThenAlreadyRevoked409(t *testing.T) {
 	r := require.New(t)
 	fx := newSharesHTTPFixture(t)

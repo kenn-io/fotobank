@@ -47,7 +47,7 @@ const (
 	sharesListMaxLimit     = 500
 )
 
-// principalDTO / scopeDTO / scopeDetailDTO are the wire shapes.
+// principalDTO / scopeDTO are the wire shapes.
 type principalDTO struct {
 	Hub    string `json:"hub"`
 	UserID string `json:"user_id"`
@@ -72,11 +72,7 @@ type scopeDTO struct {
 	BrokerLastError     string       `json:"broker_last_error,omitempty"`
 	BrokerAttempts      int          `json:"broker_attempts"`
 	BrokerNextAttemptAt *time.Time   `json:"broker_next_attempt_at,omitempty"`
-}
-
-type scopeDetailDTO struct {
-	scopeDTO
-	MediaIDs []string `json:"media_ids,omitempty"`
+	MediaIDs            []string     `json:"media_ids,omitempty"`
 }
 
 func toScopeDTO(s share.Scope) scopeDTO {
@@ -107,8 +103,10 @@ func toScopeDTO(s share.Scope) scopeDTO {
 	return out
 }
 
-func toScopeDetailDTO(d share.ScopeDetail) scopeDetailDTO {
-	return scopeDetailDTO{scopeDTO: toScopeDTO(d.Scope), MediaIDs: d.MediaIDs}
+func toScopeDetailDTO(d share.ScopeDetail) scopeDTO {
+	s := toScopeDTO(d.Scope)
+	s.MediaIDs = d.MediaIDs
+	return s
 }
 
 func callerFromCtx(ctx context.Context) (owners.Principal, error) {
@@ -150,7 +148,7 @@ type scopeOutput struct {
 
 type scopeDetailOutput struct {
 	Status int
-	Body   scopeDetailDTO
+	Body   scopeDTO
 }
 
 type listSharesInput struct {
