@@ -86,7 +86,8 @@ func isUsageError(err error) bool {
 	msg := err.Error()
 	return strings.HasPrefix(msg, "unknown command") ||
 		strings.HasPrefix(msg, "unknown flag") ||
-		strings.HasPrefix(msg, "unknown shorthand flag")
+		strings.HasPrefix(msg, "unknown shorthand flag") ||
+		strings.HasPrefix(msg, "required flag(s)")
 }
 
 func newRootCmd() *cobra.Command {
@@ -115,5 +116,6 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newReconcileCmd())
 	root.AddCommand(newThumbsCmd())
 	root.AddCommand(newAlbumsCmd())
+	root.AddCommand(newSharesCmd())
 	return root
 }
