@@ -375,3 +375,15 @@ func shortUUID(s string) string {
 	}
 	return s[:4] + ".." + s[len(s)-4:]
 }
+
+// ParseHubUserForTest, SplitCSVForTest, and ShortUUIDForTest are
+// test-only exports so the cli_test package can exercise these pure
+// helpers without promoting them into the public API. Mirrors the
+// TranslateAlbumErrorForTest pattern in internal/httpapi/albums.go.
+func ParseHubUserForTest(raw string) (owners.Principal, error) { return parseHubUser(raw) }
+
+// SplitCSVForTest exposes splitCSV for package cli_test.
+func SplitCSVForTest(raw string) []string { return splitCSV(raw) }
+
+// ShortUUIDForTest exposes shortUUID for package cli_test.
+func ShortUUIDForTest(s string) string { return shortUUID(s) }
