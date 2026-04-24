@@ -193,3 +193,29 @@ func TestWorkerSkipsFutureNextAttempt(t *testing.T) {
 	r.Equal(0, processed)
 	r.Empty(fx.fake.ObservedPublishes())
 }
+
+func TestWorkerRunExitsOnContextDeadline(t *testing.T) {
+	r := require.New(t)
+	fx := newWorkerFixture(t)
+	// Override the tick to something tiny so the first drain runs and we
+	// don't wait seconds for the test.
+	w := shareworker.New(shareworker.Config{
+		Repo:   fx.repo,
+		Broker: fx.fake,
+		Now:    func() time.Time { return fx.now },
+		Rand:   rand.New(rand.NewSource(1)),
+		Tick:   1 * time.Millisecond,
+	})
+	id := fx.insertPending(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := w.Run(ctx)
+	r.ErrorIs(err, context.DeadlineExceeded)
+
+	// The immediate drain should have processed the pending row.
+	r.Contains(fx.fake.ObservedPublishes(), id)
+	got, err := fx.repo.GetByUUID(context.Background(), id)
+	r.NoError(err)
+	r.Equal(share.StatusActive, got.BrokerStatus)
+}

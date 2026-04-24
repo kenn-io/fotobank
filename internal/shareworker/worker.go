@@ -64,7 +64,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	t := time.NewTicker(w.cfg.Tick)
 	defer t.Stop()
 	for {
-		if _, err := w.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		if _, err := w.RunOnce(ctx); err != nil && !isCtxErr(err) {
 			w.cfg.Logger.Error("shareworker tick failed", "err", err)
 		}
 		select {
@@ -105,12 +105,12 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 func (w *Worker) processPending(ctx context.Context, s share.Scope) {
 	err := w.cfg.Broker.PublishScope(ctx, s)
 	if err == nil {
-		if _, merr := w.cfg.Repo.MarkPublished(ctx, s.UUID, w.cfg.Now()); merr != nil {
-			w.cfg.Logger.Error("mark published failed", "uuid", s.UUID, "err", merr)
+		if _, merr := w.cfg.Repo.MarkPublished(ctx, s.UUID, w.cfg.Now()); merr != nil && !isCtxErr(merr) {
+			w.cfg.Logger.Error("mark-published call errored", "uuid", s.UUID, "err", merr)
 		}
 		return
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if isCtxErr(err) {
 		return
 	}
 	w.recordFailure(ctx, s, share.StatusPending, err)
@@ -119,12 +119,12 @@ func (w *Worker) processPending(ctx context.Context, s share.Scope) {
 func (w *Worker) processRevoking(ctx context.Context, s share.Scope) {
 	err := w.cfg.Broker.RevokeScope(ctx, s.UUID)
 	if err == nil {
-		if _, merr := w.cfg.Repo.MarkRevoked(ctx, s.UUID, w.cfg.Now()); merr != nil {
-			w.cfg.Logger.Error("mark revoked failed", "uuid", s.UUID, "err", merr)
+		if _, merr := w.cfg.Repo.MarkRevoked(ctx, s.UUID, w.cfg.Now()); merr != nil && !isCtxErr(merr) {
+			w.cfg.Logger.Error("mark-revoked call errored", "uuid", s.UUID, "err", merr)
 		}
 		return
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if isCtxErr(err) {
 		return
 	}
 	w.recordFailure(ctx, s, share.StatusRevoking, err)
@@ -134,13 +134,20 @@ func (w *Worker) recordFailure(ctx context.Context, s share.Scope, phase share.B
 	permanent := errors.Is(err, broker.ErrBrokerPermanent)
 	exhausted := s.BrokerAttempts+1 >= share.MaxBrokerAttempts
 	if permanent || exhausted {
-		if _, merr := w.cfg.Repo.MarkFailed(ctx, s.UUID, phase, err.Error()); merr != nil {
-			w.cfg.Logger.Error("mark failed failed", "uuid", s.UUID, "err", merr)
+		if _, merr := w.cfg.Repo.MarkFailed(ctx, s.UUID, phase, err.Error()); merr != nil && !isCtxErr(merr) {
+			w.cfg.Logger.Error("mark-failed call errored", "uuid", s.UUID, "err", merr)
 		}
 		return
 	}
 	nextAt := w.cfg.Now().Add(Backoff(s.BrokerAttempts+1, w.cfg.Rand))
-	if _, merr := w.cfg.Repo.MarkAttemptFailed(ctx, s.UUID, phase, err.Error(), nextAt); merr != nil {
-		w.cfg.Logger.Error("mark attempt-failed failed", "uuid", s.UUID, "err", merr)
+	if _, merr := w.cfg.Repo.MarkAttemptFailed(ctx, s.UUID, phase, err.Error(), nextAt); merr != nil && !isCtxErr(merr) {
+		w.cfg.Logger.Error("mark-attempt-failed call errored", "uuid", s.UUID, "err", merr)
 	}
+}
+
+// isCtxErr reports whether err is a context cancellation / deadline error.
+// We treat both as "do not log at Error level" since they signal shutdown,
+// not a real broker or DB fault.
+func isCtxErr(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
