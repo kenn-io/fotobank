@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wesm/fotobank/internal/db"
+	"github.com/wesm/fotobank/internal/testutil"
 )
 
 func TestOpenEnablesWALAndReturnsBothPools(t *testing.T) {
@@ -77,4 +78,22 @@ func TestTxRollsBackOnError(t *testing.T) {
 	var n int
 	r.NoError(d.ReadDB().QueryRow(`SELECT COUNT(*) FROM t`).Scan(&n))
 	r.Equal(0, n)
+}
+
+func TestScopesBackoffMigration(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	var name string
+	err := d.ReadDB().QueryRowContext(context.Background(),
+		`SELECT name FROM pragma_table_info('scopes') WHERE name = 'broker_next_attempt_at'`,
+	).Scan(&name)
+	r.NoError(err)
+	r.Equal("broker_next_attempt_at", name)
+
+	var idx string
+	err = d.ReadDB().QueryRowContext(context.Background(),
+		`SELECT name FROM sqlite_master WHERE type='index' AND name='scopes_broker_ready_idx'`,
+	).Scan(&idx)
+	r.NoError(err)
+	r.Equal("scopes_broker_ready_idx", idx)
 }
