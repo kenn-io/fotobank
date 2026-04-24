@@ -43,6 +43,10 @@ type Deps struct {
 	// transitions. Nil means those handlers answer 503 Service
 	// Unavailable so the OpenAPI dumper can still emit the schema.
 	ShareService *service.ShareService
+	// SharedRead powers the grantee-side /api/v1/shared/* read surface.
+	// Nil means those handlers answer 503 Service Unavailable so the
+	// OpenAPI dumper can still emit the schema.
+	SharedRead *service.SharedReadService
 }
 
 // New constructs the Fotobank HTTP handler: a net/http.ServeMux with a
@@ -76,6 +80,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerMediaThumb(mux, deps.ThumbService)
 	registerAlbums(api, deps.AlbumService)
 	registerShares(api, deps.ShareService)
+	registerShared(api, deps.SharedRead)
 	return mux, api
 }
 
