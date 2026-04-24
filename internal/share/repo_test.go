@@ -1435,6 +1435,33 @@ func TestListSharedMediaIDsTieBreakOnId(t *testing.T) {
 	r.Equal(hi, page2[0].MediaID)
 }
 
+func TestListSharedAlbumIDsEmptyValidatedReturnsNil(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	rows, err := repo.ListSharedAlbumIDs(context.Background(), nil,
+		owners.Principal{Hub: "h", UserID: "alice"})
+	require.NoError(t, err)
+	require.Nil(t, rows)
+}
+
+func TestListSharedAlbumIDsAllMediaSetReturnsNil(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScope(t, d, repo, alice, bob, nil, now)
+	bumpActive(t, d, s.UUID, now)
+	// Resolver not needed; feed the Scope directly (same shape as Validated).
+	rows, err := repo.ListSharedAlbumIDs(context.Background(),
+		[]share.Scope{s}, alice)
+	r.NoError(err)
+	r.Nil(rows)
+}
+
 func TestListSharedAlbumIDsReturnsAlbumLiveOnly(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
@@ -1473,6 +1500,13 @@ func TestListSharedAlbumIDsReturnsAlbumLiveOnly(t *testing.T) {
 	r.Len(rows, 1)
 	r.Equal(albumID, rows[0].AlbumID)
 	r.True(rows[0].CanDownload)
+}
+
+func TestCountSharedMediaByScopeNotFound(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	_, err := repo.CountSharedMediaByScope(context.Background(), "nonexistent-uuid")
+	require.ErrorIs(t, err, errs.ErrNotFound)
 }
 
 func TestCountSharedMediaByScopeAlbumLive(t *testing.T) {

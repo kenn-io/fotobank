@@ -941,7 +941,7 @@ func (r *Repo) CountSharedMediaByScope(ctx context.Context, scopeUUID string) (i
 		}
 		return n, nil
 	default:
-		return 0, fmt.Errorf("unknown target_type %q", string(targetType))
+		return 0, fmt.Errorf("unknown target_type %q", targetType)
 	}
 }
 
