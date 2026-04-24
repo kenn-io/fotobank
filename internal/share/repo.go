@@ -602,7 +602,7 @@ func (r *Repo) CoverMediaByScopes(
 WITH validated(uuid, target_type, target_album_id, allow_download) AS (
     VALUES ` + strings.Join(valRows, ",") + `
 )
-SELECT v.uuid, v.target_type, v.target_album_id, v.allow_download
+SELECT v.uuid, v.target_album_id, v.allow_download
   FROM validated v
   JOIN scopes s ON s.uuid = v.uuid
  WHERE s.owner_hub = ? AND s.owner_user_id = ?
@@ -625,12 +625,11 @@ SELECT v.uuid, v.target_type, v.target_album_id, v.allow_download
 	paths := make([]AccessPath, 0, len(validated))
 	for rows.Next() {
 		var (
-			p         AccessPath
-			albumID   sql.NullString
-			allowInt  int
-			targetStr string
+			p        AccessPath
+			albumID  sql.NullString
+			allowInt int
 		)
-		if err := rows.Scan(&p.ScopeUUID, &targetStr, &albumID, &allowInt); err != nil {
+		if err := rows.Scan(&p.ScopeUUID, &albumID, &allowInt); err != nil {
 			return AccessDecision{}, fmt.Errorf("scan cover row: %w", err)
 		}
 		if albumID.Valid {
@@ -844,6 +843,12 @@ SELECT m.id,
 // the value passes through an expression (COALESCE, CASE, …) the driver
 // loses the TIMESTAMP affinity and returns the string unchanged rather than
 // re-parsing it, so a direct Scan into *time.Time fails — we parse it here.
+//
+// UTC invariant: every TIMESTAMP column we store is UTC (the repo writes
+// timestamps via nullTime/time.Now().UTC() and the `timestamp` column is
+// pinned UTC by the ingest pipeline). The returned time.Time preserves
+// the zone that time.Parse recovers from the string tail (" +0000 UTC"),
+// so downstream comparisons against other UTC times stay correct.
 func parseSQLiteTimeString(s string) (time.Time, error) {
 	return time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", s)
 }

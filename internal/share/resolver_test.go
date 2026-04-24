@@ -200,12 +200,19 @@ func TestResolveAllDedupesBeforeCap(t *testing.T) {
 		minted = append(minted, s.UUID)
 	}
 
-	// Present each UUID TWICE (input length = 2*MaxHeaderScopes). Spec
-	// §6.5 contract: dedupe runs before cap counting, so we must still
-	// get all MaxHeaderScopes back, not MaxHeaderScopes/2.
+	// Present each UUID TWICE, interleaved (uuid_0, uuid_0, uuid_1,
+	// uuid_1, …). Spec §6.5 contract: dedupe runs before cap counting.
+	// Interleaving matters: if we appended `minted` then `minted` the
+	// first MaxHeaderScopes inputs are already unique, so a buggy
+	// implementation that caps first and then dedupes would still
+	// return all MaxHeaderScopes rows and the test would pass.
+	// Interleaving puts the duplicate at position i+1 for every
+	// element, so a cap-before-dedupe impl would return only
+	// MaxHeaderScopes/2 unique uuids.
 	headers := make([]string, 0, 2*share.MaxHeaderScopes)
-	headers = append(headers, minted...)
-	headers = append(headers, minted...)
+	for _, u := range minted {
+		headers = append(headers, u, u)
+	}
 
 	got, err := resolver.ResolveAll(context.Background(), bob, headers)
 	r.NoError(err)
@@ -371,4 +378,76 @@ func TestCheckAlbumAccessOverlappingAlbumLiveScopesORsDownload(t *testing.T) {
 	r.True(dec.Authorized)
 	r.Len(dec.Paths, 2)
 	r.True(dec.CanDownload())
+}
+
+// CheckMediaAccess and CheckAlbumAccess share the same validateAndRetain
+// path as ResolveAll, so the multi-owner warn log (spec §6.1 step 4)
+// must fire on all three entry points, not just ResolveAll. Guards
+// against a future refactor that accidentally scopes the log to
+// ResolveAll.
+
+func TestCheckMediaAccessMultiOwnerLogs(t *testing.T) {
+	r := require.New(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	handler := &recordingHandler{}
+	resolver, repo, d := newResolverWithLogger(t, now, slog.New(handler))
+
+	aliceA := owners.Principal{Hub: "hubA", UserID: "alice"}
+	aliceB := owners.Principal{Hub: "hubB", UserID: "alice"}
+	bob := owners.Principal{Hub: "hubA", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), aliceA, "ska")
+	seedOwner(t, d.WriteDB(), aliceB, "skb")
+	seedOwner(t, d.WriteDB(), bob, "skbob")
+
+	mediaA := seedMedia(t, d.WriteDB(), aliceA, "media-a")
+	scopeA := makeMediaSetScopeOver(t, d, repo, aliceA, bob, nil, now, false, mediaA)
+	bumpActive(t, d, scopeA.UUID, now)
+	scopeB := makeMediaSetScope(t, d, repo, aliceB, bob, nil, now)
+	bumpActive(t, d, scopeB.UUID, now)
+
+	_, err := resolver.CheckMediaAccess(context.Background(), bob,
+		[]string{scopeA.UUID, scopeB.UUID}, mediaA)
+	r.NoError(err)
+
+	r.Len(handler.records, 1, "expected one warn log on multi-owner degradation via CheckMediaAccess")
+	rec := handler.records[0]
+	r.Equal(slog.LevelWarn, rec.Level)
+	attrs := attrMap(rec)
+	r.Equal(aliceA.Hub, attrs["retained_owner_hub"].String())
+	dropped, ok := attrs["dropped_owners"].Any().([]string)
+	r.True(ok)
+	r.Equal([]string{aliceB.Hub + "/" + aliceB.UserID}, dropped)
+}
+
+func TestCheckAlbumAccessMultiOwnerLogs(t *testing.T) {
+	r := require.New(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	handler := &recordingHandler{}
+	resolver, repo, d := newResolverWithLogger(t, now, slog.New(handler))
+
+	aliceA := owners.Principal{Hub: "hubA", UserID: "alice"}
+	aliceB := owners.Principal{Hub: "hubB", UserID: "alice"}
+	bob := owners.Principal{Hub: "hubA", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), aliceA, "ska")
+	seedOwner(t, d.WriteDB(), aliceB, "skb")
+	seedOwner(t, d.WriteDB(), bob, "skbob")
+
+	albumA, _ := seedAlbumWithMedia(t, d, aliceA, 1)
+	scopeA := makeAlbumLiveScope(t, d, repo, aliceA, bob, albumA, nil, now, false)
+	bumpActive(t, d, scopeA.UUID, now)
+	scopeB := makeMediaSetScope(t, d, repo, aliceB, bob, nil, now)
+	bumpActive(t, d, scopeB.UUID, now)
+
+	_, err := resolver.CheckAlbumAccess(context.Background(), bob,
+		[]string{scopeA.UUID, scopeB.UUID}, albumA)
+	r.NoError(err)
+
+	r.Len(handler.records, 1, "expected one warn log on multi-owner degradation via CheckAlbumAccess")
+	rec := handler.records[0]
+	r.Equal(slog.LevelWarn, rec.Level)
+	attrs := attrMap(rec)
+	r.Equal(aliceA.Hub, attrs["retained_owner_hub"].String())
+	dropped, ok := attrs["dropped_owners"].Any().([]string)
+	r.True(ok)
+	r.Equal([]string{aliceB.Hub + "/" + aliceB.UserID}, dropped)
 }
