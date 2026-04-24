@@ -37,11 +37,9 @@ func NewStubWithScopes(p owners.Principal, handle string, scopes []string) *Stub
 // FromRequest returns the configured principal and (if set) scopes
 // without inspecting the request. The returned Scopes slice is always
 // freshly cloned so callers may mutate it without perturbing later
-// requests.
+// requests. nil-vs-empty is preserved: NewStub yields nil, and an
+// explicit []string{} passed to NewStubWithScopes round-trips as a
+// non-nil empty slice.
 func (s *Stub) FromRequest(_ context.Context, _ *http.Request) (Identity, error) {
-	var scopes []string
-	if len(s.scopes) > 0 {
-		scopes = slices.Clone(s.scopes)
-	}
-	return Identity{Principal: s.principal, Scopes: scopes}, nil
+	return Identity{Principal: s.principal, Scopes: slices.Clone(s.scopes)}, nil
 }
