@@ -464,7 +464,7 @@ func TestAlbumDeleteBlocksWhenLiveScopes(t *testing.T) {
 	_, _, err = svc.AddMedia(ctx, a.ID, []string{m.ID}, owner)
 	r.NoError(err)
 
-	_, err = shareSvc.Create(ctx, service.CreateShareRequest{
+	s, err := shareSvc.Create(ctx, service.CreateShareRequest{
 		Grantee: owners.Principal{Hub: "h", UserID: "a"}, TargetType: share.TargetAlbumLive, AlbumID: a.ID,
 	}, owner)
 	r.NoError(err)
@@ -472,6 +472,8 @@ func TestAlbumDeleteBlocksWhenLiveScopes(t *testing.T) {
 	err = svc.Delete(ctx, a.ID, owner)
 	r.ErrorIs(err, share.ErrAlbumHasLiveScopes)
 	_, err = albums.GetByID(ctx, a.ID)
+	r.NoError(err)
+	_, err = shares.GetByUUID(ctx, s.UUID)
 	r.NoError(err)
 }
 
