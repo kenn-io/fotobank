@@ -737,3 +737,189 @@ func TestRepoRetryRevokeOnlyFailedWithRevokedAt(t *testing.T) {
 	r.Equal(share.StatusRevoking, got.BrokerStatus)
 	r.Equal(0, got.BrokerAttempts)
 }
+
+func TestRepoPrepareAlbumDeleteTxBlocksOnLiveScopes(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.NotNil(got.TargetAlbumID)
+	albumID := *got.TargetAlbumID
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	err = repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID)
+	r.ErrorIs(err, share.ErrAlbumHasLiveScopes)
+}
+
+func TestRepoPrepareAlbumDeleteTxPurgesOnlyRevokedRemote(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	insertStatus := func(status share.BrokerStatus, revokedAt *time.Time, brokerGrantedAt *time.Time) string {
+		s := share.Scope{
+			UUID: uuid.NewString(), Owner: owner,
+			Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+			TargetType:    share.TargetAlbumLive,
+			TargetAlbumID: &albumID,
+			CreatedAt:     time.Now().UTC().Truncate(time.Second),
+			BrokerStatus:  share.StatusPending,
+		}
+		r.NoError(repo.Insert(context.Background(), s, nil))
+		_, err := d.WriteDB().ExecContext(context.Background(),
+			`UPDATE scopes SET broker_status=?, revoked_at=?, broker_granted_at=? WHERE uuid=?`,
+			string(status), nullablePtr(revokedAt), nullablePtr(brokerGrantedAt), s.UUID)
+		r.NoError(err)
+		return s.UUID
+	}
+	now := time.Now().UTC()
+	remote1 := insertStatus(share.StatusRevokedRemote, &now, &now)
+	remote2 := insertStatus(share.StatusRevokedRemote, &now, &now)
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	err = repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID)
+	r.NoError(err)
+	r.NoError(tx.Commit())
+
+	// Both revoked_remote rows dropped.
+	_, err = repo.GetByUUID(context.Background(), remote1)
+	r.ErrorIs(err, errs.ErrNotFound)
+	_, err = repo.GetByUUID(context.Background(), remote2)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestRepoPrepareAlbumDeleteTxMixedPurgeAndBlock(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	insertStatus := func(status share.BrokerStatus, revokedAt *time.Time) string {
+		s := share.Scope{
+			UUID: uuid.NewString(), Owner: owner,
+			Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+			TargetType:    share.TargetAlbumLive,
+			TargetAlbumID: &albumID,
+			CreatedAt:     time.Now().UTC().Truncate(time.Second),
+			BrokerStatus:  share.StatusPending,
+		}
+		r.NoError(repo.Insert(context.Background(), s, nil))
+		_, err := d.WriteDB().ExecContext(context.Background(),
+			`UPDATE scopes SET broker_status=?, revoked_at=? WHERE uuid=?`,
+			string(status), nullablePtr(revokedAt), s.UUID)
+		r.NoError(err)
+		return s.UUID
+	}
+	now := time.Now().UTC()
+	remoteID := insertStatus(share.StatusRevokedRemote, &now)
+	pendingID := insertStatus(share.StatusPending, nil)
+
+	// First pass: blocks; purge not applied (tx rolled back by caller).
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	err = repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID)
+	r.ErrorIs(err, share.ErrAlbumHasLiveScopes)
+	r.NoError(tx.Rollback())
+
+	// After rollback, both rows still present.
+	_, err = repo.GetByUUID(context.Background(), remoteID)
+	r.NoError(err)
+	_, err = repo.GetByUUID(context.Background(), pendingID)
+	r.NoError(err)
+
+	// Drive pending to revoked_remote, retry delete.
+	_, err = d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoked_remote', revoked_at=? WHERE uuid=?`,
+		now, pendingID)
+	r.NoError(err)
+
+	tx, err = d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	r.NoError(repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID))
+	r.NoError(tx.Commit())
+
+	_, err = repo.GetByUUID(context.Background(), remoteID)
+	r.ErrorIs(err, errs.ErrNotFound)
+	_, err = repo.GetByUUID(context.Background(), pendingID)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestRepoPrepareAlbumDeleteTxEmptyIsNoop(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	r.NoError(repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID))
+}
+
+func TestRepoHasBlockingScopesForAlbum(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	blocking, err := repo.HasBlockingScopesForAlbum(context.Background(), albumID)
+	r.NoError(err)
+	r.False(blocking)
+
+	// Add a revoked_remote: still not blocking.
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumID,
+		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		BrokerStatus:  share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s, nil))
+	now := time.Now().UTC()
+	_, err = d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoked_remote', revoked_at=? WHERE uuid=?`,
+		now, s.UUID)
+	r.NoError(err)
+	blocking, err = repo.HasBlockingScopesForAlbum(context.Background(), albumID)
+	r.NoError(err)
+	r.False(blocking)
+
+	// Add a pending: now blocking.
+	s2 := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:       owners.Principal{Hub: "h", UserID: "g2"},
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumID,
+		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		BrokerStatus:  share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s2, nil))
+	blocking, err = repo.HasBlockingScopesForAlbum(context.Background(), albumID)
+	r.NoError(err)
+	r.True(blocking)
+}
+
+// nullablePtr is the write-side equivalent of nullableTime used above.
+func nullablePtr(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return *t
+}

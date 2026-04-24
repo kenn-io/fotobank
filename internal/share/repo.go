@@ -467,6 +467,57 @@ func (r *Repo) RetryRevoke(ctx context.Context, uuidStr string) (int64, error) {
 	return n, nil
 }
 
+// PrepareAlbumDeleteTx runs inside an album-delete transaction (opened
+// by AlbumService on the rw pool). It purges safely-terminal scopes
+// linked to the album (broker_status = 'revoked_remote' only, because
+// a worker crash between PublishScope success and MarkPublished means
+// no other status can be proved safe) and returns
+// ErrAlbumHasLiveScopes if any row remains that is not
+// revoked_remote. See the spec's §8.3 for the crash-window rationale.
+// Caller commits the tx (purging on success) or rolls it back (no
+// changes on block).
+func (r *Repo) PrepareAlbumDeleteTx(ctx context.Context, tx *sql.Tx, albumID string) error {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM scopes
+          WHERE target_album_id = ? AND broker_status = 'revoked_remote'`,
+		albumID); err != nil {
+		return fmt.Errorf("purge revoked_remote scopes: %w", err)
+	}
+	row := tx.QueryRowContext(ctx,
+		`SELECT 1 FROM scopes
+          WHERE target_album_id = ? AND broker_status != 'revoked_remote'
+          LIMIT 1`, albumID)
+	var one int
+	switch err := row.Scan(&one); {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	case err != nil:
+		return fmt.Errorf("check blocking scopes: %w", err)
+	default:
+		return ErrAlbumHasLiveScopes
+	}
+}
+
+// HasBlockingScopesForAlbum is the non-tx diagnostic helper. Reads
+// through the ro pool; small races against a concurrent state
+// transition are acceptable because this is a preview, not the
+// authoritative album-delete decision.
+func (r *Repo) HasBlockingScopesForAlbum(ctx context.Context, albumID string) (bool, error) {
+	row := r.ro.QueryRowContext(ctx,
+		`SELECT 1 FROM scopes
+          WHERE target_album_id = ? AND broker_status != 'revoked_remote'
+          LIMIT 1`, albumID)
+	var one int
+	switch err := row.Scan(&one); {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("has blocking scopes: %w", err)
+	default:
+		return true, nil
+	}
+}
+
 // statusPlaceholders renders `IN (?,?,?)` argument tuples. Returns the
 // placeholder string and the []any args, both empty when the input is
 // empty. Used here by ListByOwner and in later tasks for filtered
