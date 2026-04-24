@@ -133,6 +133,26 @@ func (r *ScopeResolver) CheckMediaAccess(
 	return r.shares.CoverMediaByScopes(ctx, retained, owner, mediaID)
 }
 
+// CheckAlbumAccess answers "can caller see album albumID's metadata
+// and contents?" It checks album_live only — a media_set scope does
+// not imply album visibility even if its membership happens to belong
+// to that album. See spec §4.1 + §11.6.
+func (r *ScopeResolver) CheckAlbumAccess(
+	ctx context.Context,
+	caller owners.Principal,
+	headerScopes []string,
+	albumID string,
+) (AccessDecision, error) {
+	retained, owner, err := r.validateAndRetain(ctx, caller, headerScopes)
+	if err != nil {
+		return AccessDecision{}, err
+	}
+	if len(retained) == 0 {
+		return AccessDecision{}, nil
+	}
+	return r.shares.CoverAlbumByScopes(ctx, retained, owner, albumID)
+}
+
 // validateAndRetain runs pass 1 of the resolver: sanitize + validate +
 // single-owner degradation. Returns the retained-owner slice plus the
 // retained owner principal. The warn log is emitted when degradation

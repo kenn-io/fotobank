@@ -306,3 +306,69 @@ func TestCheckMediaAccessOverlappingScopesORsDownload(t *testing.T) {
 	r.Len(dec.Paths, 2)
 	r.True(dec.CanDownload())
 }
+
+func TestCheckAlbumAccessAlbumLiveAuthorized(t *testing.T) {
+	r := require.New(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	resolver, repo, d := newResolver(t, now)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	albumID, _ := seedAlbumWithMedia(t, d, alice, 1)
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, s.UUID, now)
+
+	dec, err := resolver.CheckAlbumAccess(context.Background(), bob, []string{s.UUID}, albumID)
+	r.NoError(err)
+	r.True(dec.Authorized)
+	r.Len(dec.Paths, 1)
+	r.NotNil(dec.Paths[0].AlbumID)
+	r.Equal(albumID, *dec.Paths[0].AlbumID)
+}
+
+func TestCheckAlbumAccessMediaSetDoesNotImplyAlbum(t *testing.T) {
+	r := require.New(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	resolver, repo, d := newResolver(t, now)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	albumID, mediaIDs := seedAlbumWithMedia(t, d, alice, 1)
+	// media_set scope covers every media in the album — must NOT authorise the album.
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, mediaIDs...)
+	bumpActive(t, d, s.UUID, now)
+
+	dec, err := resolver.CheckAlbumAccess(context.Background(), bob, []string{s.UUID}, albumID)
+	r.NoError(err)
+	r.False(dec.Authorized)
+	r.Empty(dec.Paths)
+}
+
+func TestCheckAlbumAccessOverlappingAlbumLiveScopesORsDownload(t *testing.T) {
+	r := require.New(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	resolver, repo, d := newResolver(t, now)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	albumID, _ := seedAlbumWithMedia(t, d, alice, 1)
+	s1 := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, s1.UUID, now)
+	s2 := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, true)
+	bumpActive(t, d, s2.UUID, now)
+
+	dec, err := resolver.CheckAlbumAccess(context.Background(), bob, []string{s1.UUID, s2.UUID}, albumID)
+	r.NoError(err)
+	r.True(dec.Authorized)
+	r.Len(dec.Paths, 2)
+	r.True(dec.CanDownload())
+}
