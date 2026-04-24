@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -976,7 +977,7 @@ func (r *Repo) ExpandScope(ctx context.Context, scopeUUID string) (ExpandedScope
 	exp := ExpandedScope{Scope: detail.Scope}
 	switch detail.TargetType {
 	case TargetMediaSet:
-		exp.MediaIDs = append([]string(nil), detail.MediaIDs...)
+		exp.MediaIDs = slices.Clone(detail.MediaIDs)
 	case TargetAlbumLive:
 		if detail.TargetAlbumID == nil {
 			return ExpandedScope{}, fmt.Errorf("album_live scope %s has no target_album_id", scopeUUID)
@@ -1008,7 +1009,7 @@ func (r *Repo) listAlbumMediaIDs(ctx context.Context, albumID string) ([]string,
 		return nil, fmt.Errorf("list album media ids: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	out := make([]string, 0, 16)
+	var out []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
@@ -1016,7 +1017,10 @@ func (r *Repo) listAlbumMediaIDs(ctx context.Context, albumID string) ([]string,
 		}
 		out = append(out, id)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iter album media ids: %w", err)
+	}
+	return out, nil
 }
 
 // albumSummary reads just the name / updated_at / item_count for one

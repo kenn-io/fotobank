@@ -1601,3 +1601,34 @@ func TestExpandScopeUnknownReturnsNotFound(t *testing.T) {
 	_, err := repo.ExpandScope(context.Background(), "not-a-uuid")
 	require.ErrorIs(t, err, errs.ErrNotFound)
 }
+
+func TestExpandScopeAlbumLivePreservesOrderAddedAtDesc(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	albumID := seedAlbum(t, d.WriteDB(), alice)
+	older := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	newer := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+
+	t0 := now
+	t1 := now.Add(time.Hour)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO album_media(album_id, media_id, added_at) VALUES(?,?,?)`,
+		albumID, older, t0)
+	r.NoError(err)
+	_, err = d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO album_media(album_id, media_id, added_at) VALUES(?,?,?)`,
+		albumID, newer, t1)
+	r.NoError(err)
+
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	exp, err := repo.ExpandScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal([]string{newer, older}, exp.MediaIDs, "added_at DESC ordering")
+}
