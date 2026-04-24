@@ -370,6 +370,103 @@ func (r *Repo) MarkFailed(ctx context.Context, uuidStr string, phase BrokerStatu
 	return n, nil
 }
 
+// SetRevoking is the service-level entry point for Revoke. It marks
+// the scope as revoked locally and queues the broker revocation. The
+// caller-declared "at" is written only if revoked_at is currently
+// NULL, so a second revoke is a no-op instead of clobbering the
+// original revoke timestamp. Fenced to states that are still
+// owner-actionable.
+//
+// Returns rows-affected. 0 means the row was already revoking,
+// revoked_remote, or does not exist; the service converts that to
+// ErrScopeAlreadyRevoked.
+func (r *Repo) SetRevoking(ctx context.Context, uuidStr string, at time.Time) (int64, error) {
+	res, err := r.rw.ExecContext(ctx,
+		`UPDATE scopes
+            SET broker_status = 'revoking',
+                revoked_at = COALESCE(revoked_at, ?),
+                broker_attempts = 0,
+                broker_next_attempt_at = NULL,
+                broker_last_error = ''
+          WHERE uuid = ?
+            AND broker_status IN ('pending', 'active', 'failed')
+            AND revoked_at IS NULL`,
+		at, uuidStr)
+	if err != nil {
+		return 0, fmt.Errorf("set revoking: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("set revoking rows affected: %w", err)
+	}
+	return n, nil
+}
+
+// MarkRevoked transitions a revoking scope to revoked_remote after a
+// successful RevokeScope call. Fenced to broker_status = 'revoking'.
+func (r *Repo) MarkRevoked(ctx context.Context, uuidStr string, at time.Time) (int64, error) {
+	res, err := r.rw.ExecContext(ctx,
+		`UPDATE scopes
+            SET broker_status = 'revoked_remote',
+                broker_revoked_at = COALESCE(broker_revoked_at, ?),
+                broker_last_error = '',
+                broker_next_attempt_at = NULL
+          WHERE uuid = ? AND broker_status = 'revoking'`,
+		at, uuidStr)
+	if err != nil {
+		return 0, fmt.Errorf("mark revoked: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("mark revoked rows affected: %w", err)
+	}
+	return n, nil
+}
+
+// RetryPublish moves a failed scope back to pending so the worker
+// retries PublishScope. Applies only to failed rows whose revoked_at
+// is NULL (publish-side stall). Returns rows-affected.
+func (r *Repo) RetryPublish(ctx context.Context, uuidStr string) (int64, error) {
+	res, err := r.rw.ExecContext(ctx,
+		`UPDATE scopes
+            SET broker_status = 'pending',
+                broker_attempts = 0,
+                broker_next_attempt_at = NULL,
+                broker_last_error = ''
+          WHERE uuid = ? AND broker_status = 'failed' AND revoked_at IS NULL`,
+		uuidStr)
+	if err != nil {
+		return 0, fmt.Errorf("retry publish: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("retry publish rows affected: %w", err)
+	}
+	return n, nil
+}
+
+// RetryRevoke moves a failed scope back to revoking so the worker
+// retries RevokeScope. Applies only to failed rows whose revoked_at
+// is NOT NULL (revoke-side stall). Returns rows-affected.
+func (r *Repo) RetryRevoke(ctx context.Context, uuidStr string) (int64, error) {
+	res, err := r.rw.ExecContext(ctx,
+		`UPDATE scopes
+            SET broker_status = 'revoking',
+                broker_attempts = 0,
+                broker_next_attempt_at = NULL,
+                broker_last_error = ''
+          WHERE uuid = ? AND broker_status = 'failed' AND revoked_at IS NOT NULL`,
+		uuidStr)
+	if err != nil {
+		return 0, fmt.Errorf("retry revoke: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("retry revoke rows affected: %w", err)
+	}
+	return n, nil
+}
+
 // statusPlaceholders renders `IN (?,?,?)` argument tuples. Returns the
 // placeholder string and the []any args, both empty when the input is
 // empty. Used here by ListByOwner and in later tasks for filtered

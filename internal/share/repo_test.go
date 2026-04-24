@@ -531,3 +531,167 @@ type dbDB interface {
 	WriteDB() *sql.DB
 	ReadDB() *sql.DB
 }
+
+func TestRepoSetRevokingFromPending(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	n, err := repo.SetRevoking(context.Background(), uuidStr, now)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.NotNil(got.RevokedAt)
+	r.True(got.RevokedAt.Equal(now))
+	r.Equal(0, got.BrokerAttempts)
+	r.Nil(got.BrokerNextAttemptAt)
+}
+
+func TestRepoSetRevokingFromFailedPublishPhase(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='failed', broker_attempts=10, broker_last_error='gone' WHERE uuid=?`,
+		uuidStr)
+	r.NoError(err)
+
+	n, err := repo.SetRevoking(context.Background(), uuidStr, time.Now().UTC())
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.Equal(0, got.BrokerAttempts)
+	r.Empty(got.BrokerLastError)
+}
+
+func TestRepoSetRevokingRejectsRevokedRemote(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	now := time.Now().UTC()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoked_remote', revoked_at=? WHERE uuid=?`,
+		now, uuidStr)
+	r.NoError(err)
+
+	n, err := repo.SetRevoking(context.Background(), uuidStr, now.Add(time.Second))
+	r.NoError(err)
+	r.Equal(int64(0), n)
+}
+
+func TestRepoSetRevokingRejectsRevokingRow(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	now := time.Now().UTC()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoking', revoked_at=? WHERE uuid=?`,
+		now, uuidStr)
+	r.NoError(err)
+
+	n, err := repo.SetRevoking(context.Background(), uuidStr, now.Add(time.Second))
+	r.NoError(err)
+	r.Equal(int64(0), n)
+}
+
+func TestRepoMarkRevokedRevokingToRevokedRemote(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoking', revoked_at=? WHERE uuid=?`,
+		time.Now().UTC(), uuidStr)
+	r.NoError(err)
+
+	at := time.Now().UTC().Add(time.Second).Truncate(time.Second)
+	n, err := repo.MarkRevoked(context.Background(), uuidStr, at)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevokedRemote, got.BrokerStatus)
+	r.NotNil(got.BrokerRevokedAt)
+	r.True(got.BrokerRevokedAt.Equal(at))
+	r.Nil(got.BrokerNextAttemptAt)
+}
+
+func TestRepoMarkRevokedRejectsOtherStates(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo) // still 'pending'
+
+	n, err := repo.MarkRevoked(context.Background(), uuidStr, time.Now().UTC())
+	r.NoError(err)
+	r.Equal(int64(0), n)
+}
+
+func TestRepoRetryPublishOnlyFailedWithoutRevokedAt(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='failed', broker_attempts=10, broker_last_error='x' WHERE uuid=?`,
+		uuidStr)
+	r.NoError(err)
+
+	n, err := repo.RetryPublish(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusPending, got.BrokerStatus)
+	r.Equal(0, got.BrokerAttempts)
+	r.Empty(got.BrokerLastError)
+	r.Nil(got.BrokerNextAttemptAt)
+}
+
+func TestRepoRetryPublishRejectsRevokedFailed(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	now := time.Now().UTC()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='failed', broker_attempts=10, revoked_at=? WHERE uuid=?`,
+		now, uuidStr)
+	r.NoError(err)
+
+	n, err := repo.RetryPublish(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(int64(0), n)
+}
+
+func TestRepoRetryRevokeOnlyFailedWithRevokedAt(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	now := time.Now().UTC()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='failed', broker_attempts=10, revoked_at=? WHERE uuid=?`,
+		now, uuidStr)
+	r.NoError(err)
+
+	n, err := repo.RetryRevoke(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.Equal(0, got.BrokerAttempts)
+}
