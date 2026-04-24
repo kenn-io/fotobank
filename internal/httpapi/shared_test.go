@@ -326,3 +326,125 @@ func TestSharedHTTPListAlbumMediaPaginates(t *testing.T) {
 	r.False(page2.HasMore)
 	r.Empty(page2.NextCursorID)
 }
+
+// sharedHTTPSeedMediaTS inserts a media row with an explicit timestamp
+// so display_time = COALESCE(timestamp, imported_at) is deterministic
+// for pagination tests that seed multiple rows in one hub/user.
+func sharedHTTPSeedMediaTS(t *testing.T, rw *sql.DB, p owners.Principal, ts time.Time) string {
+	t.Helper()
+	cs := uuid.NewString()
+	repo := media.NewRepo(rw, rw)
+	m := media.Media{
+		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/" + cs + ".jpg",
+		OriginalFilename: "x.jpg",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Timestamp:        &ts,
+		Size:             100, Checksum: cs, ThumbStatus: "pending",
+	}
+	require.NoError(t, repo.Insert(context.Background(), m))
+	return m.ID
+}
+
+func TestSharedHTTPListMediaPaginates(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+
+	t0 := in.now.Add(-2 * time.Hour)
+	t1 := in.now.Add(-1 * time.Hour)
+	t2 := in.now
+	m1 := sharedHTTPSeedMediaTS(t, in.d.WriteDB(), alice, t0)
+	m2 := sharedHTTPSeedMediaTS(t, in.d.WriteDB(), alice, t1)
+	m3 := sharedHTTPSeedMediaTS(t, in.d.WriteDB(), alice, t2)
+	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, true, m1, m2, m3)
+	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
+
+	h := buildSharedFx(in, bob, []string{s.UUID})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared/media?limit=2", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var page1 struct {
+		Items          []map[string]any `json:"items"`
+		NextCursorTime *time.Time       `json:"next_cursor_time,omitempty"`
+		NextCursorID   string           `json:"next_cursor_id,omitempty"`
+		HasMore        bool             `json:"has_more"`
+	}
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &page1))
+	r.Len(page1.Items, 2)
+	r.True(page1.HasMore)
+	r.NotEmpty(page1.NextCursorID)
+	// display_time DESC: newest first, so page 1 = [m3, m2].
+	r.Equal(m3, page1.Items[0]["id"])
+	r.Equal(m2, page1.Items[1]["id"])
+
+	req = httptest.NewRequest(http.MethodGet,
+		"/api/v1/shared/media?limit=2"+
+			"&cursor_time="+page1.NextCursorTime.UTC().Format(time.RFC3339Nano)+
+			"&cursor_id="+page1.NextCursorID,
+		nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var page2 struct {
+		Items          []map[string]any `json:"items"`
+		NextCursorTime *time.Time       `json:"next_cursor_time,omitempty"`
+		NextCursorID   string           `json:"next_cursor_id,omitempty"`
+		HasMore        bool             `json:"has_more"`
+	}
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &page2))
+	r.Len(page2.Items, 1)
+	r.Equal(m1, page2.Items[0]["id"])
+	r.False(page2.HasMore)
+	r.Empty(page2.NextCursorID)
+}
+
+func TestSharedHTTPGetMediaUnauthorizedReturns404(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	m := sharedHTTPSeedMedia(t, in.d.WriteDB(), alice)
+	// No scope at all — bob must see 404, not a permission error.
+	h := buildSharedFx(in, bob, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared/media/"+m, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+func TestSharedHTTPGetMediaAuthorizedReturnsCanDownload(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	m := sharedHTTPSeedMedia(t, in.d.WriteDB(), alice)
+	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, true, m)
+	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
+
+	h := buildSharedFx(in, bob, []string{s.UUID})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared/media/"+m, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var body map[string]any
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	r.Equal(m, body["id"])
+	r.Equal(true, body["can_download"])
+	r.Equal("h", body["owner"].(map[string]any)["hub"])
+	r.Equal("alice", body["owner"].(map[string]any)["user_id"])
+}

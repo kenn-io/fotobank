@@ -83,6 +83,8 @@ func registerShared(api huma.API, svc *service.SharedReadService) {
 	registerSharedListAlbums(api, svc)
 	registerSharedGetAlbum(api, svc)
 	registerSharedListAlbumMedia(api, svc)
+	registerSharedListMedia(api, svc)
+	registerSharedGetMedia(api, svc)
 }
 
 // sharedCall bundles the caller principal and header-attested scope
@@ -334,4 +336,65 @@ func toSharedMediaDTO(m service.SharedMedia) sharedMediaDTO {
 		ThumbVersion: m.ThumbVersion,
 		CanDownload:  m.CanDownload,
 	}
+}
+
+type sharedListMediaInput struct {
+	Limit    int       `query:"limit"`
+	CursorTS time.Time `query:"cursor_time"`
+	CursorID string    `query:"cursor_id"`
+}
+
+func registerSharedListMedia(api huma.API, svc *service.SharedReadService) {
+	huma.Register(api, huma.Operation{
+		OperationID: "shared-list-media",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/shared/media",
+	}, func(ctx context.Context, in *sharedListMediaInput) (*sharedMediaListOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("shared read unavailable")
+		}
+		call, err := callerAndScopes(ctx)
+		if err != nil {
+			return nil, translateSharedError(err)
+		}
+		page, next, err := svc.ListMedia(ctx, call.caller, call.scopes,
+			service.SharedMediaCursor{
+				AfterDisplayTime: in.CursorTS,
+				AfterID:          in.CursorID,
+				Limit:            in.Limit,
+			})
+		if err != nil {
+			return nil, translateSharedError(err)
+		}
+		return buildSharedMediaListOutput(page, next), nil
+	})
+}
+
+type sharedMediaIDParam struct {
+	ID string `path:"id"`
+}
+
+type sharedMediaOutput struct {
+	Body sharedMediaDTO
+}
+
+func registerSharedGetMedia(api huma.API, svc *service.SharedReadService) {
+	huma.Register(api, huma.Operation{
+		OperationID: "shared-get-media",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/shared/media/{id}",
+	}, func(ctx context.Context, in *sharedMediaIDParam) (*sharedMediaOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("shared read unavailable")
+		}
+		call, err := callerAndScopes(ctx)
+		if err != nil {
+			return nil, translateSharedError(err)
+		}
+		got, err := svc.GetMedia(ctx, call.caller, call.scopes, in.ID)
+		if err != nil {
+			return nil, translateSharedError(err)
+		}
+		return &sharedMediaOutput{Body: toSharedMediaDTO(got)}, nil
+	})
 }
