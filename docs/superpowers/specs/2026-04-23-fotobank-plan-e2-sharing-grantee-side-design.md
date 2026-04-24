@@ -251,8 +251,10 @@ type ResolvedScopes struct {
     // header scopes, sorted ascending. Safe to use as a predicate
     // value in follow-up queries.
     ScopeUUIDs []string
-    // Owner is the single owner of all validated scopes. Cross-owner
-    // scope presentation is rejected by the resolver (§6.1).
+    // Owner is the single owner of all validated scopes. If the
+    // header carried scopes from multiple owners, the resolver
+    // keeps the lexicographically smallest retained-owner tuple
+    // and drops the rest (§6.1).
     Owner owners.Principal
     // AllowDownload is true iff any validated scope has
     // allow_download = true. This is a coarse hint for UI; the
@@ -652,32 +654,63 @@ already produces.
 
 ### 6.3 `CheckMediaAccess` SQL shape
 
+The resolver runs this in two passes so the single-owner
+degradation rule applies uniformly (same discipline as
+`ResolveAll`). Pass 1 validates the header scopes with grantee /
+revocation / broker / expiry predicates; pass 2 is a per-item
+coverage check against the already-retained-owner subset.
+
+**Pass 1 — validate and degrade.** Same shape as
+`ValidateHeaderScopes` used by `ResolveAll`:
+
 ```
-WITH validated AS (
-    SELECT uuid, owner_hub, owner_user_id, target_type,
-           target_album_id, allow_download
-    FROM scopes
-    WHERE uuid IN (?, ?, …)      -- deduped-and-capped header set
-      AND grantee_hub = ?
-      AND grantee_user_id = ?
-      AND revoked_at IS NULL
-      AND broker_status = 'active'
-      AND (expires_at IS NULL OR expires_at > ?)
+SELECT uuid, owner_hub, owner_user_id, target_type,
+       target_album_id, allow_download
+FROM scopes
+WHERE uuid IN (?, ?, …)      -- deduped-and-capped header set
+  AND grantee_hub = ?
+  AND grantee_user_id = ?
+  AND revoked_at IS NULL
+  AND broker_status = 'active'
+  AND (expires_at IS NULL OR expires_at > ?)
+```
+
+Resolver code groups the result by `(owner_hub, owner_user_id)`,
+selects the lexicographically smallest retained owner, and filters
+the slice down to that owner's scopes (§6.1). Call that filtered
+slice `retained`.
+
+**Pass 2 — coverage check.** Parameterised by `retained` as a
+VALUES-CTE and the retained owner:
+
+```
+WITH validated(uuid, owner_hub, owner_user_id, target_type,
+               target_album_id, allow_download) AS (
+    VALUES (?, ?, ?, ?, ?, ?), …    -- retained rows
 )
 SELECT v.uuid, v.target_type, v.target_album_id, v.allow_download
 FROM validated v
-WHERE
-    -- media_set coverage
-    (v.target_type = 'media_set' AND EXISTS (
-        SELECT 1 FROM scope_media sm
-        WHERE sm.scope_uuid = v.uuid AND sm.media_id = ?
-    ))
- OR -- album_live coverage
-    (v.target_type = 'album_live' AND EXISTS (
-        SELECT 1 FROM album_media am
-        WHERE am.album_id = v.target_album_id AND am.media_id = ?
-    ))
+WHERE v.owner_hub = ? AND v.owner_user_id = ?  -- retained owner
+  AND (
+       -- media_set coverage
+       (v.target_type = 'media_set' AND EXISTS (
+           SELECT 1 FROM scope_media sm
+           WHERE sm.scope_uuid = v.uuid AND sm.media_id = ?
+       ))
+    OR -- album_live coverage
+       (v.target_type = 'album_live' AND EXISTS (
+           SELECT 1 FROM album_media am
+           WHERE am.album_id = v.target_album_id AND am.media_id = ?
+       ))
+  )
 ```
+
+The retained-owner predicate is redundant with the VALUES-CTE
+when the Go filter is correct, but we include it as a belt-and-
+braces guard so a bug in the degradation code cannot leak a
+dropped-owner scope at the DB layer. `CheckAlbumAccess` follows
+the same two-pass shape, substituting the album_live EXISTS
+branch as the sole coverage predicate.
 
 Each surviving row becomes an `AccessPath`. Empty result set →
 `AccessDecision{Authorized: false}`.
@@ -688,15 +721,16 @@ Two queries:
 
 1. `ValidateHeaderScopes` — same validated CTE as above, returned
    as a slice.
-2. `ListSharedMediaIDs(validated, cursor)` — given a validated
-   slice (already filtered to live+granted), a single SELECT that
-   unions per-scope coverage and `GROUP BY media_id` with
+2. `ListSharedMediaIDs(retained, cursor)` — given the
+   retained-owner slice (live + granted + single owner, §6.3
+   pass 1 + §6.1 degradation), a single SELECT that unions
+   per-scope coverage and `GROUP BY media_id` with
    `MAX(allow_download)`:
 
 ```
 SELECT m.id AS media_id,
-       m.timestamp, m.imported_at,
-       MAX(v.allow_download) AS can_download
+       COALESCE(m.timestamp, m.imported_at) AS display_time,
+       MAX(covers.allow_download) AS can_download
 FROM media m
 JOIN (
     SELECT sm.media_id AS media_id, v.allow_download
@@ -709,16 +743,31 @@ JOIN (
     JOIN validated v ON v.target_album_id = am.album_id
     WHERE v.target_type = 'album_live'
 ) covers ON covers.media_id = m.id
-WHERE m.owner_hub = ? AND m.owner_user_id = ?  -- single-owner invariant
-  AND (m.timestamp, m.id) < (?, ?)             -- cursor
+WHERE m.owner_hub = ? AND m.owner_user_id = ?  -- retained owner
+  -- Cursor: ordering is display_time DESC, id ASC. The strict
+  -- "after cursor" condition for that order is
+  -- (display_time < cursor_time) OR
+  -- (display_time = cursor_time AND id > cursor_id).
+  AND (
+       ? = 0  -- sentinel for "no cursor"; bind 1 when cursor present
+    OR COALESCE(m.timestamp, m.imported_at) < ?
+    OR (COALESCE(m.timestamp, m.imported_at) = ?
+        AND m.id > ?)
+  )
 GROUP BY m.id
-ORDER BY COALESCE(m.timestamp, m.imported_at) DESC, m.id ASC
+ORDER BY display_time DESC, m.id ASC
 LIMIT ?
 ```
 
-`validated` is passed in as a constructed VALUES-CTE or a temp table
-depending on the driver. For the SQLite driver we use a VALUES CTE
-keyed by `uuid`.
+The cursor block binds four parameters when a cursor is present
+(the "has_cursor" int, `cursor_time`, `cursor_time`, `cursor_id`)
+and binds `0, '', '', ''` on the first page. Callers materialise
+the cursor time in UTC and use the exact same `COALESCE` on the
+client side that the SQL uses, so a tie on `display_time` sorts
+consistently across pages.
+
+`validated` is passed in as a VALUES-CTE keyed by `uuid` (SQLite
+driver); the CTE carries the already-degraded retained rows.
 
 ### 6.5 Cap and dedupe in the resolver
 
@@ -982,12 +1031,26 @@ ON CONFLICT (hub, user_id) DO UPDATE SET
 WHERE principal_display.cached_at < excluded.cached_at;
 ```
 
-Writes are fire-and-forget on the request path — the upsert runs
-inside the request handler goroutine, but the middleware ignores
-errors (logs at `warn`). We do not block the response on the cache
-write. The middleware only upserts when `Identity.Principal.Handle`
-is non-empty; stub-mode callers typically leave Handle empty, so no
-cache churn in dev.
+The upsert runs synchronously inside the request handler
+goroutine, before `next.ServeHTTP` is called, under a bounded
+sub-context:
+
+```go
+upsertCtx, cancel := context.WithTimeout(r.Context(), 50*time.Millisecond)
+defer cancel()
+if err := repo.Upsert(upsertCtx, ident.Principal, now); err != nil {
+    slog.Warn("principal_display upsert", "err", err, …)
+}
+next.ServeHTTP(w, r)
+```
+
+This is synchronous best-effort with bounded latency: the request
+is delayed by at most 50ms on a slow upsert, and any error is
+logged at `warn` and swallowed (never propagated to the client).
+The bound is deliberate — we want the cache fresh, but a hung
+DB must not hang the grantee's read path. The middleware only
+upserts when `Identity.Principal.Handle` is non-empty; stub-mode
+callers typically leave Handle empty, so no cache churn in dev.
 
 The middleware has a rate-limit escape valve: it upserts at most
 once per `(hub, user_id)` per process per minute (in-memory LRU with
@@ -1265,7 +1328,8 @@ a real `fotobank server` invocation in header mode:
    - a request with **no** `X-Auth-Scopes` returns empty lists /
      404s
    - a request with a bad direct-access attempt (header mode but
-     guard would reject) returns 401
+     guard would reject) returns 403 (per §7.4, matching
+     WithMiddleware's mapping of `ErrDirectAccessBlocked`)
 
 This one test is enough to catch integration regressions; the
 handler-level tests stay focused and cheap.
