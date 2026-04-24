@@ -1,0 +1,82 @@
+package share_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/wesm/fotobank/internal/identity"
+	"github.com/wesm/fotobank/internal/owners"
+	"github.com/wesm/fotobank/internal/share"
+	"github.com/wesm/fotobank/internal/testutil"
+)
+
+func TestPrincipalDisplayUpsertAndGet(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewPrincipalDisplayRepo(d.WriteDB(), d.ReadDB())
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	err := repo.Upsert(context.Background(),
+		identity.Principal{Hub: "h", UserID: "alice", Handle: "Alice"}, now)
+	r.NoError(err)
+
+	handle, ok, err := repo.Get(context.Background(),
+		owners.Principal{Hub: "h", UserID: "alice"})
+	r.NoError(err)
+	r.True(ok)
+	r.Equal("Alice", handle)
+}
+
+func TestPrincipalDisplayUpsertKeepsNewest(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewPrincipalDisplayRepo(d.WriteDB(), d.ReadDB())
+
+	t1 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	t2 := t1.Add(time.Hour)
+	r.NoError(repo.Upsert(context.Background(),
+		identity.Principal{Hub: "h", UserID: "alice", Handle: "New"}, t2))
+	// Earlier cached_at must not overwrite the newer row.
+	r.NoError(repo.Upsert(context.Background(),
+		identity.Principal{Hub: "h", UserID: "alice", Handle: "Stale"}, t1))
+
+	handle, ok, err := repo.Get(context.Background(),
+		owners.Principal{Hub: "h", UserID: "alice"})
+	r.NoError(err)
+	r.True(ok)
+	r.Equal("New", handle)
+}
+
+func TestPrincipalDisplayGetMissingReturnsFalse(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := share.NewPrincipalDisplayRepo(d.WriteDB(), d.ReadDB())
+	_, ok, err := repo.Get(context.Background(),
+		owners.Principal{Hub: "h", UserID: "ghost"})
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+func TestPrincipalDisplayGetBatchReturnsKnown(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewPrincipalDisplayRepo(d.WriteDB(), d.ReadDB())
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	r.NoError(repo.Upsert(context.Background(),
+		identity.Principal{Hub: "h", UserID: "alice", Handle: "Alice"}, now))
+	r.NoError(repo.Upsert(context.Background(),
+		identity.Principal{Hub: "h", UserID: "bob", Handle: "Bob"}, now))
+
+	got, err := repo.GetBatch(context.Background(), []owners.Principal{
+		{Hub: "h", UserID: "alice"},
+		{Hub: "h", UserID: "ghost"},
+		{Hub: "h", UserID: "bob"},
+	})
+	r.NoError(err)
+	r.Equal("Alice", got[owners.Principal{Hub: "h", UserID: "alice"}])
+	r.Equal("Bob", got[owners.Principal{Hub: "h", UserID: "bob"}])
+	_, ok := got[owners.Principal{Hub: "h", UserID: "ghost"}]
+	r.False(ok)
+}
