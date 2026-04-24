@@ -214,6 +214,8 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	if raw := os.Getenv("FOTOBANK_TEST_SHARE_WORKER_TICK"); raw != "" {
 		if dur, err := time.ParseDuration(raw); err == nil {
 			shareCfg.Tick = dur
+		} else {
+			fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_SHARE_WORKER_TICK parse error: %v\n", err)
 		}
 	}
 	shareW := shareworker.New(shareCfg)

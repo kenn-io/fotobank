@@ -177,9 +177,11 @@ func TestSharesGetReturnsScopeBody(t *testing.T) {
 	r.Equal(s.UUID, body["uuid"])
 	r.Equal("pending", body["broker_status"])
 	r.Equal(albumID, body["target_album_id"])
-	grantee, _ := body["grantee"].(map[string]any)
-	r.NotNil(grantee)
+	grantee, ok := body["grantee"].(map[string]any)
+	r.True(ok, "grantee field must be an object")
 	r.Equal("alice", grantee["user_id"])
+	_, present := body["media_ids"]
+	r.False(present, "album_live response should omit media_ids")
 }
 
 func TestSharesGetMediaSetReturnsMediaIDs(t *testing.T) {
