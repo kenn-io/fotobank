@@ -28,6 +28,11 @@ func writeOriginalResponse(
 ) {
 	size := m.Size
 	h := w.Header()
+	// Restore: every successful response (200 or 206) must advertise
+	// range support. The owner handler also sets this before its 304
+	// early return — setting it here keeps shared byte routes from
+	// losing the header on their 200/206 path.
+	h.Set("Accept-Ranges", "bytes")
 
 	offset, length, partial, err := parseRangeHeader(r.Header.Get("Range"), size)
 	if err != nil {

@@ -295,6 +295,9 @@ func registerSharedListAlbumMedia(api huma.API, svc *service.SharedReadService) 
 		if err != nil {
 			return nil, translateSharedError(err)
 		}
+		if err := validateCursorPair(in.CursorTS, in.CursorID); err != nil {
+			return nil, err
+		}
 		page, next, err := svc.ListAlbumMedia(ctx, call.caller, call.scopes, in.ID,
 			service.SharedMediaCursor{
 				AfterDisplayTime: in.CursorTS,
@@ -306,6 +309,19 @@ func registerSharedListAlbumMedia(api huma.API, svc *service.SharedReadService) 
 		}
 		return buildSharedMediaListOutput(page, next), nil
 	})
+}
+
+// validateCursorPair rejects cursors where exactly one half is present.
+// A cursor with only display-time or only id cannot skip deterministically
+// — the companion field is required for the tuple ordering used by
+// share.Repo.ListSharedMediaIDs. Both absent (initial page) is fine.
+func validateCursorPair(ts time.Time, id string) error {
+	tsSet := !ts.IsZero()
+	idSet := id != ""
+	if tsSet != idSet {
+		return huma.Error400BadRequest("cursor_time and cursor_id must be set together")
+	}
+	return nil
 }
 
 func buildSharedMediaListOutput(page []service.SharedMedia, next service.SharedMediaCursor) *sharedMediaListOutput {
@@ -358,6 +374,9 @@ func registerSharedListMedia(api huma.API, svc *service.SharedReadService) {
 		call, err := callerAndScopes(ctx)
 		if err != nil {
 			return nil, translateSharedError(err)
+		}
+		if err := validateCursorPair(in.CursorTS, in.CursorID); err != nil {
+			return nil, err
 		}
 		page, next, err := svc.ListMedia(ctx, call.caller, call.scopes,
 			service.SharedMediaCursor{

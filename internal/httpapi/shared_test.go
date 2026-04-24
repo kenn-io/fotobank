@@ -410,6 +410,36 @@ func TestSharedHTTPListMediaPaginates(t *testing.T) {
 	r.Empty(page2.NextCursorID)
 }
 
+// Partial cursors (only one of cursor_time / cursor_id set) must be
+// rejected with 400; a half-cursor cannot skip deterministically given
+// the (display_time DESC, id ASC) tuple ordering.
+func TestSharedHTTPListMediaPartialCursorReturns400(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	m := sharedHTTPSeedMedia(t, in.d.WriteDB(), alice)
+	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, false, m)
+	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
+	h := buildSharedFx(in, bob, []string{s.UUID})
+
+	// Only cursor_id — missing cursor_time.
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/shared/media?cursor_id="+m, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	// Only cursor_time — missing cursor_id.
+	req = httptest.NewRequest(http.MethodGet,
+		"/api/v1/shared/media?cursor_time="+in.now.Format(time.RFC3339Nano), nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusBadRequest, rec.Code, rec.Body.String())
+}
+
 func TestSharedHTTPGetMediaUnauthorizedReturns404(t *testing.T) {
 	r := require.New(t)
 	in := setupSharedFxInputs(t)

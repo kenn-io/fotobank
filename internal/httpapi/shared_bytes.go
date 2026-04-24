@@ -41,6 +41,11 @@ func registerSharedBytes(mux *http.ServeMux, svc *service.SharedReadService) {
 func sharedThumbHandler(svc *service.SharedReadService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		// Set Cache-Control: no-store up-front so every path (401, 400,
+		// 404, 500, 200) shares the same cache directive. See
+		// sharedOriginalHandler for the same-rationale write.
+		w.Header().Set("Cache-Control", "no-store")
+
 		ident, ok := IdentityFromContext(r.Context())
 		if !ok {
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
@@ -48,7 +53,6 @@ func sharedThumbHandler(svc *service.SharedReadService) http.Handler {
 		}
 
 		notFound := func() {
-			w.Header().Set("Cache-Control", "no-store")
 			http.Error(w, "thumb not found", http.StatusNotFound)
 		}
 
@@ -90,7 +94,6 @@ func sharedThumbHandler(svc *service.SharedReadService) http.Handler {
 		if m.ThumbUpdatedAt != nil {
 			h.Set("Last-Modified", m.ThumbUpdatedAt.UTC().Format(http.TimeFormat))
 		}
-		h.Set("Cache-Control", "no-store")
 		h.Set("Content-Type", "image/jpeg")
 
 		if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" && etagMatches(ifNoneMatch, etag) {
@@ -112,6 +115,13 @@ func sharedThumbHandler(svc *service.SharedReadService) http.Handler {
 func sharedOriginalHandler(svc *service.SharedReadService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
+		// Set Cache-Control: no-store up-front so every path (401, 404,
+		// 403, 500, 200/206) shares the same cache directive. Grantee
+		// auth depends on X-Auth-Scopes / identity which intermediate
+		// caches don't key on; caching ANY response for a shared URL
+		// would risk serving it to another grantee.
+		w.Header().Set("Cache-Control", "no-store")
+
 		ident, ok := IdentityFromContext(r.Context())
 		if !ok {
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
@@ -138,7 +148,6 @@ func sharedOriginalHandler(svc *service.SharedReadService) http.Handler {
 		h := w.Header()
 		h.Set("ETag", etag)
 		h.Set("Last-Modified", m.DisplayTime.UTC().Format(http.TimeFormat))
-		h.Set("Cache-Control", "no-store")
 		h.Set("Accept-Ranges", "bytes")
 		h.Set("Content-Type", m.MimeType)
 
