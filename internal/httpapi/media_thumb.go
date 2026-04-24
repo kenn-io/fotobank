@@ -79,7 +79,6 @@ func registerMediaThumb(mux *http.ServeMux, svc *service.ThumbService) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
-		defer func() { _ = rc.Close() }()
 
 		etag := `"` + m.ID + "-" + string(size) + "-v" + strconv.Itoa(m.ThumbVersion) + `"`
 		h := w.Header()
@@ -91,12 +90,13 @@ func registerMediaThumb(mux *http.ServeMux, svc *service.ThumbService) {
 		h.Set("Content-Type", "image/jpeg")
 
 		if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" && etagMatches(ifNoneMatch, etag) {
+			_ = rc.Close()
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
 
-		if _, err := io.Copy(w, rc); err != nil {
-			slog.Error("thumb stream", "err", err, "id", id)
-		}
+		writeThumbResponse(w, r, func() (io.ReadCloser, error) {
+			return rc, nil
+		})
 	}))
 }

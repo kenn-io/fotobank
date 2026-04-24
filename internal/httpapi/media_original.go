@@ -2,10 +2,9 @@ package httpapi
 
 import (
 	"errors"
-	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/wesm/fotobank/internal/errs"
@@ -47,7 +46,6 @@ func registerMediaOriginal(mux *http.ServeMux, svc *service.MediaService) {
 		h.Set("ETag", etag)
 		h.Set("Last-Modified", m.ImportedAt.UTC().Format(http.TimeFormat))
 		h.Set("Cache-Control", "private, max-age=31536000, immutable")
-		h.Set("Accept-Ranges", "bytes")
 		h.Set("Content-Type", m.MimeType)
 
 		if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" && etagMatches(ifNoneMatch, etag) {
@@ -55,29 +53,10 @@ func registerMediaOriginal(mux *http.ServeMux, svc *service.MediaService) {
 			return
 		}
 
-		offset := int64(0)
-		length := int64(-1)
-		if rangeHdr := r.Header.Get("Range"); rangeHdr != "" {
-			start, end, rok := parseSingleByteRange(rangeHdr, m.Size)
-			if !rok {
-				h.Set("Content-Range", fmt.Sprintf("bytes */%d", m.Size))
-				http.Error(w, "range not satisfiable", http.StatusRequestedRangeNotSatisfiable)
-				return
-			}
-			offset = start
-			length = end - start + 1
-			h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, m.Size))
-			h.Set("Content-Length", strconv.FormatInt(length, 10))
-			w.WriteHeader(http.StatusPartialContent)
-		} else {
-			h.Set("Content-Length", strconv.FormatInt(m.Size, 10))
-		}
-
-		if _, streamErr := svc.StreamOriginal(r.Context(), id, caller, offset, length, w); streamErr != nil {
-			// Headers are already flushed, so we can't change the status.
-			// Log server-side; the client sees a truncated body.
-			slog.Error("media original stream", "err", streamErr, "id", id)
-		}
+		writeOriginalResponse(w, r, m, func(off, length int64) (io.ReadCloser, error) {
+			rc, _, err := svc.OpenOriginal(r.Context(), id, caller, off, length)
+			return rc, err
+		})
 	}))
 }
 
@@ -94,59 +73,4 @@ func etagMatches(header, etag string) bool {
 		}
 	}
 	return false
-}
-
-// parseSingleByteRange parses an RFC 7233 byte-range header of the form
-// "bytes=START-END", "bytes=START-", or "bytes=-N" (suffix). Returns
-// inclusive start and end in [0, size) and ok. ok is false for empty,
-// malformed, unsatisfiable, or multi-range values; multi-range is
-// explicitly out of scope for Plan B.
-func parseSingleByteRange(header string, size int64) (int64, int64, bool) {
-	if !strings.HasPrefix(header, "bytes=") {
-		return 0, 0, false
-	}
-	spec := strings.TrimPrefix(header, "bytes=")
-	if strings.Contains(spec, ",") {
-		return 0, 0, false
-	}
-	startStr, endStr, found := strings.Cut(spec, "-")
-	if !found {
-		return 0, 0, false
-	}
-	startStr = strings.TrimSpace(startStr)
-	endStr = strings.TrimSpace(endStr)
-	if startStr == "" && endStr == "" {
-		return 0, 0, false
-	}
-
-	if startStr == "" {
-		n, err := strconv.ParseInt(endStr, 10, 64)
-		if err != nil || n <= 0 {
-			return 0, 0, false
-		}
-		if n > size {
-			n = size
-		}
-		return size - n, size - 1, true
-	}
-
-	start, err := strconv.ParseInt(startStr, 10, 64)
-	if err != nil || start < 0 {
-		return 0, 0, false
-	}
-	if start >= size {
-		return 0, 0, false
-	}
-	end := size - 1
-	if endStr != "" {
-		e, err := strconv.ParseInt(endStr, 10, 64)
-		if err != nil || e < start {
-			return 0, 0, false
-		}
-		end = e
-	}
-	if end >= size {
-		end = size - 1
-	}
-	return start, end, true
 }

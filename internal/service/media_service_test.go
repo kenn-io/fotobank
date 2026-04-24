@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"io"
 	"testing"
 	"time"
 
@@ -114,7 +115,7 @@ func TestMediaServiceListFiltersByCaller(t *testing.T) {
 	r.Equal(fx.owner, rows[0].Owner)
 }
 
-func TestMediaServiceStreamOriginalWritesBytes(t *testing.T) {
+func TestMediaServiceOpenOriginalFullReader(t *testing.T) {
 	r := require.New(t)
 	fx := newMediaServiceTest(t)
 	ctx := context.Background()
@@ -124,14 +125,16 @@ func TestMediaServiceStreamOriginalWritesBytes(t *testing.T) {
 	r.NoError(err)
 	m := insertTestMedia(t, fx.repo, fx.owner, "2024/a.jpg", "cs1")
 
-	var buf bytes.Buffer
-	n, err := fx.svc.StreamOriginal(ctx, m.ID, fx.owner, 0, -1, &buf)
+	rc, got, err := fx.svc.OpenOriginal(ctx, m.ID, fx.owner, 0, -1)
 	r.NoError(err)
-	r.Equal(int64(len(payload)), n)
-	r.Equal(payload, buf.Bytes())
+	defer rc.Close()
+	r.Equal(m.ID, got.ID)
+	buf, err := io.ReadAll(rc)
+	r.NoError(err)
+	r.Equal(payload, buf)
 }
 
-func TestMediaServiceStreamOriginalRange(t *testing.T) {
+func TestMediaServiceOpenOriginalRange(t *testing.T) {
 	r := require.New(t)
 	fx := newMediaServiceTest(t)
 	ctx := context.Background()
@@ -141,14 +144,15 @@ func TestMediaServiceStreamOriginalRange(t *testing.T) {
 	r.NoError(err)
 	m := insertTestMedia(t, fx.repo, fx.owner, "2024/r.jpg", "cs-r")
 
-	var buf bytes.Buffer
-	n, err := fx.svc.StreamOriginal(ctx, m.ID, fx.owner, 2, 3, &buf)
+	rc, _, err := fx.svc.OpenOriginal(ctx, m.ID, fx.owner, 2, 3)
 	r.NoError(err)
-	r.Equal(int64(3), n)
-	r.Equal("234", buf.String())
+	defer rc.Close()
+	buf, err := io.ReadAll(rc)
+	r.NoError(err)
+	r.Equal("234", string(buf))
 }
 
-func TestMediaServiceStreamOriginalRejectsNonOwner(t *testing.T) {
+func TestMediaServiceOpenOriginalRejectsNonOwner(t *testing.T) {
 	r := require.New(t)
 	fx := newMediaServiceTest(t)
 	ctx := context.Background()
@@ -159,9 +163,7 @@ func TestMediaServiceStreamOriginalRejectsNonOwner(t *testing.T) {
 	m := insertTestMedia(t, fx.repo, fx.owner, "2024/s.jpg", "cs-s")
 
 	intruder := owners.Principal{Hub: "h", UserID: "intruder"}
-	var buf bytes.Buffer
-	n, err := fx.svc.StreamOriginal(ctx, m.ID, intruder, 0, -1, &buf)
+	rc, _, err := fx.svc.OpenOriginal(ctx, m.ID, intruder, 0, -1)
 	r.ErrorIs(err, errs.ErrNotFound)
-	r.Equal(int64(0), n)
-	r.Equal(0, buf.Len())
+	r.Nil(rc)
 }

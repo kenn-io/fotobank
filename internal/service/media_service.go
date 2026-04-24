@@ -50,30 +50,25 @@ func (s *MediaService) List(ctx context.Context, f media.ListFilter, caller owne
 	return s.repo.List(ctx, f)
 }
 
-// StreamOriginal resolves the media row, enforces the owner check, and
-// copies bytes from the backing store to w. offset and length follow
-// the storage.Store.ReadRange convention: length < 0 means "to EOF".
-// Returns the number of bytes written and any error. When the caller
-// is not the owner, returns (0, errs.ErrNotFound) without touching w.
-func (s *MediaService) StreamOriginal(
+// OpenOriginal resolves the media row, enforces the owner check, and
+// returns the backing-store reader sliced by offset / length. offset and
+// length follow the storage.Store.ReadRange convention: length < 0 means
+// "to EOF". When the caller is not the owner, returns
+// (nil, media.Media{}, errs.ErrNotFound). The caller owns the returned
+// ReadCloser and must Close it.
+func (s *MediaService) OpenOriginal(
 	ctx context.Context,
 	id string,
 	caller owners.Principal,
 	offset, length int64,
-	w io.Writer,
-) (int64, error) {
+) (io.ReadCloser, media.Media, error) {
 	m, err := s.Get(ctx, id, caller)
 	if err != nil {
-		return 0, err
+		return nil, media.Media{}, err
 	}
 	rc, err := s.store.ReadRange(ctx, caller, m.Path, offset, length)
 	if err != nil {
-		return 0, fmt.Errorf("read original: %w", err)
+		return nil, media.Media{}, fmt.Errorf("read original: %w", err)
 	}
-	defer func() { _ = rc.Close() }()
-	n, err := io.Copy(w, rc)
-	if err != nil {
-		return n, fmt.Errorf("stream original: %w", err)
-	}
-	return n, nil
+	return rc, m, nil
 }
