@@ -453,3 +453,85 @@ func TestShareRetryRejectsNonFailed(t *testing.T) {
 	_, err = fx.svc.Retry(context.Background(), s.UUID, fx.owner)
 	r.ErrorIs(err, share.ErrRetryNotApplicable)
 }
+
+func TestPreviewScopeAlbumLivePopulatesMediaAndAlbum(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 2)
+
+	s, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "bob"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	prev, err := fx.svc.PreviewScope(context.Background(), s.UUID, fx.owner)
+	r.NoError(err)
+	r.Equal(s.UUID, prev.Scope.UUID)
+	r.NotNil(prev.Album)
+	r.Equal(albumID, prev.Album.ID)
+	r.Len(prev.Media, 2)
+}
+
+func TestPreviewScopeMediaSetPopulatesFrozenMedia(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	m1 := fx.seedMediaRow(t)
+	m2 := fx.seedMediaRow(t)
+	s, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee:    owners.Principal{Hub: "h", UserID: "bob"},
+		TargetType: share.TargetMediaSet, MediaIDs: []string{m1, m2},
+	}, fx.owner)
+	r.NoError(err)
+
+	prev, err := fx.svc.PreviewScope(context.Background(), s.UUID, fx.owner)
+	r.NoError(err)
+	r.Equal(s.UUID, prev.Scope.UUID)
+	r.Nil(prev.Album, "media_set previews must not carry an album")
+	r.Len(prev.Media, 2)
+	gotIDs := []string{prev.Media[0].ID, prev.Media[1].ID}
+	r.ElementsMatch([]string{m1, m2}, gotIDs)
+}
+
+func TestPreviewScopeCrossOwnerReturnsNotFound(t *testing.T) {
+	fx := newShareFixture(t)
+	// Seed a second owner so we can attempt cross-owner preview.
+	charlie := owners.Principal{Hub: "h", UserID: "charlie"}
+	_, err := fx.rw.ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		charlie.Hub, charlie.UserID, "sk-c", time.Now().UTC())
+	require.NoError(t, err)
+
+	albumID := fx.seedAlbum(t, 1)
+	s, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "bob"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	require.NoError(t, err)
+
+	_, err = fx.svc.PreviewScope(context.Background(), s.UUID, charlie)
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}
+
+func TestPreviewScopeSurfacesExpiryAndBrokerWarnings(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 1)
+	past := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	s, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "bob"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+		ExpiresAt: &past,
+	}, fx.owner)
+	r.NoError(err)
+
+	prev, err := fx.svc.PreviewScope(context.Background(), s.UUID, fx.owner)
+	r.NoError(err)
+	r.Contains(prev.Warnings, "scope_expired")
+	r.Contains(prev.Warnings, "broker_not_active", "freshly-created scope is pending")
+	// Album has 1 media, all with thumb_status=pending → >25% not ready.
+	r.Contains(prev.Warnings, "missing_thumbs")
+}
+
+func TestPreviewScopeUnknownScopeReturnsNotFound(t *testing.T) {
+	fx := newShareFixture(t)
+	_, err := fx.svc.PreviewScope(context.Background(), uuid.NewString(), fx.owner)
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}

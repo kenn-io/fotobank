@@ -125,6 +125,7 @@ func registerShares(api huma.API, svc *service.ShareService) {
 	registerSharesGet(api, svc)
 	registerSharesRevoke(api, svc)
 	registerSharesRetry(api, svc)
+	registerSharesPreview(api, svc)
 }
 
 // --- inputs/outputs ---
@@ -305,4 +306,74 @@ func registerSharesRetry(api huma.API, svc *service.ShareService) {
 		}
 		return &scopeOutput{Status: http.StatusOK, Body: toScopeDTO(s)}, nil
 	})
+}
+
+type previewShareOutput struct {
+	Body previewShareDTO
+}
+
+type previewShareDTO struct {
+	Scope    scopeDTO          `json:"scope"`
+	Media    []previewMediaDTO `json:"media"`
+	Album    *previewAlbumDTO  `json:"album,omitempty"`
+	Warnings []string          `json:"warnings,omitempty"`
+}
+
+type previewMediaDTO struct {
+	ID           string    `json:"id"`
+	MediaType    string    `json:"media_type"`
+	MimeType     string    `json:"mime_type"`
+	DisplayTime  time.Time `json:"display_time"`
+	ThumbStatus  string    `json:"thumb_status"`
+	ThumbVersion int       `json:"thumb_version"`
+}
+
+type previewAlbumDTO struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	ItemCount int       `json:"item_count"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func registerSharesPreview(api huma.API, svc *service.ShareService) {
+	huma.Register(api, huma.Operation{
+		OperationID: "shares-preview",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/shares/{uuid}/preview",
+	}, func(ctx context.Context, in *scopeUUIDParam) (*previewShareOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("share service unavailable")
+		}
+		caller, err := callerFromCtx(ctx)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		prev, err := svc.PreviewScope(ctx, in.UUID, caller)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		return &previewShareOutput{Body: toPreviewShareDTO(prev)}, nil
+	})
+}
+
+func toPreviewShareDTO(p service.ScopePreview) previewShareDTO {
+	out := previewShareDTO{
+		Scope:    toScopeDTO(p.Scope),
+		Warnings: p.Warnings,
+	}
+	out.Media = make([]previewMediaDTO, 0, len(p.Media))
+	for _, m := range p.Media {
+		out.Media = append(out.Media, previewMediaDTO{
+			ID: m.ID, MediaType: string(m.MediaType), MimeType: m.MimeType,
+			DisplayTime: m.DisplayTime,
+			ThumbStatus: m.ThumbStatus, ThumbVersion: m.ThumbVersion,
+		})
+	}
+	if p.Album != nil {
+		out.Album = &previewAlbumDTO{
+			ID: p.Album.ID, Name: p.Album.Name,
+			ItemCount: p.Album.ItemCount, UpdatedAt: p.Album.UpdatedAt,
+		}
+	}
+	return out
 }

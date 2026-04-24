@@ -317,3 +317,63 @@ func TestSharesListMixedInvalidStatus400(t *testing.T) {
 	fx.h.ServeHTTP(rec, req)
 	r.Equal(http.StatusBadRequest, rec.Code)
 }
+
+func TestSharesPreviewHappyPath(t *testing.T) {
+	r := require.New(t)
+	fx := newSharesHTTPFixture(t)
+	albumID := fx.seedAlbumWithMedia(t)
+
+	// Create the share via the service so we have a UUID to preview.
+	s, err := fx.shares.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "alice"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares/"+s.UUID+"/preview", nil)
+	rec := httptest.NewRecorder()
+	fx.h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp struct {
+		Scope    map[string]any   `json:"scope"`
+		Media    []map[string]any `json:"media"`
+		Album    *map[string]any  `json:"album"`
+		Warnings []string         `json:"warnings"`
+	}
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &resp))
+	r.Equal(s.UUID, resp.Scope["uuid"])
+	r.NotNil(resp.Album)
+	r.Equal(albumID, (*resp.Album)["id"])
+	r.Len(resp.Media, 1)
+	// Freshly-created album_live scope with a pending thumb must surface
+	// both broker_not_active and missing_thumbs; we assert the prior.
+	r.Contains(resp.Warnings, "broker_not_active")
+}
+
+func TestSharesPreviewCrossOwnerReturns404(t *testing.T) {
+	r := require.New(t)
+	fx := newSharesHTTPFixture(t)
+	albumID := fx.seedAlbumWithMedia(t)
+	s, err := fx.shares.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "alice"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	// Build a second handler bound to a different identity; PreviewScope
+	// must return 404 for a cross-owner caller.
+	intruder := owners.Principal{Hub: "h", UserID: "intruder"}
+	_, err = fx.db.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		intruder.Hub, intruder.UserID, "sk-i", time.Now().UTC())
+	r.NoError(err)
+	h, err := httpapi.New(httpapi.Deps{
+		IdentityProvider: identity.NewStub(intruder, ""),
+		ShareService:     fx.shares,
+	})
+	r.NoError(err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares/"+s.UUID+"/preview", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusNotFound, rec.Code, rec.Body.String())
+}

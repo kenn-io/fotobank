@@ -207,6 +207,92 @@ func (s *ShareService) Revoke(ctx context.Context, uuidStr string, caller owners
 	return fresh.Scope, nil
 }
 
+// ScopePreview is the materialised view PreviewScope returns. Media is
+// the frozen membership for media_set and the live album_media order
+// for album_live. Album is non-nil iff the scope's target_type is
+// album_live.
+type ScopePreview struct {
+	Scope    share.Scope
+	Media    []PreviewMedia
+	Album    *share.AlbumSummary
+	Warnings []string
+}
+
+// PreviewMedia is the owner-facing preview row for one media. Kept as
+// a distinct type so the owner surface never accidentally reuses the
+// grantee-side SharedMedia DTO.
+type PreviewMedia struct {
+	ID           string
+	MediaType    media.Type
+	MimeType     string
+	DisplayTime  time.Time
+	ThumbStatus  string
+	ThumbVersion int
+}
+
+// PreviewScope returns the materialised view the grantee will see,
+// gated to owner callers. Cross-owner UUIDs return errs.ErrNotFound
+// (never ErrOwnerMismatch) so the preview surface cannot be probed for
+// other owners' scope UUIDs. Uses share.Repo.ExpandScope so the
+// grantee-side resolver is never invoked with owner-as-grantee
+// semantics.
+func (s *ShareService) PreviewScope(ctx context.Context, uuid string, caller owners.Principal) (ScopePreview, error) {
+	exp, err := s.shares.ExpandScope(ctx, uuid)
+	if err != nil {
+		return ScopePreview{}, err
+	}
+	if exp.Scope.Owner != caller {
+		return ScopePreview{}, fmt.Errorf("%w: scope uuid=%s", errs.ErrNotFound, uuid)
+	}
+	mediaRows, err := s.media.GetByIDs(ctx, exp.MediaIDs)
+	if err != nil {
+		return ScopePreview{}, err
+	}
+	out := ScopePreview{Scope: exp.Scope, Album: exp.Album}
+	out.Media = make([]PreviewMedia, 0, len(mediaRows))
+	for _, m := range mediaRows {
+		display := m.ImportedAt
+		if m.Timestamp != nil {
+			display = *m.Timestamp
+		}
+		out.Media = append(out.Media, PreviewMedia{
+			ID: m.ID, MediaType: m.Type, MimeType: m.MimeType,
+			DisplayTime: display,
+			ThumbStatus: m.ThumbStatus, ThumbVersion: m.ThumbVersion,
+		})
+	}
+	out.Warnings = previewWarnings(exp, mediaRows, s.now())
+	return out, nil
+}
+
+// previewWarnings implements the spec §7.7 warning set: broker not yet
+// active, expiry already passed, empty-on-the-wire album_live, and a
+// "more than 25% of thumbs not ready" smoke signal.
+func previewWarnings(exp share.ExpandedScope, mediaRows []media.Media, now time.Time) []string {
+	var w []string
+	if exp.Scope.BrokerStatus != share.StatusActive {
+		w = append(w, "broker_not_active")
+	}
+	if exp.Scope.ExpiresAt != nil && !exp.Scope.ExpiresAt.After(now) {
+		w = append(w, "scope_expired")
+	}
+	if exp.Scope.TargetType == share.TargetAlbumLive && exp.Album != nil && exp.Album.ItemCount == 0 {
+		w = append(w, "empty_album")
+	}
+	if len(mediaRows) > 0 {
+		missing := 0
+		for _, m := range mediaRows {
+			if m.ThumbStatus != "ready" {
+				missing++
+			}
+		}
+		if missing*100/len(mediaRows) > 25 {
+			w = append(w, "missing_thumbs")
+		}
+	}
+	return w
+}
+
 // Retry reopens a failed scope. Whether the retry routes through
 // pending or revoking depends on whether the row was mid-publish or
 // mid-revoke when it failed (encoded by revoked_at).
