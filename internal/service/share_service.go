@@ -173,9 +173,10 @@ func (s *ShareService) Get(ctx context.Context, uuidStr string, caller owners.Pr
 	return det, nil
 }
 
-// List returns the caller's scopes. filter is passed through verbatim
-// after Owner is forced to caller (defence-in-depth against a filter
-// that set Grantee==caller or similar).
+// List returns the caller's scopes. filter is passed through verbatim;
+// ownership is enforced by routing through share.Repo.ListByOwner(caller, …),
+// so a caller cannot see another owner's scopes regardless of what the
+// filter contains.
 func (s *ShareService) List(ctx context.Context, filter share.ScopeFilter, caller owners.Principal) ([]share.Scope, error) {
 	return s.shares.ListByOwner(ctx, caller, filter)
 }

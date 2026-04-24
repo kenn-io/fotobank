@@ -437,6 +437,8 @@ func TestShareRetryRevokeRoutesFailedToRevoking(t *testing.T) {
 	got, err := fx.svc.Retry(context.Background(), s.UUID, fx.owner)
 	r.NoError(err)
 	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.Equal(0, got.BrokerAttempts)
+	r.NotNil(got.RevokedAt)
 }
 
 func TestShareRetryRejectsNonFailed(t *testing.T) {
