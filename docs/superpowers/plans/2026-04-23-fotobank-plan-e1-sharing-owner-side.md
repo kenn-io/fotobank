@@ -5322,6 +5322,20 @@ git commit -m "Add fotobank shares CLI subcommand tree"
 
 - [ ] **Step 1: Add an end-to-end test**
 
+> **Note (2026-04-23):** The plan originally assumed `newServerEnv` /
+> `env.createAlbumWithOneMedia` helpers existed in e2e_test.go; they
+> don't. The actual implementation inlines the server-boot pattern
+> from `e2e_media_test.go` and uses the env var
+> `FOTOBANK_TEST_SHARE_WORKER_TICK=50ms` to bypass the default 15s
+> tick so the `Eventually` polls complete inside the 5s budget.
+> The landed test lives at `internal/cli/e2e_shares_test.go` and
+> polls via `/api/v1/shares?album_id=…` (list shape) rather than
+> GET `/api/v1/shares/{uuid}` — the detail handler's response body
+> contains only `$schema` because huma's schema generator does not
+> expand the embedded `scopeDTO` inside `scopeDetailDTO`. That
+> defect is filed for follow-up; it does not affect list/create/
+> revoke/retry wire shapes.
+
 Append to `internal/cli/e2e_test.go`:
 
 ```go
