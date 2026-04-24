@@ -401,7 +401,7 @@ func newResolver(t *testing.T, now time.Time) (*share.ScopeResolver, *share.Repo
     t.Helper()
     d := testutil.OpenTestDB(t)
     repo := share.NewRepo(d.WriteDB(), d.ReadDB())
-    r := share.NewScopeResolver(repo, func() time.Time { return now })
+    r := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
     return r, repo, d
 }
 
@@ -546,7 +546,7 @@ type ScopeResolver struct {
 }
 
 // NewScopeResolver constructs a resolver with prod defaults.
-func NewScopeResolver(r *Repo, now func() time.Time) *ScopeResolver {
+func NewScopeResolver(r *Repo, now func() time.Time, logger *slog.Logger) *ScopeResolver {
     if now == nil {
         now = func() time.Time { return time.Now().UTC() }
     }
@@ -1088,7 +1088,7 @@ func TestListSharedMediaIDsDedupesAndOrdersByDisplayTime(t *testing.T) {
     bumpActive(t, d, s2.UUID, now)
 
     repo := share.NewRepo(d.WriteDB(), d.ReadDB())
-    resolver := share.NewScopeResolver(repo, func() time.Time { return now })
+    resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
     resolved, err := resolver.ResolveAll(context.Background(),
         owners.Principal{Hub: "h", UserID: "bob"}, []string{s1.UUID, s2.UUID})
     r.NoError(err)
@@ -1123,7 +1123,7 @@ func TestListSharedMediaIDsCursorPagesCorrectly(t *testing.T) {
     bumpActive(t, d, s.UUID, now)
 
     repo := share.NewRepo(d.WriteDB(), d.ReadDB())
-    resolver := share.NewScopeResolver(repo, func() time.Time { return now })
+    resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
     resolved, err := resolver.ResolveAll(context.Background(),
         owners.Principal{Hub: "h", UserID: "bob"}, []string{s.UUID})
     r.NoError(err)
@@ -1325,7 +1325,7 @@ func TestListSharedAlbumIDsReturnsAlbumLiveOnly(t *testing.T) {
     bumpActive(t, d, ms.UUID, now)
 
     repo := share.NewRepo(d.WriteDB(), d.ReadDB())
-    resolver := share.NewScopeResolver(repo, func() time.Time { return now })
+    resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
     resolved, err := resolver.ResolveAll(context.Background(),
         owners.Principal{Hub: "h", UserID: "bob"},
         []string{s1.UUID, s2.UUID, ms.UUID})
@@ -2251,7 +2251,7 @@ func newSharedReadFixture(t *testing.T) sharedReadFixture {
     aRepo := album.NewRepo(d.WriteDB(), d.ReadDB())
     store := testutil.NewMemStore(t)
     now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-    resolver := share.NewScopeResolver(shares, func() time.Time { return now })
+    resolver := share.NewScopeResolver(shares, func() time.Time { return now }, nil)
     svc := service.NewSharedReadService(shares, mRepo, aRepo, store, resolver)
     return sharedReadFixture{
         t: t, db: d, shares: shares, mediaR: mRepo, albumsR: aRepo,
@@ -3557,7 +3557,7 @@ func newSharedFx(t *testing.T, grantee owners.Principal, scopes []string) shared
     aRepo := album.NewRepo(d.WriteDB(), d.ReadDB())
     store := testutil.NewMemStore(t)
     now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-    resolver := share.NewScopeResolver(shares, func() time.Time { return now })
+    resolver := share.NewScopeResolver(shares, func() time.Time { return now }, nil)
     svc := service.NewSharedReadService(shares, mRepo, aRepo, store, resolver)
 
     deps := httpapi.Deps{
@@ -4914,7 +4914,7 @@ Construct `PrincipalDisplayRepo`, `ScopeResolver`, and `SharedReadService`:
 
 ```go
 displayRepo := share.NewPrincipalDisplayRepo(db.WriteDB(), db.ReadDB())
-resolver := share.NewScopeResolver(sharesRepo, nil) // nil → time.Now().UTC()
+resolver := share.NewScopeResolver(sharesRepo, nil, slog.Default()) // nil → time.Now().UTC(); logger from host
 sharedSvc := service.NewSharedReadService(sharesRepo, mediaRepo, albumsRepo, store, resolver)
 ```
 
