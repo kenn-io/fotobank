@@ -394,6 +394,30 @@ func TestRepoMarkPublishedNoopOnTerminalStatus(t *testing.T) {
 	r.Equal(int64(0), n) // fence rejected — row was terminal.
 }
 
+func TestRepoMarkPublishedSecondCallIsNoop(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	first := time.Now().UTC().Truncate(time.Second)
+	n, err := repo.MarkPublished(context.Background(), uuidStr, first)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	// Row is now 'active'; the fence 'pending' | 'revoking' rejects
+	// the second call. Timestamps remain the originals.
+	second := first.Add(1 * time.Hour)
+	n, err = repo.MarkPublished(context.Background(), uuidStr, second)
+	r.NoError(err)
+	r.Equal(int64(0), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.True(got.BrokerRegisteredAt.Equal(first))
+	r.True(got.BrokerGrantedAt.Equal(first))
+}
+
 func TestRepoMarkAttemptFailedIncrementsAttempts(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
@@ -431,6 +455,31 @@ func TestRepoMarkAttemptFailedFencedToPhase(t *testing.T) {
 	r.Equal(0, got.BrokerAttempts)
 	r.Empty(got.BrokerLastError)
 	r.Nil(got.BrokerNextAttemptAt)
+}
+
+func TestRepoMarkAttemptFailedRevokingPhase(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	// Flip to revoking directly (owner called Revoke).
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoking', revoked_at=? WHERE uuid=?`,
+		time.Now().UTC(), uuidStr)
+	r.NoError(err)
+
+	nextAt := time.Now().UTC().Add(30 * time.Second).Truncate(time.Second)
+	n, err := repo.MarkAttemptFailed(context.Background(), uuidStr, share.StatusRevoking, "broker down", nextAt)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.Equal(1, got.BrokerAttempts)
+	r.Equal("broker down", got.BrokerLastError)
+	r.True(got.BrokerNextAttemptAt.Equal(nextAt))
 }
 
 func TestRepoMarkFailedFlipsToFailed(t *testing.T) {
