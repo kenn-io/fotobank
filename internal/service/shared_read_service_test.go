@@ -127,13 +127,14 @@ func sharedSeedAlbumWithMedia(t *testing.T, rw *sql.DB, owner owners.Principal, 
 
 func sharedMakeAlbumLiveScope(
 	t *testing.T, repo *share.Repo,
-	owner, grantee owners.Principal, albumID string, now time.Time,
+	owner, grantee owners.Principal, albumID string, now time.Time, download bool,
 ) share.Scope {
 	t.Helper()
 	s := share.Scope{
 		UUID: uuid.NewString(), Owner: owner, Grantee: grantee,
 		TargetType:    share.TargetAlbumLive,
 		TargetAlbumID: &albumID,
+		AllowDownload: download,
 		CreatedAt:     now,
 		BrokerStatus:  share.StatusPending,
 	}
@@ -219,7 +220,7 @@ func TestSharedReadGetScopeAlbumLiveItemCount(t *testing.T) {
 	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
 
 	albumID, _ := sharedSeedAlbumWithMedia(t, fx.db.WriteDB(), alice, 3)
-	live := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now)
+	live := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now, false)
 	sharedBumpActive(t, fx.db.WriteDB(), live.UUID, fx.now)
 
 	got, err := fx.svc.GetScope(context.Background(), bob,
@@ -274,18 +275,40 @@ func TestSharedReadListAlbumsReturnsAlbumLiveOnly(t *testing.T) {
 	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
 
 	albumID, mediaIDs := sharedSeedAlbumWithMedia(t, fx.db.WriteDB(), alice, 2)
-	live := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now)
-	sharedBumpActive(t, fx.db.WriteDB(), live.UUID, fx.now)
+	// Two album_live scopes over the same album — download OR'd across.
+	live1 := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now, false)
+	sharedBumpActive(t, fx.db.WriteDB(), live1.UUID, fx.now)
+	live2 := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now, true)
+	sharedBumpActive(t, fx.db.WriteDB(), live2.UUID, fx.now)
 	// media_set over same media must not surface as an album
 	ms := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, mediaIDs...)
 	sharedBumpActive(t, fx.db.WriteDB(), ms.UUID, fx.now)
 
 	got, err := fx.svc.ListAlbums(context.Background(), bob,
-		[]string{live.UUID, ms.UUID})
+		[]string{live1.UUID, live2.UUID, ms.UUID})
 	r.NoError(err)
 	r.Len(got, 1)
 	r.Equal(albumID, got[0].ID)
 	r.Equal(2, got[0].ItemCount)
+	r.True(got[0].CanDownload, "two album_live scopes — OR(false, true) == true")
+}
+
+func TestSharedReadListAlbumsCanDownloadFalseWhenNoDownloadScope(t *testing.T) {
+	r := require.New(t)
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+
+	albumID, _ := sharedSeedAlbumWithMedia(t, fx.db.WriteDB(), alice, 1)
+	live := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now, false)
+	sharedBumpActive(t, fx.db.WriteDB(), live.UUID, fx.now)
+
+	got, err := fx.svc.ListAlbums(context.Background(), bob, []string{live.UUID})
+	r.NoError(err)
+	r.Len(got, 1)
+	r.False(got[0].CanDownload, "single album_live scope with download=false")
 }
 
 func TestSharedReadGetAlbumUnauthorizedReturns404(t *testing.T) {
@@ -307,7 +330,7 @@ func TestSharedReadListAlbumMediaPaginates(t *testing.T) {
 	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
 	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
 	albumID, _ := sharedSeedAlbumWithMediaTimestamped(t, fx.db.WriteDB(), alice, fx.now, 3)
-	live := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now)
+	live := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now, false)
 	sharedBumpActive(t, fx.db.WriteDB(), live.UUID, fx.now)
 
 	page, nextCursor, err := fx.svc.ListAlbumMedia(context.Background(),
@@ -316,10 +339,48 @@ func TestSharedReadListAlbumMediaPaginates(t *testing.T) {
 	r.NoError(err)
 	r.Len(page, 2)
 	r.NotEmpty(nextCursor.AfterID)
+	r.False(page[0].CanDownload, "single download=false scope → per-media CanDownload stays false")
 
 	page2, nextCursor2, err := fx.svc.ListAlbumMedia(context.Background(),
 		bob, []string{live.UUID}, albumID, nextCursor)
 	r.NoError(err)
 	r.Len(page2, 1)
 	r.Empty(nextCursor2.AfterID) // exhausted
+}
+
+// ListAlbums must order rows by updated_at DESC, then id ASC. Seeded
+// with two albums at distinct updated_at values so the sort closure is
+// exercised (the single-album tests above do not).
+func TestSharedReadListAlbumsSortsByUpdatedAtDesc(t *testing.T) {
+	r := require.New(t)
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+
+	tsOlder := fx.now
+	tsNewer := fx.now.Add(time.Hour)
+	olderID := uuid.NewString()
+	newerID := uuid.NewString()
+	_, err := fx.db.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO albums(id, owner_hub, owner_user_id, name, created_at, updated_at) VALUES(?,?,?,?,?,?)`,
+		olderID, alice.Hub, alice.UserID, "older", tsOlder, tsOlder)
+	r.NoError(err)
+	_, err = fx.db.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO albums(id, owner_hub, owner_user_id, name, created_at, updated_at) VALUES(?,?,?,?,?,?)`,
+		newerID, alice.Hub, alice.UserID, "newer", tsNewer, tsNewer)
+	r.NoError(err)
+
+	live1 := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, olderID, fx.now, false)
+	sharedBumpActive(t, fx.db.WriteDB(), live1.UUID, fx.now)
+	live2 := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, newerID, fx.now, false)
+	sharedBumpActive(t, fx.db.WriteDB(), live2.UUID, fx.now)
+
+	got, err := fx.svc.ListAlbums(context.Background(), bob,
+		[]string{live1.UUID, live2.UUID})
+	r.NoError(err)
+	r.Len(got, 2)
+	r.Equal(newerID, got[0].ID, "updated_at DESC puts newer first")
+	r.Equal(olderID, got[1].ID)
 }

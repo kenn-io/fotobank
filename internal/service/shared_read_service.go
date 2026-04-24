@@ -284,9 +284,9 @@ func (s *SharedReadService) GetAlbum(
 // album's AccessDecision for CanDownload and the per-media OR with any
 // covering media_set scopes.
 //
-// Note: CheckAlbumAccess and ResolveAll each run the resolver's
-// validateAndRetain path, so a multi-owner presentation logs the spec
-// §6.1 warn twice. Acceptable for this rare error case.
+// A single resolver pass is performed; resolved.Validated is reused for
+// both the album-authz check (CoverAlbumByScopes) and the media-listing
+// SQL (ListSharedMediaIDs), avoiding a double DB hit.
 func (s *SharedReadService) ListAlbumMedia(
 	ctx context.Context,
 	caller owners.Principal,
@@ -294,16 +294,16 @@ func (s *SharedReadService) ListAlbumMedia(
 	albumID string,
 	cursor SharedMediaCursor,
 ) ([]SharedMedia, SharedMediaCursor, error) {
-	dec, err := s.resolver.CheckAlbumAccess(ctx, caller, headerScopes, albumID)
+	resolved, err := s.resolver.ResolveAll(ctx, caller, headerScopes)
+	if err != nil {
+		return nil, SharedMediaCursor{}, err
+	}
+	dec, err := s.shares.CoverAlbumByScopes(ctx, resolved.Validated, resolved.Owner, albumID)
 	if err != nil {
 		return nil, SharedMediaCursor{}, err
 	}
 	if !dec.Authorized {
 		return nil, SharedMediaCursor{}, fmt.Errorf("%w: album id=%s", errs.ErrNotFound, albumID)
-	}
-	resolved, err := s.resolver.ResolveAll(ctx, caller, headerScopes)
-	if err != nil {
-		return nil, SharedMediaCursor{}, err
 	}
 	limit := clampSharedMediaLimit(cursor.Limit)
 	repoRows, err := s.shares.ListSharedMediaIDs(ctx, resolved.Validated, resolved.Owner, albumID,
