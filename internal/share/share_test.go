@@ -61,6 +61,11 @@ func TestParseStatusFilter(t *testing.T) {
 		{"single", "pending", []share.BrokerStatus{share.StatusPending}},
 		{"multi", "pending,failed,revoking",
 			[]share.BrokerStatus{share.StatusPending, share.StatusFailed, share.StatusRevoking}},
+		{"all-valid", "pending,active,failed,revoking,revoked_remote",
+			[]share.BrokerStatus{
+				share.StatusPending, share.StatusActive, share.StatusFailed,
+				share.StatusRevoking, share.StatusRevokedRemote,
+			}},
 		{"whitespace", "  pending  , , failed  ",
 			[]share.BrokerStatus{share.StatusPending, share.StatusFailed}},
 		{"whitespace-only", " , , ", []share.BrokerStatus{}},

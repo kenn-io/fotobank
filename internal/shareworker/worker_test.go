@@ -199,6 +199,13 @@ func TestWorkerContextErrorFromBrokerAbortsDrain(t *testing.T) {
 	fx := newWorkerFixture(t)
 	// Seed two pending rows so we can verify the drain aborts after the first.
 	id1 := fx.insertPending(t)
+	// Pin ListReady order: id1 must drain before id2 so the cancelled
+	// broker call aborts the drain on the very first row. ListReady
+	// orders by created_at ASC as its tiebreaker, so push id1 earlier.
+	_, err := fx.db.ExecContext(context.Background(),
+		`UPDATE scopes SET created_at = ? WHERE uuid = ?`,
+		fx.now.Add(-time.Second), id1)
+	r.NoError(err)
 	id2 := fx.insertPending(t)
 	fx.fake.QueuePublishError(id1, context.Canceled)
 

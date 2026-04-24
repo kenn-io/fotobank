@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -207,6 +208,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	shareCfg := shareworker.Config{
 		Repo:   sharesRepo,
 		Broker: broker.NoopBroker{},
+		Logger: slog.New(slog.NewTextHandler(opts.stderr, nil)),
 	}
 	// FOTOBANK_TEST_SHARE_WORKER_TICK is a test-only escape hatch that
 	// overrides the default 15s tick so e2e tests can observe state

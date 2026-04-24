@@ -23,6 +23,15 @@ import (
 	"github.com/wesm/fotobank/internal/share"
 )
 
+// sharesListDefaultLimit and sharesListMaxLimit mirror the HTTP surface's
+// bounds (see internal/httpapi/shares.go::clampLimit) so the CLI clamps
+// pathological values (0, negative, huge) before they reach the repo,
+// where ListByOwner would otherwise omit LIMIT entirely.
+const (
+	sharesListDefaultLimit = 100
+	sharesListMaxLimit     = 500
+)
+
 type shareCtx struct {
 	svc    *service.ShareService
 	caller owners.Principal
@@ -93,6 +102,7 @@ func newSharesCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a scope over an album (--album) or media set (--media)",
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSharesCreate(cmd.Context(), sharesCreateOpts{
 				cfgPath:       cfgPath,
@@ -182,6 +192,7 @@ func newSharesListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List scopes (default: owner-actionable only)",
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSharesList(cmd.Context(), sharesListOpts{
 				cfgPath:        cfgPath,
@@ -228,7 +239,7 @@ func runSharesList(ctx context.Context, o sharesListOpts) error {
 		AlbumID:        o.albumID,
 		Status:         statuses,
 		IncludeSettled: o.includeSettled,
-		Limit:          o.limit,
+		Limit:          clampSharesListLimit(o.limit),
 		Offset:         o.offset,
 	}
 	if o.granteeRaw != "" {
@@ -376,6 +387,20 @@ func shortUUID(s string) string {
 	return s[:4] + ".." + s[len(s)-4:]
 }
 
+// clampSharesListLimit bounds the CLI --limit flag to the same range the
+// HTTP surface uses so bogus values (0, negative, huge) don't degrade to
+// unbounded repo queries (share.Repo.ListByOwner omits LIMIT when Limit
+// is ≤0).
+func clampSharesListLimit(in int) int {
+	if in <= 0 {
+		return sharesListDefaultLimit
+	}
+	if in > sharesListMaxLimit {
+		return sharesListMaxLimit
+	}
+	return in
+}
+
 // ParseHubUserForTest, SplitCSVForTest, and ShortUUIDForTest are
 // test-only exports so the cli_test package can exercise these pure
 // helpers without promoting them into the public API. Mirrors the
@@ -387,3 +412,8 @@ func SplitCSVForTest(raw string) []string { return splitCSV(raw) }
 
 // ShortUUIDForTest exposes shortUUID for package cli_test.
 func ShortUUIDForTest(s string) string { return shortUUID(s) }
+
+// ClampSharesListLimitForTest exposes clampSharesListLimit for package
+// cli_test so the bounds lock in a unit test without leaking the helper
+// into the public API.
+func ClampSharesListLimitForTest(in int) int { return clampSharesListLimit(in) }

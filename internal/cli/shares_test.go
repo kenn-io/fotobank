@@ -69,3 +69,25 @@ func TestShortUUID(t *testing.T) {
 	r.Equal("abcdefgh", cli.ShortUUIDForTest("abcdefgh"))
 	r.Equal("abcd..7890", cli.ShortUUIDForTest("abcd12345677890"))
 }
+
+func TestClampSharesListLimit(t *testing.T) {
+	r := require.New(t)
+	r.Equal(100, cli.ClampSharesListLimitForTest(0))
+	r.Equal(100, cli.ClampSharesListLimitForTest(-5))
+	r.Equal(1, cli.ClampSharesListLimitForTest(1))
+	r.Equal(500, cli.ClampSharesListLimitForTest(500))
+	r.Equal(500, cli.ClampSharesListLimitForTest(10000))
+}
+
+func TestSharesCreateExtraArgs(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"shares", "create", "--grantee", "h:u", "--album", "x", "extra"},
+		&stdout, &stderr)
+	require.Equal(t, 2, code)
+}
+
+func TestSharesListExtraArgs(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"shares", "list", "extra"}, &stdout, &stderr)
+	require.Equal(t, 2, code)
+}
