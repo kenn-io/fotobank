@@ -142,6 +142,21 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		storeLayer,
 	)
 
+	// Grantee-side plumbing: display-handle cache, resolver, and
+	// SharedReadService. The resolver uses nil for its clock so it
+	// defaults to time.Now().UTC; the display cache middleware is
+	// driven off the same repo in httpapi.New when PrincipalDisplay is
+	// non-nil.
+	displayRepo := share.NewPrincipalDisplayRepo(d.WriteDB(), d.ReadDB())
+	resolver := share.NewScopeResolver(sharesRepo, nil, slog.Default())
+	sharedSvc := service.NewSharedReadService(
+		sharesRepo,
+		media.NewRepo(d.WriteDB(), d.ReadDB()),
+		album.NewRepo(d.WriteDB(), d.ReadDB()),
+		storeLayer,
+		resolver,
+	)
+
 	handler, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: idp,
 		OwnerService:     ownerSvc,
@@ -149,6 +164,8 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		AlbumService:     albumSvc,
 		ThumbService:     thumbSvc,
 		ShareService:     shareSvc,
+		SharedRead:       sharedSvc,
+		PrincipalDisplay: displayRepo,
 	})
 	if err != nil {
 		return err
