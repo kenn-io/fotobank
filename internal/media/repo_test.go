@@ -2,6 +2,7 @@ package media_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -30,6 +31,32 @@ func baseMedia(id string, p owners.Principal) media.Media {
 		Checksum:         "cs1",
 		ThumbStatus:      "pending",
 	}
+}
+
+// seedOwner inserts a minimal owners row so media FK constraints resolve.
+func seedOwner(t *testing.T, rw *sql.DB, p owners.Principal, sk string) {
+	t.Helper()
+	_, err := rw.ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, sk, time.Now().UTC())
+	require.NoError(t, err)
+}
+
+// seedOneMedia inserts a minimally valid media row owned by p, returning
+// its id. Fresh path + checksum each call so multi-row tests don't
+// collide on the (owner, checksum) or (owner, path) unique indexes.
+func seedOneMedia(t *testing.T, repo *media.Repo, p owners.Principal) string {
+	t.Helper()
+	id := uuid.NewString()
+	cs := uuid.NewString()
+	m := media.Media{
+		ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "2024/" + cs + ".jpg", OriginalFilename: "x.jpg",
+		ImportedAt: time.Now().UTC().Truncate(time.Second),
+		Size:       100, Checksum: cs, ThumbStatus: "pending",
+	}
+	require.NoError(t, repo.Insert(context.Background(), m))
+	return id
 }
 
 func TestMediaInsertAndGet(t *testing.T) {
@@ -331,4 +358,44 @@ func TestMediaGetByOwnerChecksum(t *testing.T) {
 
 	_, err = repo.GetByOwnerChecksum(ctx, p, "nope")
 	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestMediaGetByIDsPreservesInputOrder(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk")
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+
+	a := seedOneMedia(t, repo, p)
+	b := seedOneMedia(t, repo, p)
+	c := seedOneMedia(t, repo, p)
+
+	got, err := repo.GetByIDs(context.Background(), []string{c, a, b})
+	r.NoError(err)
+	r.Len(got, 3)
+	r.Equal(c, got[0].ID)
+	r.Equal(a, got[1].ID)
+	r.Equal(b, got[2].ID)
+}
+
+func TestMediaGetByIDsSkipsMissing(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk")
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	a := seedOneMedia(t, repo, p)
+	got, err := repo.GetByIDs(context.Background(), []string{a, "00000000-0000-0000-0000-000000000000"})
+	r.NoError(err)
+	r.Len(got, 1)
+	r.Equal(a, got[0].ID)
+}
+
+func TestMediaGetByIDsEmptyInputReturnsNil(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	got, err := repo.GetByIDs(context.Background(), nil)
+	require.NoError(t, err)
+	require.Empty(t, got)
 }

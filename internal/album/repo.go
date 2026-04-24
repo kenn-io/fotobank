@@ -184,6 +184,58 @@ func scanAlbumListItem(s rowScanner) (AlbumListItem, error) {
 	return item, nil
 }
 
+// GetDetailsByIDs returns AlbumListItem rows in the same order as ids.
+// Missing ids are silently dropped. Uses the same count-and-cover
+// subqueries as GetDetailByID; callers get the same ItemCount + Cover
+// projection per album without N+1 round-trips.
+func (r *Repo) GetDetailsByIDs(ctx context.Context, ids []string) ([]AlbumListItem, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	valRows := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids)*2)
+	for i, id := range ids {
+		valRows = append(valRows, "(?, ?)")
+		args = append(args, id, i)
+	}
+	q := `
+WITH ord(id, pos) AS (VALUES ` + strings.Join(valRows, ",") + `)
+SELECT a.id, a.owner_hub, a.owner_user_id, a.name, a.created_at, a.updated_at,
+       (SELECT COUNT(*) FROM album_media am WHERE am.album_id = a.id) AS item_count,
+       cv.media_id, cv.thumb_version
+  FROM ord
+  JOIN albums a ON a.id = ord.id
+  LEFT JOIN (
+    SELECT am.album_id, am.media_id, m.thumb_version,
+           ROW_NUMBER() OVER (
+             PARTITION BY am.album_id
+             ORDER BY am.added_at DESC, am.media_id ASC
+           ) AS rn
+      FROM album_media am
+      JOIN media m ON m.id = am.media_id
+     WHERE m.thumb_status = 'ready'
+  ) cv ON cv.album_id = a.id AND cv.rn = 1
+ ORDER BY ord.pos
+`
+	rows, err := r.ro.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get album details by ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]AlbumListItem, 0, len(ids))
+	for rows.Next() {
+		item, err := scanAlbumListItem(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan album detail: %w", err)
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iter album details: %w", err)
+	}
+	return out, nil
+}
+
 // ListByOwner returns albums belonging to owner, paginated by limit /
 // offset and ordered by updated_at DESC, id ASC. ItemCount and Cover
 // are derived in the same statement.

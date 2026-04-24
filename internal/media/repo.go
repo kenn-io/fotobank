@@ -43,6 +43,16 @@ const mediaSelect = `SELECT
 	thumb_status, thumb_version, thumb_updated_at
 FROM media`
 
+// mediaColumnsQualified is the m-prefixed projection used when the
+// query joins a CTE that also has an `id` column. Keep column order
+// identical to mediaSelect so scanMedia works unchanged.
+const mediaColumnsQualified = `
+    m.id, m.owner_hub, m.owner_user_id, m.media_type, m.mime_type, m.path, m.original_filename,
+    m.imported_at, m.timestamp, m.size, m.checksum,
+    m.make, m.model, m.focal_length, m.shutter, m.width, m.height, m.iso, m.aperture,
+    m.duration_ms,
+    m.thumb_status, m.thumb_version, m.thumb_updated_at`
+
 const mediaInsert = `INSERT INTO media (
 	id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
 	imported_at, timestamp, size, checksum,
@@ -135,6 +145,47 @@ func (r *Repo) GetByOwnerPath(ctx context.Context, p owners.Principal, path stri
 		return Media{}, fmt.Errorf("get media by path: %w", err)
 	}
 	return m, nil
+}
+
+// GetByIDs returns media rows in the same order as ids. Missing ids are
+// silently dropped. Empty input returns (nil, nil) without querying.
+// Order preservation uses a VALUES-CTE carrying the caller-supplied
+// position; the CTE's `id` column collides with media.id so the SELECT
+// uses the m-prefixed projection.
+func (r *Repo) GetByIDs(ctx context.Context, ids []string) ([]Media, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	valRows := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids)*2)
+	for i, id := range ids {
+		valRows = append(valRows, "(?, ?)")
+		args = append(args, id, i)
+	}
+	q := `
+WITH ord(id, pos) AS (VALUES ` + strings.Join(valRows, ",") + `)
+SELECT ` + mediaColumnsQualified + `
+  FROM media m
+  JOIN ord ON ord.id = m.id
+ ORDER BY ord.pos
+`
+	rows, err := r.ro.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get media by ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]Media, 0, len(ids))
+	for rows.Next() {
+		m, err := scanMedia(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan media by id: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iter media by ids: %w", err)
+	}
+	return out, nil
 }
 
 const defaultListLimit = 1000

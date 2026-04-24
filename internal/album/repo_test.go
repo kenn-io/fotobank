@@ -596,6 +596,46 @@ func TestRepoDeleteTxNotFound(t *testing.T) {
 	r.ErrorIs(err, errs.ErrNotFound)
 }
 
+func TestAlbumGetDetailsByIDsPreservesOrder(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+
+	a := seedAlbum(t, repo, p, "A")
+	b := seedAlbum(t, repo, p, "B")
+	c := seedAlbum(t, repo, p, "C")
+
+	got, err := repo.GetDetailsByIDs(context.Background(), []string{b.ID, c.ID, a.ID})
+	r.NoError(err)
+	r.Len(got, 3)
+	r.Equal(b.ID, got[0].ID)
+	r.Equal(c.ID, got[1].ID)
+	r.Equal(a.ID, got[2].ID)
+}
+
+func TestAlbumGetDetailsByIDsSkipsMissing(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	a := seedAlbum(t, repo, p, "A")
+	got, err := repo.GetDetailsByIDs(context.Background(), []string{a.ID, "00000000-0000-0000-0000-000000000000"})
+	r.NoError(err)
+	r.Len(got, 1)
+	r.Equal(a.ID, got[0].ID)
+}
+
+func TestAlbumGetDetailsByIDsEmpty(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	got, err := repo.GetDetailsByIDs(context.Background(), nil)
+	require.NoError(t, err)
+	require.Empty(t, got)
+}
+
 func TestRepoListMediaImportedSort(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
