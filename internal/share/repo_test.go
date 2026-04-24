@@ -53,6 +53,25 @@ func seedMedia(t *testing.T, rw *sql.DB, p owners.Principal, checksum string) st
 	return m.ID
 }
 
+// seedMediaWithTimestamp inserts a media row with an explicit Timestamp
+// (the EXIF capture time; display_time = COALESCE(timestamp, imported_at)).
+// Used by ListSharedMediaIDs tests that need deterministic ordering.
+func seedMediaWithTimestamp(t *testing.T, d dbDB, p owners.Principal, ts time.Time) string {
+	t.Helper()
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	checksum := uuid.NewString()
+	m := media.Media{
+		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/" + checksum + ".jpg",
+		OriginalFilename: "x.jpg",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Timestamp:        &ts,
+		Size:             100, Checksum: checksum, ThumbStatus: "pending",
+	}
+	require.NoError(t, repo.Insert(context.Background(), m))
+	return m.ID
+}
+
 func TestRepoInsertAlbumLiveAndGet(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
@@ -1210,4 +1229,208 @@ func TestValidateHeaderScopesEmptyInputReturnsEmpty(t *testing.T) {
 		owners.Principal{Hub: "h", UserID: "bob"}, nil, time.Now())
 	r.NoError(err)
 	r.Empty(got)
+}
+
+func TestListSharedMediaIDsDedupesAndOrdersByDisplayTime(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	m1 := seedMediaWithTimestamp(t, d, alice, now.Add(-3*time.Hour))
+	m2 := seedMediaWithTimestamp(t, d, alice, now.Add(-2*time.Hour))
+	m3 := seedMediaWithTimestamp(t, d, alice, now.Add(-1*time.Hour))
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	// media_set {m1, m2} download=false
+	s1 := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2)
+	bumpActive(t, d, s1.UUID, now)
+	// overlapping media_set {m2, m3} download=true
+	s2 := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, true, m2, m3)
+	bumpActive(t, d, s2.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s1.UUID, s2.UUID})
+	r.NoError(err)
+
+	rows, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rows, 3)
+	r.Equal(m3, rows[0].MediaID) // newest first
+	r.Equal(m2, rows[1].MediaID)
+	r.Equal(m1, rows[2].MediaID)
+	r.True(rows[0].CanDownload)  // m3 via s2
+	r.True(rows[1].CanDownload)  // m2 via s2 OR'd across s1+s2
+	r.False(rows[2].CanDownload) // m1 via s1 only
+}
+
+func TestListSharedMediaIDsCursorPages(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	// Seed 5 media at descending timestamps. Index 0 is newest.
+	ids := make([]string, 5)
+	for i := range ids {
+		ids[i] = seedMediaWithTimestamp(t, d, alice, now.Add(-time.Duration(i+1)*time.Hour))
+	}
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, true, ids...)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	// Page 1: limit 2 — two newest.
+	page1, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{Limit: 2})
+	r.NoError(err)
+	r.Len(page1, 2)
+	r.Equal(ids[0], page1[0].MediaID)
+	r.Equal(ids[1], page1[1].MediaID)
+
+	// Page 2: cursor from last of page 1 — next two.
+	page2, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{
+			AfterDisplayTime: page1[1].DisplayTime,
+			AfterID:          page1[1].MediaID,
+			Limit:            2,
+		})
+	r.NoError(err)
+	r.Len(page2, 2)
+	r.Equal(ids[2], page2[0].MediaID)
+	r.Equal(ids[3], page2[1].MediaID)
+
+	// Page 3: cursor from last of page 2 — one remaining.
+	page3, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{
+			AfterDisplayTime: page2[1].DisplayTime,
+			AfterID:          page2[1].MediaID,
+			Limit:            2,
+		})
+	r.NoError(err)
+	r.Len(page3, 1)
+	r.Equal(ids[4], page3[0].MediaID)
+}
+
+func TestListSharedMediaIDsEmptyValidatedReturnsNil(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	rows, err := repo.ListSharedMediaIDs(context.Background(), nil,
+		owners.Principal{Hub: "h", UserID: "alice"}, "",
+		share.SharedMediaCursor{Limit: 10})
+	require.NoError(t, err)
+	require.Nil(t, rows)
+}
+
+func TestListSharedMediaIDsAlbumFilter(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	// Two albums under alice, each with one media row.
+	albumA, aMedia := seedAlbumWithMedia(t, d, alice, 1)
+	_, bMedia := seedAlbumWithMedia(t, d, alice, 1)
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	// album_live scope over album A.
+	sA := makeAlbumLiveScope(t, d, repo, alice, bob, albumA, nil, now, false)
+	bumpActive(t, d, sA.UUID, now)
+
+	// media_set scope covering album B's media (which is outside album A).
+	sB := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, bMedia[0])
+	bumpActive(t, d, sB.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob,
+		[]string{sA.UUID, sB.UUID})
+	r.NoError(err)
+
+	// albumID=albumA restricts to album A's member.
+	rowsA, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, albumA,
+		share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rowsA, 1)
+	r.Equal(aMedia[0], rowsA[0].MediaID)
+
+	// albumID="" returns both authorised media rows.
+	rowsAll, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rowsAll, 2)
+	gotIDs := []string{rowsAll[0].MediaID, rowsAll[1].MediaID}
+	r.ElementsMatch([]string{aMedia[0], bMedia[0]}, gotIDs)
+}
+
+func TestListSharedMediaIDsTieBreakOnId(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	ts := now.Add(-1 * time.Hour)
+	// Two media with identical display_time.
+	m1 := seedMediaWithTimestamp(t, d, alice, ts)
+	m2 := seedMediaWithTimestamp(t, d, alice, ts)
+	lo, hi := m1, m2
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	rows, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rows, 2)
+	// ORDER BY id ASC on equal display_time: lexicographically smaller first.
+	r.Equal(lo, rows[0].MediaID)
+	r.Equal(hi, rows[1].MediaID)
+
+	// Cursor from row[0] should advance to row[1].
+	page2, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{
+			AfterDisplayTime: rows[0].DisplayTime,
+			AfterID:          rows[0].MediaID,
+			Limit:            10,
+		})
+	r.NoError(err)
+	r.Len(page2, 1)
+	r.Equal(hi, page2[0].MediaID)
 }

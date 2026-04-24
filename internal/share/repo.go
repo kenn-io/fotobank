@@ -718,6 +718,136 @@ SELECT v.uuid, v.target_album_id, v.allow_download
 	return AccessDecision{Authorized: len(paths) > 0, Paths: paths}, nil
 }
 
+// SharedMediaRow is one row from ListSharedMediaIDs.
+type SharedMediaRow struct {
+	MediaID     string
+	DisplayTime time.Time
+	CanDownload bool
+}
+
+// SharedMediaCursor paginates ListSharedMediaIDs by (display_time, id).
+// Limit is clamped by the caller (service tier); the repo itself does
+// not enforce a cap. Limit <= 0 means "no LIMIT clause."
+type SharedMediaCursor struct {
+	AfterDisplayTime time.Time
+	AfterID          string
+	Limit            int
+}
+
+// ListSharedMediaIDs returns the deduped union of media visible via the
+// retained-owner validated slice. Rows are ordered display_time DESC,
+// id ASC (display_time = COALESCE(timestamp, imported_at)). can_download
+// is MAX(allow_download) across covering scopes. When albumID is
+// non-empty, the result is further restricted to album_media members of
+// that album. See spec §6.4 / §9.2.
+func (r *Repo) ListSharedMediaIDs(
+	ctx context.Context,
+	validated []Scope,
+	owner owners.Principal,
+	albumID string,
+	cursor SharedMediaCursor,
+) ([]SharedMediaRow, error) {
+	if len(validated) == 0 {
+		return nil, nil
+	}
+	valRows := make([]string, 0, len(validated))
+	args := make([]any, 0, len(validated)*4+8)
+	for _, s := range validated {
+		valRows = append(valRows, "(?, ?, ?, ?)")
+		var albumArg any
+		if s.TargetAlbumID != nil {
+			albumArg = *s.TargetAlbumID
+		}
+		args = append(args, s.UUID, string(s.TargetType), albumArg, boolToInt(s.AllowDownload))
+	}
+	args = append(args, owner.Hub, owner.UserID)
+
+	hasCursor := 0
+	if !cursor.AfterDisplayTime.IsZero() || cursor.AfterID != "" {
+		hasCursor = 1
+	}
+	args = append(args, hasCursor, cursor.AfterDisplayTime, cursor.AfterDisplayTime, cursor.AfterID)
+
+	albumPredicate := ""
+	if albumID != "" {
+		albumPredicate = ` AND EXISTS (
+            SELECT 1 FROM album_media am2
+             WHERE am2.album_id = ? AND am2.media_id = m.id
+        )`
+		args = append(args, albumID)
+	}
+
+	limitClause := ""
+	if cursor.Limit > 0 {
+		limitClause = " LIMIT ?"
+		args = append(args, cursor.Limit)
+	}
+
+	q := `
+WITH validated(uuid, target_type, target_album_id, allow_download) AS (
+    VALUES ` + strings.Join(valRows, ",") + `
+)
+SELECT m.id,
+       COALESCE(m.timestamp, m.imported_at) AS display_time,
+       MAX(covers.allow_download) AS can_download
+  FROM media m
+  JOIN (
+      SELECT sm.media_id AS media_id, v.allow_download
+        FROM scope_media sm
+        JOIN validated v ON v.uuid = sm.scope_uuid
+       WHERE v.target_type = 'media_set'
+      UNION ALL
+      SELECT am.media_id AS media_id, v.allow_download
+        FROM album_media am
+        JOIN validated v ON v.target_album_id = am.album_id
+       WHERE v.target_type = 'album_live'
+  ) covers ON covers.media_id = m.id
+ WHERE m.owner_hub = ? AND m.owner_user_id = ?
+   AND (
+         ? = 0
+      OR COALESCE(m.timestamp, m.imported_at) < ?
+      OR (COALESCE(m.timestamp, m.imported_at) = ? AND m.id > ?)
+       )` + albumPredicate + `
+ GROUP BY m.id
+ ORDER BY display_time DESC, m.id ASC` + limitClause
+
+	rows, err := r.ro.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list shared media ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]SharedMediaRow, 0, 32)
+	for rows.Next() {
+		var (
+			row         SharedMediaRow
+			displayTime string
+			allowInt    int
+		)
+		if err := rows.Scan(&row.MediaID, &displayTime, &allowInt); err != nil {
+			return nil, fmt.Errorf("scan shared media row: %w", err)
+		}
+		dt, perr := parseSQLiteTimeString(displayTime)
+		if perr != nil {
+			return nil, fmt.Errorf("parse display_time: %w", perr)
+		}
+		row.DisplayTime = dt
+		row.CanDownload = allowInt != 0
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// parseSQLiteTimeString parses the string representation modernc.org/sqlite
+// returns for COALESCE'd TIMESTAMP columns. The driver serializes time.Time
+// using Go's default Time.String() format, which is the layout below. When
+// the value passes through an expression (COALESCE, CASE, …) the driver
+// loses the TIMESTAMP affinity and returns the string unchanged rather than
+// re-parsing it, so a direct Scan into *time.Time fails — we parse it here.
+func parseSQLiteTimeString(s string) (time.Time, error) {
+	return time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", s)
+}
+
 // statusPlaceholders renders `IN (?,?,?)` argument tuples. Returns the
 // placeholder string and the []any args, both empty when the input is
 // empty. Used here by ListByOwner and in later tasks for filtered
