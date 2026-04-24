@@ -148,3 +148,257 @@ func toSharedScope(s share.Scope, itemCount int) SharedScope {
 		ItemCount:     itemCount,
 	}
 }
+
+// SharedAlbumCover is the minimum a shared client needs to render
+// /api/v1/shared/media/{id}/thumb. Cover existence implies a ready
+// thumb.
+type SharedAlbumCover struct {
+	MediaID      string
+	ThumbVersion int
+}
+
+// SharedAlbum is the grantee view of one album.
+type SharedAlbum struct {
+	ID          string
+	Name        string
+	Owner       owners.Principal
+	ItemCount   int
+	Cover       *SharedAlbumCover
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	CanDownload bool
+}
+
+// SharedAlbumDetail mirrors SharedAlbum for now; kept distinct so the
+// detail endpoint can add fields without widening the listing body.
+type SharedAlbumDetail struct {
+	SharedAlbum
+}
+
+// SharedMedia is the grantee view of one media row.
+type SharedMedia struct {
+	ID           string
+	Owner        owners.Principal
+	MediaType    media.Type
+	MimeType     string
+	DisplayTime  time.Time
+	Width        *int
+	Height       *int
+	DurationMs   *int64
+	ThumbStatus  string
+	ThumbVersion int
+	CanDownload  bool
+}
+
+// SharedMediaCursor paginates ListMedia / ListAlbumMedia.
+type SharedMediaCursor struct {
+	AfterDisplayTime time.Time
+	AfterID          string
+	Limit            int
+}
+
+const (
+	sharedMediaDefaultLimit = 100
+	sharedMediaMaxLimit     = 500
+)
+
+// clampSharedMediaLimit applies the default+max policy.
+func clampSharedMediaLimit(n int) int {
+	if n <= 0 {
+		return sharedMediaDefaultLimit
+	}
+	if n > sharedMediaMaxLimit {
+		return sharedMediaMaxLimit
+	}
+	return n
+}
+
+// ListAlbums returns distinct albums authorised by the album_live
+// subset of headerScopes.
+func (s *SharedReadService) ListAlbums(
+	ctx context.Context,
+	caller owners.Principal,
+	headerScopes []string,
+) ([]SharedAlbum, error) {
+	resolved, err := s.resolver.ResolveAll(ctx, caller, headerScopes)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.shares.ListSharedAlbumIDs(ctx, resolved.Validated, resolved.Owner)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	perm := make(map[string]bool, len(rows))
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		perm[row.AlbumID] = row.CanDownload
+		ids = append(ids, row.AlbumID)
+	}
+	details, err := s.albums.GetDetailsByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	// Sort details by updated_at DESC, id ASC for a stable listing order.
+	// time.Time.Compare returns +1 when the receiver is later, so
+	// b.UpdatedAt.Compare(a.UpdatedAt) returns +1 when b is later than a,
+	// i.e. puts the later row first (DESC).
+	slices.SortFunc(details, func(a, b album.AlbumListItem) int {
+		if c := b.UpdatedAt.Compare(a.UpdatedAt); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	out := make([]SharedAlbum, 0, len(details))
+	for _, a := range details {
+		out = append(out, toSharedAlbum(a, perm[a.ID]))
+	}
+	return out, nil
+}
+
+// GetAlbum returns album metadata iff a live album_live scope in
+// headerScopes points at albumID.
+func (s *SharedReadService) GetAlbum(
+	ctx context.Context,
+	caller owners.Principal,
+	headerScopes []string,
+	albumID string,
+) (SharedAlbumDetail, error) {
+	dec, err := s.resolver.CheckAlbumAccess(ctx, caller, headerScopes, albumID)
+	if err != nil {
+		return SharedAlbumDetail{}, err
+	}
+	if !dec.Authorized {
+		return SharedAlbumDetail{}, fmt.Errorf("%w: album id=%s", errs.ErrNotFound, albumID)
+	}
+	detail, err := s.albums.GetDetailByID(ctx, albumID)
+	if err != nil {
+		return SharedAlbumDetail{}, err
+	}
+	return SharedAlbumDetail{SharedAlbum: toSharedAlbum(detail, dec.CanDownload())}, nil
+}
+
+// ListAlbumMedia returns one page of an album's media, honouring the
+// album's AccessDecision for CanDownload and the per-media OR with any
+// covering media_set scopes.
+//
+// Note: CheckAlbumAccess and ResolveAll each run the resolver's
+// validateAndRetain path, so a multi-owner presentation logs the spec
+// §6.1 warn twice. Acceptable for this rare error case.
+func (s *SharedReadService) ListAlbumMedia(
+	ctx context.Context,
+	caller owners.Principal,
+	headerScopes []string,
+	albumID string,
+	cursor SharedMediaCursor,
+) ([]SharedMedia, SharedMediaCursor, error) {
+	dec, err := s.resolver.CheckAlbumAccess(ctx, caller, headerScopes, albumID)
+	if err != nil {
+		return nil, SharedMediaCursor{}, err
+	}
+	if !dec.Authorized {
+		return nil, SharedMediaCursor{}, fmt.Errorf("%w: album id=%s", errs.ErrNotFound, albumID)
+	}
+	resolved, err := s.resolver.ResolveAll(ctx, caller, headerScopes)
+	if err != nil {
+		return nil, SharedMediaCursor{}, err
+	}
+	limit := clampSharedMediaLimit(cursor.Limit)
+	repoRows, err := s.shares.ListSharedMediaIDs(ctx, resolved.Validated, resolved.Owner, albumID,
+		share.SharedMediaCursor{
+			AfterDisplayTime: cursor.AfterDisplayTime,
+			AfterID:          cursor.AfterID,
+			Limit:            limit + 1,
+		})
+	if err != nil {
+		return nil, SharedMediaCursor{}, err
+	}
+	page, next := pageSharedMediaRows(repoRows, limit)
+	medias, err := s.fetchSharedMediaByRows(ctx, page)
+	if err != nil {
+		return nil, SharedMediaCursor{}, err
+	}
+	return medias, next, nil
+}
+
+// pageSharedMediaRows splits repo rows into (page, next-cursor) using
+// the limit+1 convention.
+func pageSharedMediaRows(rows []share.SharedMediaRow, limit int) ([]share.SharedMediaRow, SharedMediaCursor) {
+	if len(rows) <= limit {
+		return rows, SharedMediaCursor{}
+	}
+	last := rows[limit-1]
+	return rows[:limit], SharedMediaCursor{
+		AfterDisplayTime: last.DisplayTime,
+		AfterID:          last.MediaID,
+		Limit:            limit,
+	}
+}
+
+// fetchSharedMediaByRows expands the repo rows into SharedMedia,
+// preserving the input order and carrying the per-row CanDownload.
+func (s *SharedReadService) fetchSharedMediaByRows(ctx context.Context, rows []share.SharedMediaRow) ([]SharedMedia, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(rows))
+	can := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.MediaID)
+		can[row.MediaID] = row.CanDownload
+	}
+	mediaRows, err := s.media.GetByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SharedMedia, 0, len(mediaRows))
+	for _, m := range mediaRows {
+		out = append(out, toSharedMedia(m, can[m.ID]))
+	}
+	return out, nil
+}
+
+// toSharedAlbum projects album.AlbumListItem + can_download into the
+// shared view. ItemCount and Cover come straight from the detail row.
+func toSharedAlbum(a album.AlbumListItem, canDownload bool) SharedAlbum {
+	out := SharedAlbum{
+		ID:          a.ID,
+		Name:        a.Name,
+		Owner:       a.Owner,
+		ItemCount:   a.ItemCount,
+		CreatedAt:   a.CreatedAt,
+		UpdatedAt:   a.UpdatedAt,
+		CanDownload: canDownload,
+	}
+	if a.Cover != nil {
+		out.Cover = &SharedAlbumCover{
+			MediaID:      a.Cover.MediaID,
+			ThumbVersion: a.Cover.ThumbVersion,
+		}
+	}
+	return out
+}
+
+// toSharedMedia projects media.Media + can_download into the grantee
+// view. display_time = COALESCE(timestamp, imported_at).
+func toSharedMedia(m media.Media, canDownload bool) SharedMedia {
+	display := m.ImportedAt
+	if m.Timestamp != nil {
+		display = *m.Timestamp
+	}
+	return SharedMedia{
+		ID:           m.ID,
+		Owner:        m.Owner,
+		MediaType:    m.Type,
+		MimeType:     m.MimeType,
+		DisplayTime:  display,
+		Width:        m.Width,
+		Height:       m.Height,
+		DurationMs:   m.DurationMs,
+		ThumbStatus:  m.ThumbStatus,
+		ThumbVersion: m.ThumbVersion,
+		CanDownload:  canDownload,
+	}
+}

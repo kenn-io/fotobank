@@ -230,3 +230,96 @@ func TestSharedReadGetScopeAlbumLiveItemCount(t *testing.T) {
 	r.Equal(3, got.ItemCount)
 	r.Empty(got.MediaIDs, "album_live should not expose frozen media_ids")
 }
+
+// sharedSeedAlbumWithMediaTimestamped seeds n media with distinct
+// timestamps descending from baseTime (so display_time ordering is
+// deterministic for pagination tests). Returns (albumID, mediaIDs in
+// baseTime-descending order).
+func sharedSeedAlbumWithMediaTimestamped(t *testing.T, rw *sql.DB, owner owners.Principal, baseTime time.Time, n int) (string, []string) {
+	t.Helper()
+	now := time.Now().UTC()
+	albumID := uuid.NewString()
+	_, err := rw.ExecContext(context.Background(),
+		`INSERT INTO albums(id, owner_hub, owner_user_id, name, created_at, updated_at) VALUES(?,?,?,?,?,?)`,
+		albumID, owner.Hub, owner.UserID, "t", now, now)
+	require.NoError(t, err)
+	mRepo := media.NewRepo(rw, rw)
+	mediaIDs := make([]string, 0, n)
+	for i := range n {
+		ts := baseTime.Add(-time.Duration(i) * time.Minute) // newest first
+		cs := uuid.NewString()
+		id := uuid.NewString()
+		require.NoError(t, mRepo.Insert(context.Background(), media.Media{
+			ID: id, Owner: owner, Type: media.TypePhoto,
+			MimeType: "image/jpeg", Path: "2024/" + cs + ".jpg",
+			OriginalFilename: "x.jpg",
+			ImportedAt:       now, Timestamp: &ts,
+			Size: 100, Checksum: cs, ThumbStatus: "pending",
+		}))
+		_, err := rw.ExecContext(context.Background(),
+			`INSERT INTO album_media(album_id, media_id, added_at) VALUES(?,?,?)`,
+			albumID, id, now)
+		require.NoError(t, err)
+		mediaIDs = append(mediaIDs, id)
+	}
+	return albumID, mediaIDs
+}
+
+func TestSharedReadListAlbumsReturnsAlbumLiveOnly(t *testing.T) {
+	r := require.New(t)
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+
+	albumID, mediaIDs := sharedSeedAlbumWithMedia(t, fx.db.WriteDB(), alice, 2)
+	live := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now)
+	sharedBumpActive(t, fx.db.WriteDB(), live.UUID, fx.now)
+	// media_set over same media must not surface as an album
+	ms := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, mediaIDs...)
+	sharedBumpActive(t, fx.db.WriteDB(), ms.UUID, fx.now)
+
+	got, err := fx.svc.ListAlbums(context.Background(), bob,
+		[]string{live.UUID, ms.UUID})
+	r.NoError(err)
+	r.Len(got, 1)
+	r.Equal(albumID, got[0].ID)
+	r.Equal(2, got[0].ItemCount)
+}
+
+func TestSharedReadGetAlbumUnauthorizedReturns404(t *testing.T) {
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	albumID, _ := sharedSeedAlbumWithMedia(t, fx.db.WriteDB(), alice, 1)
+	_, err := fx.svc.GetAlbum(context.Background(), bob, nil, albumID)
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}
+
+func TestSharedReadListAlbumMediaPaginates(t *testing.T) {
+	r := require.New(t)
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	albumID, _ := sharedSeedAlbumWithMediaTimestamped(t, fx.db.WriteDB(), alice, fx.now, 3)
+	live := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now)
+	sharedBumpActive(t, fx.db.WriteDB(), live.UUID, fx.now)
+
+	page, nextCursor, err := fx.svc.ListAlbumMedia(context.Background(),
+		bob, []string{live.UUID}, albumID,
+		service.SharedMediaCursor{Limit: 2})
+	r.NoError(err)
+	r.Len(page, 2)
+	r.NotEmpty(nextCursor.AfterID)
+
+	page2, nextCursor2, err := fx.svc.ListAlbumMedia(context.Background(),
+		bob, []string{live.UUID}, albumID, nextCursor)
+	r.NoError(err)
+	r.Len(page2, 1)
+	r.Empty(nextCursor2.AfterID) // exhausted
+}
