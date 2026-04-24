@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -210,9 +211,11 @@ func (s *ShareService) Revoke(ctx context.Context, uuidStr string, caller owners
 // ScopePreview is the materialised view PreviewScope returns. Media is
 // the frozen membership for media_set and the live album_media order
 // for album_live. Album is non-nil iff the scope's target_type is
-// album_live.
+// album_live. MediaIDs mirrors the existing /api/v1/shares/{uuid}
+// detail shape — populated for media_set, empty for album_live.
 type ScopePreview struct {
 	Scope    share.Scope
+	MediaIDs []string
 	Media    []PreviewMedia
 	Album    *share.AlbumSummary
 	Warnings []string
@@ -249,6 +252,11 @@ func (s *ShareService) PreviewScope(ctx context.Context, uuid string, caller own
 		return ScopePreview{}, err
 	}
 	out := ScopePreview{Scope: exp.Scope, Album: exp.Album}
+	// Only media_set carries the frozen MediaIDs on the detail shape —
+	// album_live's membership is live and exposed via Media[].
+	if exp.Scope.TargetType == share.TargetMediaSet {
+		out.MediaIDs = slices.Clone(exp.MediaIDs)
+	}
 	out.Media = make([]PreviewMedia, 0, len(mediaRows))
 	for _, m := range mediaRows {
 		display := m.ImportedAt

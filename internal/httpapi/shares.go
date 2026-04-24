@@ -389,8 +389,10 @@ func registerSharesPreview(api huma.API, svc *service.ShareService) {
 }
 
 func toPreviewShareDTO(p service.ScopePreview) previewShareDTO {
+	scopeDTO := toScopeDTO(p.Scope)
+	scopeDTO.MediaIDs = p.MediaIDs
 	out := previewShareDTO{
-		Scope:    toScopeDTO(p.Scope),
+		Scope:    scopeDTO,
 		Warnings: p.Warnings,
 	}
 	out.Media = make([]previewMediaDTO, 0, len(p.Media))

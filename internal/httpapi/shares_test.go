@@ -353,6 +353,46 @@ func TestSharesPreviewHappyPath(t *testing.T) {
 	r.Contains(resp.Warnings, "broker_not_active")
 }
 
+func TestSharesPreviewMediaSetExposesFrozenMediaIDs(t *testing.T) {
+	r := require.New(t)
+	fx := newSharesHTTPFixture(t)
+	// Seed two media rows so we can build a media_set scope over them.
+	m1 := media.Media{
+		ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
+		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
+		Size: 100, Checksum: "cs1-" + uuid.NewString(), ThumbStatus: "pending",
+	}
+	m2 := m1
+	m2.ID = uuid.NewString()
+	m2.Path = "2024/" + uuid.NewString() + ".jpg"
+	m2.Checksum = "cs2-" + uuid.NewString()
+	r.NoError(fx.media.Insert(context.Background(), m1))
+	r.NoError(fx.media.Insert(context.Background(), m2))
+
+	s, err := fx.shares.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "alice"}, TargetType: share.TargetMediaSet,
+		MediaIDs: []string{m1.ID, m2.ID},
+	}, fx.owner)
+	r.NoError(err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares/"+s.UUID+"/preview", nil)
+	rec := httptest.NewRecorder()
+	fx.h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp struct {
+		Scope struct {
+			UUID     string   `json:"uuid"`
+			MediaIDs []string `json:"media_ids"`
+		} `json:"scope"`
+	}
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &resp))
+	r.Equal(s.UUID, resp.Scope.UUID)
+	r.ElementsMatch([]string{m1.ID, m2.ID}, resp.Scope.MediaIDs,
+		"media_set preview must carry frozen media_ids to match /shares/{uuid} detail")
+}
+
 func TestSharesPreviewCrossOwnerReturns404(t *testing.T) {
 	r := require.New(t)
 	fx := newSharesHTTPFixture(t)

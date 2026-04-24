@@ -490,6 +490,23 @@ func TestPreviewScopeMediaSetPopulatesFrozenMedia(t *testing.T) {
 	r.Len(prev.Media, 2)
 	gotIDs := []string{prev.Media[0].ID, prev.Media[1].ID}
 	r.ElementsMatch([]string{m1, m2}, gotIDs)
+	// Matches /api/v1/shares/{uuid} detail shape: media_set previews
+	// surface the frozen MediaIDs; album_live previews leave it empty.
+	r.ElementsMatch([]string{m1, m2}, prev.MediaIDs)
+}
+
+func TestPreviewScopeAlbumLiveOmitsFrozenMediaIDs(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 2)
+	s, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "bob"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	prev, err := fx.svc.PreviewScope(context.Background(), s.UUID, fx.owner)
+	r.NoError(err)
+	r.Empty(prev.MediaIDs, "album_live previews must not surface a frozen MediaIDs list")
 }
 
 func TestPreviewScopeCrossOwnerReturnsNotFound(t *testing.T) {
