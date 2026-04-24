@@ -681,7 +681,10 @@ the slice down to that owner's scopes (§6.1). Call that filtered
 slice `retained`.
 
 **Pass 2 — coverage check.** Parameterised by `retained` as a
-VALUES-CTE and the retained owner:
+VALUES-CTE and the retained owner. If `retained` is empty, skip
+pass 2 entirely and return `AccessDecision{Authorized: false}` —
+a literal empty `VALUES (...)` list is invalid SQL on SQLite, and
+the empty case is trivially unauthorized by construction.
 
 ```
 WITH validated(uuid, owner_hub, owner_user_id, target_type,
@@ -708,9 +711,25 @@ WHERE v.owner_hub = ? AND v.owner_user_id = ?  -- retained owner
 The retained-owner predicate is redundant with the VALUES-CTE
 when the Go filter is correct, but we include it as a belt-and-
 braces guard so a bug in the degradation code cannot leak a
-dropped-owner scope at the DB layer. `CheckAlbumAccess` follows
-the same two-pass shape, substituting the album_live EXISTS
-branch as the sole coverage predicate.
+dropped-owner scope at the DB layer.
+
+`CheckAlbumAccess` (album_live only; §6.3 consumers) uses the
+same VALUES-CTE shell and short-circuit rule, but swaps the
+coverage predicate for a direct album-target match:
+
+```
+SELECT v.uuid, v.target_type, v.target_album_id, v.allow_download
+FROM validated v
+WHERE v.owner_hub = ? AND v.owner_user_id = ?
+  AND v.target_type = 'album_live'
+  AND v.target_album_id = ?
+```
+
+This authorizes the shared album itself rather than media-item
+coverage, so an empty album_live scope still yields an
+authorized `AccessDecision` (the grantee is allowed to see an
+empty album page, they just have nothing to list). `media_id` is
+not an input to `CheckAlbumAccess`.
 
 Each surviving row becomes an `AccessPath`. Empty result set →
 `AccessDecision{Authorized: false}`.

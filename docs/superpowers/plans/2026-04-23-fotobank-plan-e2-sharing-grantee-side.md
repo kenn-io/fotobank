@@ -1760,10 +1760,21 @@ Expected: FAIL.
 Append to `internal/media/repo.go`:
 
 ```go
+// mediaColumnsQualified is the m-prefixed projection used when the
+// query joins a CTE that also has an `id` column. Keep column order
+// identical to mediaSelect so scanMedia works unchanged.
+const mediaColumnsQualified = `
+    m.id, m.owner_hub, m.owner_user_id, m.media_type, m.mime_type, m.path, m.original_filename,
+    m.imported_at, m.timestamp, m.size, m.checksum,
+    m.make, m.model, m.focal_length, m.shutter, m.width, m.height, m.iso, m.aperture,
+    m.duration_ms,
+    m.thumb_status, m.thumb_version, m.thumb_updated_at`
+
 // GetByIDs returns media rows in the same order as ids. Missing ids are
 // silently dropped from the result. Empty input returns (nil, nil)
 // without querying. Order preservation uses a VALUES-CTE that carries
-// the caller-supplied position.
+// the caller-supplied position; the CTE's `id` column name collides with
+// media.id, so the SELECT uses the m-prefixed projection.
 func (r *Repo) GetByIDs(ctx context.Context, ids []string) ([]Media, error) {
     if len(ids) == 0 {
         return nil, nil
@@ -1776,7 +1787,7 @@ func (r *Repo) GetByIDs(ctx context.Context, ids []string) ([]Media, error) {
     }
     q := `
 WITH ord(id, pos) AS (VALUES ` + strings.Join(valRows, ",") + `)
-SELECT ` + mediaColumns + `
+SELECT ` + mediaColumnsQualified + `
   FROM media m
   JOIN ord ON ord.id = m.id
  ORDER BY ord.pos
@@ -1798,7 +1809,8 @@ SELECT ` + mediaColumns + `
 }
 ```
 
-If `mediaColumns` is not already a package constant, extract the column list used by `scanMedia` into one. Keep it adjacent to `scanMedia` for readability.
+Keep `mediaColumnsQualified` adjacent to `mediaSelect` so a schema change
+to either reminds the maintainer to mirror the other.
 
 - [ ] **Step 4: Implement `album.Repo.GetDetailsByIDs`**
 
@@ -2322,6 +2334,31 @@ func TestSharedReadGetScopeRevokedReturnsNotFound(t *testing.T) {
         []string{live.UUID}, live.UUID)
     require.ErrorIs(t, err, errs.ErrNotFound)
 }
+
+// album_live scopes don't freeze media in scope_media; item_count
+// must come from the live album membership via
+// share.Repo.CountSharedMediaByScope. Regression guard against
+// using len(detail.MediaIDs) for album_live.
+func TestSharedReadGetScopeAlbumLiveItemCount(t *testing.T) {
+    r := require.New(t)
+    fx := newSharedReadFixture(t)
+    seedOwner(t, fx.db, "h", "alice")
+    seedOwner(t, fx.db, "h", "bob")
+
+    album, mediaIDs := seedAlbumWithMedia(t, fx.db, "h/alice", 3)
+    live := makeAlbumLiveScope(t, fx.db, "h/alice", "h/bob", fx.now, album)
+    bumpActive(t, fx.db, live.UUID, fx.now)
+
+    got, err := fx.svc.GetScope(context.Background(),
+        owners.Principal{Hub: "h", UserID: "bob"},
+        []string{live.UUID}, live.UUID)
+    r.NoError(err)
+    r.Equal(live.UUID, got.UUID)
+    r.Equal(share.TargetAlbumLive, got.TargetType)
+    r.Equal(3, got.ItemCount)
+    r.Empty(got.MediaIDs, "album_live should not expose frozen media_ids")
+    _ = mediaIDs
+}
 ```
 
 `testutil.NewMemStore` is the in-memory `storage.Store` double; if it does not yet exist, add it to `internal/testutil` as a minimal map-backed implementation of the four Store methods. (Plan C established the pattern.)
@@ -2468,7 +2505,15 @@ func (s *SharedReadService) GetScope(
     if err != nil {
         return SharedScopeDetail{}, err
     }
-    out := SharedScopeDetail{SharedScope: toSharedScope(*match, len(detail.MediaIDs))}
+    // detail.MediaIDs is only populated for TargetMediaSet (the
+    // frozen-at-mint set). For TargetAlbumLive, GetByUUID returns
+    // an empty MediaIDs slice, so item_count is computed via the
+    // scope_media / album_media coverage counter introduced in T6.
+    count, err := s.shares.CountSharedMediaByScope(ctx, uuid)
+    if err != nil {
+        return SharedScopeDetail{}, err
+    }
+    out := SharedScopeDetail{SharedScope: toSharedScope(*match, count)}
     if match.TargetType == share.TargetMediaSet {
         out.MediaIDs = append([]string(nil), detail.MediaIDs...)
     }
@@ -3080,6 +3125,24 @@ func TestWriteOriginalResponseUnsatisfiableRange(t *testing.T) {
     })
     require.Equal(t, http.StatusRequestedRangeNotSatisfiable, w.Result().StatusCode)
 }
+
+// Malformed Range syntax must also map to 416, not 400. The owner
+// path's existing handler rejects any invalid single-range request
+// uniformly with 416; E2 preserves that contract on the extracted
+// helper so owner/shared routes stay byte-identical.
+func TestWriteOriginalResponseMalformedRange(t *testing.T) {
+    req := httptest.NewRequest(http.MethodGet, "/x", nil)
+    req.Header.Set("Range", "not-a-range")
+    w := httptest.NewRecorder()
+    m := media.Media{Size: 10, MimeType: "text/plain", ImportedAt: time.Now().UTC()}
+    writeOriginalResponse(w, req, m, func(off, length int64) (io.ReadCloser, error) {
+        t.Fatal("open must not be called on malformed range")
+        return nil, nil
+    })
+    res := w.Result()
+    require.Equal(t, http.StatusRequestedRangeNotSatisfiable, res.StatusCode)
+    require.Equal(t, "bytes */10", res.Header.Get("Content-Range"))
+}
 ```
 
 Create `internal/httpapi/thumbs_test.go`:
@@ -3156,14 +3219,15 @@ func writeOriginalResponse(
     h.Set("Accept-Ranges", "bytes")
 
     offset, length, partial, err := parseRangeHeader(r.Header.Get("Range"), size)
-    if errors.Is(err, errRangeUnsatisfiable) {
+    if err != nil {
+        // Preserve the existing owner contract: any malformed or
+        // unsatisfiable single-range request returns 416 with a
+        // Content-Range: bytes */SIZE hint. Emitting 400 here would
+        // diverge the shared byte route from the owner byte route and
+        // break the "byte-identical" invariant the spec pins.
         h.Set("Content-Range", fmt.Sprintf("bytes */%d", size))
         http.Error(w, http.StatusText(http.StatusRequestedRangeNotSatisfiable),
             http.StatusRequestedRangeNotSatisfiable)
-        return
-    }
-    if err != nil {
-        http.Error(w, "bad range", http.StatusBadRequest)
         return
     }
 
@@ -3199,9 +3263,12 @@ var errRangeUnsatisfiable = errors.New("range unsatisfiable")
 //   bytes=START-END
 //   bytes=START-
 //   bytes=-SUFFIX
-// length == -1 means "to EOF" for the open closure. A Range header
-// outside [0, size) returns errRangeUnsatisfiable; other malformed
-// inputs return a generic error (mapped to 400).
+// length == -1 means "to EOF" for the open closure. Any non-nil error
+// (malformed syntax, unsupported range unit, multi-range, or out-of-
+// bounds) is treated uniformly by the caller as unsatisfiable and
+// produces 416. errRangeUnsatisfiable is kept as a named sentinel for
+// future callers that want to distinguish malformed from unsatisfiable,
+// but writeOriginalResponse intentionally does not branch on it.
 func parseRangeHeader(raw string, size int64) (offset, length int64, partial bool, err error) {
     raw = strings.TrimSpace(raw)
     if raw == "" {
@@ -3486,13 +3553,20 @@ func (s *SharedReadService) OpenThumb(
     key := thumb.ThumbKey(mediaID, version, size)
     rc, err := s.storage.ReadRange(ctx, m.Owner, key, 0, -1)
     if err != nil {
+        // Mirror ThumbService.Get: a missing cached blob is a 404 for
+        // the grantee, not a 500. Storage can surface either
+        // errs.ErrNotFound (already-wrapped by the tier) or a raw
+        // os.ErrNotExist depending on backend; translate both.
+        if errors.Is(err, errs.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
+            return nil, media.Media{}, fmt.Errorf("%w: media id=%s thumb blob missing", errs.ErrNotFound, mediaID)
+        }
         return nil, media.Media{}, err
     }
     return rc, m, nil
 }
 ```
 
-Imports to add: `"io"`, `"github.com/wesm/fotobank/internal/thumb"`.
+Imports to add: `"errors"`, `"io"`, `"os"`, `"github.com/wesm/fotobank/internal/thumb"`.
 
 - [ ] **Step 4: Run — expect PASS**
 
@@ -4209,8 +4283,12 @@ func sharedThumbHandler(svc *service.SharedReadService) http.Handler {
         if m.ThumbUpdatedAt != nil {
             h.Set("Last-Modified", m.ThumbUpdatedAt.UTC().Format(http.TimeFormat))
         }
-        h.Set("Cache-Control", "private, max-age=31536000, immutable")
-        h.Set("Vary", "X-Auth-Scopes")
+        // Grantee authorisation depends on headers (X-Auth-Scopes, grantee
+        // identity) that are not reliably part of the browser/proxy cache
+        // key. Use no-store on shared byte routes so a cached response
+        // cannot serve another grantee. ETag is still emitted for
+        // revalidation within a single session.
+        h.Set("Cache-Control", "no-store")
         h.Set("Content-Type", "image/jpeg")
 
         if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" && etagMatches(ifNoneMatch, etag) {
@@ -4259,8 +4337,9 @@ func sharedOriginalHandler(svc *service.SharedReadService) http.Handler {
         h := w.Header()
         h.Set("ETag", etag)
         h.Set("Last-Modified", m.DisplayTime.UTC().Format(http.TimeFormat))
-        h.Set("Cache-Control", "private, max-age=31536000, immutable")
-        h.Set("Vary", "X-Auth-Scopes")
+        // no-store on shared byte routes (see thumb handler rationale).
+        h.Set("Cache-Control", "no-store")
+        h.Set("Accept-Ranges", "bytes")
         h.Set("Content-Type", m.MimeType)
 
         if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" && etagMatches(ifNoneMatch, etag) {
