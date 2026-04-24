@@ -3,7 +3,10 @@ package service
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"slices"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/storage"
+	"github.com/wesm/fotobank/internal/thumb"
 )
 
 // SharedReadService is the auth boundary for every /api/v1/shared/*
@@ -457,4 +461,81 @@ func (s *SharedReadService) GetMedia(
 		return SharedMedia{}, err
 	}
 	return toSharedMedia(m, dec.CanDownload()), nil
+}
+
+// OpenOriginal returns the storage reader for the full-resolution
+// bytes, gated by CheckMediaAccess *and* CanDownload. Returns
+// errs.ErrPermissionDenied when access exists but download is
+// disallowed, errs.ErrNotFound otherwise. offset/length are forwarded
+// verbatim to storage.Store.ReadRange; length == -1 means "to EOF".
+func (s *SharedReadService) OpenOriginal(
+	ctx context.Context,
+	caller owners.Principal,
+	headerScopes []string,
+	mediaID string,
+	offset, length int64,
+) (io.ReadCloser, media.Media, error) {
+	dec, err := s.resolver.CheckMediaAccess(ctx, caller, headerScopes, mediaID)
+	if err != nil {
+		return nil, media.Media{}, err
+	}
+	if !dec.Authorized {
+		return nil, media.Media{}, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, mediaID)
+	}
+	if !dec.CanDownload() {
+		return nil, media.Media{}, fmt.Errorf("%w: media id=%s download disabled", errs.ErrPermissionDenied, mediaID)
+	}
+	m, err := s.media.GetByID(ctx, mediaID)
+	if err != nil {
+		return nil, media.Media{}, err
+	}
+	rc, err := s.storage.ReadRange(ctx, m.Owner, m.Path, offset, length)
+	if err != nil {
+		return nil, media.Media{}, fmt.Errorf("read shared original: %w", err)
+	}
+	return rc, m, nil
+}
+
+// OpenThumb returns the cached thumb bytes, gated only by
+// CheckMediaAccess (thumbs ignore allow_download). The media row comes
+// back alongside the reader so the handler can derive ETag without a
+// second repo round-trip. Returns errs.ErrNotFound for any of: no
+// access, thumb not ready, version mismatch, or missing blob.
+func (s *SharedReadService) OpenThumb(
+	ctx context.Context,
+	caller owners.Principal,
+	headerScopes []string,
+	mediaID string, size thumb.Size, version int,
+) (io.ReadCloser, media.Media, error) {
+	dec, err := s.resolver.CheckMediaAccess(ctx, caller, headerScopes, mediaID)
+	if err != nil {
+		return nil, media.Media{}, err
+	}
+	if !dec.Authorized {
+		return nil, media.Media{}, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, mediaID)
+	}
+	m, err := s.media.GetByID(ctx, mediaID)
+	if err != nil {
+		return nil, media.Media{}, err
+	}
+	if m.ThumbStatus != "ready" {
+		return nil, media.Media{}, fmt.Errorf("%w: media id=%s thumb not ready", errs.ErrNotFound, mediaID)
+	}
+	if m.ThumbVersion != version {
+		return nil, media.Media{}, fmt.Errorf("%w: media id=%s thumb version mismatch (want %d have %d)",
+			errs.ErrNotFound, mediaID, version, m.ThumbVersion)
+	}
+	key := thumb.ThumbKey(mediaID, version, size)
+	rc, err := s.storage.ReadRange(ctx, m.Owner, key, 0, -1)
+	if err != nil {
+		// Mirror ThumbService.Get: a missing cached blob is a 404 for
+		// the grantee, not a 500. NAS backends surface os.ErrNotExist
+		// via *PathError; future tiered backends may wrap as
+		// errs.ErrNotFound directly.
+		if errors.Is(err, errs.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
+			return nil, media.Media{}, fmt.Errorf("%w: media id=%s thumb blob missing", errs.ErrNotFound, mediaID)
+		}
+		return nil, media.Media{}, fmt.Errorf("read shared thumb: %w", err)
+	}
+	return rc, m, nil
 }

@@ -1,8 +1,10 @@
 package service_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"io"
 	"testing"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/storage"
 	"github.com/wesm/fotobank/internal/testutil"
+	"github.com/wesm/fotobank/internal/thumb"
 )
 
 type sharedReadFixture struct {
@@ -468,4 +471,188 @@ func TestSharedReadGetMediaAuthorizedSetsCanDownload(t *testing.T) {
 	r.NoError(err)
 	r.Equal(m, got.ID)
 	r.True(got.CanDownload)
+}
+
+// sharedSeedStoredMedia inserts a media row owned by p and writes the
+// given body into the fixture's storage at the row's path. Returns the
+// media ID and body for convenience.
+func sharedSeedStoredMedia(t *testing.T, fx sharedReadFixture, p owners.Principal, body string) (string, string) {
+	t.Helper()
+	cs := uuid.NewString()
+	path := "2024/" + cs + ".jpg"
+	m := media.Media{
+		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: path,
+		OriginalFilename: "x.jpg",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Size:             int64(len(body)), Checksum: cs, ThumbStatus: "pending",
+	}
+	require.NoError(t, fx.mediaR.Insert(context.Background(), m))
+	_, err := fx.store.Write(context.Background(), p, path, bytes.NewReader([]byte(body)))
+	require.NoError(t, err)
+	return m.ID, body
+}
+
+// sharedSeedMediaWithReadyThumb seeds a media row with thumb_status='ready'
+// and writes the thumb bytes into the fixture's storage at the computed
+// thumb.ThumbKey. Returns (mediaID, thumbVersion).
+func sharedSeedMediaWithReadyThumb(t *testing.T, fx sharedReadFixture, p owners.Principal, body string) (string, int) {
+	t.Helper()
+	cs := uuid.NewString()
+	version := 1
+	updatedAt := time.Now().UTC().Truncate(time.Second)
+	m := media.Media{
+		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/" + cs + ".jpg",
+		OriginalFilename: "x.jpg",
+		ImportedAt:       updatedAt,
+		Size:             100, Checksum: cs,
+		ThumbStatus:    "pending",
+		ThumbVersion:   version,
+		ThumbUpdatedAt: nil,
+	}
+	require.NoError(t, fx.mediaR.Insert(context.Background(), m))
+	_, err := fx.db.WriteDB().ExecContext(context.Background(),
+		`UPDATE media SET thumb_status='ready', thumb_updated_at=? WHERE id=?`,
+		updatedAt, m.ID)
+	require.NoError(t, err)
+	key := thumb.ThumbKey(m.ID, version, thumb.SizeGrid)
+	_, err = fx.store.Write(context.Background(), p, key, bytes.NewReader([]byte(body)))
+	require.NoError(t, err)
+	return m.ID, version
+}
+
+func TestSharedReadOpenOriginalAuthorizedWithDownload(t *testing.T) {
+	r := require.New(t)
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+
+	mID, body := sharedSeedStoredMedia(t, fx, alice, "hello")
+	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, true, mID)
+	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
+
+	rc, row, err := fx.svc.OpenOriginal(context.Background(),
+		bob, []string{s.UUID}, mID, 0, -1)
+	r.NoError(err)
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	r.NoError(err)
+	r.Equal(body, string(got))
+	r.Equal(mID, row.ID)
+}
+
+func TestSharedReadOpenOriginalAuthorizedWithoutDownloadReturnsForbidden(t *testing.T) {
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	mID, _ := sharedSeedStoredMedia(t, fx, alice, "hello")
+	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, mID)
+	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
+
+	_, _, err := fx.svc.OpenOriginal(context.Background(),
+		bob, []string{s.UUID}, mID, 0, -1)
+	require.ErrorIs(t, err, errs.ErrPermissionDenied)
+}
+
+func TestSharedReadOpenOriginalUnauthorizedReturnsNotFound(t *testing.T) {
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	mID, _ := sharedSeedStoredMedia(t, fx, alice, "hello")
+	_, _, err := fx.svc.OpenOriginal(context.Background(),
+		bob, nil, mID, 0, -1)
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}
+
+func TestSharedReadOpenOriginalRange(t *testing.T) {
+	r := require.New(t)
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	mID, _ := sharedSeedStoredMedia(t, fx, alice, "0123456789")
+	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, true, mID)
+	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
+
+	rc, _, err := fx.svc.OpenOriginal(context.Background(),
+		bob, []string{s.UUID}, mID, 2, 3)
+	r.NoError(err)
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	r.NoError(err)
+	r.Equal("234", string(got))
+}
+
+func TestSharedReadOpenThumbAuthorizedIgnoresDownload(t *testing.T) {
+	r := require.New(t)
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	mID, version := sharedSeedMediaWithReadyThumb(t, fx, alice, "jpegbytes")
+	// download=false on the scope — thumb must still be served.
+	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, mID)
+	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
+
+	rc, row, err := fx.svc.OpenThumb(context.Background(),
+		bob, []string{s.UUID}, mID, thumb.SizeGrid, version)
+	r.NoError(err)
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	r.NoError(err)
+	r.Equal("jpegbytes", string(got))
+	r.Equal(mID, row.ID)
+	r.Equal(version, row.ThumbVersion)
+}
+
+func TestSharedReadOpenThumbUnauthorizedReturnsNotFound(t *testing.T) {
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	mID, version := sharedSeedMediaWithReadyThumb(t, fx, alice, "jpegbytes")
+
+	_, _, err := fx.svc.OpenThumb(context.Background(),
+		bob, nil, mID, thumb.SizeGrid, version)
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}
+
+func TestSharedReadOpenThumbVersionMismatchReturnsNotFound(t *testing.T) {
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	mID, version := sharedSeedMediaWithReadyThumb(t, fx, alice, "jpegbytes")
+	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, mID)
+	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
+
+	_, _, err := fx.svc.OpenThumb(context.Background(),
+		bob, []string{s.UUID}, mID, thumb.SizeGrid, version+1)
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}
+
+func TestSharedReadOpenThumbPendingReturnsNotFound(t *testing.T) {
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	mID := sharedSeedMedia(t, fx.db.WriteDB(), alice) // thumb_status=pending
+	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, mID)
+	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
+
+	_, _, err := fx.svc.OpenThumb(context.Background(),
+		bob, []string{s.UUID}, mID, thumb.SizeGrid, 0)
+	require.ErrorIs(t, err, errs.ErrNotFound)
 }
