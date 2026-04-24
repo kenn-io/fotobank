@@ -92,17 +92,37 @@ func sharedBumpActive(t *testing.T, rw *sql.DB, uuidStr string, at time.Time) {
 
 func sharedMakeMediaSetScopeOver(
 	t *testing.T, repo *share.Repo,
-	owner, grantee owners.Principal, now time.Time, mediaIDs ...string,
+	owner, grantee owners.Principal, now time.Time, download bool, mediaIDs ...string,
 ) share.Scope {
 	t.Helper()
 	s := share.Scope{
 		UUID: uuid.NewString(), Owner: owner, Grantee: grantee,
-		TargetType:   share.TargetMediaSet,
-		CreatedAt:    now,
-		BrokerStatus: share.StatusPending,
+		TargetType:    share.TargetMediaSet,
+		AllowDownload: download,
+		CreatedAt:     now,
+		BrokerStatus:  share.StatusPending,
 	}
 	require.NoError(t, repo.Insert(context.Background(), s, mediaIDs))
 	return s
+}
+
+// sharedSeedMediaWithTimestamp inserts a media row with an explicit
+// Timestamp so display_time = COALESCE(timestamp, imported_at) is
+// deterministic for ordering-sensitive tests.
+func sharedSeedMediaWithTimestamp(t *testing.T, rw *sql.DB, p owners.Principal, ts time.Time) string {
+	t.Helper()
+	cs := uuid.NewString()
+	repo := media.NewRepo(rw, rw)
+	m := media.Media{
+		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/" + cs + ".jpg",
+		OriginalFilename: "x.jpg",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Timestamp:        &ts,
+		Size:             100, Checksum: cs, ThumbStatus: "pending",
+	}
+	require.NoError(t, repo.Insert(context.Background(), m))
+	return m.ID
 }
 
 func sharedSeedAlbumWithMedia(t *testing.T, rw *sql.DB, owner owners.Principal, n int) (string, []string) {
@@ -155,9 +175,9 @@ func TestSharedReadListScopesReturnsAuthorizedOnly(t *testing.T) {
 	sharedSeedOwner(t, fx.db.WriteDB(), charlie, "charlie-sk")
 
 	m := sharedSeedMedia(t, fx.db.WriteDB(), alice)
-	live := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, m)
+	live := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, m)
 	sharedBumpActive(t, fx.db.WriteDB(), live.UUID, fx.now)
-	other := sharedMakeMediaSetScopeOver(t, fx.shares, alice, charlie, fx.now, m)
+	other := sharedMakeMediaSetScopeOver(t, fx.shares, alice, charlie, fx.now, false, m)
 	sharedBumpActive(t, fx.db.WriteDB(), other.UUID, fx.now)
 
 	got, err := fx.svc.ListScopes(context.Background(), bob,
@@ -177,9 +197,9 @@ func TestSharedReadGetScopeEnforcesHeaderMembership(t *testing.T) {
 	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
 
 	m := sharedSeedMedia(t, fx.db.WriteDB(), alice)
-	live := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, m)
+	live := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, m)
 	sharedBumpActive(t, fx.db.WriteDB(), live.UUID, fx.now)
-	ghost := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, m)
+	ghost := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, m)
 	sharedBumpActive(t, fx.db.WriteDB(), ghost.UUID, fx.now)
 
 	_, err := fx.svc.GetScope(context.Background(), bob,
@@ -200,7 +220,7 @@ func TestSharedReadGetScopeRevokedReturnsNotFound(t *testing.T) {
 	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
 	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
 	m := sharedSeedMedia(t, fx.db.WriteDB(), alice)
-	live := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, m)
+	live := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, m)
 	sharedBumpActive(t, fx.db.WriteDB(), live.UUID, fx.now)
 	_, err := fx.shares.SetRevoking(context.Background(), live.UUID, fx.now)
 	require.NoError(t, err)
@@ -281,7 +301,7 @@ func TestSharedReadListAlbumsReturnsAlbumLiveOnly(t *testing.T) {
 	live2 := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now, true)
 	sharedBumpActive(t, fx.db.WriteDB(), live2.UUID, fx.now)
 	// media_set over same media must not surface as an album
-	ms := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, mediaIDs...)
+	ms := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, mediaIDs...)
 	sharedBumpActive(t, fx.db.WriteDB(), ms.UUID, fx.now)
 
 	got, err := fx.svc.ListAlbums(context.Background(), bob,
@@ -383,4 +403,69 @@ func TestSharedReadListAlbumsSortsByUpdatedAtDesc(t *testing.T) {
 	r.Len(got, 2)
 	r.Equal(newerID, got[0].ID, "updated_at DESC puts newer first")
 	r.Equal(olderID, got[1].ID)
+}
+
+// ListMedia returns every media covered by any authorised scope, with
+// per-media CanDownload OR'd across overlapping scopes. Ordering is
+// display_time DESC + id ASC from share.Repo.ListSharedMediaIDs.
+func TestSharedReadListMediaUnionOfScopes(t *testing.T) {
+	r := require.New(t)
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+
+	t0 := fx.now.Add(-2 * time.Hour)
+	t1 := fx.now.Add(-1 * time.Hour)
+	t2 := fx.now
+	m1 := sharedSeedMediaWithTimestamp(t, fx.db.WriteDB(), alice, t0)
+	m2 := sharedSeedMediaWithTimestamp(t, fx.db.WriteDB(), alice, t1)
+	m3 := sharedSeedMediaWithTimestamp(t, fx.db.WriteDB(), alice, t2)
+
+	s1 := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, m1, m2)
+	sharedBumpActive(t, fx.db.WriteDB(), s1.UUID, fx.now)
+	s2 := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, true, m2, m3)
+	sharedBumpActive(t, fx.db.WriteDB(), s2.UUID, fx.now)
+
+	page, next, err := fx.svc.ListMedia(context.Background(), bob,
+		[]string{s1.UUID, s2.UUID},
+		service.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(page, 3)
+	r.Equal(m3, page[0].ID)
+	r.Equal(m2, page[1].ID)
+	r.Equal(m1, page[2].ID)
+	r.True(page[0].CanDownload, "m3 is covered only by s2 (download=true)")
+	r.True(page[1].CanDownload, "m2 is covered by s1 (false) and s2 (true) — OR is true")
+	r.False(page[2].CanDownload, "m1 is covered only by s1 (download=false)")
+	r.Empty(next.AfterID, "single page — no next cursor")
+}
+
+func TestSharedReadGetMediaUnauthorizedReturns404(t *testing.T) {
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	m := sharedSeedMedia(t, fx.db.WriteDB(), alice)
+	_, err := fx.svc.GetMedia(context.Background(), bob, nil, m)
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}
+
+func TestSharedReadGetMediaAuthorizedSetsCanDownload(t *testing.T) {
+	r := require.New(t)
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	m := sharedSeedMedia(t, fx.db.WriteDB(), alice)
+	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, true, m)
+	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
+
+	got, err := fx.svc.GetMedia(context.Background(), bob, []string{s.UUID}, m)
+	r.NoError(err)
+	r.Equal(m, got.ID)
+	r.True(got.CanDownload)
 }

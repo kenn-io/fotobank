@@ -402,3 +402,59 @@ func toSharedMedia(m media.Media, canDownload bool) SharedMedia {
 		CanDownload:  canDownload,
 	}
 }
+
+// ListMedia returns one page of every distinct media the caller can
+// see across all validated scopes, cursor-paginated by display_time
+// DESC + id ASC.
+func (s *SharedReadService) ListMedia(
+	ctx context.Context,
+	caller owners.Principal,
+	headerScopes []string,
+	cursor SharedMediaCursor,
+) ([]SharedMedia, SharedMediaCursor, error) {
+	resolved, err := s.resolver.ResolveAll(ctx, caller, headerScopes)
+	if err != nil {
+		return nil, SharedMediaCursor{}, err
+	}
+	if len(resolved.Validated) == 0 {
+		return nil, SharedMediaCursor{}, nil
+	}
+	limit := clampSharedMediaLimit(cursor.Limit)
+	repoRows, err := s.shares.ListSharedMediaIDs(ctx, resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{
+			AfterDisplayTime: cursor.AfterDisplayTime,
+			AfterID:          cursor.AfterID,
+			Limit:            limit + 1,
+		})
+	if err != nil {
+		return nil, SharedMediaCursor{}, err
+	}
+	page, next := pageSharedMediaRows(repoRows, limit)
+	medias, err := s.fetchSharedMediaByRows(ctx, page)
+	if err != nil {
+		return nil, SharedMediaCursor{}, err
+	}
+	return medias, next, nil
+}
+
+// GetMedia returns one media row iff CheckMediaAccess authorises it.
+// CanDownload is OR'd across every scope that covers this media.
+func (s *SharedReadService) GetMedia(
+	ctx context.Context,
+	caller owners.Principal,
+	headerScopes []string,
+	mediaID string,
+) (SharedMedia, error) {
+	dec, err := s.resolver.CheckMediaAccess(ctx, caller, headerScopes, mediaID)
+	if err != nil {
+		return SharedMedia{}, err
+	}
+	if !dec.Authorized {
+		return SharedMedia{}, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, mediaID)
+	}
+	m, err := s.media.GetByID(ctx, mediaID)
+	if err != nil {
+		return SharedMedia{}, err
+	}
+	return toSharedMedia(m, dec.CanDownload()), nil
+}
