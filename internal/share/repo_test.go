@@ -573,6 +573,33 @@ func TestRepoSetRevokingFromFailedPublishPhase(t *testing.T) {
 	r.Empty(got.BrokerLastError)
 }
 
+func TestRepoSetRevokingFromActive(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	// Drive pending -> active via MarkPublished (the real production path).
+	grantedAt := time.Now().UTC().Truncate(time.Second)
+	_, err := repo.MarkPublished(context.Background(), uuidStr, grantedAt)
+	r.NoError(err)
+
+	// Now revoke it.
+	revokedAt := grantedAt.Add(time.Hour)
+	n, err := repo.SetRevoking(context.Background(), uuidStr, revokedAt)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.True(got.RevokedAt.Equal(revokedAt))
+	r.Equal(0, got.BrokerAttempts)
+	// broker_granted_at should still reflect the prior publish.
+	r.NotNil(got.BrokerGrantedAt)
+	r.True(got.BrokerGrantedAt.Equal(grantedAt))
+}
+
 func TestRepoSetRevokingRejectsRevokedRemote(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
@@ -672,6 +699,21 @@ func TestRepoRetryPublishRejectsRevokedFailed(t *testing.T) {
 	r.NoError(err)
 
 	n, err := repo.RetryPublish(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(int64(0), n)
+}
+
+func TestRepoRetryRevokeRejectsPublishSideFailed(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='failed', broker_attempts=10, broker_last_error='x' WHERE uuid=?`,
+		uuidStr)
+	r.NoError(err)
+
+	n, err := repo.RetryRevoke(context.Background(), uuidStr)
 	r.NoError(err)
 	r.Equal(int64(0), n)
 }

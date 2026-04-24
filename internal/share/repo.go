@@ -378,8 +378,8 @@ func (r *Repo) MarkFailed(ctx context.Context, uuidStr string, phase BrokerStatu
 // owner-actionable.
 //
 // Returns rows-affected. 0 means the row was already revoking,
-// revoked_remote, or does not exist; the service converts that to
-// ErrScopeAlreadyRevoked.
+// revoked_remote, or does not exist; the service layer (T14) is
+// expected to translate that into ErrScopeAlreadyRevoked.
 func (r *Repo) SetRevoking(ctx context.Context, uuidStr string, at time.Time) (int64, error) {
 	res, err := r.rw.ExecContext(ctx,
 		`UPDATE scopes
