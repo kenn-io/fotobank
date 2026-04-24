@@ -5,6 +5,7 @@ package httpapi
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/wesm/fotobank/internal/identity"
 	"github.com/wesm/fotobank/internal/service"
+	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/version"
 )
 
@@ -47,19 +49,31 @@ type Deps struct {
 	// Nil means those handlers answer 503 Service Unavailable so the
 	// OpenAPI dumper can still emit the schema.
 	SharedRead *service.SharedReadService
+	// PrincipalDisplay is the write side of the display-handle cache
+	// (populated by WithPrincipalDisplayCache). Nil disables the
+	// middleware — handles won't be refreshed from live traffic but the
+	// rest of the API keeps working.
+	PrincipalDisplay *share.PrincipalDisplayRepo
 }
 
 // New constructs the Fotobank HTTP handler: a net/http.ServeMux with a
 // huma API layered on top. The returned handler serves every operation
 // registered during setup; an error is returned if any registration or
 // wiring step fails. When deps.IdentityProvider is non-nil the handler
-// is wrapped with the identity + request-id + logging middleware.
+// is wrapped with the identity + request-id + logging middleware. When
+// deps.PrincipalDisplay is also set the chain gains the display-cache
+// middleware between identity resolution and request dispatch, so the
+// cache observes the post-resolution Identity on the request context.
 func New(deps Deps) (http.Handler, error) {
 	mux, _ := buildAPI(deps)
-	if deps.IdentityProvider != nil {
-		return WithMiddleware(deps.IdentityProvider)(mux), nil
+	var handler http.Handler = mux
+	if deps.PrincipalDisplay != nil {
+		handler = WithPrincipalDisplayCache(deps.PrincipalDisplay, slog.Default())(handler)
 	}
-	return mux, nil
+	if deps.IdentityProvider != nil {
+		handler = WithMiddleware(deps.IdentityProvider)(handler)
+	}
+	return handler, nil
 }
 
 // buildAPI creates the shared mux + huma API and registers every
