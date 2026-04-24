@@ -1551,3 +1551,53 @@ func TestCountSharedMediaByScopeMediaSet(t *testing.T) {
 	r.NoError(err)
 	r.Equal(2, n)
 }
+
+func TestExpandScopeAlbumLive(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	albumID, mediaIDs := seedAlbumWithMedia(t, d, alice, 2)
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+
+	exp, err := repo.ExpandScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(share.TargetAlbumLive, exp.Scope.TargetType)
+	r.NotNil(exp.Album)
+	r.Equal(albumID, exp.Album.ID)
+	r.Equal(2, exp.Album.ItemCount)
+	r.ElementsMatch(mediaIDs, exp.MediaIDs)
+}
+
+func TestExpandScopeMediaSet(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	m1 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2)
+
+	exp, err := repo.ExpandScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(share.TargetMediaSet, exp.Scope.TargetType)
+	r.Nil(exp.Album)
+	r.ElementsMatch([]string{m1, m2}, exp.MediaIDs)
+}
+
+func TestExpandScopeUnknownReturnsNotFound(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	_, err := repo.ExpandScope(context.Background(), "not-a-uuid")
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}

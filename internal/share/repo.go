@@ -945,6 +945,98 @@ func (r *Repo) CountSharedMediaByScope(ctx context.Context, scopeUUID string) (i
 	}
 }
 
+// AlbumSummary is the minimal album view attached to ExpandedScope for
+// album_live scopes. Kept here (rather than reusing album.AlbumListItem)
+// to avoid a share→album dependency in this direction.
+type AlbumSummary struct {
+	ID        string
+	Name      string
+	ItemCount int
+	UpdatedAt time.Time
+}
+
+// ExpandedScope is the pure materializer output used by PreviewScope.
+// MediaIDs is always populated: frozen membership for media_set, live
+// album_media order for album_live. Album is non-nil iff target_type
+// == album_live.
+type ExpandedScope struct {
+	Scope    Scope
+	MediaIDs []string
+	Album    *AlbumSummary
+}
+
+// ExpandScope reads a scope and its materialised membership without
+// any grantee-identity plumbing. Callers must have already performed
+// the owner-scoped auth check (see service.ShareService.PreviewScope).
+func (r *Repo) ExpandScope(ctx context.Context, scopeUUID string) (ExpandedScope, error) {
+	detail, err := r.GetByUUID(ctx, scopeUUID)
+	if err != nil {
+		return ExpandedScope{}, err
+	}
+	exp := ExpandedScope{Scope: detail.Scope}
+	switch detail.TargetType {
+	case TargetMediaSet:
+		exp.MediaIDs = append([]string(nil), detail.MediaIDs...)
+	case TargetAlbumLive:
+		if detail.TargetAlbumID == nil {
+			return ExpandedScope{}, fmt.Errorf("album_live scope %s has no target_album_id", scopeUUID)
+		}
+		mediaIDs, err := r.listAlbumMediaIDs(ctx, *detail.TargetAlbumID)
+		if err != nil {
+			return ExpandedScope{}, err
+		}
+		exp.MediaIDs = mediaIDs
+		summary, err := r.albumSummary(ctx, *detail.TargetAlbumID)
+		if err != nil {
+			return ExpandedScope{}, err
+		}
+		exp.Album = &summary
+	default:
+		return ExpandedScope{}, fmt.Errorf("unknown target_type %q", detail.TargetType)
+	}
+	return exp, nil
+}
+
+// listAlbumMediaIDs returns album_media rows ordered by added_at DESC,
+// media_id ASC — the same order the owner UI uses.
+func (r *Repo) listAlbumMediaIDs(ctx context.Context, albumID string) ([]string, error) {
+	rows, err := r.ro.QueryContext(ctx,
+		`SELECT media_id FROM album_media
+          WHERE album_id = ?
+          ORDER BY added_at DESC, media_id ASC`, albumID)
+	if err != nil {
+		return nil, fmt.Errorf("list album media ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]string, 0, 16)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan album media id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// albumSummary reads just the name / updated_at / item_count for one
+// album. Returns errs.ErrNotFound when the album row is missing.
+func (r *Repo) albumSummary(ctx context.Context, albumID string) (AlbumSummary, error) {
+	var s AlbumSummary
+	err := r.ro.QueryRowContext(ctx,
+		`SELECT a.id, a.name, a.updated_at,
+                (SELECT COUNT(*) FROM album_media am WHERE am.album_id = a.id)
+           FROM albums a WHERE a.id = ?`, albumID,
+	).Scan(&s.ID, &s.Name, &s.UpdatedAt, &s.ItemCount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AlbumSummary{}, fmt.Errorf("%w: album id=%s", errs.ErrNotFound, albumID)
+	}
+	if err != nil {
+		return AlbumSummary{}, fmt.Errorf("read album summary: %w", err)
+	}
+	return s, nil
+}
+
 // parseSQLiteTimeString parses the string representation modernc.org/sqlite
 // returns for COALESCE'd TIMESTAMP columns. The driver serializes time.Time
 // using Go's default Time.String() format, which is the layout below. When
