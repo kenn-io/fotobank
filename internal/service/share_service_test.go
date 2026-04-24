@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,18 +85,30 @@ func TestShareCreateAlbumLiveHappyPath(t *testing.T) {
 	r := require.New(t)
 	fx := newShareFixture(t)
 	albumID := fx.seedAlbum(t, 2)
+	expires := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second)
 
 	got, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
-		Label:      "Summer",
-		Grantee:    owners.Principal{Hub: "h", UserID: "alice"},
-		TargetType: share.TargetAlbumLive,
-		AlbumID:    albumID,
+		Label:         "Summer",
+		Grantee:       owners.Principal{Hub: "h", UserID: "alice"},
+		TargetType:    share.TargetAlbumLive,
+		AlbumID:       albumID,
+		AllowDownload: true,
+		ExpiresAt:     &expires,
 	}, fx.owner)
 	r.NoError(err)
 	r.NotEmpty(got.UUID)
 	r.Equal(share.StatusPending, got.BrokerStatus)
 	r.NotNil(got.TargetAlbumID)
 	r.Equal(albumID, *got.TargetAlbumID)
+	r.True(got.AllowDownload)
+	r.NotNil(got.ExpiresAt)
+	r.True(got.ExpiresAt.Equal(expires))
+
+	det, err := fx.shares.GetByUUID(context.Background(), got.UUID)
+	r.NoError(err)
+	r.True(det.AllowDownload)
+	r.NotNil(det.ExpiresAt)
+	r.True(det.ExpiresAt.Equal(expires))
 }
 
 func TestShareCreateMediaSetHappyPath(t *testing.T) {
@@ -128,6 +141,20 @@ func TestShareCreateRejectsEmptyAlbum(t *testing.T) {
 		AlbumID:    albumID,
 	}, fx.owner)
 	r.ErrorIs(err, share.ErrAlbumEmpty)
+}
+
+func TestShareCreateRejectsOversizedLabel(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 1)
+
+	_, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+		Label:      strings.Repeat("x", share.LabelMaxLen+1),
+		Grantee:    owners.Principal{Hub: "h", UserID: "alice"},
+		TargetType: share.TargetAlbumLive,
+		AlbumID:    albumID,
+	}, fx.owner)
+	r.ErrorIs(err, share.ErrInvalidLabel)
 }
 
 func TestShareCreateRejectsCrossOwnerAlbum(t *testing.T) {
@@ -190,6 +217,41 @@ func TestShareCreateValidatesGrantee(t *testing.T) {
 		{"empty hub", owners.Principal{UserID: "a"}},
 		{"empty user", owners.Principal{Hub: "h"}},
 		{"caller self", fx.owner},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			_, err := fx.svc.Create(context.Background(), service.CreateShareRequest{
+				Grantee:    tc.grantee,
+				TargetType: share.TargetAlbumLive,
+				AlbumID:    albumID,
+			}, fx.owner)
+			r.ErrorIs(err, share.ErrInvalidGrantee)
+		})
+	}
+}
+
+func TestShareCreateRejectsOversizedGrantee(t *testing.T) {
+	fx := newShareFixture(t)
+	albumID := fx.seedAlbum(t, 1)
+	cases := []struct {
+		name    string
+		grantee owners.Principal
+	}{
+		{
+			"oversized hub",
+			owners.Principal{
+				Hub:    strings.Repeat("h", share.PrincipalFieldMaxLen+1),
+				UserID: "alice",
+			},
+		},
+		{
+			"oversized user_id",
+			owners.Principal{
+				Hub:    "h",
+				UserID: strings.Repeat("u", share.PrincipalFieldMaxLen+1),
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
