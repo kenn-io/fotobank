@@ -89,21 +89,12 @@ func (r *ScopeResolver) ResolveAll(
 	caller owners.Principal,
 	headerScopes []string,
 ) (ResolvedScopes, error) {
-	sanitized := sanitizeHeaderScopes(headerScopes)
-	if len(sanitized) == 0 {
-		return ResolvedScopes{}, nil
-	}
-	validated, err := r.shares.ValidateHeaderScopes(ctx, caller, sanitized, r.now())
+	retained, owner, err := r.validateAndRetain(ctx, caller, headerScopes)
 	if err != nil {
 		return ResolvedScopes{}, err
 	}
-	if len(validated) == 0 {
+	if len(retained) == 0 {
 		return ResolvedScopes{}, nil
-	}
-	distinctOwners := collectDistinctOwners(validated)
-	retained := retainSmallestOwner(validated)
-	if len(distinctOwners) > 1 {
-		r.logMultiOwnerDegradation(caller, retained[0].Owner, distinctOwners)
 	}
 	uuids := make([]string, 0, len(retained))
 	allowAny := false
@@ -116,10 +107,56 @@ func (r *ScopeResolver) ResolveAll(
 	sort.Strings(uuids)
 	return ResolvedScopes{
 		ScopeUUIDs:    uuids,
-		Owner:         retained[0].Owner,
+		Owner:         owner,
 		AllowDownload: allowAny,
 		Validated:     retained,
 	}, nil
+}
+
+// CheckMediaAccess answers "can caller see media mediaID via one of
+// these presented scopes?" Runs the two-pass shape from spec §6.3:
+// pass 1 is sanitize + validate + single-owner degradation (shared
+// with ResolveAll); pass 2 is the per-item coverage query.
+func (r *ScopeResolver) CheckMediaAccess(
+	ctx context.Context,
+	caller owners.Principal,
+	headerScopes []string,
+	mediaID string,
+) (AccessDecision, error) {
+	retained, owner, err := r.validateAndRetain(ctx, caller, headerScopes)
+	if err != nil {
+		return AccessDecision{}, err
+	}
+	if len(retained) == 0 {
+		return AccessDecision{}, nil
+	}
+	return r.shares.CoverMediaByScopes(ctx, retained, owner, mediaID)
+}
+
+// validateAndRetain runs pass 1 of the resolver: sanitize + validate +
+// single-owner degradation. Returns the retained-owner slice plus the
+// retained owner principal. The warn log is emitted when degradation
+// fires. Callers with no surviving scopes receive (nil, zero, nil).
+func (r *ScopeResolver) validateAndRetain(
+	ctx context.Context, caller owners.Principal, headerScopes []string,
+) ([]Scope, owners.Principal, error) {
+	sanitized := sanitizeHeaderScopes(headerScopes)
+	if len(sanitized) == 0 {
+		return nil, owners.Principal{}, nil
+	}
+	validated, err := r.shares.ValidateHeaderScopes(ctx, caller, sanitized, r.now())
+	if err != nil {
+		return nil, owners.Principal{}, err
+	}
+	if len(validated) == 0 {
+		return nil, owners.Principal{}, nil
+	}
+	distinct := collectDistinctOwners(validated)
+	retained := retainSmallestOwner(validated)
+	if len(distinct) > 1 {
+		r.logMultiOwnerDegradation(caller, retained[0].Owner, distinct)
+	}
+	return retained, retained[0].Owner, nil
 }
 
 // logMultiOwnerDegradation emits the spec §6.1 warn log when a multi-

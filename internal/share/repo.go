@@ -572,6 +572,80 @@ func (r *Repo) ValidateHeaderScopes(
 	return out, rows.Err()
 }
 
+// CoverMediaByScopes runs pass 2 of CheckMediaAccess per spec §6.3:
+// given a retained-owner validated slice, returns one AccessPath per
+// covering scope. The retained-owner predicate on scopes.owner_hub /
+// owner_user_id is a belt-and-braces guard so a bug in the Go-side
+// degradation cannot leak a dropped-owner scope through the DB layer.
+func (r *Repo) CoverMediaByScopes(
+	ctx context.Context,
+	validated []Scope,
+	owner owners.Principal,
+	mediaID string,
+) (AccessDecision, error) {
+	if len(validated) == 0 {
+		return AccessDecision{}, nil
+	}
+	valRows := make([]string, 0, len(validated))
+	args := make([]any, 0, len(validated)*4+4)
+	for _, s := range validated {
+		valRows = append(valRows, "(?, ?, ?, ?)")
+		var albumID any
+		if s.TargetAlbumID != nil {
+			albumID = *s.TargetAlbumID
+		}
+		args = append(args, s.UUID, string(s.TargetType), albumID, boolToInt(s.AllowDownload))
+	}
+	args = append(args, owner.Hub, owner.UserID, mediaID, mediaID)
+
+	q := `
+WITH validated(uuid, target_type, target_album_id, allow_download) AS (
+    VALUES ` + strings.Join(valRows, ",") + `
+)
+SELECT v.uuid, v.target_type, v.target_album_id, v.allow_download
+  FROM validated v
+  JOIN scopes s ON s.uuid = v.uuid
+ WHERE s.owner_hub = ? AND s.owner_user_id = ?
+   AND (
+         (v.target_type = 'media_set' AND EXISTS (
+             SELECT 1 FROM scope_media sm
+              WHERE sm.scope_uuid = v.uuid AND sm.media_id = ?
+         ))
+      OR (v.target_type = 'album_live' AND EXISTS (
+             SELECT 1 FROM album_media am
+              WHERE am.album_id = v.target_album_id AND am.media_id = ?
+         ))
+       )
+`
+	rows, err := r.ro.QueryContext(ctx, q, args...)
+	if err != nil {
+		return AccessDecision{}, fmt.Errorf("cover media by scopes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	paths := make([]AccessPath, 0, len(validated))
+	for rows.Next() {
+		var (
+			p         AccessPath
+			albumID   sql.NullString
+			allowInt  int
+			targetStr string
+		)
+		if err := rows.Scan(&p.ScopeUUID, &targetStr, &albumID, &allowInt); err != nil {
+			return AccessDecision{}, fmt.Errorf("scan cover row: %w", err)
+		}
+		if albumID.Valid {
+			a := albumID.String
+			p.AlbumID = &a
+		}
+		p.AllowDownload = allowInt != 0
+		paths = append(paths, p)
+	}
+	if err := rows.Err(); err != nil {
+		return AccessDecision{}, fmt.Errorf("iter cover rows: %w", err)
+	}
+	return AccessDecision{Authorized: len(paths) > 0, Paths: paths}, nil
+}
+
 // statusPlaceholders renders `IN (?,?,?)` argument tuples. Returns the
 // placeholder string and the []any args, both empty when the input is
 // empty. Used here by ListByOwner and in later tasks for filtered

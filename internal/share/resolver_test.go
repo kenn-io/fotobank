@@ -215,3 +215,94 @@ func TestResolveAllDedupesBeforeCap(t *testing.T) {
 	sort.Strings(expected)
 	r.Equal(expected, got.ScopeUUIDs)
 }
+
+func TestCheckMediaAccessViaMediaSet(t *testing.T) {
+	r := require.New(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	resolver, repo, d := newResolver(t, now)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	mediaID := seedMedia(t, d.WriteDB(), alice, "media-set-c1")
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, mediaID)
+	bumpActive(t, d, s.UUID, now)
+
+	dec, err := resolver.CheckMediaAccess(context.Background(), bob, []string{s.UUID}, mediaID)
+	r.NoError(err)
+	r.True(dec.Authorized)
+	r.Len(dec.Paths, 1)
+	r.Equal(s.UUID, dec.Paths[0].ScopeUUID)
+	r.Nil(dec.Paths[0].AlbumID)
+}
+
+func TestCheckMediaAccessViaAlbumLive(t *testing.T) {
+	r := require.New(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	resolver, repo, d := newResolver(t, now)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	albumID, mediaIDs := seedAlbumWithMedia(t, d, alice, 2)
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, s.UUID, now)
+
+	dec, err := resolver.CheckMediaAccess(context.Background(), bob, []string{s.UUID}, mediaIDs[0])
+	r.NoError(err)
+	r.True(dec.Authorized)
+	r.Len(dec.Paths, 1)
+	r.Equal(s.UUID, dec.Paths[0].ScopeUUID)
+	r.NotNil(dec.Paths[0].AlbumID)
+	r.Equal(albumID, *dec.Paths[0].AlbumID)
+}
+
+func TestCheckMediaAccessUnauthorized(t *testing.T) {
+	r := require.New(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	resolver, repo, d := newResolver(t, now)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	covered := seedMedia(t, d.WriteDB(), alice, "covered-c1")
+	other := seedMedia(t, d.WriteDB(), alice, "other-c1")
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, covered)
+	bumpActive(t, d, s.UUID, now)
+
+	dec, err := resolver.CheckMediaAccess(context.Background(), bob, []string{s.UUID}, other)
+	r.NoError(err)
+	r.False(dec.Authorized)
+	r.Empty(dec.Paths)
+}
+
+func TestCheckMediaAccessOverlappingScopesORsDownload(t *testing.T) {
+	r := require.New(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	resolver, repo, d := newResolver(t, now)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	albumID, mediaIDs := seedAlbumWithMedia(t, d, alice, 1)
+	albumScope := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, albumScope.UUID, now)
+
+	mediaSetScope := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, true, mediaIDs[0])
+	bumpActive(t, d, mediaSetScope.UUID, now)
+
+	dec, err := resolver.CheckMediaAccess(context.Background(), bob,
+		[]string{albumScope.UUID, mediaSetScope.UUID}, mediaIDs[0])
+	r.NoError(err)
+	r.True(dec.Authorized)
+	r.Len(dec.Paths, 2)
+	r.True(dec.CanDownload())
+}

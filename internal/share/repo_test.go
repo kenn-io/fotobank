@@ -1103,6 +1103,62 @@ func makeMediaSetScope(t *testing.T, d dbDB, repo *share.Repo,
 	return s
 }
 
+// makeMediaSetScopeOver inserts a pending media_set scope over the given
+// already-seeded media ids, with download as configured.
+func makeMediaSetScopeOver(t *testing.T, d dbDB, repo *share.Repo,
+	owner, grantee owners.Principal, expiresAt *time.Time, now time.Time,
+	download bool, mediaIDs ...string,
+) share.Scope {
+	t.Helper()
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner, Grantee: grantee,
+		TargetType:    share.TargetMediaSet,
+		AllowDownload: download,
+		CreatedAt:     now,
+		ExpiresAt:     expiresAt,
+		BrokerStatus:  share.StatusPending,
+	}
+	require.NoError(t, repo.Insert(context.Background(), s, mediaIDs))
+	return s
+}
+
+// seedAlbumWithMedia seeds an album owned by owner plus n fresh media
+// rows and links them via album_media. Returns the album ID and the
+// seeded media IDs in insertion order.
+func seedAlbumWithMedia(t *testing.T, d dbDB, owner owners.Principal, n int) (string, []string) {
+	t.Helper()
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	mediaIDs := make([]string, 0, n)
+	for range n {
+		mid := seedMedia(t, d.WriteDB(), owner, uuid.NewString())
+		_, err := d.WriteDB().ExecContext(context.Background(),
+			`INSERT INTO album_media(album_id, media_id, added_at) VALUES(?,?,?)`,
+			albumID, mid, time.Now().UTC())
+		require.NoError(t, err)
+		mediaIDs = append(mediaIDs, mid)
+	}
+	return albumID, mediaIDs
+}
+
+// makeAlbumLiveScope inserts a pending album_live scope over albumID.
+func makeAlbumLiveScope(t *testing.T, d dbDB, repo *share.Repo,
+	owner, grantee owners.Principal, albumID string, expiresAt *time.Time,
+	now time.Time, download bool,
+) share.Scope {
+	t.Helper()
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner, Grantee: grantee,
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumID,
+		AllowDownload: download,
+		CreatedAt:     now,
+		ExpiresAt:     expiresAt,
+		BrokerStatus:  share.StatusPending,
+	}
+	require.NoError(t, repo.Insert(context.Background(), s, nil))
+	return s
+}
+
 func TestValidateHeaderScopesFiltersByGranteeAndLivePredicate(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
