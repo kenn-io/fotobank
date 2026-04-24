@@ -998,13 +998,17 @@ func (r *Repo) ExpandScope(ctx context.Context, scopeUUID string) (ExpandedScope
 	return exp, nil
 }
 
-// listAlbumMediaIDs returns album_media rows ordered by added_at DESC,
-// media_id ASC — the same order the owner UI uses.
+// listAlbumMediaIDs returns album_media rows ordered to match
+// album.Repo.ListMedia's default "added" mode: added_at DESC,
+// media_id DESC. A DESC tiebreaker matters because batched
+// AddMedia inserts share a single added_at timestamp; an ASC
+// tiebreaker here would make the owner preview disagree with
+// what the grantee and the owner UI render.
 func (r *Repo) listAlbumMediaIDs(ctx context.Context, albumID string) ([]string, error) {
 	rows, err := r.ro.QueryContext(ctx,
 		`SELECT media_id FROM album_media
           WHERE album_id = ?
-          ORDER BY added_at DESC, media_id ASC`, albumID)
+          ORDER BY added_at DESC, media_id DESC`, albumID)
 	if err != nil {
 		return nil, fmt.Errorf("list album media ids: %w", err)
 	}

@@ -1632,3 +1632,48 @@ func TestExpandScopeAlbumLivePreservesOrderAddedAtDesc(t *testing.T) {
 	r.NoError(err)
 	r.Equal([]string{newer, older}, exp.MediaIDs, "added_at DESC ordering")
 }
+
+// When two album_media rows share a single added_at timestamp (the
+// common shape for batched AddMedia inserts), the tie-breaker must
+// match album.Repo.ListMedia's default "added" ordering (media_id
+// DESC). An ASC tie-breaker would make owner previews disagree with
+// the owner UI and the grantee-side listing.
+func TestExpandScopeAlbumLiveTieBreakMediaIDDesc(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	albumID := seedAlbum(t, d.WriteDB(), alice)
+	// Two media with deterministic, lexicographically-ordered ids so
+	// the assertion does not depend on uuid randomness.
+	low := "00000000-0000-0000-0000-aaaaaaaaaaaa"
+	high := "00000000-0000-0000-0000-ffffffffffff"
+	for _, mid := range []string{low, high} {
+		r.NoError(media.NewRepo(d.WriteDB(), d.ReadDB()).Insert(context.Background(),
+			media.Media{
+				ID: mid, Owner: alice, Type: media.TypePhoto, MimeType: "image/jpeg",
+				Path: "2024/" + mid + ".jpg", OriginalFilename: "x.jpg",
+				ImportedAt:  time.Now().UTC().Truncate(time.Second),
+				Size:        100,
+				Checksum:    mid,
+				ThumbStatus: "pending",
+			}))
+	}
+	// Both rows share the same added_at — tie-breaker decides the order.
+	for _, mid := range []string{low, high} {
+		_, err := d.WriteDB().ExecContext(context.Background(),
+			`INSERT INTO album_media(album_id, media_id, added_at) VALUES(?,?,?)`,
+			albumID, mid, now)
+		r.NoError(err)
+	}
+
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	exp, err := repo.ExpandScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal([]string{high, low}, exp.MediaIDs, "media_id DESC tie-break matches album.Repo.ListMedia default")
+}
