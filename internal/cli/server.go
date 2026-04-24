@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wesm/fotobank/internal/album"
+	"github.com/wesm/fotobank/internal/broker"
 	"github.com/wesm/fotobank/internal/config"
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/httpapi"
@@ -26,6 +27,7 @@ import (
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service"
 	"github.com/wesm/fotobank/internal/share"
+	"github.com/wesm/fotobank/internal/shareworker"
 	"github.com/wesm/fotobank/internal/storage"
 	"github.com/wesm/fotobank/internal/thumb"
 )
@@ -126,6 +128,11 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		sharesRepo,
 		d,
 	)
+	shareSvc := service.NewShareService(
+		sharesRepo,
+		album.NewRepo(d.WriteDB(), d.ReadDB()),
+		media.NewRepo(d.WriteDB(), d.ReadDB()),
+	)
 
 	thumbQueue := thumb.NewQueue(d.WriteDB(), d.ReadDB())
 	thumbSvc := service.NewThumbService(
@@ -140,6 +147,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		MediaService:     mediaSvc,
 		AlbumService:     albumSvc,
 		ThumbService:     thumbSvc,
+		ShareService:     shareSvc,
 	})
 	if err != nil {
 		return err
@@ -193,6 +201,25 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	bgWG.Go(func() {
 		if err := thumbWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
 			fmt.Fprintln(opts.stderr, "thumb worker exited:", err)
+		}
+	})
+
+	shareCfg := shareworker.Config{
+		Repo:   sharesRepo,
+		Broker: broker.NoopBroker{},
+	}
+	// FOTOBANK_TEST_SHARE_WORKER_TICK is a test-only escape hatch that
+	// overrides the default 15s tick so e2e tests can observe state
+	// transitions within a few seconds.
+	if raw := os.Getenv("FOTOBANK_TEST_SHARE_WORKER_TICK"); raw != "" {
+		if dur, err := time.ParseDuration(raw); err == nil {
+			shareCfg.Tick = dur
+		}
+	}
+	shareW := shareworker.New(shareCfg)
+	bgWG.Go(func() {
+		if err := shareW.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(opts.stderr, "share worker exited:", err)
 		}
 	})
 
