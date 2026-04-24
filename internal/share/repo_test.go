@@ -328,3 +328,157 @@ func nullableTime(t *time.Time) any {
 	}
 	return *t
 }
+
+func TestRepoMarkPublishedPendingToActive(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	n, err := repo.MarkPublished(context.Background(), uuidStr, now)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusActive, got.BrokerStatus)
+	r.NotNil(got.BrokerRegisteredAt)
+	r.NotNil(got.BrokerGrantedAt)
+	r.True(got.BrokerRegisteredAt.Equal(now))
+	r.True(got.BrokerGrantedAt.Equal(now))
+	r.Empty(got.BrokerLastError)
+	r.Nil(got.BrokerNextAttemptAt)
+}
+
+func TestRepoMarkPublishedRevokingRecordsTimestampsButKeepsStatus(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	// Owner-Revoke raced the worker: flip to revoking directly.
+	revokedAt := time.Now().UTC().Truncate(time.Second)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoking', revoked_at=? WHERE uuid=?`,
+		revokedAt, uuidStr)
+	r.NoError(err)
+
+	now := revokedAt.Add(1 * time.Second)
+	n, err := repo.MarkPublished(context.Background(), uuidStr, now)
+	r.NoError(err)
+	r.Equal(int64(1), n) // update still lands; status is unchanged.
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.NotNil(got.BrokerRegisteredAt)
+	r.NotNil(got.BrokerGrantedAt)
+	r.NotNil(got.RevokedAt)
+}
+
+func TestRepoMarkPublishedNoopOnTerminalStatus(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	// Move to revoked_remote directly.
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoked_remote' WHERE uuid=?`,
+		uuidStr)
+	r.NoError(err)
+
+	n, err := repo.MarkPublished(context.Background(), uuidStr, time.Now().UTC())
+	r.NoError(err)
+	r.Equal(int64(0), n) // fence rejected — row was terminal.
+}
+
+func TestRepoMarkAttemptFailedIncrementsAttempts(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	nextAt := time.Now().UTC().Add(30 * time.Second).Truncate(time.Second)
+	n, err := repo.MarkAttemptFailed(context.Background(), uuidStr, share.StatusPending, "boom", nextAt)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusPending, got.BrokerStatus)
+	r.Equal(1, got.BrokerAttempts)
+	r.Equal("boom", got.BrokerLastError)
+	r.NotNil(got.BrokerNextAttemptAt)
+	r.True(got.BrokerNextAttemptAt.Equal(nextAt))
+}
+
+func TestRepoMarkAttemptFailedFencedToPhase(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	// Row is pending; calling with phase=revoking must be a no-op.
+	nextAt := time.Now().UTC().Add(30 * time.Second).Truncate(time.Second)
+	n, err := repo.MarkAttemptFailed(context.Background(), uuidStr, share.StatusRevoking, "wrong", nextAt)
+	r.NoError(err)
+	r.Equal(int64(0), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(0, got.BrokerAttempts)
+	r.Empty(got.BrokerLastError)
+	r.Nil(got.BrokerNextAttemptAt)
+}
+
+func TestRepoMarkFailedFlipsToFailed(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	n, err := repo.MarkFailed(context.Background(), uuidStr, share.StatusPending, "fatal")
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusFailed, got.BrokerStatus)
+	r.Equal(1, got.BrokerAttempts)
+	r.Equal("fatal", got.BrokerLastError)
+	r.Nil(got.BrokerNextAttemptAt)
+	r.Nil(got.RevokedAt)
+}
+
+// seedPendingAlbumScope returns the UUID of a freshly-inserted album_live
+// scope in status pending. Reused across state-transition tests.
+func seedPendingAlbumScope(t *testing.T, d dbDB, repo *share.Repo) string {
+	t.Helper()
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	// Insert owner once. INSERT OR IGNORE so repeated helper calls in the
+	// same test don't trip PK uniqueness.
+	_, _ = d.WriteDB().ExecContext(context.Background(),
+		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at)
+         VALUES(?,?,?,?)`, owner.Hub, owner.UserID, "sk", time.Now().UTC())
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumID,
+		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		BrokerStatus:  share.StatusPending,
+	}
+	require.NoError(t, repo.Insert(context.Background(), s, nil))
+	return s.UUID
+}
+
+// dbDB is the subset of *db.DB that test helpers need. Defined as an
+// interface so future fakes can satisfy it without importing the real
+// db package transitively.
+type dbDB interface {
+	WriteDB() *sql.DB
+	ReadDB() *sql.DB
+}

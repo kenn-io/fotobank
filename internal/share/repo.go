@@ -294,6 +294,82 @@ func (r *Repo) ListReady(ctx context.Context, now time.Time, limit int) ([]Scope
 	return out, rows.Err()
 }
 
+// MarkPublished records a successful PublishScope. Timestamps land
+// whether the row is still 'pending' or has already moved to
+// 'revoking' (owner-Revoke raced), so the owner-facing UI shows
+// "was granted" honestly. Only the status transition to 'active'
+// is fenced to broker_status = 'pending'; if the row is already
+// 'revoking', status stays 'revoking' and the worker issues
+// RevokeScope on the next tick.
+//
+// Rows-affected = 1 does NOT mean broker_status is now 'active';
+// it may still be 'revoking'. Callers that care must re-read.
+func (r *Repo) MarkPublished(ctx context.Context, uuidStr string, at time.Time) (int64, error) {
+	res, err := r.rw.ExecContext(ctx,
+		`UPDATE scopes
+            SET broker_registered_at = COALESCE(broker_registered_at, ?),
+                broker_granted_at    = COALESCE(broker_granted_at, ?),
+                broker_status = CASE WHEN broker_status = 'pending' THEN 'active' ELSE broker_status END,
+                broker_last_error = CASE WHEN broker_status = 'pending' THEN '' ELSE broker_last_error END,
+                broker_next_attempt_at = CASE WHEN broker_status = 'pending' THEN NULL ELSE broker_next_attempt_at END
+          WHERE uuid = ? AND broker_status IN ('pending', 'revoking')`,
+		at, at, uuidStr)
+	if err != nil {
+		return 0, fmt.Errorf("mark published: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("mark published rows affected: %w", err)
+	}
+	return n, nil
+}
+
+// MarkAttemptFailed records a retryable broker failure. Bumps
+// broker_attempts, stores err, and schedules the next attempt. Fenced
+// to the caller-declared phase (pending or revoking) so the row
+// cannot drift into the wrong state if owner Revoke raced between
+// ListReady and this UPDATE.
+func (r *Repo) MarkAttemptFailed(ctx context.Context, uuidStr string, phase BrokerStatus, errMsg string, nextAt time.Time) (int64, error) {
+	res, err := r.rw.ExecContext(ctx,
+		`UPDATE scopes
+            SET broker_attempts = broker_attempts + 1,
+                broker_last_error = ?,
+                broker_next_attempt_at = ?
+          WHERE uuid = ? AND broker_status = ?`,
+		errMsg, nextAt, uuidStr, string(phase))
+	if err != nil {
+		return 0, fmt.Errorf("mark attempt failed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("mark attempt failed rows affected: %w", err)
+	}
+	return n, nil
+}
+
+// MarkFailed flips a scope to broker_status = 'failed' after exceeding
+// MaxBrokerAttempts or on a permanent error. Fenced to the caller-
+// declared phase. broker_attempts is bumped one more time (so the row
+// records that the final attempt happened).
+func (r *Repo) MarkFailed(ctx context.Context, uuidStr string, phase BrokerStatus, errMsg string) (int64, error) {
+	res, err := r.rw.ExecContext(ctx,
+		`UPDATE scopes
+            SET broker_status = 'failed',
+                broker_attempts = broker_attempts + 1,
+                broker_last_error = ?,
+                broker_next_attempt_at = NULL
+          WHERE uuid = ? AND broker_status = ?`,
+		errMsg, uuidStr, string(phase))
+	if err != nil {
+		return 0, fmt.Errorf("mark failed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("mark failed rows affected: %w", err)
+	}
+	return n, nil
+}
+
 // statusPlaceholders renders `IN (?,?,?)` argument tuples. Returns the
 // placeholder string and the []any args, both empty when the input is
 // empty. Used here by ListByOwner and in later tasks for filtered
