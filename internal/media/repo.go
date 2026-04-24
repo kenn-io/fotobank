@@ -45,7 +45,9 @@ FROM media`
 
 // mediaColumnsQualified is the m-prefixed projection used when the
 // query joins a CTE that also has an `id` column. Keep column order
-// identical to mediaSelect so scanMedia works unchanged.
+// identical to mediaSelect so scanMedia works unchanged. A third copy
+// of this list lives in internal/album/repo.go as albumMediaMediaSelect;
+// schema changes must sync all three.
 const mediaColumnsQualified = `
     m.id, m.owner_hub, m.owner_user_id, m.media_type, m.mime_type, m.path, m.original_filename,
     m.imported_at, m.timestamp, m.size, m.checksum,
@@ -233,7 +235,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Media, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list media: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []Media
 	for rows.Next() {
