@@ -2,6 +2,7 @@ package share
 
 import (
 	"context"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -41,7 +42,8 @@ func (d AccessDecision) CanDownload() bool {
 // endpoints. ScopeUUIDs is sorted ascending post-degradation so
 // callers get deterministic output. Validated is the retained-owner
 // slice; downstream repo calls use it as a VALUES-CTE input without
-// re-querying scopes.
+// re-querying scopes. Order is unspecified; callers who need a stable
+// order sort themselves.
 type ResolvedScopes struct {
 	ScopeUUIDs    []string
 	Owner         owners.Principal
@@ -60,15 +62,19 @@ const MaxHeaderScopes = 100
 type ScopeResolver struct {
 	shares *Repo
 	now    func() time.Time
+	logger *slog.Logger
 }
 
 // NewScopeResolver constructs a resolver. A nil now defaults to
-// time.Now().UTC().
-func NewScopeResolver(r *Repo, now func() time.Time) *ScopeResolver {
+// time.Now().UTC(). A nil logger defaults to slog.Default().
+func NewScopeResolver(r *Repo, now func() time.Time, logger *slog.Logger) *ScopeResolver {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &ScopeResolver{shares: r, now: now}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &ScopeResolver{shares: r, now: now, logger: logger}
 }
 
 // ResolveAll validates the presented scopes and returns the fully-
@@ -94,7 +100,11 @@ func (r *ScopeResolver) ResolveAll(
 	if len(validated) == 0 {
 		return ResolvedScopes{}, nil
 	}
+	distinctOwners := collectDistinctOwners(validated)
 	retained := retainSmallestOwner(validated)
+	if len(distinctOwners) > 1 {
+		r.logMultiOwnerDegradation(caller, retained[0].Owner, distinctOwners)
+	}
 	uuids := make([]string, 0, len(retained))
 	allowAny := false
 	for _, s := range retained {
@@ -110,6 +120,47 @@ func (r *ScopeResolver) ResolveAll(
 		AllowDownload: allowAny,
 		Validated:     retained,
 	}, nil
+}
+
+// logMultiOwnerDegradation emits the spec §6.1 warn log when a multi-
+// owner presentation is reduced to a single retained owner.
+func (r *ScopeResolver) logMultiOwnerDegradation(
+	caller, retained owners.Principal,
+	distinctOwners []owners.Principal,
+) {
+	dropped := make([]string, 0, len(distinctOwners)-1)
+	for _, o := range distinctOwners {
+		if o == retained {
+			continue
+		}
+		dropped = append(dropped, o.Hub+"/"+o.UserID)
+	}
+	sort.Strings(dropped)
+	r.logger.Warn("share: multi-owner scope presentation; dropping non-retained owners",
+		"caller_hub", caller.Hub,
+		"caller_user_id", caller.UserID,
+		"retained_owner_hub", retained.Hub,
+		"retained_owner_user_id", retained.UserID,
+		"dropped_owners", dropped,
+	)
+}
+
+// collectDistinctOwners returns the set of distinct owners present in
+// scopes. Order matches first-seen in the input.
+func collectDistinctOwners(scopes []Scope) []owners.Principal {
+	if len(scopes) == 0 {
+		return nil
+	}
+	seen := make(map[owners.Principal]struct{}, len(scopes))
+	out := make([]owners.Principal, 0, len(scopes))
+	for _, s := range scopes {
+		if _, ok := seen[s.Owner]; ok {
+			continue
+		}
+		seen[s.Owner] = struct{}{}
+		out = append(out, s.Owner)
+	}
+	return out
 }
 
 // sanitizeHeaderScopes dedupes, caps, and drops syntactically-invalid

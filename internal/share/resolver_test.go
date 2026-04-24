@@ -2,6 +2,7 @@ package share_test
 
 import (
 	"context"
+	"log/slog"
 	"sort"
 	"testing"
 	"time"
@@ -15,11 +16,47 @@ import (
 	"github.com/wesm/fotobank/internal/testutil"
 )
 
+// recordingHandler captures slog records for assertion in tests. Local
+// to this file; not exported.
+type recordingHandler struct {
+	records []slog.Record
+}
+
+func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.records = append(h.records, r)
+	return nil
+}
+
+func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+func (h *recordingHandler) WithGroup(string) slog.Handler { return h }
+
+// attrMap collects a record's top-level attributes into a map for
+// easier assertion.
+func attrMap(r slog.Record) map[string]slog.Value {
+	out := make(map[string]slog.Value, r.NumAttrs())
+	r.Attrs(func(a slog.Attr) bool {
+		out[a.Key] = a.Value
+		return true
+	})
+	return out
+}
+
 func newResolver(t *testing.T, now time.Time) (*share.ScopeResolver, *share.Repo, *db.DB) {
 	t.Helper()
 	d := testutil.OpenTestDB(t)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
-	r := share.NewScopeResolver(repo, func() time.Time { return now })
+	r := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	return r, repo, d
+}
+
+func newResolverWithLogger(t *testing.T, now time.Time, logger *slog.Logger) (*share.ScopeResolver, *share.Repo, *db.DB) {
+	t.Helper()
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	r := share.NewScopeResolver(repo, func() time.Time { return now }, logger)
 	return r, repo, d
 }
 
@@ -84,7 +121,8 @@ func TestResolveAllAppliesMaxHeaderScopesCap(t *testing.T) {
 func TestResolveAllMultiOwnerKeepsLexSmallest(t *testing.T) {
 	r := require.New(t)
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	resolver, repo, d := newResolver(t, now)
+	handler := &recordingHandler{}
+	resolver, repo, d := newResolverWithLogger(t, now, slog.New(handler))
 
 	// Two owners with identical user_ids but different hubs. Bob is the
 	// grantee. (hubA, alice) < (hubB, alice) lexicographically, so
@@ -108,4 +146,72 @@ func TestResolveAllMultiOwnerKeepsLexSmallest(t *testing.T) {
 	r.Equal([]string{scopeA.UUID}, got.ScopeUUIDs)
 	r.Len(got.Validated, 1)
 	r.Equal(aliceA, got.Validated[0].Owner)
+
+	// Spec §6.1 step 4: a warn log records caller, retained owner, and
+	// dropped owner tuples whenever degradation actually fires.
+	r.Len(handler.records, 1, "expected exactly one warn log for multi-owner degradation")
+	rec := handler.records[0]
+	r.Equal(slog.LevelWarn, rec.Level)
+	r.Contains(rec.Message, "multi-owner")
+	attrs := attrMap(rec)
+	r.Equal(bob.Hub, attrs["caller_hub"].String())
+	r.Equal(bob.UserID, attrs["caller_user_id"].String())
+	r.Equal(aliceA.Hub, attrs["retained_owner_hub"].String())
+	r.Equal(aliceA.UserID, attrs["retained_owner_user_id"].String())
+	dropped, ok := attrs["dropped_owners"].Any().([]string)
+	r.True(ok, "dropped_owners must be []string")
+	r.Equal([]string{aliceB.Hub + "/" + aliceB.UserID}, dropped)
+}
+
+func TestResolveAllSingleOwnerDoesNotLog(t *testing.T) {
+	r := require.New(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	handler := &recordingHandler{}
+	resolver, repo, d := newResolverWithLogger(t, now, slog.New(handler))
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+
+	live := makeMediaSetScope(t, d, repo, alice, bob, nil, now)
+	bumpActive(t, d, live.UUID, now)
+
+	_, err := resolver.ResolveAll(context.Background(), bob, []string{live.UUID})
+	r.NoError(err)
+	r.Empty(handler.records, "single-owner presentations must not emit warn logs")
+}
+
+func TestResolveAllDedupesBeforeCap(t *testing.T) {
+	r := require.New(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	resolver, repo, d := newResolver(t, now)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+
+	// Seed MaxHeaderScopes unique live scopes.
+	minted := make([]string, 0, share.MaxHeaderScopes)
+	for range share.MaxHeaderScopes {
+		s := makeMediaSetScope(t, d, repo, alice, bob, nil, now)
+		bumpActive(t, d, s.UUID, now)
+		minted = append(minted, s.UUID)
+	}
+
+	// Present each UUID TWICE (input length = 2*MaxHeaderScopes). Spec
+	// §6.5 contract: dedupe runs before cap counting, so we must still
+	// get all MaxHeaderScopes back, not MaxHeaderScopes/2.
+	headers := make([]string, 0, 2*share.MaxHeaderScopes)
+	headers = append(headers, minted...)
+	headers = append(headers, minted...)
+
+	got, err := resolver.ResolveAll(context.Background(), bob, headers)
+	r.NoError(err)
+	r.Len(got.ScopeUUIDs, share.MaxHeaderScopes)
+
+	expected := append([]string(nil), minted...)
+	sort.Strings(expected)
+	r.Equal(expected, got.ScopeUUIDs)
 }
