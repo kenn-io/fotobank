@@ -46,8 +46,8 @@ ON CONFLICT (hub, user_id) DO UPDATE SET
 
 // Get reads the cached handle for owner; returns ("", false, nil) when
 // no row exists and (handle, true, nil) otherwise. A row with handle
-// stored as NULL returns ("", true, nil) — ok=true to keep the caller
-// from upserting over an intentionally cleared row.
+// stored as NULL returns ("", true, nil) — ok=true avoids
+// misclassifying a cached empty-handle row as a miss.
 func (r *PrincipalDisplayRepo) Get(ctx context.Context, owner owners.Principal) (string, bool, error) {
 	var handle sql.NullString
 	err := r.ro.QueryRowContext(ctx,
