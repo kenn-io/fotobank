@@ -194,6 +194,31 @@ func TestWorkerSkipsFutureNextAttempt(t *testing.T) {
 	r.Empty(fx.fake.ObservedPublishes())
 }
 
+func TestWorkerContextErrorFromBrokerAbortsDrain(t *testing.T) {
+	r := require.New(t)
+	fx := newWorkerFixture(t)
+	// Seed two pending rows so we can verify the drain aborts after the first.
+	id1 := fx.insertPending(t)
+	id2 := fx.insertPending(t)
+	fx.fake.QueuePublishError(id1, context.Canceled)
+
+	n, err := fx.w.RunOnce(context.Background())
+	r.ErrorIs(err, context.Canceled)
+	r.Equal(0, n) // the cancelled row is not counted
+
+	// id1's state is unchanged — still pending, no attempts recorded.
+	got, err := fx.repo.GetByUUID(context.Background(), id1)
+	r.NoError(err)
+	r.Equal(share.StatusPending, got.BrokerStatus)
+	r.Equal(0, got.BrokerAttempts)
+
+	// id2 was never reached; still pending, no publish observed.
+	got2, err := fx.repo.GetByUUID(context.Background(), id2)
+	r.NoError(err)
+	r.Equal(share.StatusPending, got2.BrokerStatus)
+	r.NotContains(fx.fake.ObservedPublishes(), id2)
+}
+
 func TestWorkerRunExitsOnContextDeadline(t *testing.T) {
 	r := require.New(t)
 	fx := newWorkerFixture(t)

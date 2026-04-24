@@ -63,6 +63,12 @@ func TestTranslateAlbumErrorDelegatesToShared(t *testing.T) {
 	r.Nil(httpapi.TranslateAlbumErrorForTest(nil))
 }
 
+func TestTranslateAlbumErrorShareAlbumHasLiveScopes(t *testing.T) {
+	r := require.New(t)
+	got := httpapi.TranslateAlbumErrorForTest(share.ErrAlbumHasLiveScopes)
+	r.Equal(409, httpapi.StatusFrom(got))
+}
+
 type albumsAPIFixture struct {
 	srv   *httptest.Server
 	owner owners.Principal

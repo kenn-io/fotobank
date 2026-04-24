@@ -4160,6 +4160,12 @@ git commit -m "Wire AlbumService.Delete through db.Tx + PrepareAlbumDeleteTx"
 - Modify: `internal/httpapi/api.go` (Deps + buildAPI)
 - Modify: `internal/httpapi/openapi.go` (regenerated via `make api-generate`)
 
+> **Note (2026-04-23 sweep 3):** Steps 1-4 below (translator case + unit test for
+> `share.ErrAlbumHasLiveScopes`) were pulled forward into roborev sweep 3 to close
+> a live finding on the T15 commit. Verify these files already have the changes
+> before skipping: `internal/httpapi/albums.go::translateAlbumError` and the test
+> `TestTranslateAlbumErrorShareAlbumHasLiveScopes`. If present, skip to Step 5.
+
 - [ ] **Step 1: Extend the album translator test**
 
 Edit `internal/httpapi/albums_test.go`. Find the existing

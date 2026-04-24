@@ -77,7 +77,8 @@ func (w *Worker) Run(ctx context.Context) error {
 
 // RunOnce drains up to Batch ready rows once and returns the number
 // processed. Non-terminal errors from a single row are logged and do
-// not stop the drain.
+// not stop the drain. Context errors from a row's broker call abort
+// the drain immediately; the aborted row is NOT counted as processed.
 func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	rows, err := w.cfg.Repo.ListReady(ctx, w.cfg.Now(), w.cfg.Batch)
 	if err != nil {
@@ -88,46 +89,52 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 		if ctx.Err() != nil {
 			return n, ctx.Err()
 		}
+		var perr error
 		switch s.BrokerStatus {
 		case share.StatusPending:
-			w.processPending(ctx, s)
+			perr = w.processPending(ctx, s)
 		case share.StatusRevoking:
-			w.processRevoking(ctx, s)
+			perr = w.processRevoking(ctx, s)
 		default:
 			w.cfg.Logger.Warn("shareworker unexpected status",
 				"uuid", s.UUID, "status", s.BrokerStatus)
+		}
+		if isCtxErr(perr) {
+			return n, perr
 		}
 		n++
 	}
 	return n, nil
 }
 
-func (w *Worker) processPending(ctx context.Context, s share.Scope) {
+func (w *Worker) processPending(ctx context.Context, s share.Scope) error {
 	err := w.cfg.Broker.PublishScope(ctx, s)
 	if err == nil {
 		if _, merr := w.cfg.Repo.MarkPublished(ctx, s.UUID, w.cfg.Now()); merr != nil && !isCtxErr(merr) {
 			w.cfg.Logger.Error("mark-published call errored", "uuid", s.UUID, "err", merr)
 		}
-		return
+		return nil
 	}
 	if isCtxErr(err) {
-		return
+		return err
 	}
 	w.recordFailure(ctx, s, share.StatusPending, err)
+	return nil
 }
 
-func (w *Worker) processRevoking(ctx context.Context, s share.Scope) {
+func (w *Worker) processRevoking(ctx context.Context, s share.Scope) error {
 	err := w.cfg.Broker.RevokeScope(ctx, s.UUID)
 	if err == nil {
 		if _, merr := w.cfg.Repo.MarkRevoked(ctx, s.UUID, w.cfg.Now()); merr != nil && !isCtxErr(merr) {
 			w.cfg.Logger.Error("mark-revoked call errored", "uuid", s.UUID, "err", merr)
 		}
-		return
+		return nil
 	}
 	if isCtxErr(err) {
-		return
+		return err
 	}
 	w.recordFailure(ctx, s, share.StatusRevoking, err)
+	return nil
 }
 
 func (w *Worker) recordFailure(ctx context.Context, s share.Scope, phase share.BrokerStatus, err error) {

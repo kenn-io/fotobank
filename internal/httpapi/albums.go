@@ -11,6 +11,7 @@ import (
 	"github.com/wesm/fotobank/internal/album"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/service"
+	"github.com/wesm/fotobank/internal/share"
 )
 
 // translateAlbumError maps service-layer errors to huma.StatusError with
@@ -34,6 +35,8 @@ func translateAlbumError(err error) huma.StatusError {
 		return huma.Error400BadRequest("batch size must be 1..500")
 	case errors.Is(err, album.ErrInvalidSort):
 		return huma.Error400BadRequest("sort_by must be added or imported")
+	case errors.Is(err, share.ErrAlbumHasLiveScopes):
+		return huma.Error409Conflict("album has outstanding shares; revoke or retry them first")
 	default:
 		return Translate(err)
 	}
