@@ -207,6 +207,9 @@ func nullTime(t *time.Time) any {
 // every other row is visible. When len(filter.Status) > 0, only those
 // statuses are included and IncludeSettled is ignored. AlbumID /
 // Grantee further narrow the result when non-zero.
+//
+// Offset is ignored when Limit is zero — callers must pass a non-zero
+// Limit to paginate.
 func (r *Repo) ListByOwner(ctx context.Context, owner owners.Principal, filter ScopeFilter) ([]Scope, error) {
 	var (
 		sb   strings.Builder

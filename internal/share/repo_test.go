@@ -165,10 +165,9 @@ func TestRepoListByOwnerDefaultHidesRevokedRemote(t *testing.T) {
 		}
 		r.NoError(repo.Insert(context.Background(), s, nil))
 		if status != share.StatusPending || revokedAt != nil {
-			now := time.Now().UTC()
 			_, err := d.WriteDB().ExecContext(context.Background(),
 				`UPDATE scopes SET broker_status = ?, revoked_at = ? WHERE uuid = ?`,
-				string(status), nullableTime(revokedAt, now), s.UUID)
+				string(status), nullableTime(revokedAt), s.UUID)
 			r.NoError(err)
 		}
 		return s.UUID
@@ -258,7 +257,7 @@ func TestRepoListReadyReturnsDueRowsOnly(t *testing.T) {
 		r.NoError(repo.Insert(context.Background(), s, nil))
 		_, err := d.WriteDB().ExecContext(context.Background(),
 			`UPDATE scopes SET broker_status = ?, broker_next_attempt_at = ? WHERE uuid = ?`,
-			string(status), nullableTime(nextAt, time.Now().UTC()), s.UUID)
+			string(status), nullableTime(nextAt), s.UUID)
 		r.NoError(err)
 		return s.UUID
 	}
@@ -274,6 +273,16 @@ func TestRepoListReadyReturnsDueRowsOnly(t *testing.T) {
 	r.ElementsMatch([]string{pendingNow, pendingPast, revokingNow}, got)
 	r.NotContains(got, pendingFuture)
 	r.NotContains(got, active)
+
+	// Ordering contract: NULL next_attempt_at first, then earliest
+	// next_attempt_at, then created_at. pendingNow and revokingNow both
+	// have NULL next_attempt_at, followed by pendingPast (next_attempt_at
+	// in the past).
+	r.Len(rows, 3)
+	// The two NULL-next_attempt rows come first (order between them is by
+	// created_at; we don't assert which is first since seeding timestamps
+	// are close together). But pendingPast MUST be last.
+	r.Equal(pendingPast, rows[2].UUID, "pendingPast should sort after the two NULL rows")
 }
 
 func TestRepoListReadyRespectsMaxBrokerAttempts(t *testing.T) {
@@ -312,9 +321,8 @@ func ids(rows []share.Scope) []string {
 	return out
 }
 
-// nullableTime returns t for UPDATE binding; when t is nil returns
-// nil (maps to SQL NULL). fallback unused; kept for call-site symmetry.
-func nullableTime(t *time.Time, _ time.Time) any {
+// nullableTime returns t for UPDATE binding; nil maps to SQL NULL.
+func nullableTime(t *time.Time) any {
 	if t == nil {
 		return nil
 	}
