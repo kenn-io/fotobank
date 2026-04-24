@@ -57,6 +57,7 @@ type scopeDTO struct {
 	UUID                string       `json:"uuid"`
 	Owner               principalDTO `json:"owner"`
 	Grantee             principalDTO `json:"grantee"`
+	GranteeHandle       string       `json:"grantee_handle,omitempty"`
 	TargetType          string       `json:"target_type"`
 	TargetAlbumID       string       `json:"target_album_id,omitempty"`
 	AllowDownload       bool         `json:"allow_download"`
@@ -118,11 +119,14 @@ func callerFromCtx(ctx context.Context) (owners.Principal, error) {
 }
 
 // registerShares wires /api/v1/shares. svc == nil answers 503 so the
-// OpenAPI dumper can build the spec without real deps.
-func registerShares(api huma.API, svc *service.ShareService) {
+// OpenAPI dumper can build the spec without real deps. displayRepo may
+// be nil — the list/get handlers just skip grantee_handle hydration,
+// keeping the response shape valid for stub-mode deployments and the
+// spec dumper.
+func registerShares(api huma.API, svc *service.ShareService, displayRepo *share.PrincipalDisplayRepo) {
 	registerSharesCreate(api, svc)
-	registerSharesList(api, svc)
-	registerSharesGet(api, svc)
+	registerSharesList(api, svc, displayRepo)
+	registerSharesGet(api, svc, displayRepo)
 	registerSharesRevoke(api, svc)
 	registerSharesRetry(api, svc)
 	registerSharesPreview(api, svc)
@@ -202,7 +206,7 @@ func registerSharesCreate(api huma.API, svc *service.ShareService) {
 	})
 }
 
-func registerSharesList(api huma.API, svc *service.ShareService) {
+func registerSharesList(api huma.API, svc *service.ShareService, displayRepo *share.PrincipalDisplayRepo) {
 	huma.Register(api, huma.Operation{
 		OperationID: "shares-list",
 		Method:      http.MethodGet,
@@ -232,20 +236,40 @@ func registerSharesList(api huma.API, svc *service.ShareService) {
 		if err != nil {
 			return nil, translateShareError(err)
 		}
+		handles, err := batchGranteeHandles(ctx, displayRepo, rows)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
 		out := &listSharesOutput{}
 		out.Body.Items = make([]scopeDTO, 0, len(rows))
 		for _, s := range rows {
-			out.Body.Items = append(out.Body.Items, toScopeDTO(s))
+			dto := toScopeDTO(s)
+			dto.GranteeHandle = handles[s.Grantee]
+			out.Body.Items = append(out.Body.Items, dto)
 		}
 		return out, nil
 	})
+}
+
+// batchGranteeHandles looks up display handles for every grantee
+// appearing in rows. Returns an empty map (never nil) when displayRepo
+// is nil so callers can index unconditionally.
+func batchGranteeHandles(ctx context.Context, displayRepo *share.PrincipalDisplayRepo, rows []share.Scope) (map[owners.Principal]string, error) {
+	if displayRepo == nil || len(rows) == 0 {
+		return map[owners.Principal]string{}, nil
+	}
+	principals := make([]owners.Principal, 0, len(rows))
+	for _, s := range rows {
+		principals = append(principals, s.Grantee)
+	}
+	return displayRepo.GetBatch(ctx, principals)
 }
 
 type scopeUUIDParam struct {
 	UUID string `path:"uuid"`
 }
 
-func registerSharesGet(api huma.API, svc *service.ShareService) {
+func registerSharesGet(api huma.API, svc *service.ShareService, displayRepo *share.PrincipalDisplayRepo) {
 	huma.Register(api, huma.Operation{
 		OperationID: "shares-get",
 		Method:      http.MethodGet,
@@ -262,7 +286,15 @@ func registerSharesGet(api huma.API, svc *service.ShareService) {
 		if err != nil {
 			return nil, translateShareError(err)
 		}
-		return &scopeDetailOutput{Status: http.StatusOK, Body: toScopeDetailDTO(det)}, nil
+		dto := toScopeDetailDTO(det)
+		if displayRepo != nil {
+			handle, _, err := displayRepo.Get(ctx, det.Grantee)
+			if err != nil {
+				return nil, translateShareError(err)
+			}
+			dto.GranteeHandle = handle
+		}
+		return &scopeDetailOutput{Status: http.StatusOK, Body: dto}, nil
 	})
 }
 

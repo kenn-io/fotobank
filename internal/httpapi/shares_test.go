@@ -24,12 +24,13 @@ import (
 )
 
 type sharesHTTPFixture struct {
-	h      http.Handler
-	owner  owners.Principal
-	shares *service.ShareService
-	albums *service.AlbumService
-	media  *media.Repo
-	db     *db.DB
+	h       http.Handler
+	owner   owners.Principal
+	shares  *service.ShareService
+	albums  *service.AlbumService
+	media   *media.Repo
+	display *share.PrincipalDisplayRepo
+	db      *db.DB
 }
 
 func newSharesHTTPFixture(t *testing.T) *sharesHTTPFixture {
@@ -45,6 +46,7 @@ func newSharesHTTPFixture(t *testing.T) *sharesHTTPFixture {
 	albumsRepo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	shareRepo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	displayRepo := share.NewPrincipalDisplayRepo(d.WriteDB(), d.ReadDB())
 	albumSvc := service.NewAlbumService(albumsRepo, mediaRepo, shareRepo, d)
 	shareSvc := service.NewShareService(shareRepo, albumsRepo, mediaRepo)
 
@@ -52,11 +54,12 @@ func newSharesHTTPFixture(t *testing.T) *sharesHTTPFixture {
 		IdentityProvider: identity.NewStub(owner, "Test User"),
 		AlbumService:     albumSvc,
 		ShareService:     shareSvc,
+		PrincipalDisplay: displayRepo,
 	})
 	require.NoError(t, err)
 	return &sharesHTTPFixture{
 		h: h, owner: owner, shares: shareSvc, albums: albumSvc,
-		media: mediaRepo, db: d,
+		media: mediaRepo, display: displayRepo, db: d,
 	}
 }
 
@@ -376,4 +379,80 @@ func TestSharesPreviewCrossOwnerReturns404(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	r.Equal(http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+func TestSharesListHydratesGranteeHandle(t *testing.T) {
+	r := require.New(t)
+	fx := newSharesHTTPFixture(t)
+	albumID := fx.seedAlbumWithMedia(t)
+
+	// Mint a scope granted to bob, then seed a display row so the
+	// hydration path has something to hit.
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	_, err := fx.shares.Create(context.Background(), service.CreateShareRequest{
+		Grantee: bob, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+	r.NoError(fx.display.Upsert(context.Background(),
+		identity.Principal{Hub: bob.Hub, UserID: bob.UserID, Handle: "Bob"},
+		time.Now().UTC()))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares", nil)
+	rec := httptest.NewRecorder()
+	fx.h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &resp))
+	r.Len(resp.Items, 1)
+	r.Equal("Bob", resp.Items[0]["grantee_handle"])
+}
+
+func TestSharesGetHydratesGranteeHandle(t *testing.T) {
+	r := require.New(t)
+	fx := newSharesHTTPFixture(t)
+	albumID := fx.seedAlbumWithMedia(t)
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	s, err := fx.shares.Create(context.Background(), service.CreateShareRequest{
+		Grantee: bob, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+	r.NoError(fx.display.Upsert(context.Background(),
+		identity.Principal{Hub: bob.Hub, UserID: bob.UserID, Handle: "Bob"},
+		time.Now().UTC()))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares/"+s.UUID, nil)
+	rec := httptest.NewRecorder()
+	fx.h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var body map[string]any
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	r.Equal("Bob", body["grantee_handle"])
+}
+
+func TestSharesListNoDisplayRowOmitsGranteeHandle(t *testing.T) {
+	r := require.New(t)
+	fx := newSharesHTTPFixture(t)
+	albumID := fx.seedAlbumWithMedia(t)
+	// No principal_display row for the grantee.
+	_, err := fx.shares.Create(context.Background(), service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "bob"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares", nil)
+	rec := httptest.NewRecorder()
+	fx.h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &resp))
+	r.Len(resp.Items, 1)
+	_, present := resp.Items[0]["grantee_handle"]
+	r.False(present, "grantee_handle must be absent from JSON when no display row exists")
 }

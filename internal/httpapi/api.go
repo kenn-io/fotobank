@@ -93,7 +93,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerMediaOriginal(mux, deps.MediaService)
 	registerMediaThumb(mux, deps.ThumbService)
 	registerAlbums(api, deps.AlbumService)
-	registerShares(api, deps.ShareService)
+	registerShares(api, deps.ShareService, deps.PrincipalDisplay)
 	registerShared(api, deps.SharedRead)
 	registerSharedBytes(mux, deps.SharedRead)
 	return mux, api
