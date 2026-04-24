@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wesm/fotobank/internal/errs"
+	"github.com/wesm/fotobank/internal/owners"
 )
 
 // Repo is a SQLite-backed store of scopes + scope_media rows. Split
@@ -197,4 +199,111 @@ func nullTime(t *time.Time) any {
 		return nil
 	}
 	return *t
+}
+
+// ListByOwner returns scopes owned by this principal, filtered and
+// paginated. When len(filter.Status) == 0 and filter.IncludeSettled
+// is false, broker_status = 'revoked_remote' is hidden by default;
+// every other row is visible. When len(filter.Status) > 0, only those
+// statuses are included and IncludeSettled is ignored. AlbumID /
+// Grantee further narrow the result when non-zero.
+func (r *Repo) ListByOwner(ctx context.Context, owner owners.Principal, filter ScopeFilter) ([]Scope, error) {
+	var (
+		sb   strings.Builder
+		args []any
+	)
+	sb.WriteString(`SELECT ` + scopeSelect + ` FROM scopes WHERE owner_hub = ? AND owner_user_id = ?`)
+	args = append(args, owner.Hub, owner.UserID)
+
+	switch {
+	case len(filter.Status) > 0:
+		ph, sargs := statusPlaceholders(filter.Status)
+		sb.WriteString(` AND broker_status IN (` + ph + `)`)
+		args = append(args, sargs...)
+	case !filter.IncludeSettled:
+		sb.WriteString(` AND broker_status != 'revoked_remote'`)
+	}
+	if filter.AlbumID != "" {
+		sb.WriteString(` AND target_album_id = ?`)
+		args = append(args, filter.AlbumID)
+	}
+	if !filter.Grantee.IsZero() {
+		sb.WriteString(` AND grantee_hub = ? AND grantee_user_id = ?`)
+		args = append(args, filter.Grantee.Hub, filter.Grantee.UserID)
+	}
+	sb.WriteString(` ORDER BY created_at DESC, uuid ASC`)
+	if filter.Limit > 0 {
+		sb.WriteString(` LIMIT ?`)
+		args = append(args, filter.Limit)
+		if filter.Offset > 0 {
+			sb.WriteString(` OFFSET ?`)
+			args = append(args, filter.Offset)
+		}
+	}
+
+	rows, err := r.ro.QueryContext(ctx, sb.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("list scopes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Scope
+	for rows.Next() {
+		s, err := scanScope(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan scope: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// ListReady returns up to limit scopes the outbox worker should attempt
+// right now: status in (pending, revoking), broker_next_attempt_at is
+// either NULL or <= now, and broker_attempts < MaxBrokerAttempts.
+// Ordered by broker_next_attempt_at ASC NULLS FIRST, then created_at
+// ASC, so newly-inserted rows are picked up promptly.
+func (r *Repo) ListReady(ctx context.Context, now time.Time, limit int) ([]Scope, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.ro.QueryContext(ctx,
+		`SELECT `+scopeSelect+` FROM scopes
+          WHERE broker_status IN ('pending', 'revoking')
+            AND (broker_next_attempt_at IS NULL OR broker_next_attempt_at <= ?)
+            AND broker_attempts < ?
+          ORDER BY (broker_next_attempt_at IS NULL) DESC,
+                   broker_next_attempt_at ASC,
+                   created_at ASC
+          LIMIT ?`,
+		now, MaxBrokerAttempts, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list ready scopes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Scope
+	for rows.Next() {
+		s, err := scanScope(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan scope: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// statusPlaceholders renders `IN (?,?,?)` argument tuples. Returns the
+// placeholder string and the []any args, both empty when the input is
+// empty. Used here by ListByOwner and in later tasks for filtered
+// UPDATEs.
+func statusPlaceholders(statuses []BrokerStatus) (string, []any) {
+	if len(statuses) == 0 {
+		return "", nil
+	}
+	parts := make([]string, len(statuses))
+	args := make([]any, len(statuses))
+	for i, s := range statuses {
+		parts[i] = "?"
+		args[i] = string(s)
+	}
+	return strings.Join(parts, ","), args
 }
