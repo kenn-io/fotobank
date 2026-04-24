@@ -4850,15 +4850,17 @@ git commit -m "Add /api/v1/shares routes, translator, and OpenAPI regen"
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `internal/cli/shares_test.go`:
+Create `internal/cli/shares_test.go`. The CLI entrypoint is
+`cli.Run(args, stdout, stderr) int` (returns 0=success, 1=runtime,
+2=usage); see `internal/cli/dispatch_test.go` for the established
+pattern. `MarkFlagRequired` produces a cobra "required flag(s) … not
+set" error, which `isUsageError` recognises so it maps to exit 2.
 
 ```go
 package cli_test
 
 import (
     "bytes"
-    "context"
-    "strings"
     "testing"
 
     "github.com/stretchr/testify/require"
@@ -4867,27 +4869,18 @@ import (
 )
 
 func TestSharesCmdUsageErrorWithoutSub(t *testing.T) {
-    r := require.New(t)
-    root := cli.NewRoot()
-    root.SetArgs([]string{"shares"})
-    var out bytes.Buffer
-    root.SetOut(&out)
-    root.SetErr(&out)
-    err := root.ExecuteContext(context.Background())
-    r.Error(err)
-    r.True(strings.Contains(out.String(), "a subcommand is required") ||
-        strings.Contains(err.Error(), "a subcommand is required"))
+    var stdout, stderr bytes.Buffer
+    code := cli.Run([]string{"shares"}, &stdout, &stderr)
+    require.Equal(t, 2, code)
+    require.Contains(t, stderr.String(), "usage")
 }
 
-func TestSharesCreateMissingFlags(t *testing.T) {
-    r := require.New(t)
-    root := cli.NewRoot()
-    root.SetArgs([]string{"shares", "create"})
-    var out bytes.Buffer
-    root.SetOut(&out)
-    root.SetErr(&out)
-    err := root.ExecuteContext(context.Background())
-    r.Error(err)
+func TestSharesCreateMissingGrantee(t *testing.T) {
+    var stdout, stderr bytes.Buffer
+    code := cli.Run([]string{"shares", "create"}, &stdout, &stderr)
+    // Cobra's MarkFlagRequired("grantee") produces a "required flag(s)"
+    // error, which isUsageError catches → exit 2.
+    require.Equal(t, 2, code)
 }
 ```
 
@@ -5166,7 +5159,6 @@ func runSharesList(ctx context.Context, o sharesListOpts) error {
 
 func newSharesShowCmd() *cobra.Command {
     var cfgPath string
-    var asJSON bool
     cmd := &cobra.Command{
         Use:   "show <uuid>",
         Short: "Show a single scope (including media set membership)",
@@ -5183,14 +5175,10 @@ func newSharesShowCmd() *cobra.Command {
             }
             enc := json.NewEncoder(cmd.OutOrStdout())
             enc.SetIndent("", "  ")
-            if asJSON {
-                return enc.Encode(det)
-            }
-            return enc.Encode(det) // for now the table-ish form is the same JSON
+            return enc.Encode(det)
         },
     }
     cmd.Flags().StringVar(&cfgPath, "config", "", "")
-    cmd.Flags().BoolVar(&asJSON, "json", true, "raw JSON")
     return cmd
 }
 
