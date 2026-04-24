@@ -17,9 +17,11 @@ const (
 // Backoff returns the delay AFTER attempt n has failed, before attempt
 // n+1. The worker calls Backoff(scope.BrokerAttempts + 1) on a
 // transient failure. Attempt 1 post-fail waits baseDelay (30s),
-// attempt 2 waits 60s, and so on; beyond ~attempt 8 the delay is
-// capped at maxDelay (1h). Jitter is ± jitterPct % of the raw
-// delay; rng is injected so tests can pin it.
+// attempt 2 waits 60s, and so on; beyond ~attempt 8 the raw delay is
+// capped at maxDelay (1h). Jitter is ± jitterPct % of the raw delay
+// and is applied after the cap, so the returned duration can exceed
+// maxDelay by up to jitterPct (e.g., 1h → up to 66m). rng is
+// injected so tests can pin it.
 //
 // No-jitter delays in seconds (n=1..9):
 //

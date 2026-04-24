@@ -1,6 +1,7 @@
 package shareworker_test
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 	"time"
@@ -60,4 +61,15 @@ func TestBackoffJitterBandedAroundRaw(t *testing.T) {
 		r.GreaterOrEqual(got, 108*time.Second) // 120s - 10% = 108s
 		r.LessOrEqual(got, 132*time.Second)    // 120s + 10% = 132s
 	}
+}
+
+// MaxBrokerAttempts fences attempts to 10 in production, but the pure
+// Backoff function is defensive: math.Pow(2, MaxInt) overflows to
+// +Inf, which the raw > maxDelay guard catches, so extreme inputs
+// still yield maxDelay (pre-jitter) rather than NaN or negative
+// durations.
+func TestBackoffHandlesExtremeAttempts(t *testing.T) {
+	r := require.New(t)
+	rng := zeroJitterRng()
+	r.Equal(1*time.Hour, shareworker.Backoff(math.MaxInt, rng))
 }
