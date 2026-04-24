@@ -1,11 +1,14 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -22,6 +25,7 @@ import (
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/storage"
 	"github.com/wesm/fotobank/internal/testutil"
+	"github.com/wesm/fotobank/internal/thumb"
 )
 
 // sharedFxInputs carries the pre-built repos + storage + time needed to
@@ -447,4 +451,175 @@ func TestSharedHTTPGetMediaAuthorizedReturnsCanDownload(t *testing.T) {
 	r.Equal(true, body["can_download"])
 	r.Equal("h", body["owner"].(map[string]any)["hub"])
 	r.Equal("alice", body["owner"].(map[string]any)["user_id"])
+}
+
+// sharedHTTPSeedStoredMedia inserts a media row and writes its bytes
+// into the fixture's storage at the row's path. Size is set to the
+// body length so Content-Length arithmetic in the handler lines up.
+func sharedHTTPSeedStoredMedia(t *testing.T, in sharedFxInputs, p owners.Principal, body string) string {
+	t.Helper()
+	cs := uuid.NewString()
+	path := "2024/" + cs + ".jpg"
+	m := media.Media{
+		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: path,
+		OriginalFilename: "x.jpg",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Size:             int64(len(body)), Checksum: cs, ThumbStatus: "pending",
+	}
+	require.NoError(t, in.mediaR.Insert(context.Background(), m))
+	_, err := in.store.Write(context.Background(), p, path, bytes.NewReader([]byte(body)))
+	require.NoError(t, err)
+	return m.ID
+}
+
+// sharedHTTPSeedMediaWithReadyThumb seeds a media row with
+// thumb_status='ready' and writes thumb bytes into the fixture's
+// storage at thumb.ThumbKey. Returns (id, version).
+func sharedHTTPSeedMediaWithReadyThumb(t *testing.T, in sharedFxInputs, p owners.Principal, body string) (string, int) {
+	t.Helper()
+	cs := uuid.NewString()
+	version := 1
+	updatedAt := time.Now().UTC().Truncate(time.Second)
+	m := media.Media{
+		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/" + cs + ".jpg",
+		OriginalFilename: "x.jpg",
+		ImportedAt:       updatedAt,
+		Size:             100, Checksum: cs,
+		ThumbStatus: "pending", ThumbVersion: version,
+	}
+	require.NoError(t, in.mediaR.Insert(context.Background(), m))
+	_, err := in.d.WriteDB().ExecContext(context.Background(),
+		`UPDATE media SET thumb_status='ready', thumb_updated_at=? WHERE id=?`,
+		updatedAt, m.ID)
+	require.NoError(t, err)
+	key := thumb.ThumbKey(m.ID, version, thumb.SizeGrid)
+	_, err = in.store.Write(context.Background(), p, key, bytes.NewReader([]byte(body)))
+	require.NoError(t, err)
+	return m.ID, version
+}
+
+func TestSharedHTTPThumbAuthorized(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	mID, version := sharedHTTPSeedMediaWithReadyThumb(t, in, alice, "PNGBYTES")
+	// download=false — thumbs ignore the flag.
+	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, false, mID)
+	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
+
+	h := buildSharedFx(in, bob, []string{s.UUID})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/shared/media/"+mID+"/thumb?size=grid&v="+strconv.Itoa(version), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+	r.Equal("image/jpeg", rec.Result().Header.Get("Content-Type"))
+	r.Equal("no-store", rec.Result().Header.Get("Cache-Control"))
+	r.Equal("PNGBYTES", rec.Body.String())
+}
+
+func TestSharedHTTPThumbUnauthorizedReturns404(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	mID, _ := sharedHTTPSeedMediaWithReadyThumb(t, in, alice, "PNGBYTES")
+
+	h := buildSharedFx(in, bob, nil) // no scopes
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/shared/media/"+mID+"/thumb?size=grid&v=1", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusNotFound, rec.Code, rec.Body.String())
+	r.Equal("no-store", rec.Result().Header.Get("Cache-Control"))
+}
+
+func TestSharedHTTPOriginalAllowDownloadTrue(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	mID := sharedHTTPSeedStoredMedia(t, in, alice, "photobytes")
+	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, true, mID)
+	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
+
+	h := buildSharedFx(in, bob, []string{s.UUID})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared/media/"+mID+"/original", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+	body, err := io.ReadAll(rec.Result().Body)
+	r.NoError(err)
+	r.Equal("photobytes", string(body))
+	r.Equal("no-store", rec.Result().Header.Get("Cache-Control"))
+	r.Equal("bytes", rec.Result().Header.Get("Accept-Ranges"))
+}
+
+func TestSharedHTTPOriginalAllowDownloadFalseReturns403(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	mID := sharedHTTPSeedStoredMedia(t, in, alice, "photobytes")
+	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, false, mID)
+	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
+
+	h := buildSharedFx(in, bob, []string{s.UUID})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared/media/"+mID+"/original", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusForbidden, rec.Code, rec.Body.String())
+}
+
+func TestSharedHTTPOriginalRangeReturns206(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	mID := sharedHTTPSeedStoredMedia(t, in, alice, "0123456789")
+	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, true, mID)
+	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
+
+	h := buildSharedFx(in, bob, []string{s.UUID})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared/media/"+mID+"/original", nil)
+	req.Header.Set("Range", "bytes=2-5")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusPartialContent, rec.Code, rec.Body.String())
+	r.Equal("bytes 2-5/10", rec.Result().Header.Get("Content-Range"))
+	r.Equal("2345", rec.Body.String())
+}
+
+func TestSharedHTTPOriginalUnsatisfiableRangeReturns416(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	mID := sharedHTTPSeedStoredMedia(t, in, alice, "0123456789")
+	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, true, mID)
+	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
+
+	h := buildSharedFx(in, bob, []string{s.UUID})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared/media/"+mID+"/original", nil)
+	req.Header.Set("Range", "bytes=999-")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusRequestedRangeNotSatisfiable, rec.Code, rec.Body.String())
+	r.Equal("bytes */10", rec.Result().Header.Get("Content-Range"))
 }

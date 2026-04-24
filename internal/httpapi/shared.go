@@ -52,6 +52,7 @@ type sharedMediaDTO struct {
 	MediaType    string             `json:"media_type"`
 	MimeType     string             `json:"mime_type"`
 	DisplayTime  time.Time          `json:"display_time"`
+	Size         int64              `json:"size,omitempty"`
 	Width        *int               `json:"width,omitempty"`
 	Height       *int               `json:"height,omitempty"`
 	DurationMs   *int64             `json:"duration_ms,omitempty"`
@@ -329,6 +330,7 @@ func toSharedMediaDTO(m service.SharedMedia) sharedMediaDTO {
 		MediaType:    string(m.MediaType),
 		MimeType:     m.MimeType,
 		DisplayTime:  m.DisplayTime,
+		Size:         m.Size,
 		Width:        m.Width,
 		Height:       m.Height,
 		DurationMs:   m.DurationMs,

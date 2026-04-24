@@ -179,13 +179,17 @@ type SharedAlbumDetail struct {
 	SharedAlbum
 }
 
-// SharedMedia is the grantee view of one media row.
+// SharedMedia is the grantee view of one media row. Size is exposed on
+// the wire so the byte route can set Content-Length without another
+// repo round-trip; it's not sensitive — a grantee that can see the
+// media already knows how many bytes they'd download.
 type SharedMedia struct {
 	ID           string
 	Owner        owners.Principal
 	MediaType    media.Type
 	MimeType     string
 	DisplayTime  time.Time
+	Size         int64
 	Width        *int
 	Height       *int
 	DurationMs   *int64
@@ -398,6 +402,7 @@ func toSharedMedia(m media.Media, canDownload bool) SharedMedia {
 		MediaType:    m.Type,
 		MimeType:     m.MimeType,
 		DisplayTime:  display,
+		Size:         m.Size,
 		Width:        m.Width,
 		Height:       m.Height,
 		DurationMs:   m.DurationMs,

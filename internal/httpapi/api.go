@@ -81,6 +81,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerAlbums(api, deps.AlbumService)
 	registerShares(api, deps.ShareService)
 	registerShared(api, deps.SharedRead)
+	registerSharedBytes(mux, deps.SharedRead)
 	return mux, api
 }
 
