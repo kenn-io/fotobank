@@ -1324,7 +1324,7 @@ type RestoreResult struct {
 // with errors.Join.
 func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res RestoreResult, retErr error) {
 	// 1. Validate the snapshot file is a real SQLite DB.
-	if err := validateSnapshot(snapshotPath); err != nil {
+	if err := ValidateSnapshot(snapshotPath); err != nil {
 		return RestoreResult{}, fmt.Errorf("validate snapshot: %w", err)
 	}
 
@@ -1355,7 +1355,11 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 			rollbackErrs = append(rollbackErrs, openedDB.Close())
 		}
 		// Remove any freshly-installed files; ignore not-exist.
-		for _, p := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+		// dbPath + ".incoming" is included to defend against a process
+		// crash inside copyFile that strands the temp file — without
+		// the rollback covering it, the next Restore would fail at
+		// O_EXCL with a misleading "create incoming" error.
+		for _, p := range []string{dbPath, dbPath + "-wal", dbPath + "-shm", dbPath + ".incoming"} {
 			if rmErr := os.Remove(p); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 				rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback remove %s: %w", p, rmErr))
 			}
@@ -1419,7 +1423,13 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 	}, nil
 }
 
-func validateSnapshot(path string) error {
+// ValidateSnapshot opens path with the same DSN as snapshot creation
+// (mode=rw, no create) and runs PRAGMA integrity_check to confirm it's
+// a real, intact SQLite database. Used by Restore as a precondition
+// and by the CLI `backup restore --dry-run` so an operator finds out
+// about a bad snapshot before any move-aside runs. Reads only — the
+// rw mode is just to share buildDSN; integrity_check does not write.
+func ValidateSnapshot(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
@@ -2190,7 +2200,6 @@ Expected: build fails — `backup` subcommand not registered.
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2199,6 +2208,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 
 	"github.com/wesm/fotobank/internal/backup"
@@ -2385,9 +2395,13 @@ func promptRestoreConfirmation(cmd *cobra.Command, snap, dbPath string) error {
 }
 
 func restoreDryRun(cmd *cobra.Command, snap, dbPath, lockPath string, asJSON bool) error {
-	// Validate snapshot.
-	if _, err := os.Stat(snap); err != nil {
-		return fmt.Errorf("snapshot stat: %w", err)
+	// Validate snapshot integrity, not just existence — a corrupt or
+	// non-SQLite file at snap would fail the actual restore, and the
+	// dry-run must surface that pre-emptively. backup.ValidateSnapshot
+	// (exported in T6) opens the file read-only and runs PRAGMA
+	// integrity_check.
+	if err := backup.ValidateSnapshot(snap); err != nil {
+		return fmt.Errorf("validate snapshot: %w", err)
 	}
 	// Try to acquire and immediately release the lock.
 	l := flockNew(lockPath)
@@ -2423,13 +2437,13 @@ func backupDirFor(cfg *config.Config) string {
 	return filepath.Join(cfg.NAS.Root, ".fotobank", "snapshots")
 }
 
-// flockNew is shimmed via a var so dry-run doesn't need to import gofrs/flock
-// at top of file. In production it's the real constructor.
+// flockNew is the package-level constructor injection point so tests can
+// stub the lock behaviour. Production calls flock.New directly.
 var flockNew = func(path string) interface {
 	TryLock() (bool, error)
 	Unlock() error
 } {
-	return flockBackend(path)
+	return flock.New(path)
 }
 ```
 
@@ -2461,18 +2475,16 @@ func loadConfigFromCmd(cmd *cobra.Command) (*config.Config, error) {
 
 (If a helper already exists, replace the body of this with a call to it instead.)
 
-- [ ] **Step 6: Implement the `flockBackend` shim**
+- [ ] **Step 6: (no longer needed)**
 
-Add to `internal/cli/backup.go` near the bottom:
+The earlier draft introduced a `flockBackend` shim because the dry-run path
+was meant to avoid importing `gofrs/flock`. Step 3 above now imports the
+package at the top of the file and `flockNew` calls `flock.New` directly,
+so this step is intentionally a no-op. Skip it.
 
 ```go
-import "github.com/gofrs/flock"
-
-func flockBackend(path string) interface {
-	TryLock() (bool, error)
-	Unlock() error
-} {
-	return flock.New(path)
+// (no code; this step is preserved as a numbered marker so subsequent
+//  steps keep their numbers but adds nothing to backup.go.)
 }
 ```
 

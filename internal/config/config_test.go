@@ -450,3 +450,24 @@ dir = "relative/path"
 	_, err := config.Load(p)
 	require.ErrorIs(t, err, errs.ErrBadConfiguration)
 }
+
+// When backups are disabled, retention counts are never consulted, so
+// keep_* validation must not block boot. An absolute dir is still
+// validated because the dir field is read by the CLI snapshot/list/
+// restore subcommands regardless of the worker being enabled.
+func TestBackupDisabledSkipsKeepValidation(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[backup]
+enabled = false
+keep_15min = 0
+keep_hourly = 0
+keep_daily = 0
+`), 0o600))
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	require.False(t, cfg.Backup.Enabled)
+}

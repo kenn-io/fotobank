@@ -311,8 +311,17 @@ func TestPublishScopeRedactsMembership(t *testing.T) {
 	fr := &fakeResult{exit: 0, captureStdin: &stdin}
 	reg := newTestRegistrar(t, Config{}, fr)
 
+	// Populate every membership-bearing field actually present on
+	// share.Scope so the absence assertions below prove redaction is
+	// unconditional. Without a non-nil TargetAlbumID, an `omitempty`
+	// tag would produce the same JSON whether the wire struct copied
+	// the field or not. (MediaIDs lives on share.ScopeDetail, not
+	// share.Scope; the media_ids assertion below is a defensive check
+	// that nothing else leaks the field name.)
+	albumID := "album-123"
 	s := sampleScope()
-	s.TargetType = share.TargetMediaSet
+	s.TargetType = share.TargetAlbumLive
+	s.TargetAlbumID = &albumID
 	r.NoError(reg.PublishScope(context.Background(), s))
 
 	var got map[string]any

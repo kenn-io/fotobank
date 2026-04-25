@@ -30,14 +30,20 @@ type SnapshotInfo struct {
 // whose names do not match the timestamp layout are skipped silently;
 // .partial files are skipped. A missing directory returns an empty
 // slice, not an error (callers may have a dir that the worker has not
-// created yet).
+// created yet). Returned SnapshotInfo.Path values are absolute even
+// when dir is relative — callers (CLI, sweep, restore) treat them as
+// stable identifiers and may pass them across cwd-changing boundaries.
 func List(dir string) ([]SnapshotInfo, error) {
-	entries, err := os.ReadDir(dir)
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		absDir = dir
+	}
+	entries, err := os.ReadDir(absDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("readdir %s: %w", dir, err)
+		return nil, fmt.Errorf("readdir %s: %w", absDir, err)
 	}
 	var out []SnapshotInfo
 	for _, e := range entries {
@@ -58,7 +64,7 @@ func List(dir string) ([]SnapshotInfo, error) {
 			continue
 		}
 		out = append(out, SnapshotInfo{
-			Path:      filepath.Join(dir, name),
+			Path:      filepath.Join(absDir, name),
 			Timestamp: ts,
 			Size:      info.Size(),
 		})

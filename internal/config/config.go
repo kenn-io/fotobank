@@ -232,14 +232,19 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%w: [broker].mode=%q (must be stub|exec)",
 			errs.ErrBadConfiguration, c.Broker.Mode)
 	}
-	if c.Backup.Keep15Min < 1 {
-		return fmt.Errorf("%w: backup.keep_15min must be >= 1", errs.ErrBadConfiguration)
-	}
-	if c.Backup.KeepHourly < 1 {
-		return fmt.Errorf("%w: backup.keep_hourly must be >= 1", errs.ErrBadConfiguration)
-	}
-	if c.Backup.KeepDaily < 1 {
-		return fmt.Errorf("%w: backup.keep_daily must be >= 1", errs.ErrBadConfiguration)
+	// Retention validation only applies when the worker will actually run.
+	// An operator who set enabled=false should be free to leave keep_*
+	// at zero or unset; the values would never be consulted.
+	if c.Backup.Enabled {
+		if c.Backup.Keep15Min < 1 {
+			return fmt.Errorf("%w: backup.keep_15min must be >= 1", errs.ErrBadConfiguration)
+		}
+		if c.Backup.KeepHourly < 1 {
+			return fmt.Errorf("%w: backup.keep_hourly must be >= 1", errs.ErrBadConfiguration)
+		}
+		if c.Backup.KeepDaily < 1 {
+			return fmt.Errorf("%w: backup.keep_daily must be >= 1", errs.ErrBadConfiguration)
+		}
 	}
 	if c.Backup.Dir != "" && !filepath.IsAbs(c.Backup.Dir) {
 		return fmt.Errorf("%w: backup.dir must be absolute when set", errs.ErrBadConfiguration)

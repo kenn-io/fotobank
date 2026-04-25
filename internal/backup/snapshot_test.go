@@ -98,11 +98,17 @@ func TestSnapshotPathOpensWritableDSN(t *testing.T) {
 }
 
 func TestSnapshotPathErrorsOnMissingSource(t *testing.T) {
+	r := require.New(t)
 	tmp := t.TempDir()
 	missing := filepath.Join(tmp, "no-such.sqlite")
 	dst := filepath.Join(tmp, "snap.sqlite")
 	err := SnapshotPath(context.Background(), missing, dst)
-	require.Error(t, err)
+	r.Error(err)
+	// mode=rw on the source DSN must prevent SQLite from creating an
+	// empty database in place of the missing source.
+	_, statErr := os.Stat(missing)
+	r.True(os.IsNotExist(statErr),
+		"missing source must not be created by snapshot open path")
 }
 
 func TestSnapshotSurfaceErrorFromSyncDir(t *testing.T) {
@@ -126,6 +132,7 @@ func TestBuildDSNEscapesReserved(t *testing.T) {
 	r.Contains(dsn, "%20", "space must be percent-escaped")
 	r.Contains(dsn, "%3F", "'?' must be percent-escaped")
 	r.Contains(dsn, "%23", "'#' must be percent-escaped")
+	r.Contains(dsn, "mode=rw", "DSN must pin mode=rw to refuse create-on-open")
 
 	rel := buildDSN("rel.sqlite")
 	u, err := url.Parse(rel)

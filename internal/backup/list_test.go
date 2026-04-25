@@ -74,3 +74,23 @@ func TestListParsesTimestampsCorrectly(t *testing.T) {
 	r.Len(got, 1)
 	r.Equal(time.Date(2026, 4, 25, 11, 30, 45, 123_000_000, time.UTC), got[0].Timestamp)
 }
+
+// SnapshotInfo.Path is documented as absolute. Callers cd into other
+// directories, so a relative dir argument must still produce paths that
+// remain valid.
+func TestListReturnsAbsolutePathsEvenForRelativeDir(t *testing.T) {
+	r := require.New(t)
+	dir := t.TempDir()
+	makeFile(t, dir, "2026-04-25T11:00:00.000Z.sqlite", time.Now())
+
+	// Resolve a path relative to dir's parent so the test's working
+	// directory does not affect outcomes.
+	t.Chdir(filepath.Dir(dir))
+	rel := filepath.Base(dir)
+
+	got, err := List(rel)
+	r.NoError(err)
+	r.Len(got, 1)
+	r.True(filepath.IsAbs(got[0].Path),
+		"List must return absolute paths even for relative dir, got %q", got[0].Path)
+}

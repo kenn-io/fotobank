@@ -77,6 +77,11 @@ func SnapshotPath(ctx context.Context, srcDB, dst string) error {
 // via net/url so paths containing '?', '#', or whitespace are safe.
 // Relative paths are resolved to absolute so url.URL.String() does not
 // emit them as authority components (file://rel.sqlite is malformed).
+//
+// mode=rw is set so SQLite refuses to create an empty database when the
+// source file is missing. SnapshotPath stats the source first, but
+// without mode=rw a TOCTOU window between stat and open could otherwise
+// silently produce an "ok" snapshot of a freshly-created empty DB.
 func buildDSN(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -84,6 +89,7 @@ func buildDSN(path string) string {
 	}
 	u := url.URL{Scheme: "file", Path: abs}
 	q := u.Query()
+	q.Set("mode", "rw")
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "foreign_keys(1)")
 	u.RawQuery = q.Encode()
