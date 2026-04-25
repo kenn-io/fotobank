@@ -65,7 +65,7 @@ A new package `internal/obs` owns three concerns:
    No identity middleware on this listener.
 
 `internal/cli/server.go` constructs the logger and metrics registry early,
-calls `slog.SetDefault(logger)` as a transition guard, threads both into
+calls `slog.SetDefault(logger.With("component", "legacy"))` as a transition guard, threads both into
 every `Config` that already takes a logger, and binds the admin listener
 as a separate `http.Server` alongside the main one. The admin listener
 is **not** part of `bgWG`; it has its own shutdown handled after
@@ -80,7 +80,7 @@ is **not** part of `bgWG`; it has its own shutdown handled after
 cli/server.go:
   obs.NewLogger ─────────► *slog.Logger (the only logger constructed)
        │
-       └── slog.SetDefault(...)         (transition guard for legacy callsites)
+       └── slog.SetDefault(...With("component","legacy"))   (transition guard)
        │
        └── obs.NewMetrics ───────────► obs.Metrics (private metrics.Set)
                                           │
@@ -230,8 +230,16 @@ deterministically resolves to JSON in tests.
 
 | Scope | Always present |
 |---|---|
-| All records emitted via `obs`-constructed loggers | `time`, `level`, `msg`, `component` |
+| All records | `time`, `level`, `msg`, `component` |
 | Request-scoped (added by middleware) | `req_id`, `principal_hub`, `principal_user_id`, `principal` |
+
+The "always present" guarantee for `component` is realized by binding
+it on every logger handed out: `slog.SetDefault` is called with
+`baseLogger.With("component", "legacy")` so that direct `slog.Info` /
+`slog.Error` callsites still emit a `component` value during the
+migration window. Middleware and worker chains derive from the
+*unbound* `baseLogger` and apply their own `.With("component", ...)` —
+a single `component` attribute per record, no double-set.
 
 **Reserved field names** (callers must not collide):
 
@@ -245,9 +253,10 @@ deterministically resolves to JSON in tests.
 
 **`component` field — constrained but tolerant.** Documented intended
 values: `httpapi | thumb | share | backup | broker | cli | db | obs |
-boot`. Not runtime-enforced; deliberate code may introduce new values.
-Dashboards filtering on `component` will see records emitted via
-obs-constructed loggers.
+boot | legacy`. Not runtime-enforced; deliberate code may introduce new
+values. `legacy` is reserved for the default logger that catches direct
+`slog.*` callsites during migration. Dashboards filtering on
+`component != "legacy"` see only obs-constructed records.
 
 **Domain correlation in workers:**
 
@@ -282,8 +291,11 @@ ctx = httpapi.WithLogger(ctx, reqLogger)
 
 Handlers fetch via `httpapi.LoggerFromContext(ctx) *slog.Logger`. Direct
 `slog.Info`/`slog.Error` callsites continue working via
-`slog.SetDefault(baseLogger)` but won't carry `req_id` until migrated.
-Migration is opportunistic, not gated by v1.
+`slog.SetDefault(baseLogger.With("component","legacy"))`. They carry
+`component=legacy` until migrated to obs-constructed or context-fetched
+loggers (which carry e.g. `component=httpapi` or `component=backup`).
+They will not carry `req_id` until migrated. Migration is
+opportunistic, not gated by v1.
 
 ### Migration scope (v1, small)
 
@@ -320,12 +332,20 @@ func NewMetrics(src MetricSources) *Metrics
 func NewTestMetrics() *Metrics                 // private set, never exposed
 
 func (m *Metrics) HTTPRequests(method, route, statusClass string) *metrics.Counter
-func (m *Metrics) HTTPRequestDuration(method, route string) *metrics.Histogram
+func (m *Metrics) HTTPRequestDuration(method, route string) *metrics.PrometheusHistogram
 func (m *Metrics) ThumbJobs(result string) *metrics.Counter
 // … etc.
 
-func (m *Metrics) WritePrometheus(w io.Writer) // for /metrics handler
+func (m *Metrics) WritePrometheus(w io.Writer) // private set + process metrics
 ```
+
+**Histogram type — `*metrics.PrometheusHistogram`, not `*metrics.Histogram`.**
+The upstream `metrics.Histogram` uses automatic `vmrange` buckets (a
+VictoriaMetrics-native format). Prometheus expects explicit `le` (less-
+than-or-equal) buckets, and the spec pins specific bucket lists per
+metric. Histograms are therefore registered via the upstream
+`NewPrometheusHistogramExt(name, buckets)` helper, which emits the
+standard `_bucket{le="..."}` series Prometheus understands.
 
 ### Metric set (v1)
 
@@ -357,8 +377,8 @@ fotobank_thumb_leases_swept_total                  counter
 
 `result` matches the thumb domain's terminal states (mapped from
 `thumb_status`). `fotobank_thumb_leases_swept_total` is incremented by
-total rows reset by `MarkClaimsLost`, surfacing stale-lease churn that
-indicates worker death or hangs.
+the count returned from `Queue.SweepLeases`, surfacing stale-lease
+churn that indicates worker death or hangs.
 
 #### Share worker (4)
 
@@ -369,8 +389,13 @@ fotobank_share_revokes_total{result}               result: ok | retry | terminal
 fotobank_share_revoke_duration_seconds{result}
 ```
 
-`retry` covers transient broker failures that schedule another attempt;
-`terminal_fail` covers max-retries-exhausted.
+`retry` covers transient broker failures that schedule another attempt
+(`recordFailure` calls `MarkAttemptFailed`). `terminal_fail` covers
+both `errors.Is(err, broker.ErrBrokerPermanent)` (the broker reports a
+non-recoverable condition) and exhausted attempts
+(`s.BrokerAttempts+1 >= share.MaxBrokerAttempts`); both paths call
+`MarkFailed`. The metric does not need to distinguish the two — the
+log line carries `err` for forensic analysis.
 
 #### Backup worker (4)
 
@@ -425,8 +450,26 @@ fotobank_build_info{version, commit, build_date}   gauge always 1
 go_*                                                via metrics.WriteProcessMetrics
 ```
 
-Reads from `internal/version` (already populated via ldflags). Standard
-Go runtime metrics emitted via the upstream library's helper.
+`fotobank_build_info` reads from `internal/version` (already populated
+via ldflags) and is registered on the private set.
+
+The Go runtime metrics (`go_*`, `process_*`) are emitted by the upstream
+`metrics.WriteProcessMetrics(w)` helper, which queries the runtime
+directly and writes Prometheus-format text — it does **not** read from
+the upstream global registry, so calling it from a private-set context
+is safe. To make this work, `obs.Metrics.WritePrometheus(w)` is
+sequenced as:
+
+```go
+func (m *Metrics) WritePrometheus(w io.Writer) {
+    m.set.WritePrometheus(w)         // application metrics from private set
+    metrics.WriteProcessMetrics(w)   // go_* / process_* from runtime
+}
+```
+
+The private-set decision applies to *registration* of fotobank's own
+counters/gauges/histograms; runtime/process metrics are pure read-side
+and have no registration step to confine.
 
 ### Cardinality budget
 
@@ -539,16 +582,30 @@ GET /readyz   503
 Changes:
 
 1. Construct logger and metrics early — before any worker or http.Server.
-2. `slog.SetDefault(logger)` for legacy callsite coverage.
+2. `slog.SetDefault(logger.With("component", "legacy"))` for legacy
+   callsite coverage. Middleware and worker chains derive from the
+   unbound `logger` (no component) so each downstream `.With("component",
+   "httpapi"|"thumb"|"share"|"backup"|"boot")` produces records with a
+   single component attribute.
 3. Pass logger and metrics into `httpapi.New(httpapi.Deps{...})`,
    `thumb.NewWorker`, `shareworker.New`, `backup.NewWorker`.
-4. Bind admin listener (when `cfg.Observability.AdminEnabled`) under
-   `bgWG`. Admin listener uses its own `http.Server` instance with the
-   same shutdown timeout as the main API.
-5. On graceful shutdown:
-   1. `obs.Ready.Store(false)`
-   2. Shut down main API; `bgWG.Wait()` for workers
-   3. Shut down admin listener last
+4. Bind admin listener (when `cfg.Observability.AdminEnabled`) on its
+   own `http.Server` and `Serve` it from a dedicated goroutine tracked
+   by a separate `var adminDone chan error`. **Not** part of `bgWG` —
+   `bgWG` is for goroutines that hold references to `d` (SQL) or
+   `storeLayer`; the admin listener references neither (it serves
+   metrics from `obs.Metrics` and runs `/readyz` checks via injected
+   closures), so its lifecycle is independent.
+5. On graceful shutdown, run in this order:
+   1. `obs.Ready.Store(false)` — next `/readyz` returns 503 immediately.
+   2. Shut down main API listener (`mainSrv.Shutdown`).
+   3. `bgWG.Wait()` — workers drain.
+   4. Shut down admin listener (`adminSrv.Shutdown`); wait on
+      `adminDone` for the serve goroutine to return.
+   This sequence guarantees: admin Serve does not deadlock `bgWG.Wait()`
+   (admin is not in it); a Prometheus scrape during shutdown sees the
+   `/readyz` flip before any listener closes; the metrics endpoint is
+   the last thing to disappear.
 
 ### `internal/httpapi/middleware.go`
 
