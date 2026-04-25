@@ -16,9 +16,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 
 	"github.com/wesm/fotobank/internal/album"
+	"github.com/wesm/fotobank/internal/backup"
 	"github.com/wesm/fotobank/internal/config"
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/httpapi"
@@ -93,10 +95,26 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		}
 	}
 
-	dbPath := os.Getenv("FOTOBANK_DB_PATH")
-	if dbPath == "" {
-		dbPath = filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
+	dbPath := resolveDBPath(cfg)
+
+	// Lifetime advisory lock. Refuses two servers on the same DB and
+	// blocks `backup restore` while we're running. POSIX advisory locks
+	// release automatically on process exit, so a crash does not strand
+	// the lock.
+	lockPath := lockPathFor(dbPath)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		return fmt.Errorf("mkdir lock dir: %w", err)
 	}
+	lockFile := flock.New(lockPath)
+	ok, err := lockFile.TryLock()
+	if err != nil {
+		return fmt.Errorf("acquire lifetime lock: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("another fotobank process is using %s", dbPath)
+	}
+	defer func() { _ = lockFile.Unlock() }()
+
 	d, err := db.Open(dbPath)
 	if err != nil {
 		return err
@@ -251,6 +269,37 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			fmt.Fprintln(opts.stderr, "share worker exited:", err)
 		}
 	})
+
+	if cfg.Backup.Enabled {
+		backupDir := cfg.Backup.Dir
+		if backupDir == "" {
+			backupDir = filepath.Join(cfg.NAS.Root, ".fotobank", "snapshots")
+		}
+		interval := 15 * time.Minute
+		if raw := os.Getenv("FOTOBANK_TEST_BACKUP_INTERVAL"); raw != "" {
+			if d, err := time.ParseDuration(raw); err == nil {
+				interval = d
+			} else {
+				fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_BACKUP_INTERVAL parse error: %v\n", err)
+			}
+		}
+		bw := backup.NewWorker(backup.Config{
+			DB:       d.WriteDB(),
+			Dir:      backupDir,
+			Interval: interval,
+			Policy: backup.Policy{
+				Keep15Min:  cfg.Backup.Keep15Min,
+				KeepHourly: cfg.Backup.KeepHourly,
+				KeepDaily:  cfg.Backup.KeepDaily,
+			},
+			Logger: logger,
+		})
+		bgWG.Go(func() {
+			if err := bw.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
+				fmt.Fprintln(opts.stderr, "backup worker exited:", err)
+			}
+		})
+	}
 
 	serveErr := make(chan error, 1)
 	go func() {
