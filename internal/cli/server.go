@@ -19,7 +19,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wesm/fotobank/internal/album"
-	"github.com/wesm/fotobank/internal/broker"
 	"github.com/wesm/fotobank/internal/config"
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/httpapi"
@@ -222,10 +221,17 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		}
 	})
 
+	logger := slog.New(slog.NewTextHandler(opts.stderr, nil))
+
+	brokerClient, err := newBrokerClient(cfg.Broker, logger)
+	if err != nil {
+		return fmt.Errorf("broker init: %w", err)
+	}
+
 	shareCfg := shareworker.Config{
 		Repo:   sharesRepo,
-		Broker: broker.NoopBroker{},
-		Logger: slog.New(slog.NewTextHandler(opts.stderr, nil)),
+		Broker: brokerClient,
+		Logger: logger,
 	}
 	// FOTOBANK_TEST_SHARE_WORKER_TICK is a test-only escape hatch that
 	// overrides the default 15s tick so e2e tests can observe state
