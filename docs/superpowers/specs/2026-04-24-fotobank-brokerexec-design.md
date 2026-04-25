@@ -73,17 +73,44 @@ The interface invariant — that publish and revoke are distinguishable on the b
 
 ### Invocation
 
+The Registrar orchestrates each call; the actual `exec.Cmd` construction lives behind an unexported runner so unit tests can swap it out.
+
+```go
+// internal/brokerexec/exec.go
+type runFunc func(
+    ctx context.Context,
+    command string,
+    args []string,
+    env []string,
+    stdin io.Reader,
+    stdout io.Writer,
+    stderr io.Writer,
+) (exitCode int, err error)
+
+// realRun is the default value of Registrar.runCmd.
+func realRun(ctx context.Context, command string, args, env []string,
+             stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+    cmd := exec.CommandContext(ctx, command, args...)
+    cmd.Env = env
+    cmd.Stdin = stdin
+    cmd.Stdout = stdout
+    cmd.Stderr = stderr
+    err := cmd.Run()
+    if cmd.ProcessState != nil {
+        return cmd.ProcessState.ExitCode(), err
+    }
+    return -1, err   // process never started (e.g., "executable not found")
+}
+```
+
 For each `PublishScope(ctx, scope)` or `RevokeScope(ctx, uuid)` call:
 
-1. Build `cmdCtx, cancel := context.WithTimeout(ctx, r.callTimeout)`
-2. `cmd := exec.CommandContext(cmdCtx, r.command, args...)` where `args` is `r.publishArgs` or `r.revokeArgs`
-3. `cmd.Env = r.buildEnv()` — `os.Environ()` overlayed by configured overrides in sorted-key order (deterministic for tests; see Env merge semantics below)
-4. Marshal payload to a `bytes.Buffer` via `json.NewEncoder` (gives a trailing newline → NDJSON-friendly)
-5. `cmd.Stdin = bytes.NewReader(buf.Bytes())`
-6. `cmd.Stdout = io.Discard`
-7. `cmd.Stderr = newPrefixBuffer(4096)` — sliding window keeps the **last** 4 KiB
-8. Call the unexported `runCmd` (defaults to `cmd.Run()`)
-9. Map the result via the rules below
+1. Build `cmdCtx, cancel := context.WithTimeout(pctx, r.callTimeout)`.
+2. Marshal the payload via `json.NewEncoder` into a `bytes.Buffer` (trailing newline → NDJSON-friendly).
+3. Build the env slice via `r.buildEnv()` — `os.Environ()` overlayed by configured overrides in sorted-key order (deterministic for tests; see Env merge semantics below).
+4. Allocate a fresh `stderrBuf := newPrefixBuffer(4096)` — sliding window keeps the **last** 4 KiB.
+5. Call `exitCode, runErr := r.runCmd(cmdCtx, r.command, args, env, bytes.NewReader(buf.Bytes()), io.Discard, stderrBuf)`. The default `runCmd = realRun` constructs and runs an `exec.Cmd`; same-package tests pass a fake `runFunc` that captures `stdin` into a buffer for assertion and writes canned stdout/stderr.
+6. Map the result via the rules in §Context mapping and §Exit code → error mapping.
 
 ### Stdin payloads
 
@@ -159,10 +186,10 @@ The full 4 KiB is also passed to `r.logger.Error("brokerexec failed", "stderr", 
 
 ### Context mapping
 
-After `cmd.Run()`, distinguish three cases in this order:
+After `r.runCmd(...)` returns `(exitCode, runErr)`, distinguish three cases in this order:
 
 ```go
-err := cmd.Run()
+exitCode, runErr := r.runCmd(cmdCtx, r.command, args, env, stdin, io.Discard, stderrBuf)
 
 // 1. Parent (worker) ctx cancelled → propagate as-is. The worker's
 // isCtxErr matches, recordFailure is skipped, and the drain aborts.
@@ -179,7 +206,7 @@ if cmdCtx.Err() == context.DeadlineExceeded {
         op, r.callTimeout, broker.ErrBrokerTransient)
 }
 
-// 3. Otherwise classify exit code from err / *exec.ExitError.
+// 3. Otherwise classify the (exitCode, runErr) pair.
 ```
 
 This split is load-bearing: the worker's `isCtxErr` (worker.go:158) treats `Canceled` and `DeadlineExceeded` identically, both aborting the drain *and* skipping `recordFailure`. That's right for shutdown; wrong for a per-call timeout.
@@ -367,29 +394,40 @@ Three layers. Most assertions live at layer A; B verifies the contract holds aga
 
 ### Layer A — unit tests with the runner seam (`brokerexec/exec_test.go`)
 
-Same-package tests swap the unexported `runFunc`; no process spawned.
+Same-package tests swap the unexported `runFunc` (signature defined in §Architecture › Invocation). The fake runner reads `stdin` into a captured buffer, writes canned bytes to the supplied `stderr` writer, and returns the configured exit code:
 
 ```go
-type runFunc func(ctx context.Context, cmd string, args, env []string,
-                  stdin io.Reader, stdout, stderr io.Writer) (exitCode int, err error)
+// brokerexec/exec_test.go
+func fakeRun(stdoutBytes, stderrBytes []byte, exit int, runErr error,
+             capturedStdin *bytes.Buffer) runFunc {
+    return func(_ context.Context, _ string, _, _ []string,
+                stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+        if capturedStdin != nil {
+            _, _ = io.Copy(capturedStdin, stdin)
+        }
+        _, _ = stdout.Write(stdoutBytes)
+        _, _ = stderr.Write(stderrBytes)
+        return exit, runErr
+    }
+}
 ```
 
 Cases:
 
 | Test | Setup | Asserts |
 |------|-------|---------|
-| `TestPublishScopeSuccess` | exit 0 | returns nil; stdin JSON has `schema_version`, `operation:"publish"`, all scope fields |
+| `TestPublishScopeSuccess` | exit 0 | returns nil; captured stdin JSON has `schema_version`, `operation:"publish"`, all scope fields |
 | `TestPublishScopeExitPermanent` | exit 65, stderr "scope rejected" | `errors.Is(err, broker.ErrBrokerPermanent)`; tail in error |
 | `TestPublishScopeExitTransient` | exit 75 | `errors.Is(err, broker.ErrBrokerTransient)` |
 | `TestPublishScopeExitUnknown` | exit 1 | `errors.Is(err, broker.ErrBrokerTransient)`; error message contains `exit=1` |
-| `TestPublishScopeStderrTruncated` | stderr 8 KiB | wrapped error tail ≤256 bytes; full 8 KiB visible to logger (assert via captured slog handler) |
+| `TestPublishScopeStderrTruncated` | stderr 8 KiB | wrapped error tail ≤256 bytes; logged stderr is bounded to the last 4 KiB (assert via captured slog handler — verifies the prefixBuffer cap) |
 | `TestPublishScopeStderrNormalized` | stderr `"hello\x00\nworld\x07\t!"` | error tail is `"hello world !"` |
 | `TestPublishScopeOmitsExpiresAt` | scope `ExpiresAt == nil` | stdin JSON has no `expires_at` key |
 | `TestPublishScopeRedactsMembership` | scope `TargetType=media_set, MediaIDs=[…]` | stdin JSON has no `target_type` / `album_id` / `media_ids` |
 | `TestRevokeScopePayload` | uuid `"abc"` | stdin JSON is exactly `{"schema_version":1,"operation":"revoke","uuid":"abc"}`; uses `revokeArgs` not `publishArgs` |
 | `TestParentCtxCancellation` | runFunc returns `context.Canceled`; pctx cancelled before call | wrapped err satisfies `errors.Is(err, context.Canceled)` so worker `isCtxErr` matches |
 | `TestPerCallTimeoutClassifiedTransient` | runFunc blocks past `callTimeout=10ms` | `errors.Is(err, broker.ErrBrokerTransient)` AND **not** `errors.Is(err, context.DeadlineExceeded)` |
-| `TestEnvOverlay` | base `FB_X=base`, override `FB_X=override`, override `FB_NEW=v` | `cmd.Env` has `FB_X=override` (in place), `FB_NEW=v` appended after sort |
+| `TestEnvOverlay` | base `FB_X=base`, override `FB_X=override`, override `FB_NEW=v` | env slice passed to `runFunc` has `FB_X=override` (overlayed in place), `FB_NEW=v` appended after sort |
 | `TestEnvParseRejectsEmptyKey` | `New` with `Env: ["=value"]` | error wrapping `errs.ErrBadConfiguration`; mentions `KEY=VALUE` |
 | `TestEnvParseRejectsMissingEq` | `New` with `Env: ["NO_EQUALS"]` | same |
 
@@ -447,15 +485,17 @@ if testing.Short() { t.Skip("e2e exec tests skipped under -short") }
 
 ### Layer C — single integration test (`internal/cli/e2e_brokerexec_test.go`)
 
-Boots a real fotobank server with `mode = "exec"` and the test helper binary as `command`. Exercises the full path:
+The share worker (`shareW`) is a local inside `runServer`, so the test cannot call `shareW.RunOnce` from outside. Use the existing `FOTOBANK_TEST_SHARE_WORKER_TICK` escape hatch (already honoured by `cli/server.go:233`) to set a small tick (e.g. 50 ms) and poll the DB, the same pattern `TestSharedE2EHeaderMode` already uses.
 
-1. Owner POSTs `/api/v1/shares` → row inserted with `broker_status='pending'`.
-2. Test calls `shareW.RunOnce(ctx)` directly (skips the 15s tick).
-3. Assert: `broker_status='active'`, `broker_registered_at` and `broker_granted_at` set.
+Boots a real fotobank server with `mode = "exec"` and the layer-B helper binary as `[broker.exec].command`. Exercises the full path:
+
+1. `t.Setenv("FOTOBANK_TEST_SHARE_WORKER_TICK", "50ms")` and configure the helper binary to exit 0 on `operation=publish` and `operation=revoke` (env-driven, same pattern as layer B).
+2. Owner POSTs `/api/v1/shares` → row inserted with `broker_status='pending'`.
+3. `require.Eventually(t, …, 5*time.Second, 25*time.Millisecond)` polls the DB until `broker_status='active'`. Assert `broker_registered_at` and `broker_granted_at` are non-NULL.
 4. Owner DELETEs the share → row goes to `broker_status='revoking'`.
-5. Another `RunOnce` → row reaches `broker_status='revoked_remote'`, `broker_revoked_at` set.
+5. `require.Eventually` again until `broker_status='revoked_remote'`. Assert `broker_revoked_at` is non-NULL.
 
-Proves wiring + worker + registrar + DB state machine all compose. No analogous test added to `internal/shareworker` — its existing tests use a fake `BrokerClient` and cover the worker state machine on its own.
+Proves wiring + worker + registrar + DB state machine all compose under the actual server boot path. No analogous test added to `internal/shareworker` — its existing tests use a fake `BrokerClient` and cover the worker state machine on its own.
 
 ### Config tests (`internal/config/config_test.go`)
 
