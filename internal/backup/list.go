@@ -10,11 +10,13 @@ import (
 	"time"
 )
 
-// StampLayout is the on-disk filename layout: RFC3339 with millisecond
+// StampLayout is the on-disk filename layout: RFC3339 with nanosecond
 // precision and a literal "Z" suffix. UTC. Exported so the worker
 // (this package) and the CLI (internal/cli) write filenames List can
 // parse — the layout is the contract between writers and the reader.
-const StampLayout = "2006-01-02T15:04:05.000Z"
+// Nanosecond precision (vs. millisecond) prevents filename collision
+// between back-to-back snapshots taken within the same millisecond.
+const StampLayout = "2006-01-02T15:04:05.000000000Z"
 
 // SnapshotExt is the suffix every snapshot filename carries.
 const SnapshotExt = ".sqlite"

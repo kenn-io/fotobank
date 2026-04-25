@@ -113,15 +113,14 @@ func TestBackupListCLI(t *testing.T) {
 
 	// Take two snapshots into the configured backup dir.
 	// The default dir layout is {nas}/.fotobank/snapshots; the snapshot
-	// subcommand creates it via os.MkdirAll. Snapshot filenames carry
-	// millisecond precision, so a 2ms sleep between calls guarantees a
-	// distinct filename even when the test machine is fast.
+	// subcommand creates it via os.MkdirAll. Filenames carry nanosecond
+	// precision so back-to-back invocations get distinct names without
+	// any artificial sleep.
 	for range 2 {
 		so.Reset()
 		code := cli.RunContext(context.Background(),
 			[]string{"backup", "snapshot", "--config", cfgPath}, &so, &se)
 		r.Equal(0, code, se.String())
-		time.Sleep(2 * time.Millisecond)
 	}
 
 	so.Reset()

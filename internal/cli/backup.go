@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -75,7 +77,7 @@ func newBackupSnapshotCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&out, "out", "", "destination path (default: backup.dir/{ms-timestamp}.sqlite)")
+	cmd.Flags().StringVar(&out, "out", "", "destination path (default: backup.dir/{timestamp}.sqlite)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON to stdout")
 	cmd.Flags().String("config", "", "path to config file")
 	return cmd
@@ -180,19 +182,24 @@ func newBackupRestoreCmd() *cobra.Command {
 	return cmd
 }
 
-// promptRestoreConfirmation reads up to four bytes from stdin and
-// requires "yes\n" or "yes\r" before proceeding with a destructive
-// restore. Any other input cancels the operation.
+// promptRestoreConfirmation reads a single line from stdin and requires
+// it to be exactly "yes" (CR/LF stripped) before proceeding with a
+// destructive restore. Any other input cancels the operation. Reading
+// up to a newline avoids the line-buffered TTY hang that a fixed-size
+// io.ReadFull would suffer when the user types fewer bytes than the
+// buffer.
 func promptRestoreConfirmation(cmd *cobra.Command, snap, dbPath string) error {
 	fmt.Fprintf(cmd.ErrOrStderr(),
 		"Restore from %s into %s?\n"+
 			"This will move the existing DB to {dbPath}.pre-restore.{timestamp}.\n"+
 			"Type 'yes' to proceed: ",
 		snap, dbPath)
-	in := cmd.InOrStdin()
-	var resp [4]byte
-	n, _ := io.ReadFull(in, resp[:])
-	if string(resp[:n]) != "yes\n" && string(resp[:n]) != "yes\r" {
+	r := bufio.NewReader(cmd.InOrStdin())
+	line, err := r.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read confirmation: %w", err)
+	}
+	if strings.TrimRight(line, "\r\n") != "yes" {
 		return errors.New("restore cancelled")
 	}
 	return nil
@@ -206,7 +213,7 @@ func restoreDryRun(cmd *cobra.Command, snap, dbPath, lockPath string, asJSON boo
 	if err := backup.ValidateSnapshot(cmd.Context(), snap); err != nil {
 		return fmt.Errorf("validate snapshot: %w", err)
 	}
-	l := flockNew(lockPath)
+	l := flock.New(lockPath)
 	ok, err := l.TryLock()
 	if err != nil {
 		return fmt.Errorf("flock: %w", err)
@@ -237,18 +244,4 @@ func backupDirFor(cfg *config.Config) string {
 		return cfg.Backup.Dir
 	}
 	return filepath.Join(cfg.NAS.Root, ".fotobank", "snapshots")
-}
-
-// flockHandle is the subset of *flock.Flock the dry-run path uses.
-// Exposing it as an interface lets tests stub the lock behaviour
-// without standing up a real server.
-type flockHandle interface {
-	TryLock() (bool, error)
-	Unlock() error
-}
-
-// flockNew is the package-level constructor injection point so tests
-// can stub the lock behaviour. Production calls flock.New directly.
-var flockNew = func(path string) flockHandle {
-	return flock.New(path)
 }

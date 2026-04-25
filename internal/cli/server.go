@@ -271,10 +271,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	})
 
 	if cfg.Backup.Enabled {
-		backupDir := cfg.Backup.Dir
-		if backupDir == "" {
-			backupDir = filepath.Join(cfg.NAS.Root, ".fotobank", "snapshots")
-		}
+		backupDir := backupDirFor(cfg)
 		interval := 15 * time.Minute
 		if raw := os.Getenv("FOTOBANK_TEST_BACKUP_INTERVAL"); raw != "" {
 			if dur, err := time.ParseDuration(raw); err == nil {
