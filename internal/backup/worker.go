@@ -69,7 +69,7 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) tick(ctx context.Context, now time.Time) {
-	dst := filepath.Join(w.cfg.Dir, now.UTC().Format(stampLayout)+snapshotExt)
+	dst := filepath.Join(w.cfg.Dir, now.UTC().Format(StampLayout)+SnapshotExt)
 	start := time.Now()
 	if err := Snapshot(ctx, w.cfg.DB, dst); err != nil {
 		w.cfg.Logger.Error("backup snapshot failed",

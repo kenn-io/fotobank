@@ -121,7 +121,7 @@ func cleanStalePartials(dir string, now time.Time, logger *slog.Logger) error {
 			continue
 		}
 		name := e.Name()
-		if !strings.HasSuffix(name, snapshotExt+".partial") {
+		if !strings.HasSuffix(name, SnapshotExt+".partial") {
 			continue
 		}
 		info, err := e.Info()

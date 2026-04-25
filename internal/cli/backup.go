@@ -16,13 +16,6 @@ import (
 	"github.com/wesm/fotobank/internal/config"
 )
 
-// snapshotStampLayout matches backup.stampLayout: an RFC3339 timestamp
-// with millisecond precision and a literal "Z" suffix. Snapshot
-// filenames written by the worker and the CLI must agree so List can
-// parse both. Duplicated here because backup keeps its layout
-// unexported.
-const snapshotStampLayout = "2006-01-02T15:04:05.000Z"
-
 func newBackupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backup",
@@ -52,7 +45,7 @@ func newBackupSnapshotCmd() *cobra.Command {
 					return fmt.Errorf("mkdir backup dir: %w", err)
 				}
 				dst = filepath.Join(dir,
-					time.Now().UTC().Format(snapshotStampLayout)+".sqlite")
+					time.Now().UTC().Format(backup.StampLayout)+backup.SnapshotExt)
 			}
 			start := time.Now()
 			if err := backup.SnapshotPath(cmd.Context(), resolveDBPath(cfg), dst); err != nil {

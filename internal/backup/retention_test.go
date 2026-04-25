@@ -14,7 +14,7 @@ import (
 
 func mkSnap(t *testing.T, dir string, ts time.Time) string {
 	t.Helper()
-	name := ts.UTC().Format(stampLayout) + snapshotExt
+	name := ts.UTC().Format(StampLayout) + SnapshotExt
 	p := filepath.Join(dir, name)
 	require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
 	require.NoError(t, os.Chtimes(p, ts, ts))

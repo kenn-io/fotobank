@@ -10,12 +10,14 @@ import (
 	"time"
 )
 
-// stampLayout is the on-disk filename layout: RFC3339 with millisecond
-// precision and a literal "Z" suffix. UTC.
-const stampLayout = "2006-01-02T15:04:05.000Z"
+// StampLayout is the on-disk filename layout: RFC3339 with millisecond
+// precision and a literal "Z" suffix. UTC. Exported so the worker
+// (this package) and the CLI (internal/cli) write filenames List can
+// parse — the layout is the contract between writers and the reader.
+const StampLayout = "2006-01-02T15:04:05.000Z"
 
-// snapshotExt is the suffix every snapshot filename carries.
-const snapshotExt = ".sqlite"
+// SnapshotExt is the suffix every snapshot filename carries.
+const SnapshotExt = ".sqlite"
 
 // SnapshotInfo describes a single retained snapshot on disk. It carries
 // the absolute path, the timestamp parsed from the filename, and the
@@ -51,11 +53,11 @@ func List(dir string) ([]SnapshotInfo, error) {
 			continue
 		}
 		name := e.Name()
-		if !strings.HasSuffix(name, snapshotExt) {
+		if !strings.HasSuffix(name, SnapshotExt) {
 			continue
 		}
-		stamp := strings.TrimSuffix(name, snapshotExt)
-		ts, err := time.Parse(stampLayout, stamp)
+		stamp := strings.TrimSuffix(name, SnapshotExt)
+		ts, err := time.Parse(StampLayout, stamp)
 		if err != nil {
 			continue
 		}
