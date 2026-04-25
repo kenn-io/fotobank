@@ -277,8 +277,8 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		}
 		interval := 15 * time.Minute
 		if raw := os.Getenv("FOTOBANK_TEST_BACKUP_INTERVAL"); raw != "" {
-			if d, err := time.ParseDuration(raw); err == nil {
-				interval = d
+			if dur, err := time.ParseDuration(raw); err == nil {
+				interval = dur
 			} else {
 				fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_BACKUP_INTERVAL parse error: %v\n", err)
 			}
