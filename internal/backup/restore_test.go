@@ -273,5 +273,24 @@ func TestValidateSnapshotRejectsEmptySchema(t *testing.T) {
 	r.NoError(d.Close())
 	err = ValidateSnapshot(context.Background(), snap)
 	r.Error(err)
-	r.Contains(err.Error(), "empty schema")
+	r.Contains(err.Error(), "schema_migrations")
+}
+
+// An unrelated SQLite database with a dummy table is a real
+// operational hazard — somebody points the restore CLI at the wrong
+// file and silently destroys the live fotobank DB. ValidateSnapshot
+// must reject anything that lacks the schema_migrations marker.
+func TestValidateSnapshotRejectsUnrelatedSQLite(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	snap := filepath.Join(tmp, "unrelated.sqlite")
+	d, err := sql.Open("sqlite", snap+"?_pragma=busy_timeout(5000)")
+	r.NoError(err)
+	_, err = d.ExecContext(context.Background(),
+		"CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)")
+	r.NoError(err)
+	r.NoError(d.Close())
+	err = ValidateSnapshot(context.Background(), snap)
+	r.Error(err)
+	r.Contains(err.Error(), "schema_migrations")
 }

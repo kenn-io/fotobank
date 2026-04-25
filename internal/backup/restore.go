@@ -212,17 +212,22 @@ func ValidateSnapshot(ctx context.Context, path string) error {
 	if s != "ok" {
 		return fmt.Errorf("integrity_check returned %q", s)
 	}
-	// Reject empty-schema DBs: a freshly initialized SQLite file has
-	// integrity_check=ok but zero rows in sqlite_master. Restoring
-	// from such a file would silently replace the live DB with an
-	// empty one. Any real fotobank snapshot has the migrations table
-	// at minimum.
-	var schemaCount int
-	if err := d.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master").Scan(&schemaCount); err != nil {
-		return fmt.Errorf("count sqlite_master: %w", err)
+	// Reject DBs that lack the fotobank schema marker. golang-migrate
+	// creates schema_migrations as the very first table on any opened
+	// DB, so its presence is a strong signal the file came from a
+	// fotobank instance and not from an unrelated SQLite app or a
+	// freshly-initialized empty DB. A bare empty DB has zero rows in
+	// sqlite_master; an unrelated SQLite DB with a dummy table also
+	// fails this check unless it happens to be using golang-migrate
+	// with the same convention.
+	var hasMigrations int
+	const q = `SELECT count(*) FROM sqlite_master
+	           WHERE type='table' AND name='schema_migrations'`
+	if err := d.QueryRowContext(ctx, q).Scan(&hasMigrations); err != nil {
+		return fmt.Errorf("check schema_migrations: %w", err)
 	}
-	if schemaCount == 0 {
-		return fmt.Errorf("%s has empty schema (not a fotobank snapshot)", path)
+	if hasMigrations == 0 {
+		return fmt.Errorf("%s lacks schema_migrations table (not a fotobank snapshot)", path)
 	}
 	return nil
 }
