@@ -25,7 +25,7 @@ import (
 // below cannot use itself as the broker CLI: child invocations would
 // re-run the full test suite. The dispatcher is a no-op for the normal
 // `go test` invocation because BROKEREXEC_TEST_HELPER is only ever set
-// on env passed to brokerexec.New (see internal/brokerexec/registrar.go),
+// on env passed to brokerexec.New (see internal/brokerexec/exec.go),
 // which targets child processes only.
 func TestMain(m *testing.M) {
 	if brokerhelper.IsHelper() {

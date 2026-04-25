@@ -7,6 +7,7 @@ import (
 	"github.com/wesm/fotobank/internal/broker"
 	"github.com/wesm/fotobank/internal/brokerexec"
 	"github.com/wesm/fotobank/internal/config"
+	"github.com/wesm/fotobank/internal/errs"
 )
 
 // newBrokerClient returns the broker.BrokerClient implementation
@@ -27,6 +28,6 @@ func newBrokerClient(cfg config.Broker, logger *slog.Logger) (broker.BrokerClien
 			Logger:           logger,
 		})
 	default:
-		return nil, fmt.Errorf("unknown broker mode %q", cfg.Mode)
+		return nil, fmt.Errorf("%w: unknown broker mode %q", errs.ErrBadConfiguration, cfg.Mode)
 	}
 }

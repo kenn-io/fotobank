@@ -311,10 +311,8 @@ func TestPublishScopeRedactsMembership(t *testing.T) {
 	fr := &fakeResult{exit: 0, captureStdin: &stdin}
 	reg := newTestRegistrar(t, Config{}, fr)
 
-	albumID := "album-1"
 	s := sampleScope()
 	s.TargetType = share.TargetMediaSet
-	s.TargetAlbumID = &albumID
 	r.NoError(reg.PublishScope(context.Background(), s))
 
 	var got map[string]any

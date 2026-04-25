@@ -24,20 +24,22 @@ import (
 // runErr is included verbatim for diagnostic value when the process
 // never started (e.g. "executable file not found in $PATH").
 func classifyExit(op string, exitCode int, tail string, runErr error) error {
+	prefix := "brokerexec " + op
+	if tail != "" {
+		prefix += ": " + tail
+	}
 	switch exitCode {
 	case 65:
-		return fmt.Errorf("brokerexec %s: %s: %w",
-			op, tail, broker.ErrBrokerPermanent)
+		return fmt.Errorf("%s: %w", prefix, broker.ErrBrokerPermanent)
 	case 75:
-		return fmt.Errorf("brokerexec %s: %s: %w",
-			op, tail, broker.ErrBrokerTransient)
+		return fmt.Errorf("%s: %w", prefix, broker.ErrBrokerTransient)
 	default:
 		if runErr != nil {
-			return fmt.Errorf("brokerexec %s: %s: exit=%d run-err=%v: %w",
-				op, tail, exitCode, runErr, broker.ErrBrokerTransient)
+			return fmt.Errorf("%s: exit=%d run-err=%v: %w",
+				prefix, exitCode, runErr, broker.ErrBrokerTransient)
 		}
-		return fmt.Errorf("brokerexec %s: %s: exit=%d: %w",
-			op, tail, exitCode, broker.ErrBrokerTransient)
+		return fmt.Errorf("%s: exit=%d: %w",
+			prefix, exitCode, broker.ErrBrokerTransient)
 	}
 }
 

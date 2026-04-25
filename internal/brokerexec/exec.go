@@ -41,9 +41,6 @@ const defaultCallTimeout = 30 * time.Second
 //   - Env entries are validated as KEY=VALUE in New; per call the env
 //     is os.Environ() overlayed by configured keys in sorted order
 //     (deterministic for tests).
-//
-// PublishScope and RevokeScope are added in a follow-up change; this
-// file currently lands the foundation only.
 type Registrar struct {
 	command          string
 	publishScopeArgs []string
@@ -97,7 +94,7 @@ func New(cfg Config) (*Registrar, error) {
 	}
 	logger := cfg.Logger
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 	}
 	return &Registrar{
 		command:          cfg.Command,
