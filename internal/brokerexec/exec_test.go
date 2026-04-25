@@ -2,6 +2,7 @@ package brokerexec
 
 import (
 	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
@@ -102,5 +103,30 @@ func TestNewLeavesRunCmdNil(t *testing.T) {
 	reg, err := New(Config{Command: "/bin/true"})
 	require.NoError(t, err)
 	require.Nil(t, reg.runCmd)
-	var _ = reg.runCmd
+}
+
+// TestBuildEnvAppendedKeysAreSorted verifies the load-bearing sorted-key
+// iteration in buildEnv. Configured-only keys are appended to the base
+// in alphabetical order — without sort.Strings, map iteration could
+// produce them in any order, breaking determinism that downstream tests
+// (Task 6 captureEnv assertions) rely on.
+func TestBuildEnvAppendedKeysAreSorted(t *testing.T) {
+	r := require.New(t)
+	reg, err := New(Config{
+		Command: "/bin/true",
+		Env: []string{
+			"FB_BROKEREXEC_TEST_ZULU=z",
+			"FB_BROKEREXEC_TEST_ALPHA=a",
+			"FB_BROKEREXEC_TEST_MIKE=m",
+		},
+	})
+	r.NoError(err)
+
+	env := reg.buildEnv()
+	iAlpha := slices.Index(env, "FB_BROKEREXEC_TEST_ALPHA=a")
+	iMike := slices.Index(env, "FB_BROKEREXEC_TEST_MIKE=m")
+	iZulu := slices.Index(env, "FB_BROKEREXEC_TEST_ZULU=z")
+	r.GreaterOrEqual(iAlpha, 0)
+	r.Less(iAlpha, iMike, "alpha must precede mike in sorted append order")
+	r.Less(iMike, iZulu, "mike must precede zulu in sorted append order")
 }
