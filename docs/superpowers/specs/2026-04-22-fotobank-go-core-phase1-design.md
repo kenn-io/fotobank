@@ -351,10 +351,11 @@ lease_timeout = "10m"                # working rows reclaimed after this
 mode = "stub"
 
 [broker.exec]
-# Reserved for Phase 2. Example shape (broker name omitted
-# intentionally; fill in when the broker CLI is available):
 # command = "/usr/local/bin/<broker-cli>"
-# register_scope_args = ["scope", "register", "--app", "fotobank", ...]
+# publish_scope_args = ["scope", "publish"]
+# revoke_scope_args  = ["scope", "revoke"]
+# call_timeout = "30s"
+# env = ["FB_BROKER_ENV=prod"]
 
 [backup]
 snapshot_interval = "15m"

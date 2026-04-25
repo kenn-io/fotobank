@@ -785,8 +785,11 @@ type Broker struct {
 }
 
 type BrokerExec struct {
-	Command           string   `toml:"command"`
-	RegisterScopeArgs []string `toml:"register_scope_args"`
+	Command          string        `toml:"command"`
+	PublishScopeArgs []string      `toml:"publish_scope_args"`
+	RevokeScopeArgs  []string      `toml:"revoke_scope_args"`
+	CallTimeout      time.Duration `toml:"call_timeout"`
+	Env              []string      `toml:"env"`
 }
 
 type Backup struct {
