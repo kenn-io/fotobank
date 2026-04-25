@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,34 @@ import (
 
 	"github.com/wesm/fotobank/internal/cli"
 )
+
+// stableCopySnapshot copies one .sqlite file from snapDir to a stable
+// path outside the worker-managed directory, returning that path. Used
+// by e2e tests to pin a snapshot for downstream checks even though the
+// worker is still running and may sweep the original at any moment.
+func stableCopySnapshot(t *testing.T, snapDir, dst string) string {
+	t.Helper()
+	r := require.New(t)
+	entries, err := os.ReadDir(snapDir)
+	r.NoError(err)
+	var src string
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) == ".sqlite" {
+			src = filepath.Join(snapDir, e.Name())
+			break
+		}
+	}
+	r.NotEmpty(src, "no snapshot to copy from %s", snapDir)
+	in, err := os.Open(src)
+	r.NoError(err)
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	r.NoError(err)
+	_, err = io.Copy(out, in)
+	r.NoError(err)
+	r.NoError(out.Close())
+	return dst
+}
 
 // writeBackupE2EConfig produces a TOML config sufficient for a server
 // to boot in stub-identity mode with backup enabled. It mirrors the
@@ -98,9 +128,22 @@ func TestE2EBackupWorkerProducesSnapshot(t *testing.T) {
 	}, 5*time.Second, 30*time.Millisecond,
 		"backup worker must produce at least one snapshot within 5s")
 
-	// Pick the newest snapshot and integrity-check it. Filename
-	// timestamps sort lexicographically (RFC3339 UTC), so the largest
-	// name corresponds to the newest snapshot.
+	// Stop the server before integrity-checking the snapshot. The
+	// retention policy keeps one snapshot per 15-minute slot, so a
+	// later worker tick at 50ms cadence could delete the file we
+	// pick before PRAGMA integrity_check returns. Cancel + wait for
+	// the worker to drain, then the snapshot dir is quiescent.
+	cancel()
+	select {
+	case ec := <-done:
+		r.Equal(0, ec)
+	case <-time.After(5 * time.Second):
+		r.Fail("server did not shut down")
+	}
+
+	// Pick the newest surviving snapshot and integrity-check it.
+	// Filename timestamps sort lexicographically (RFC3339 UTC), so
+	// the largest name corresponds to the newest snapshot.
 	entries, err := os.ReadDir(snapDir)
 	r.NoError(err)
 	var newest string
@@ -118,14 +161,6 @@ func TestE2EBackupWorkerProducesSnapshot(t *testing.T) {
 	var s string
 	r.NoError(d.QueryRow("PRAGMA integrity_check").Scan(&s))
 	r.Equal("ok", s, "snapshot must pass integrity_check")
-
-	cancel()
-	select {
-	case ec := <-done:
-		r.Equal(0, ec)
-	case <-time.After(5 * time.Second):
-		r.Fail("server did not shut down")
-	}
 }
 
 // TestE2ERestoreRefusesWhileServerRuns proves the lifetime-lock fence:
@@ -178,23 +213,28 @@ func TestE2ERestoreRefusesWhileServerRuns(t *testing.T) {
 		return false
 	}, 5*time.Second, 30*time.Millisecond)
 
-	entries, err := os.ReadDir(snapDir)
-	r.NoError(err)
-	var snap string
-	for _, e := range entries {
-		if filepath.Ext(e.Name()) == ".sqlite" {
-			snap = filepath.Join(snapDir, e.Name())
-			break
-		}
-	}
-	r.NotEmpty(snap)
+	// Copy the snapshot to a stable location outside snapDir so the
+	// running worker's retention sweep cannot delete it between now
+	// and the restore invocation. Without this, a 50ms-cadence
+	// worker can race ahead, delete the file, and the restore would
+	// then exit non-zero with a "stat snapshot" error rather than
+	// the lock-held error this test is meant to assert.
+	stableSnap := filepath.Join(tmp, "snap.sqlite")
+	stableCopySnapshot(t, snapDir, stableSnap)
 
-	// Attempt restore; must fail with lock-held.
+	// Attempt restore; must fail with lock-held. The exit code alone
+	// is insufficient because many unrelated failures also exit
+	// non-zero — assert the error text contains the lock-held
+	// signature so a regression in the lock fence cannot pass this
+	// test by failing for a different reason.
 	var so, se bytes.Buffer
 	code := cli.RunContext(context.Background(),
-		[]string{"backup", "restore", "--config", cfgPath, "--yes", snap},
+		[]string{"backup", "restore", "--config", cfgPath, "--yes", stableSnap},
 		&so, &se)
 	r.NotEqual(0, code, "restore must fail while server holds the lock")
+	r.Contains(strings.ToLower(se.String()+so.String()),
+		"another fotobank process",
+		"stderr/stdout must explain the lock contention, not some unrelated failure")
 
 	cancel()
 	<-done
