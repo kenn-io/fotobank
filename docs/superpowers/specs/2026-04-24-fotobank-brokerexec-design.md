@@ -105,7 +105,7 @@ func realRun(ctx context.Context, command string, args, env []string,
 
 For each `PublishScope(ctx, scope)` or `RevokeScope(ctx, uuid)` call:
 
-1. Build `cmdCtx, cancel := context.WithTimeout(pctx, r.callTimeout)`.
+1. Build `cmdCtx, cancel := context.WithTimeout(ctx, r.callTimeout)`.
 2. Marshal the payload via `json.NewEncoder` into a `bytes.Buffer` (trailing newline → NDJSON-friendly).
 3. Build the env slice via `r.buildEnv()` — `os.Environ()` overlayed by configured overrides in sorted-key order (deterministic for tests; see Env merge semantics below).
 4. Allocate a fresh `stderrBuf := newPrefixBuffer(4096)` — sliding window keeps the **last** 4 KiB.
@@ -193,8 +193,8 @@ exitCode, runErr := r.runCmd(cmdCtx, r.command, args, env, stdin, io.Discard, st
 
 // 1. Parent (worker) ctx cancelled → propagate as-is. The worker's
 // isCtxErr matches, recordFailure is skipped, and the drain aborts.
-if pctx.Err() != nil {
-    return fmt.Errorf("brokerexec %s: %w", op, pctx.Err())
+if ctx.Err() != nil {
+    return fmt.Errorf("brokerexec %s: %w", op, ctx.Err())
 }
 
 // 2. Per-call timeout triggered (parent ctx still healthy) →
@@ -425,32 +425,39 @@ Cases:
 | `TestPublishScopeOmitsExpiresAt` | scope `ExpiresAt == nil` | stdin JSON has no `expires_at` key |
 | `TestPublishScopeRedactsMembership` | scope `TargetType=media_set, MediaIDs=[…]` | stdin JSON has no `target_type` / `album_id` / `media_ids` |
 | `TestRevokeScopePayload` | uuid `"abc"` | stdin JSON is exactly `{"schema_version":1,"operation":"revoke","uuid":"abc"}`; uses `revokeArgs` not `publishArgs` |
-| `TestParentCtxCancellation` | runFunc returns `context.Canceled`; pctx cancelled before call | wrapped err satisfies `errors.Is(err, context.Canceled)` so worker `isCtxErr` matches |
-| `TestPerCallTimeoutClassifiedTransient` | runFunc blocks past `callTimeout=10ms` | `errors.Is(err, broker.ErrBrokerTransient)` AND **not** `errors.Is(err, context.DeadlineExceeded)` |
+| `TestParentCtxCancellation` | runFunc returns `context.Canceled`; ctx cancelled before call | wrapped err satisfies `errors.Is(err, context.Canceled)` so worker `isCtxErr` matches |
+| `TestPerCallTimeoutClassifiedTransient` | runFunc waits for `ctx.Done()` then returns `(0, ctx.Err())`; `callTimeout=10ms` | `errors.Is(err, broker.ErrBrokerTransient)` AND **not** `errors.Is(err, context.DeadlineExceeded)`. (Cooperative blocking — fake honours ctx so the test never deadlocks.) |
 | `TestEnvOverlay` | base `FB_X=base`, override `FB_X=override`, override `FB_NEW=v` | env slice passed to `runFunc` has `FB_X=override` (overlayed in place), `FB_NEW=v` appended after sort |
 | `TestEnvParseRejectsEmptyKey` | `New` with `Env: ["=value"]` | error wrapping `errs.ErrBadConfiguration`; mentions `KEY=VALUE` |
 | `TestEnvParseRejectsMissingEq` | `New` with `Env: ["NO_EQUALS"]` | same |
 
 ### Layer B — end-to-end against a real helper binary (`brokerexec/exec_e2e_test.go`)
 
-Re-exec the test binary as the broker CLI via the `TestHelperProcess` pattern:
+The helper logic lives in a shared, non-test package so both Layer B and Layer C can use the exact same broker behaviour without duplicating it. Each layer's `TestMain` opts that test binary into "be the helper" when invoked with `BROKEREXEC_TEST_HELPER=1`, and points `[broker.exec].command` at `os.Executable()` (its own test binary path):
 
 ```go
-func TestMain(m *testing.M) {
-    if os.Getenv("BROKEREXEC_TEST_HELPER") == "1" {
-        runHelper()
-        return
-    }
-    os.Exit(m.Run())
-}
+// internal/testutil/brokerhelper/helper.go (NEW — non-test package)
+package brokerhelper
 
-func runHelper() {
+// EnvVar is the env-var name that switches a test binary into helper mode.
+const EnvVar = "BROKEREXEC_TEST_HELPER"
+
+// IsHelper reports whether the current process is running as the helper.
+func IsHelper() bool { return os.Getenv(EnvVar) == "1" }
+
+// Run reads the JSON payload from stdin, optionally validates the
+// operation discriminator, optionally writes a configured stderr
+// message, optionally sleeps, then exits with the configured exit
+// code. Driven entirely by env vars so callers can shape behaviour
+// without recompiling.
+func Run() {
     payload, _ := io.ReadAll(os.Stdin)
     if want := os.Getenv("BROKEREXEC_TEST_EXPECT_OPERATION"); want != "" {
         var got struct{ Operation string `json:"operation"` }
         _ = json.Unmarshal(payload, &got)
         if got.Operation != want {
-            fmt.Fprintf(os.Stderr, "operation mismatch: got=%q want=%q", got.Operation, want)
+            fmt.Fprintf(os.Stderr, "operation mismatch: got=%q want=%q",
+                got.Operation, want)
             os.Exit(65)
         }
     }
@@ -467,6 +474,29 @@ func runHelper() {
 }
 ```
 
+Layer B's `TestMain` (and Layer C's, identically) dispatches to it:
+
+```go
+// internal/brokerexec/exec_e2e_test.go
+func TestMain(m *testing.M) {
+    if brokerhelper.IsHelper() {
+        brokerhelper.Run()
+        return
+    }
+    os.Exit(m.Run())
+}
+
+// helperCommand returns the path of the running test binary, which
+// becomes the broker CLI when invoked with BROKEREXEC_TEST_HELPER=1.
+func helperCommand(t *testing.T) string {
+    self, err := os.Executable()
+    require.NoError(t, err)
+    return self
+}
+```
+
+Tests build a `brokerexec.Registrar` whose `Command = helperCommand(t)` and whose `Env` includes `BROKEREXEC_TEST_HELPER=1` plus the case-specific knobs (`BROKEREXEC_TEST_EXIT=65`, `…_SLEEP=5s`, etc.).
+
 Cases:
 
 | Test | Helper env | Asserts |
@@ -474,7 +504,7 @@ Cases:
 | `TestE2EPublishSuccess` | `EXIT=0, EXPECT_OPERATION=publish` | `PublishScope` returns nil; payload reaches helper through stdin |
 | `TestE2EPermanentExit` | `EXIT=65, STDERR="scope already exists"` | `errors.Is(err, broker.ErrBrokerPermanent)`; error contains "scope already exists" |
 | `TestE2ETimeoutKillsChild` | `SLEEP=5s, EXIT=0`; `CallTimeout=50ms` | within ~100ms, returns `ErrBrokerTransient` (not `DeadlineExceeded`); child gone |
-| `TestE2EParentCtxCancelKillsChild` | `SLEEP=5s`; cancel pctx after 50ms | returns `context.Canceled`-wrapping err; child gone |
+| `TestE2EParentCtxCancelKillsChild` | `SLEEP=5s`; cancel ctx after 50ms | returns `context.Canceled`-wrapping err; child gone |
 | `TestE2EEnvReachesChild` | helper echoes `FB_BROKER_ENV` to stderr; `Env: ["FB_BROKER_ENV=prod"]`, `EXIT=65` | error tail contains `prod` |
 
 Skipped under `-short`:
@@ -487,13 +517,28 @@ if testing.Short() { t.Skip("e2e exec tests skipped under -short") }
 
 The share worker (`shareW`) is a local inside `runServer`, so the test cannot call `shareW.RunOnce` from outside. Use the existing `FOTOBANK_TEST_SHARE_WORKER_TICK` escape hatch (already honoured by `cli/server.go:233`) to set a small tick (e.g. 50 ms) and poll the DB, the same pattern `TestSharedE2EHeaderMode` already uses.
 
-Boots a real fotobank server with `mode = "exec"` and the layer-B helper binary as `[broker.exec].command`. Exercises the full path:
+`internal/cli/e2e_brokerexec_test.go` opts its own test binary into helper mode using the same shared package as Layer B — the helper logic is not duplicated:
 
-1. `t.Setenv("FOTOBANK_TEST_SHARE_WORKER_TICK", "50ms")` and configure the helper binary to exit 0 on `operation=publish` and `operation=revoke` (env-driven, same pattern as layer B).
+```go
+// internal/cli/e2e_brokerexec_test.go
+func TestMain(m *testing.M) {
+    if brokerhelper.IsHelper() {
+        brokerhelper.Run()
+        return
+    }
+    os.Exit(m.Run())
+}
+```
+
+Boots a real fotobank server with `mode = "exec"` and `[broker.exec].command = os.Executable()`. The server's worker spawns this same test binary with `BROKEREXEC_TEST_HELPER=1` for each call, hitting `brokerhelper.Run()` instead of running the test suite. Test flow:
+
+1. `t.Setenv("FOTOBANK_TEST_SHARE_WORKER_TICK", "50ms")`. The TOML config sets `[broker.exec].env = ["BROKEREXEC_TEST_HELPER=1", "BROKEREXEC_TEST_EXIT=0"]` so each helper invocation succeeds.
 2. Owner POSTs `/api/v1/shares` → row inserted with `broker_status='pending'`.
 3. `require.Eventually(t, …, 5*time.Second, 25*time.Millisecond)` polls the DB until `broker_status='active'`. Assert `broker_registered_at` and `broker_granted_at` are non-NULL.
 4. Owner DELETEs the share → row goes to `broker_status='revoking'`.
 5. `require.Eventually` again until `broker_status='revoked_remote'`. Assert `broker_revoked_at` is non-NULL.
+
+Note: `internal/cli` is *not* `package main`, so its test binary's `TestMain` is the only entry point; the helper-mode dispatch in `TestMain` is what makes `os.Executable()` reusable as a broker CLI.
 
 Proves wiring + worker + registrar + DB state machine all compose under the actual server boot path. No analogous test added to `internal/shareworker` — its existing tests use a fake `BrokerClient` and cover the worker state machine on its own.
 
@@ -514,9 +559,10 @@ Proves wiring + worker + registrar + DB state machine all compose under the actu
 5. `internal/config/config_test.go::TestExplicitTOMLValuesWinOverDefaults` — add `command = "/bin/true"` to its TOML fixture.
 6. New tests as enumerated in §Config tests.
 7. New package `internal/brokerexec/` with `exec.go`, `exec_test.go`, `exec_e2e_test.go`.
-8. `internal/cli/broker.go` — new dispatcher.
-9. `internal/cli/server.go` — hoist logger, replace `broker.NoopBroker{}` with `newBrokerClient` call, wire boot-fatal error path.
-10. `internal/cli/e2e_brokerexec_test.go` — single integration test.
+8. New package `internal/testutil/brokerhelper/` with `helper.go` — shared broker-CLI helper logic used by both Layer B and Layer C TestMain dispatchers.
+9. `internal/cli/broker.go` — new dispatcher.
+10. `internal/cli/server.go` — hoist logger, replace `broker.NoopBroker{}` with `newBrokerClient` call, wire boot-fatal error path.
+11. `internal/cli/e2e_brokerexec_test.go` — single integration test (its own `TestMain` also dispatches to `brokerhelper.Run`).
 
 ## Open questions
 
