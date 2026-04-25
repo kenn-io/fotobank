@@ -77,7 +77,7 @@ func (w *Worker) tick(ctx context.Context, now time.Time) {
 			"duration_ms", time.Since(start).Milliseconds())
 		return
 	}
-	w.lastSuccessAt = time.Now()
+	w.lastSuccessAt = now
 	var size int64
 	if info, err := os.Stat(dst); err == nil {
 		size = info.Size()
@@ -89,14 +89,19 @@ func (w *Worker) tick(ctx context.Context, now time.Time) {
 		// Snapshot still succeeded; don't suppress the success log.
 	}
 
-	w.cfg.Logger.Info("backup snapshot ok",
+	attrs := []any{
 		"path", dst,
 		"size_bytes", size,
 		"duration_ms", time.Since(start).Milliseconds(),
-		"kept_15min", res.Kept15Min,
-		"kept_hourly", res.KeptHourly,
-		"kept_daily", res.KeptDaily,
-		"deleted", res.Deleted)
+	}
+	if err == nil {
+		attrs = append(attrs,
+			"kept_15min", res.Kept15Min,
+			"kept_hourly", res.KeptHourly,
+			"kept_daily", res.KeptDaily,
+			"deleted", res.Deleted)
+	}
+	w.cfg.Logger.Info("backup snapshot ok", attrs...)
 }
 
 func (w *Worker) maybeWarnStale(now time.Time) {

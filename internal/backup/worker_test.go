@@ -9,12 +9,32 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
+
+// syncBuf wraps bytes.Buffer with a mutex so a slog handler running in
+// the worker goroutine can write while a polling goroutine reads.
+type syncBuf struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
 
 func TestWorkerRunsTickAndExitsOnContextCancel(t *testing.T) {
 	r := require.New(t)
@@ -56,7 +76,7 @@ func TestWorkerLogsSnapshotSuccessFields(t *testing.T) {
 	r.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	var buf bytes.Buffer
+	var buf syncBuf
 	w := NewWorker(Config{
 		DB:       db,
 		Dir:      filepath.Join(tmp, "snaps"),
