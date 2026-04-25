@@ -75,6 +75,20 @@ func TestListParsesTimestampsCorrectly(t *testing.T) {
 	r.Equal(time.Date(2026, 4, 25, 11, 30, 45, 123_456_789, time.UTC), got[0].Timestamp)
 }
 
+// Snapshots written before commit 8f6b547 used millisecond precision
+// (".000Z"). List must still surface them so they remain visible in
+// `backup list` output and reachable by retention sweep until they
+// age out naturally.
+func TestListAcceptsLegacyMillisecondLayout(t *testing.T) {
+	r := require.New(t)
+	dir := t.TempDir()
+	makeFile(t, dir, "2026-04-25T11:00:00.123Z.sqlite", time.Now())
+	got, err := List(dir)
+	r.NoError(err)
+	r.Len(got, 1)
+	r.Equal(time.Date(2026, 4, 25, 11, 0, 0, 123_000_000, time.UTC), got[0].Timestamp)
+}
+
 // SnapshotInfo.Path is documented as absolute. Callers cd into other
 // directories, so a relative dir argument must still produce paths that
 // remain valid.
