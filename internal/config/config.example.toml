@@ -81,6 +81,8 @@ mode = "stub"
 # env = ["FB_BROKER_ENV=prod"]
 
 [backup]
-snapshot_interval = "15m"
-snapshot_retention = 96              # keep last N snapshots
-wal_shipping = false                 # future
+# enabled = true                     # default; set to false to disable scheduled snapshots
+# dir = ""                           # absolute path; default: {nas.root}/.fotobank/snapshots/
+# keep_15min = 4                     # last hour of 15-min slots
+# keep_hourly = 24                   # last day of hourly slots
+# keep_daily = 7                     # last week of daily slots

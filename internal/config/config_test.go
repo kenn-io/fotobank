@@ -79,8 +79,10 @@ mode = "exec"
 [broker.exec]
 command = "/bin/true"
 [backup]
-snapshot_interval = "1h"
-snapshot_retention = 48
+dir = "/custom/backup"
+keep_15min = 8
+keep_hourly = 12
+keep_daily = 14
 `), 0o600))
 	cfg, err := config.Load(p)
 	require.NoError(t, err)
@@ -99,8 +101,10 @@ snapshot_retention = 48
 	r.Equal(time.Second, cfg.Thumbs.PollInterval)
 	r.Equal(2*time.Minute, cfg.Thumbs.LeaseTimeout)
 	r.Equal("exec", cfg.Broker.Mode)
-	r.Equal(time.Hour, cfg.Backup.SnapshotInterval)
-	r.Equal(48, cfg.Backup.SnapshotRetention)
+	r.Equal("/custom/backup", cfg.Backup.Dir)
+	r.Equal(8, cfg.Backup.Keep15Min)
+	r.Equal(12, cfg.Backup.KeepHourly)
+	r.Equal(14, cfg.Backup.KeepDaily)
 }
 
 func TestValidateRequiresNASRoot(t *testing.T) {
@@ -393,5 +397,56 @@ call_timeout = "-1s"
 `), 0o600))
 	_, err := config.Load(p)
 	require.Error(t, err)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+}
+
+func TestBackupDefaults(t *testing.T) {
+	r := require.New(t)
+	cfg, err := config.Load(filepath.Join("..", "..", "testdata", "config", "minimal.toml"))
+	r.NoError(err)
+	r.True(cfg.Backup.Enabled) // defaulted true when [backup] absent
+	r.Empty(cfg.Backup.Dir)    // empty = derive from nas.root at use site
+	r.Equal(4, cfg.Backup.Keep15Min)
+	r.Equal(24, cfg.Backup.KeepHourly)
+	r.Equal(7, cfg.Backup.KeepDaily)
+}
+
+func TestBackupExplicitDisabledHonored(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[backup]
+enabled = false
+`), 0o600))
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	require.False(t, cfg.Backup.Enabled)
+}
+
+func TestBackupValidationRejectsZeroKeepCount(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[backup]
+keep_15min = 0
+`), 0o600))
+	_, err := config.Load(p)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+}
+
+func TestBackupValidationRejectsRelativeDir(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[backup]
+dir = "relative/path"
+`), 0o600))
+	_, err := config.Load(p)
 	require.ErrorIs(t, err, errs.ErrBadConfiguration)
 }

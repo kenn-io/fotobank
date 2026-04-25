@@ -139,9 +139,11 @@ type BrokerExec struct {
 }
 
 type Backup struct {
-	SnapshotInterval  time.Duration `toml:"snapshot_interval"`
-	SnapshotRetention int           `toml:"snapshot_retention"`
-	WALShipping       bool          `toml:"wal_shipping"`
+	Enabled    bool   `toml:"enabled"`
+	Dir        string `toml:"dir"`
+	Keep15Min  int    `toml:"keep_15min"`
+	KeepHourly int    `toml:"keep_hourly"`
+	KeepDaily  int    `toml:"keep_daily"`
 }
 
 // Load reads the file at path, parses it as TOML, applies defaults,
@@ -229,6 +231,18 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("%w: [broker].mode=%q (must be stub|exec)",
 			errs.ErrBadConfiguration, c.Broker.Mode)
+	}
+	if c.Backup.Keep15Min < 1 {
+		return fmt.Errorf("%w: backup.keep_15min must be >= 1", errs.ErrBadConfiguration)
+	}
+	if c.Backup.KeepHourly < 1 {
+		return fmt.Errorf("%w: backup.keep_hourly must be >= 1", errs.ErrBadConfiguration)
+	}
+	if c.Backup.KeepDaily < 1 {
+		return fmt.Errorf("%w: backup.keep_daily must be >= 1", errs.ErrBadConfiguration)
+	}
+	if c.Backup.Dir != "" && !filepath.IsAbs(c.Backup.Dir) {
+		return fmt.Errorf("%w: backup.dir must be absolute when set", errs.ErrBadConfiguration)
 	}
 	return nil
 }
@@ -337,11 +351,20 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	if c.Broker.Exec.CallTimeout == 0 {
 		c.Broker.Exec.CallTimeout = 30 * time.Second
 	}
-	if c.Backup.SnapshotInterval == 0 {
-		c.Backup.SnapshotInterval = 15 * time.Minute
+	// Default Enabled to true unless the operator explicitly set it.
+	if !meta.IsDefined("backup", "enabled") {
+		c.Backup.Enabled = true
 	}
-	if c.Backup.SnapshotRetention == 0 {
-		c.Backup.SnapshotRetention = 96
+	// Default keep counts only when the operator did not set them; an
+	// explicit 0 is preserved so Validate rejects it as out of range.
+	if !meta.IsDefined("backup", "keep_15min") {
+		c.Backup.Keep15Min = 4
+	}
+	if !meta.IsDefined("backup", "keep_hourly") {
+		c.Backup.KeepHourly = 24
+	}
+	if !meta.IsDefined("backup", "keep_daily") {
+		c.Backup.KeepDaily = 7
 	}
 }
 
