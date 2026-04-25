@@ -1309,7 +1309,7 @@ type RestoreResult struct {
 // Restore replaces dbPath with the contents of snapshotPath, holding a
 // non-blocking flock on lockPath for the duration to prevent races with
 // a live server. On success, the previous DB and its sidecars are
-// preserved at "{path}.pre-restore.{ms-timestamp}" — the operator
+// preserved at "{path}.pre-restore.{ns-timestamp}" — the operator
 // deletes them when satisfied.
 //
 // Failure paths roll back: any post-move-aside failure restores the
@@ -1341,7 +1341,7 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 
 	// 3. Arm rollback BEFORE any move-aside. This guards against partial
 	//    move-aside failure (first rename succeeds, second fails).
-	suffix := ".pre-restore." + time.Now().UTC().Format("20060102T150405.000Z")
+	suffix := ".pre-restore." + time.Now().UTC().Format("20060102T150405.000000000Z")
 	var movedAside []string
 	var success bool
 	var openedDB *db.DB
