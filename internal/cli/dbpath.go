@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/spf13/cobra"
+
 	"github.com/wesm/fotobank/internal/config"
 )
 
@@ -23,4 +25,16 @@ func resolveDBPath(cfg *config.Config) string {
 // regardless of FOTOBANK_DB_PATH overrides.
 func lockPathFor(dbPath string) string {
 	return dbPath + ".lock"
+}
+
+// loadConfigFromCmd reads the --config flag from cmd, falling back to
+// config.DefaultConfigPath() when unset, and returns the parsed config.
+// Subcommands that need both the config and the DB path go through this
+// helper so the precedence rules stay in one place.
+func loadConfigFromCmd(cmd *cobra.Command) (*config.Config, error) {
+	cfgPath, _ := cmd.Flags().GetString("config")
+	if cfgPath == "" {
+		cfgPath = config.DefaultConfigPath()
+	}
+	return config.Load(cfgPath)
 }

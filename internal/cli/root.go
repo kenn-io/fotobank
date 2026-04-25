@@ -117,5 +117,6 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newThumbsCmd())
 	root.AddCommand(newAlbumsCmd())
 	root.AddCommand(newSharesCmd())
+	root.AddCommand(newBackupCmd())
 	return root
 }
