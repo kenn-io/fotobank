@@ -68,29 +68,39 @@ func (w *Worker) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case now := <-t.C:
-			w.tick(ctx, now)
-			w.maybeWarnStale(now)
+		case <-t.C:
+			w.tick(ctx)
+			w.maybeWarnStale(time.Now())
 		}
 	}
 }
 
-func (w *Worker) tick(ctx context.Context, now time.Time) {
+// tick takes one snapshot and runs one retention sweep. The ticker
+// channel is treated as a wakeup signal, NOT a clock — every time
+// reading happens via time.Now() so the snapshot filename, the
+// lastSuccessAt stamp, and Sweep's age-bucketing all reference the
+// same real-time instant. Otherwise, on a slow NAS where Snapshot
+// stretches past one tick interval, a tick-time filename combined
+// with a time.Now()-based file mtime can land "in the future"
+// relative to a tick-time Sweep `now`, and the just-written snapshot
+// gets deleted as a future-dated file.
+func (w *Worker) tick(ctx context.Context) {
+	now := time.Now()
 	dst := filepath.Join(w.cfg.Dir, now.UTC().Format(StampLayout)+SnapshotExt)
-	start := time.Now()
+	start := now
 	if err := Snapshot(ctx, w.cfg.DB, dst); err != nil {
 		w.cfg.Logger.Error("backup snapshot failed",
 			"err", err, "dst", dst,
 			"duration_ms", time.Since(start).Milliseconds())
 		return
 	}
-	w.lastSuccessAt = now
+	w.lastSuccessAt = time.Now()
 	var size int64
 	if info, err := os.Stat(dst); err == nil {
 		size = info.Size()
 	}
 
-	res, err := Sweep(w.cfg.Dir, w.cfg.Policy, now, w.cfg.Logger)
+	res, err := Sweep(w.cfg.Dir, w.cfg.Policy, time.Now(), w.cfg.Logger)
 	if err != nil {
 		w.cfg.Logger.Warn("backup retention sweep failed", "err", err, "dir", w.cfg.Dir)
 		// Snapshot still succeeded; don't suppress the success log.
