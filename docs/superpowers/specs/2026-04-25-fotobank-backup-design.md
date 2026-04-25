@@ -42,8 +42,9 @@ fotobank backup restore <snapshot-path> [--config <path>] [--yes] [--dry-run] [-
 ```
 
 The worker reuses `backup.Snapshot` and `backup.Sweep`; the CLI reuses
-`backup.SnapshotPath` (a path-shaped wrapper that opens read-only),
-`backup.List`, and `backup.Restore`.
+`backup.SnapshotPath` (a path-shaped wrapper that opens its own writable
+SQLite connection without running migrations), `backup.List`, and
+`backup.Restore`.
 
 ### 3.1 Package layout
 
@@ -132,7 +133,7 @@ same second. Filenames are lexicographically sortable, so `ls -1
 `SnapshotPath(ctx, srcDB, dst string)`:
 
 1. Build the DSN with proper URI escaping (a small unexported helper that wraps `srcDB` as `file:` URI and percent-escapes any reserved characters; raw `file:` + path concatenation is incorrect for paths containing `?`, `#`, or whitespace).
-2. Open writable: `db, err := sql.Open("sqlite", uri)`. The DSN sets `_busy_timeout=5000` to match the rest of the codebase. `mode=ro` is **not** used — `VACUUM INTO` requires a writable source connection (verified empirically; `VACUUM INTO` against a read-only source fails).
+2. Open writable: `db, err := sql.Open("sqlite", uri)`. The DSN matches the project's existing pattern in `internal/db/db.go:29`: `?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)`. The modernc.org/sqlite driver recognises `_pragma=...` form, not `_busy_timeout=...`. `mode=ro` is **not** used — `VACUUM INTO` requires a writable source connection (verified empirically; `VACUUM INTO` against a read-only source fails).
 3. `defer db.Close()`.
 4. `return Snapshot(ctx, db, dst)`.
 
@@ -183,35 +184,42 @@ type SweepResult struct {
 
 ```
 files := List(dir)            // newest-first; skips malformed names; skips *.partial
-keep := map[path]bool{}
 seen15  := map[truncated_15min]bool{}
 seenH   := map[truncated_hour]bool{}
 seenD   := map[truncated_day]bool{}
+var result SweepResult
 
+// Single pass: decide and act on each file in turn. No second
+// delete-loop, so future-deleted files cannot be revisited.
 for f in files:
     age := now.Sub(f.ts)
     if age < 0:
-        // Future-dated. Delete-with-warn (clock skew).
+        // Future-dated. Delete-with-warn (clock skew). Not counted
+        // toward result.Deleted; future-snapshot deletions are tracked
+        // separately via the slog warning.
         os.Remove(f.path); logger.Warn("future snapshot deleted", ...)
         continue
+
+    keep := false
     if age < 1h:
         // 15-min tier. If full, this snapshot is deleted — does NOT
         // fall through to the hourly tier (otherwise a young snapshot
         // would be promoted past tier boundaries).
         slot := f.ts.Truncate(15 * time.Minute)
         if !seen15[slot] && len(seen15) < policy.Keep15Min:
-            seen15[slot] = true; keep[f.path] = true
+            seen15[slot] = true; result.Kept15Min++; keep = true
     else if age < 24h:
         slot := f.ts.Truncate(time.Hour)
         if !seenH[slot] && len(seenH) < policy.KeepHourly:
-            seenH[slot] = true; keep[f.path] = true
+            seenH[slot] = true; result.KeptHourly++; keep = true
     else if age < 7*24h:
         slot := f.ts.Truncate(24 * time.Hour)
         if !seenD[slot] && len(seenD) < policy.KeepDaily:
-            seenD[slot] = true; keep[f.path] = true
-    // age >= 7d: not kept (deleted in the next loop)
+            seenD[slot] = true; result.KeptDaily++; keep = true
+    // age >= 7d falls through with keep == false
 
-for f in files where !keep[f.path]: os.Remove(f.path)
+    if !keep:
+        os.Remove(f.path); result.Deleted++
 
 // Stale partial cleanup.
 for p in partials_in(dir):
@@ -393,8 +401,10 @@ fotobank backup snapshot [--out <path>] [--config <path>] [--json]
 
 Calls `backup.SnapshotPath(ctx, resolveDBPath(cfg), dst)`. Default
 `dst` is `{cfg.Backup.Dir or default}/{ms-timestamp}.sqlite`. Does
-not acquire the flock; SnapshotPath opens the source read-only so a
-live server is unaffected.
+not acquire the flock; SnapshotPath opens its own writable SQLite
+connection without running migrations, so a live server is unaffected
+(SQLite's WAL mode permits multiple writers and `VACUUM INTO` does not
+modify the source).
 
 `--json` (stdout): `{"path": str, "size_bytes": int, "duration_ms": int, "timestamp": "RFC3339"}`.
 
