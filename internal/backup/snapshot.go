@@ -75,10 +75,14 @@ func SnapshotPath(ctx context.Context, srcDB, dst string) error {
 // buildDSN returns a writable file: URI for path with the project's
 // standard pragmas. Any reserved characters in path are percent-escaped
 // via net/url so paths containing '?', '#', or whitespace are safe.
+// Relative paths are resolved to absolute so url.URL.String() does not
+// emit them as authority components (file://rel.sqlite is malformed).
 func buildDSN(path string) string {
-	u := url.URL{Scheme: "file", Opaque: ""}
-	// modernc.org/sqlite uses the path component, not Opaque.
-	u.Path = path
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	u := url.URL{Scheme: "file", Path: abs}
 	q := u.Query()
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "foreign_keys(1)")

@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -62,6 +64,9 @@ func TestSnapshotRefusesExistingDestination(t *testing.T) {
 	// preexisting content still on disk
 	b, _ := os.ReadFile(dst)
 	r.Equal("preexisting", string(b))
+	// Cleanup path: the .partial sibling must be removed when the link fails.
+	_, perr := os.Stat(dst + ".partial")
+	r.True(os.IsNotExist(perr), ".partial must be removed after link failure")
 }
 
 func TestSnapshotCallsSyncDirOnParent(t *testing.T) {
@@ -112,4 +117,21 @@ func TestSnapshotSurfaceErrorFromSyncDir(t *testing.T) {
 
 	err := Snapshot(context.Background(), db, dst)
 	r.ErrorIs(err, want)
+}
+
+func TestBuildDSNEscapesReserved(t *testing.T) {
+	r := require.New(t)
+
+	dsn := buildDSN("/tmp/foo bar?x#y.sqlite")
+	r.Contains(dsn, "%20", "space must be percent-escaped")
+	r.Contains(dsn, "%3F", "'?' must be percent-escaped")
+	r.Contains(dsn, "%23", "'#' must be percent-escaped")
+
+	rel := buildDSN("rel.sqlite")
+	u, err := url.Parse(rel)
+	r.NoError(err, "DSN built from a relative path must parse cleanly")
+	r.Equal("file", u.Scheme)
+	r.NotEmpty(u.Path, "relative path must be promoted into u.Path")
+	r.True(strings.HasPrefix(u.Path, "/"), "u.Path must be absolute, got %q", u.Path)
+	r.True(strings.HasSuffix(u.Path, "/rel.sqlite"), "u.Path must end with the original filename, got %q", u.Path)
 }
