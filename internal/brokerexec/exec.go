@@ -1,16 +1,22 @@
 package brokerexec
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/wesm/fotobank/internal/broker"
 	"github.com/wesm/fotobank/internal/errs"
+	"github.com/wesm/fotobank/internal/share"
 )
 
 const defaultCallTimeout = 30 * time.Second
@@ -148,3 +154,85 @@ func (r *Registrar) buildEnv() []string {
 	}
 	return base
 }
+
+// PublishScope satisfies broker.BrokerClient. See package godoc for
+// the wire contract.
+func (r *Registrar) PublishScope(ctx context.Context, s share.Scope) error {
+	return r.execOnce(ctx, "publish", r.publishScopeArgs, newPublishRequest(s))
+}
+
+// RevokeScope satisfies broker.BrokerClient. Revocation is keyed by
+// UUID only; the broker is membership-ignorant.
+func (r *Registrar) RevokeScope(ctx context.Context, uuid string) error {
+	return r.execOnce(ctx, "revoke", r.revokeScopeArgs, newRevokeRequest(uuid))
+}
+
+// execOnce orchestrates one shell-out: marshal payload, build env,
+// run the broker CLI, capture stderr, classify result.
+func (r *Registrar) execOnce(ctx context.Context, op string,
+	args []string, payload any) error {
+
+	cmdCtx, cancel := context.WithTimeout(ctx, r.callTimeout)
+	defer cancel()
+
+	var stdinBuf bytes.Buffer
+	if err := json.NewEncoder(&stdinBuf).Encode(payload); err != nil {
+		return fmt.Errorf("brokerexec %s: marshal payload: %w", op, err)
+	}
+
+	stderrBuf := newPrefixBuffer(4096)
+	runner := r.runCmd
+	if runner == nil {
+		runner = realRun
+	}
+	exitCode, runErr := runner(
+		cmdCtx, r.command, args, r.buildEnv(),
+		bytes.NewReader(stdinBuf.Bytes()),
+		io.Discard,
+		stderrBuf,
+	)
+
+	// 1. Caller (worker) ctx cancelled — propagate as-is so the
+	// worker's isCtxErr matches and the drain aborts cleanly.
+	if ctx.Err() != nil {
+		return fmt.Errorf("brokerexec %s: %w", op, ctx.Err())
+	}
+	// 2. Per-call timeout fired (caller ctx still healthy) —
+	// classify as transient. Propagating DeadlineExceeded would
+	// suppress recordFailure in the share worker, leaving the row
+	// permanently stuck.
+	if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("brokerexec %s: timed out after %s: %w",
+			op, r.callTimeout, broker.ErrBrokerTransient)
+	}
+	// 3. Success.
+	if exitCode == 0 && runErr == nil {
+		return nil
+	}
+	// 4. Failure — log full stderr and classify by exit code.
+	full := stderrBuf.Bytes()
+	r.logger.Error("brokerexec failed",
+		"op", op, "exit", exitCode, "stderr", string(full))
+	return classifyExit(op, exitCode, tailForError(full), runErr)
+}
+
+// realRun is the default runFunc: builds an exec.Cmd from the
+// supplied parameters, runs it, returns the exit code (or -1 if the
+// process never started). All io wiring (env, stdin, stdout,
+// stderr) is set on the Cmd; nothing else.
+func realRun(ctx context.Context, command string, args, env []string,
+	stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+
+	cmd := exec.CommandContext(ctx, command, args...)
+	cmd.Env = env
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	if cmd.ProcessState != nil {
+		return cmd.ProcessState.ExitCode(), err
+	}
+	return -1, err
+}
+
+var _ broker.BrokerClient = (*Registrar)(nil)
