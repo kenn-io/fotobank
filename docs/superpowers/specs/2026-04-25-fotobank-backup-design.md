@@ -51,13 +51,14 @@ New package `internal/backup/`:
 
 | File | Responsibility |
 |------|----------------|
-| `snapshot.go` | `Snapshot(ctx, db *sql.DB, dst string) error` and `SnapshotPath(ctx, srcDB, dst string) error`. Runs `VACUUM INTO`, fsyncs file and parent dir, atomic rename via `O_EXCL`. |
-| `retention.go` | `Sweep(dir string, policy Policy, now time.Time) (SweepResult, error)`. Bucket-based retention. Deletes stale `*.partial`. |
+| `snapshot.go` | `Snapshot(ctx, db *sql.DB, dst string) error` and `SnapshotPath(ctx, srcDB, dst string) error`. Runs `VACUUM INTO`, fsyncs file and parent dir, atomic create-if-not-exists via `os.Link`. |
+| `retention.go` | `Sweep(dir string, policy Policy, now time.Time, logger *slog.Logger) (SweepResult, error)`. Bucket-based retention. Deletes stale `*.partial`. nil logger → `slog.Default()`. |
 | `list.go` | `List(dir string) ([]Snapshot, error)`. Newest-first. |
-| `restore.go` | `Restore(ctx, snapshotPath, dbPath, lockPath string) error`. No logger argument. |
+| `restore.go` | `Restore(ctx, snapshotPath, dbPath, lockPath string) (RestoreResult, error)`. No logger argument. |
 | `worker.go` | `Worker.Run(ctx) error`. Owns the 15-minute ticker, calls Snapshot then Sweep, tracks `lastSuccessAt`, emits stale warnings. |
 | `quote.go` | unexported `sqlQuoteLiteral(s string) string`. SQLite literal escaping. |
 | `errors.go` | `ErrServerHoldsLock` sentinel. |
+| `seam.go` | unexported `syncDir func(string) error` package var (test seam). Default opens dir, `f.Sync`, closes. Used by both `Snapshot`'s parent fsync and `Restore`'s post-rename fsync. Tests swap via a `setSyncDir(t, fn)` helper. |
 
 ### 3.2 CLI layout
 
@@ -126,13 +127,16 @@ same second. Filenames are lexicographically sortable, so `ls -1
 4. Open `tmp`, `f.Sync()`, close.
 5. `os.Link(tmp, dst)`. Atomic create-if-not-exists on the destination; collision = hard error. Same-filesystem (tmp lives next to dst) so `EXDEV` is not a concern.
 6. `os.Remove(tmp)` to drop the link source.
-7. Call `cfg.SyncDir(filepath.Dir(dst))` to fsync the parent directory.
+7. Call `syncDir(filepath.Dir(dst))` to fsync the parent directory (package-level seam).
 
 `SnapshotPath(ctx, srcDB, dst string)`:
 
-1. `db, err := sql.Open("sqlite", "file:" + srcDB + "?mode=ro&_busy_timeout=5000")`.
-2. `defer db.Close()`.
-3. `return Snapshot(ctx, db, dst)`.
+1. Build the DSN with proper URI escaping (a small unexported helper that wraps `srcDB` as `file:` URI and percent-escapes any reserved characters; raw `file:` + path concatenation is incorrect for paths containing `?`, `#`, or whitespace).
+2. Open writable: `db, err := sql.Open("sqlite", uri)`. The DSN sets `_busy_timeout=5000` to match the rest of the codebase. `mode=ro` is **not** used — `VACUUM INTO` requires a writable source connection (verified empirically; `VACUUM INTO` against a read-only source fails).
+3. `defer db.Close()`.
+4. `return Snapshot(ctx, db, dst)`.
+
+`SnapshotPath` does **not** call `db.Open` — migrations must not run from a CLI command alongside a live server.
 
 ### 4.4 Configuration
 
@@ -142,8 +146,9 @@ same second. Filenames are lexicographically sortable, so `ls -1
 | `Dir string` | snapshot directory |
 | `Interval time.Duration` | tick interval (production: 15min) |
 | `Policy Policy` | retention policy |
-| `Logger *slog.Logger` | structured log handle |
-| `SyncDir func(string) error` | injectable parent-dir fsync seam (default: open + Sync + close) |
+| `Logger *slog.Logger` | structured log handle (passed to `Sweep`; reused by worker for snapshot success/failure logs) |
+
+The `syncDir` seam is a package-level test seam (see §3.1's `seam.go`) rather than a worker config field. Production never overrides; tests do.
 
 ## 5. Retention
 
@@ -163,7 +168,7 @@ history.
 
 ### 5.2 Algorithm
 
-`Sweep(dir string, policy Policy, now time.Time) (SweepResult, error)`:
+`Sweep(dir string, policy Policy, now time.Time, logger *slog.Logger) (SweepResult, error)`:
 
 ```go
 type SweepResult struct {
@@ -173,6 +178,8 @@ type SweepResult struct {
     Deleted    int  // non-future deletions only; future-snapshot deletions and .partial cleanup are accounted separately in slog
 }
 ```
+
+`logger == nil` → `slog.Default()`. The worker passes its configured logger.
 
 ```
 files := List(dir)            // newest-first; skips malformed names; skips *.partial
@@ -185,27 +192,34 @@ for f in files:
     age := now.Sub(f.ts)
     if age < 0:
         // Future-dated. Delete-with-warn (clock skew).
-        os.Remove(f.path); slog.Warn("future snapshot deleted", ...)
+        os.Remove(f.path); logger.Warn("future snapshot deleted", ...)
         continue
-    if age < 1h && len(seen15) < policy.Keep15Min:
+    if age < 1h:
+        // 15-min tier. If full, this snapshot is deleted — does NOT
+        // fall through to the hourly tier (otherwise a young snapshot
+        // would be promoted past tier boundaries).
         slot := f.ts.Truncate(15 * time.Minute)
-        if !seen15[slot]:
+        if !seen15[slot] && len(seen15) < policy.Keep15Min:
             seen15[slot] = true; keep[f.path] = true
-    else if age < 24h && len(seenH) < policy.KeepHourly:
+    else if age < 24h:
         slot := f.ts.Truncate(time.Hour)
-        if !seenH[slot]:
+        if !seenH[slot] && len(seenH) < policy.KeepHourly:
             seenH[slot] = true; keep[f.path] = true
-    else if age < 7*24h && len(seenD) < policy.KeepDaily:
+    else if age < 7*24h:
         slot := f.ts.Truncate(24 * time.Hour)
-        if !seenD[slot]:
+        if !seenD[slot] && len(seenD) < policy.KeepDaily:
             seenD[slot] = true; keep[f.path] = true
+    // age >= 7d: not kept (deleted in the next loop)
 
 for f in files where !keep[f.path]: os.Remove(f.path)
 
 // Stale partial cleanup.
 for p in partials_in(dir):
-    if now.Sub(stat(p).ModTime()) > 24h: os.Remove(p)
+    if now.Sub(stat(p).ModTime()) > 24h:
+        os.Remove(p); logger.Info("partial cleanup", ...)
 ```
+
+Tier selection is decoupled from "bucket full." A snapshot's age determines which tier considers it; only that tier's bucket dedup + count cap applies. A young snapshot whose 15-min tier is full is deleted, not promoted to hourly.
 
 **Properties:**
 - O(snapshots) per sweep.
@@ -242,7 +256,7 @@ func (w *Worker) tick(ctx context.Context) {
         slog.Info("backup snapshot ok", "path", dst,
                   "size_bytes", size, "duration_ms", elapsed)
     }
-    res, err := Sweep(w.dir, w.policy, time.Now())
+    res, err := Sweep(w.dir, w.policy, time.Now(), w.logger)
     if err != nil {
         slog.Warn("backup retention sweep failed", "err", err)
     } else {
@@ -264,40 +278,37 @@ warning to once per 48h window.
 ### 6.1 Function signature
 
 ```go
-func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) error
+func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (RestoreResult, error)
+
+type RestoreResult struct {
+    SnapshotPath     string
+    DBPath           string
+    PreRestoreSuffix string   // ".pre-restore.{ms-timestamp}", common to all moved-aside files
+    MovedAside       []string // absolute paths of files actually moved aside (skipped paths omitted)
+}
 ```
 
 No logger argument; library is quiet except for returned errors. CLI
-wrapper handles human progress output.
+wrapper handles human progress output. `MovedAside` lets the CLI
+report exactly which sidecars were preserved (some may have been
+absent on a flash-loss recovery).
 
 ### 6.2 Steps
 
-1. **Validate snapshot.** `os.Stat(snapshotPath)` must show a regular
-   file. `sql.Open("sqlite", "file:"+snapshotPath+"?mode=ro")`, then
-   `PRAGMA integrity_check` must return `ok`. Close.
-2. **Acquire lock.** `flock.New(lockPath); l.TryLock()`. On failure,
-   return `ErrServerHoldsLock` (wrapped with the underlying error).
-   Defer `l.Unlock()`.
-3. **Move-aside.** For each of `dbPath`, `dbPath+"-wal"`, `dbPath+"-shm"`:
-   - `os.Rename(p, p + ".pre-restore." + ms-timestamp)`.
-   - `os.IsNotExist` → skip silently (flash-loss recovery has nothing to move).
-   - Any other rename error → return without touching anything else.
-4. **Arm rollback.** Capture the moved-aside paths. Defer a function
-   that, if the success flag is unset:
+1. **Validate snapshot.** `os.Stat(snapshotPath)` must show a regular file. Open with the same writable-DSN URI helper as §4.4 (read-only is fine here — we don't VACUUM INTO from the snapshot, only inspect it). Run `PRAGMA integrity_check`; require `ok`. Close.
+2. **Acquire lock.** `flock.New(lockPath); l.TryLock()`. On failure, return `ErrServerHoldsLock` (wrapped). Defer `l.Unlock()`.
+3. **Arm rollback BEFORE any move-aside.** Initialize `var movedAside []string` and `var success bool`. Defer a closure that, if `!success`:
    - Closes any DB handle from step 6 if open.
    - Removes `dbPath`, `dbPath+"-wal"`, `dbPath+"-shm"` if present.
-   - Renames each `.pre-restore.*` file back to its original name.
-   - Joins any rollback errors via `errors.Join` and returns the
-     original failure with rollback errors as added context.
-5. **Copy snapshot.** Open `snapshotPath` for reading. Create
-   `dbPath + ".incoming"` with `O_CREATE|O_EXCL|O_WRONLY`. `io.Copy`,
-   `f.Sync`, close. `os.Rename(.incoming, dbPath)`. Call `SyncDir(filepath.Dir(dbPath))`.
-   Any error → rollback fires.
-6. **Forward-port schema.** `d, err := db.Open(dbPath)`. `db.Open`
-   enables WAL and runs embedded migrations idempotently. On error,
-   close `d` if non-nil; rollback fires. On success, close `d`
-   explicitly so the server can open the DB freshly.
-7. **Disarm rollback.** Set the success flag. Return nil.
+   - For each path in `movedAside` (reverse order), rename `.pre-restore.{ts}` → original.
+   - Joins any rollback errors via `errors.Join` and returns the original failure with rollback errors as added context.
+4. **Move-aside.** Compute `suffix := ".pre-restore." + ms-timestamp` once. For each of `dbPath`, `dbPath+"-wal"`, `dbPath+"-shm"`:
+   - `os.Rename(p, p + suffix)`. On success, append `p + suffix` to `movedAside`.
+   - `os.IsNotExist` → skip (no append).
+   - Any other rename error → return error; the deferred rollback fires and unwinds the appends made so far.
+5. **Copy snapshot.** Open `snapshotPath` for reading. Create `dbPath + ".incoming"` with `O_CREATE|O_EXCL|O_WRONLY`. `io.Copy`, `f.Sync`, close. `os.Rename(.incoming, dbPath)`. `syncDir(filepath.Dir(dbPath))`. Any error → rollback fires.
+6. **Forward-port schema.** `d, err := db.Open(dbPath)`. `db.Open` enables WAL and runs embedded migrations idempotently. On error, close `d` if non-nil; rollback fires. On success, close `d` explicitly so the server can open the DB freshly.
+7. **Disarm rollback.** Set `success = true`. Return `RestoreResult{SnapshotPath, DBPath, suffix, movedAside}, nil`.
 
 ### 6.3 Pre-restore artefacts
 
@@ -406,7 +417,7 @@ Calls `backup.List(cfg.Backup.Dir or default)`. Output:
 fotobank backup restore <snapshot-path> [--config <path>] [--yes] [--dry-run] [--json]
 ```
 
-Calls `backup.Restore(ctx, snapshotPath, resolveDBPath(cfg), lockPathFor(dbPath))`.
+Calls `backup.Restore(ctx, snapshotPath, resolveDBPath(cfg), lockPathFor(dbPath))` and uses the returned `RestoreResult.MovedAside` for both the human and JSON output.
 
 - Default human: prompts `Restore from {snapshot} into {dbPath}? (yes/no): ` on stderr; success prints `restored from {snapshot} -> {dbPath}; previous DB moved aside: {paths}` to stdout.
 - `--yes` skips the confirmation prompt.
@@ -467,7 +478,7 @@ worker keeps its slog logger because it has no other surface.
 
 ### 10.1 Unit tests in `internal/backup/`
 
-- `snapshot_test.go` — real SQLite source DB; assert `dst` exists, `PRAGMA integrity_check` returns `ok`, source unmodified, `.partial` gone. Inject a counting `SyncDir` to assert it was called on the parent dir.
+- `snapshot_test.go` — real SQLite source DB; assert `dst` exists, `PRAGMA integrity_check` returns `ok`, source unmodified, `.partial` gone. Swap the `syncDir` package-var seam (via `setSyncDir(t, fn)` helper) for a counting fake to assert it was called on the parent dir.
 - `retention_test.go` — table-driven; synthesize files via `os.Chtimes` to backdate. Cover: tight 15-min cluster, missing tiers, future-dated files, malformed filenames, `.partial` aging at 24h cutoff (boundary cases at 24h±1s).
 - `list_test.go` — sort order, timestamp parsing, malformed-skip behaviour.
 - `restore_test.go` — real DB + real snapshot; assert post-state. Force-fail at each step (snapshot integrity, lock, copy, migrations) via injected I/O errors; assert rollback restores the original DB and that the joined error mentions both failures.
