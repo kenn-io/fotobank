@@ -358,9 +358,11 @@ mode = "stub"
 # env = ["FB_BROKER_ENV=prod"]
 
 [backup]
-snapshot_interval = "15m"
-snapshot_retention = 96              # keep last N snapshots
-wal_shipping = false                 # future
+# enabled = true
+# dir = ""                           # absolute path; default {nas.root}/.fotobank/snapshots/
+# keep_15min = 4
+# keep_hourly = 24
+# keep_daily = 7
 ```
 
 ### 4.2 Config file location

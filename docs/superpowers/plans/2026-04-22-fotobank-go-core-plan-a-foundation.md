@@ -793,9 +793,11 @@ type BrokerExec struct {
 }
 
 type Backup struct {
-	SnapshotInterval  time.Duration `toml:"snapshot_interval"`
-	SnapshotRetention int           `toml:"snapshot_retention"`
-	WALShipping       bool          `toml:"wal_shipping"`
+	Enabled    bool   `toml:"enabled"`
+	Dir        string `toml:"dir"`
+	Keep15Min  int    `toml:"keep_15min"`
+	KeepHourly int    `toml:"keep_hourly"`
+	KeepDaily  int    `toml:"keep_daily"`
 }
 
 // Load reads the file at path, applies defaults, and returns the
@@ -880,11 +882,14 @@ func applyDefaults(c *Config) {
 	if c.Broker.Mode == "" {
 		c.Broker.Mode = "stub"
 	}
-	if c.Backup.SnapshotInterval == 0 {
-		c.Backup.SnapshotInterval = 15 * time.Minute
+	if c.Backup.Keep15Min == 0 {
+		c.Backup.Keep15Min = 4
 	}
-	if c.Backup.SnapshotRetention == 0 {
-		c.Backup.SnapshotRetention = 96
+	if c.Backup.KeepHourly == 0 {
+		c.Backup.KeepHourly = 24
+	}
+	if c.Backup.KeepDaily == 0 {
+		c.Backup.KeepDaily = 7
 	}
 }
 
