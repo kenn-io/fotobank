@@ -13,6 +13,7 @@
 //	BROKEREXEC_TEST_STDERR              // literal -> stderr
 //	BROKEREXEC_TEST_SLEEP               // time.Duration sleep before exit
 //	BROKEREXEC_TEST_EXIT                // exit code (default 0)
+//	BROKEREXEC_TEST_RECORD_FILE         // append payload.operation + "\n" to file
 package brokerhelper
 
 import (
@@ -31,20 +32,31 @@ const EnvVar = "BROKEREXEC_TEST_HELPER"
 func IsHelper() bool { return os.Getenv(EnvVar) == "1" }
 
 // Run reads stdin, optionally validates the operation discriminator,
-// optionally echoes a configured env var to stderr, optionally writes
-// a literal stderr message, optionally sleeps, and exits with the
-// configured exit code. Never returns.
+// optionally records the invocation to a file (so callers can prove
+// the helper ran, not the NoopBroker), optionally echoes a configured
+// env var to stderr, optionally writes a literal stderr message,
+// optionally sleeps, and exits with the configured exit code. Never
+// returns.
 func Run() {
 	payload, _ := io.ReadAll(os.Stdin)
+	var got struct {
+		Operation string `json:"operation"`
+	}
+	_ = json.Unmarshal(payload, &got)
 	if want := os.Getenv("BROKEREXEC_TEST_EXPECT_OPERATION"); want != "" {
-		var got struct {
-			Operation string `json:"operation"`
-		}
-		_ = json.Unmarshal(payload, &got)
 		if got.Operation != want {
 			fmt.Fprintf(os.Stderr, "operation mismatch: got=%q want=%q",
 				got.Operation, want)
 			os.Exit(65)
+		}
+	}
+	if path := os.Getenv("BROKEREXEC_TEST_RECORD_FILE"); path != "" {
+		// O_APPEND writes < PIPE_BUF are atomic on POSIX, so concurrent
+		// broker children appending one short line each cannot interleave.
+		if f, err := os.OpenFile(path,
+			os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600); err == nil {
+			fmt.Fprintln(f, got.Operation)
+			_ = f.Close()
 		}
 	}
 	if k := os.Getenv("BROKEREXEC_TEST_ECHO_ENV"); k != "" {

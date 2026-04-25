@@ -56,6 +56,17 @@ func TestE2EBrokerExecPublishesAndRevokes(t *testing.T) {
 	r.NoError(os.MkdirAll(nasRoot, 0o700))
 	r.NoError(os.MkdirAll(flashRoot, 0o700))
 
+	// Pin DB path so an inherited FOTOBANK_DB_PATH from the developer's
+	// or CI's environment cannot redirect import/server writes off-disk.
+	dbPath := filepath.Join(flashRoot, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	// brokerRecord captures every broker child invocation. Each helper
+	// process appends payload.operation + "\n" here, so we can prove the
+	// brokerexec child actually ran rather than NoopBroker silently
+	// flipping status (which it would also do).
+	brokerRecord := filepath.Join(tmp, "broker_invocations.log")
+
 	self, err := os.Executable()
 	r.NoError(err)
 
@@ -91,9 +102,10 @@ call_timeout = "5s"
 env = [
   "%s=1",
   "BROKEREXEC_TEST_EXIT=0",
+  "BROKEREXEC_TEST_RECORD_FILE=%s",
 ]
 `, nasRoot, flashRoot, filepath.Join(tmp, "import.lock"),
-		self, brokerhelper.EnvVar), 0o600))
+		self, brokerhelper.EnvVar, brokerRecord), 0o600))
 
 	t.Setenv("FOTOBANK_CONFIG", cfgPath)
 	t.Setenv("FOTOBANK_TEST_SHARE_WORKER_TICK", "50ms")
@@ -148,10 +160,6 @@ env = [
 	r.NoError(resp.Body.Close())
 	r.NotEmpty(scope.UUID)
 
-	// runServer defaults the DB to flashRoot/fotobank.sqlite (see
-	// internal/cli/server.go:96-99) when FOTOBANK_DB_PATH is unset.
-	dbPath := filepath.Join(flashRoot, "fotobank.sqlite")
-
 	// Phase 1: worker should reach broker_status='active' within
 	// a few ticks (50ms each). The helper exits 0 on every call.
 	require.Eventually(t, func() bool {
@@ -162,6 +170,12 @@ env = [
 	// Assert the progress timestamps are populated.
 	requireProgressSet(t, dbPath, scope.UUID,
 		"broker_registered_at", "broker_granted_at")
+
+	// Prove the brokerexec child actually fired the publish — without
+	// this, a regression that silently routed mode="exec" to NoopBroker
+	// would still walk the status to 'active' and pass.
+	r.Contains(brokerInvocations(t, brokerRecord), "publish",
+		"brokerexec child must have recorded a publish call")
 
 	// Phase 2: revoke via POST /api/v1/shares/{uuid}/revoke (see
 	// internal/httpapi/shares.go:301-305 — there is no DELETE route).
@@ -177,6 +191,11 @@ env = [
 		"broker_status did not reach 'revoked_remote'")
 
 	requireProgressSet(t, dbPath, scope.UUID, "broker_revoked_at")
+
+	// Same check on the revoke path: prove the brokerexec child fired
+	// the revoke, not just that the worker walked status by itself.
+	r.Contains(brokerInvocations(t, brokerRecord), "revoke",
+		"brokerexec child must have recorded a revoke call")
 
 	// Tidy shutdown.
 	cancel()
@@ -224,6 +243,19 @@ func requireProgressSet(t *testing.T, dbPath, uuid string, cols ...string) {
 		require.NoError(t, err)
 		require.True(t, ts.Valid, "%s must be non-NULL after broker call", c)
 	}
+}
+
+// brokerInvocations returns the contents of the record file the broker
+// helper appends to (one operation per line). Returns "" when the file
+// does not yet exist — useful before the first invocation has landed.
+func brokerInvocations(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return ""
+	}
+	require.NoError(t, err)
+	return string(b)
 }
 
 // importOneMedia returns the imported media ID by listing /api/v1/media.
