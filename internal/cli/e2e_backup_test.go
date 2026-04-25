@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -22,28 +23,78 @@ import (
 // path outside the worker-managed directory, returning that path. Used
 // by e2e tests to pin a snapshot for downstream checks even though the
 // worker is still running and may sweep the original at any moment.
+//
+// The read-then-open sequence is itself a TOCTOU race against the
+// worker's retention sweep: a snapshot listed by ReadDir can be gone
+// by the time we Open it. Retry the entire pick+open until we get a
+// stable handle (or a fresh snapshot has appeared), treating ENOENT
+// as a non-fatal "the worker won this race, try again". The retry
+// budget is bounded so a permanently empty dir surfaces a real test
+// failure instead of hanging.
 func stableCopySnapshot(t *testing.T, snapDir, dst string) string {
 	t.Helper()
 	r := require.New(t)
-	entries, err := os.ReadDir(snapDir)
-	r.NoError(err)
-	var src string
+	const maxAttempts = 40
+	const retryGap = 25 * time.Millisecond
+	for range maxAttempts {
+		src := pickAnySnapshot(t, snapDir)
+		if src == "" {
+			time.Sleep(retryGap)
+			continue
+		}
+		if copyAtomic(src, dst) {
+			return dst
+		}
+		// Either the source vanished mid-copy or dst was left over
+		// from a partial prior attempt; the worker won this race.
+		_ = os.Remove(dst)
+		time.Sleep(retryGap)
+	}
+	r.Failf("stableCopySnapshot",
+		"no snapshot stayed put across %d retries in %s", maxAttempts, snapDir)
+	return ""
+}
+
+// pickAnySnapshot returns the absolute path of any .sqlite snapshot in
+// dir, or "" if none are present. Caller is responsible for handling
+// the race that the file may vanish before it can be opened.
+func pickAnySnapshot(t *testing.T, dir string) string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
 	for _, e := range entries {
 		if filepath.Ext(e.Name()) == ".sqlite" {
-			src = filepath.Join(snapDir, e.Name())
-			break
+			return filepath.Join(dir, e.Name())
 		}
 	}
-	r.NotEmpty(src, "no snapshot to copy from %s", snapDir)
+	return ""
+}
+
+// copyAtomic copies src to dst, returning false if any step in the
+// sequence is racy in a recoverable way (source vanished, dst left
+// over from a partial prior attempt). Hard I/O errors panic via the
+// caller's require helper.
+func copyAtomic(src, dst string) bool {
 	in, err := os.Open(src)
-	r.NoError(err)
+	if errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	if err != nil {
+		return false
+	}
 	defer in.Close()
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	r.NoError(err)
-	_, err = io.Copy(out, in)
-	r.NoError(err)
-	r.NoError(out.Close())
-	return dst
+	if errors.Is(err, os.ErrExist) {
+		return false
+	}
+	if err != nil {
+		return false
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return false
+	}
+	return out.Close() == nil
 }
 
 // writeBackupE2EConfig produces a TOML config sufficient for a server
