@@ -2032,7 +2032,9 @@ env = [
     r.NoError(resp.Body.Close())
     r.NotEmpty(scope.UUID)
 
-    dbPath := filepath.Join(nasRoot, "fotobank.db")
+    // runServer defaults the DB to flashRoot/fotobank.sqlite (see
+    // internal/cli/server.go:99) unless FOTOBANK_DB_PATH is set.
+    dbPath := filepath.Join(flashRoot, "fotobank.sqlite")
 
     // Phase 1: worker should reach broker_status='active' within
     // a few ticks (50ms each). The helper exits 0 on every call.
@@ -2045,14 +2047,13 @@ env = [
     requireProgressSet(t, dbPath, scope.UUID,
         "broker_registered_at", "broker_granted_at")
 
-    // Phase 2: revoke and watch for 'revoked_remote'.
-    req, err := http.NewRequest(http.MethodDelete,
-        base+"/api/v1/shares/"+scope.UUID, nil)
-    r.NoError(err)
-    resp, err = client.Do(req)
+    // Phase 2: revoke via POST /api/v1/shares/{uuid}/revoke (see
+    // internal/httpapi/shares.go:301-305 — there is no DELETE route).
+    resp, err = client.Post(base+"/api/v1/shares/"+scope.UUID+"/revoke",
+        "application/json", nil)
     r.NoError(err)
     r.NoError(resp.Body.Close())
-    r.Equal(http.StatusNoContent, resp.StatusCode)
+    r.Equal(http.StatusOK, resp.StatusCode)
 
     require.Eventually(t, func() bool {
         return readScopeStatus(t, dbPath, scope.UUID) == "revoked_remote"
@@ -2221,8 +2222,8 @@ type BrokerExec struct {
 
 - [ ] **Step 3: Verify nothing else in the repo references the old field**
 
-Run: `grep -rn "RegisterScopeArgs\|register_scope_args" .`
-Expected: zero matches (the actual rename has already removed all live references; this catches stragglers in docs).
+Run: `grep -rn "RegisterScopeArgs\|register_scope_args" internal cmd`
+Expected: zero matches under `internal/` and `cmd/` (the live code paths). The brokerexec design spec (`docs/superpowers/specs/2026-04-24-fotobank-brokerexec-design.md`) and this plan itself contain intentional historical references in their `Coordinated changes` and `Migration` sections — those should not be rewritten, so the grep is narrowed to live code.
 
 - [ ] **Step 4: Commit**
 

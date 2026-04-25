@@ -213,10 +213,15 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("%w: [broker.exec].command is required when mode=exec",
 				errs.ErrBadConfiguration)
 		}
-		// call_timeout: 0 is allowed because applyDefaults has already
-		// run by this point and replaced 0 with 30s. Negative values
-		// are rejected so a future refactor that moves Validate ahead
-		// of applyDefaults doesn't silently accept them.
+		// call_timeout: 0 is the documented "use the default" sentinel
+		// and follows fotobank's convention for zero-valued numeric
+		// config (see originals_cache_days, worker_concurrency, etc.).
+		// applyDefaults rewrites 0 to 30s before this arm runs, so a 0
+		// the user typed and a missing key are indistinguishable here
+		// and both produce a 30s effective timeout — there is no way
+		// to express "no per-call timeout". Negative values are
+		// rejected to defend against a future refactor that reorders
+		// applyDefaults after Validate.
 		if c.Broker.Exec.CallTimeout < 0 {
 			return fmt.Errorf("%w: [broker.exec].call_timeout must be >= 0",
 				errs.ErrBadConfiguration)
