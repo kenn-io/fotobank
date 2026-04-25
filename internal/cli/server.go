@@ -187,6 +187,15 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		WriteTimeout: cfg.HTTP.WriteTimeout,
 	}
 
+	// Build the broker client before spawning bgWG-tracked workers.
+	// An error here must short-circuit with a bare return, which only
+	// fires d.Close — there are no running goroutines to join yet.
+	logger := slog.New(slog.NewTextHandler(opts.stderr, nil))
+	brokerClient, err := newBrokerClient(cfg.Broker, logger)
+	if err != nil {
+		return fmt.Errorf("broker init: %w", err)
+	}
+
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -220,13 +229,6 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			fmt.Fprintln(opts.stderr, "thumb worker exited:", err)
 		}
 	})
-
-	logger := slog.New(slog.NewTextHandler(opts.stderr, nil))
-
-	brokerClient, err := newBrokerClient(cfg.Broker, logger)
-	if err != nil {
-		return fmt.Errorf("broker init: %w", err)
-	}
 
 	shareCfg := shareworker.Config{
 		Repo:   sharesRepo,
