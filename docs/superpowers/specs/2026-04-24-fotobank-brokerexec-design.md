@@ -171,14 +171,19 @@ func tailForError(b []byte) string {
     if len(b) > 256 {
         b = b[len(b)-256:]
     }
-    s := string(b)
-    s = strings.Map(func(r rune) rune {
-        if r == '\t' { return ' ' }
-        if r < 0x20 || r == 0x7f { return -1 }   // strip control bytes
+    s := strings.Map(func(r rune) rune {
+        // IsSpace catches \n / \r / \t plus NBSP etc. so newlines
+        // are not silently dropped as control bytes — that would
+        // fuse adjacent words in the stderr tail.
+        if unicode.IsSpace(r) {
+            return ' '
+        }
+        if r < 0x20 || r == 0x7f {
+            return -1
+        }
         return r
-    }, s)
-    s = strings.Join(strings.Fields(s), " ")     // collapse whitespace
-    return s
+    }, string(b))
+    return strings.Join(strings.Fields(s), " ")
 }
 ```
 

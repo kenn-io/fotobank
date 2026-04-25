@@ -41,15 +41,20 @@ func classifyExit(op string, exitCode int, tail string, runErr error) error {
 	}
 }
 
-// tailForError returns at most 256 bytes from the END of b, with
-// control bytes stripped, tabs replaced by spaces, and whitespace
-// runs collapsed. Used to fold stderr into the wrapped error
-// message that ends up in scopes.broker_last_error.
+// tailForError returns at most 256 bytes from the END of b. Whitespace
+// runes (tab, newline, carriage return, NBSP, …) are folded to a single
+// space so word boundaries survive; other control bytes (< 0x20 or 0x7f)
+// are dropped; runs of whitespace are collapsed to one space. Used to
+// fold stderr into the wrapped error message that ends up in
+// scopes.broker_last_error.
 func tailForError(b []byte) string {
 	if len(b) > 256 {
 		b = b[len(b)-256:]
 	}
 	s := strings.Map(func(r rune) rune {
+		// IsSpace catches \n / \r / \t plus Unicode whitespace (NBSP,
+		// etc.) so newlines do not get dropped as control bytes —
+		// that would silently fuse adjacent words in stderr tails.
 		if unicode.IsSpace(r) {
 			return ' '
 		}
