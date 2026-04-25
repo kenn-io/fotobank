@@ -2480,13 +2480,8 @@ func loadConfigFromCmd(cmd *cobra.Command) (*config.Config, error) {
 The earlier draft introduced a `flockBackend` shim because the dry-run path
 was meant to avoid importing `gofrs/flock`. Step 3 above now imports the
 package at the top of the file and `flockNew` calls `flock.New` directly,
-so this step is intentionally a no-op. Skip it.
-
-```go
-// (no code; this step is preserved as a numbered marker so subsequent
-//  steps keep their numbers but adds nothing to backup.go.)
-}
-```
+so this step is intentionally a no-op. Skip it — nothing belongs in
+`backup.go` for this step.
 
 - [ ] **Step 7: Run tests to verify**
 

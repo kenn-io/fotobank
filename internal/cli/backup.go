@@ -35,6 +35,7 @@ func newBackupSnapshotCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "snapshot",
 		Short: "Take a one-shot snapshot of the metadata DB",
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfigFromCmd(cmd)
 			if err != nil {
@@ -88,6 +89,7 @@ func newBackupListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all snapshots in the configured backup dir, newest-first",
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfigFromCmd(cmd)
 			if err != nil {
@@ -130,7 +132,7 @@ func newBackupRestoreCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restore <snapshot-path>",
 		Short: "Restore the metadata DB from a snapshot file",
-		Args:  cobra.ExactArgs(1),
+		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfigFromCmd(cmd)
 			if err != nil {

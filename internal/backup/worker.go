@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -43,6 +44,12 @@ func NewWorker(cfg Config) *Worker {
 }
 
 func (w *Worker) Run(ctx context.Context) error {
+	// time.NewTicker panics on a non-positive duration. Validate up
+	// front so an operator misconfiguration surfaces as a clean error
+	// rather than a goroutine panic that crashes the server.
+	if w.cfg.Interval <= 0 {
+		return fmt.Errorf("backup worker: interval must be positive, got %s", w.cfg.Interval)
+	}
 	w.cfg.Logger.Info("backup worker starting",
 		"dir", w.cfg.Dir,
 		"interval", w.cfg.Interval,

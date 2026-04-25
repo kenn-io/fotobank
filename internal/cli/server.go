@@ -274,10 +274,18 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		backupDir := backupDirFor(cfg)
 		interval := 15 * time.Minute
 		if raw := os.Getenv("FOTOBANK_TEST_BACKUP_INTERVAL"); raw != "" {
-			if dur, err := time.ParseDuration(raw); err == nil {
-				interval = dur
-			} else {
+			dur, err := time.ParseDuration(raw)
+			switch {
+			case err != nil:
 				fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_BACKUP_INTERVAL parse error: %v\n", err)
+			case dur <= 0:
+				// Non-positive durations would panic time.NewTicker;
+				// fall back to the production cadence.
+				fmt.Fprintf(opts.stderr,
+					"FOTOBANK_TEST_BACKUP_INTERVAL must be positive, got %s; using default %s\n",
+					dur, interval)
+			default:
+				interval = dur
 			}
 		}
 		bw := backup.NewWorker(backup.Config{

@@ -101,6 +101,24 @@ func TestWorkerLogsSnapshotSuccessFields(t *testing.T) {
 	r.Contains(logs, "kept_15min=")
 }
 
+// time.NewTicker panics on a non-positive duration; Run must reject
+// such configurations cleanly so a misconfigured server gets an error
+// log instead of a goroutine panic that crashes the whole process.
+func TestWorkerRunRejectsNonPositiveInterval(t *testing.T) {
+	r := require.New(t)
+	for _, iv := range []time.Duration{0, -1 * time.Second} {
+		w := NewWorker(Config{
+			Dir:      t.TempDir(),
+			Interval: iv,
+			Policy:   Policy{Keep15Min: 4, KeepHourly: 24, KeepDaily: 7},
+			Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		})
+		err := w.Run(context.Background())
+		r.Error(err, "interval=%s must reject", iv)
+		r.Contains(err.Error(), "interval must be positive")
+	}
+}
+
 func TestWorkerStaleWarningSuppression(t *testing.T) {
 	// Fake worker time via private field manipulation — start lastSuccessAt
 	// at "now" and verify no stale warn fires before 48h elapse. Then jump

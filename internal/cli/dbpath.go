@@ -13,11 +13,22 @@ import (
 // agree on. FOTOBANK_DB_PATH wins; otherwise default to
 // {flash}/fotobank.sqlite. Mirrors the existing logic in runServer
 // so that backup commands (and any future shared logic) cannot drift.
+//
+// The path is canonicalized via filepath.Abs so that two equivalent
+// spellings (e.g. one relative, one absolute) produce the same lock
+// file under lockPathFor — without this, the lifetime fence can be
+// bypassed by spelling the same DB two different ways.
 func resolveDBPath(cfg *config.Config) string {
+	var p string
 	if v := os.Getenv("FOTOBANK_DB_PATH"); v != "" {
-		return v
+		p = v
+	} else {
+		p = filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
 	}
-	return filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	return p
 }
 
 // lockPathFor returns the canonical lock-file path for a given dbPath.

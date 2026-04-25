@@ -2,7 +2,9 @@ package backup
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +20,9 @@ import (
 
 // RestoreResult describes a successful restore. PreRestoreSuffix is the
 // common suffix appended to the moved-aside files (".pre-restore.{ns-
-// timestamp}") so the operator can identify them in stderr output.
+// timestamp}.{rand}") so the operator can identify them in stderr
+// output. The trailing 4-byte hex random ensures back-to-back restores
+// can never collide on filename even at sub-nanosecond clock resolution.
 // MovedAside lists each file that was actually moved aside; missing
 // sidecars (flash-loss recovery) are absent.
 type RestoreResult struct {
@@ -63,10 +67,29 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 
 	// 3. Arm rollback BEFORE any move-aside. This guards against partial
 	//    move-aside failure (first rename succeeds, second fails).
-	suffix := ".pre-restore." + time.Now().UTC().Format("20060102T150405.000000000Z")
+	//    The suffix combines a UTC nanosecond timestamp (operator-readable)
+	//    with 4 random hex bytes (collision-proof). Without the random
+	//    tail, two restores at the same wall-clock nanosecond could let
+	//    os.Rename's POSIX overwrite-semantics silently destroy the
+	//    earlier preserved DB.
+	rnd := make([]byte, 4)
+	if _, err := rand.Read(rnd); err != nil {
+		return RestoreResult{}, fmt.Errorf("generate suffix: %w", err)
+	}
+	suffix := ".pre-restore." +
+		time.Now().UTC().Format("20060102T150405.000000000Z") + "." +
+		hex.EncodeToString(rnd)
 	var movedAside []string
 	var success bool
 	var openedDB *db.DB
+	// copyComplete flips to true only after copyFile has installed the
+	// snapshot at dbPath. Until that happens, dbPath either still holds
+	// the original (move-aside not run, or run but failed before any
+	// rename) or is empty (originals safely moved aside). In either
+	// case the rollback must NOT delete dbPath/-wal/-shm, because doing
+	// so could destroy an unmoved-aside original sidecar (see jobs
+	// 15858, 15860, 15861 — partial move-aside failure scenarios).
+	var copyComplete bool
 
 	defer func() {
 		if success {
@@ -76,14 +99,22 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 		if openedDB != nil {
 			rollbackErrs = append(rollbackErrs, openedDB.Close())
 		}
-		// Remove any freshly-installed files; ignore not-exist.
-		// dbPath + ".incoming" is included to defend against a process
-		// crash inside copyFile that strands the temp file — without
-		// the rollback covering it, the next Restore would fail at
-		// O_EXCL with a misleading "create incoming" error.
-		for _, p := range []string{dbPath, dbPath + "-wal", dbPath + "-shm", dbPath + ".incoming"} {
-			if rmErr := os.Remove(p); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
-				rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback remove %s: %w", p, rmErr))
+		// Always try to remove the transient .incoming temp file in
+		// case copyFile crashed mid-flight and left it stranded;
+		// the next Restore would otherwise fail at O_EXCL.
+		if rmErr := os.Remove(dbPath + ".incoming"); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback remove %s: %w", dbPath+".incoming", rmErr))
+		}
+		// Only delete dbPath / -wal / -shm if we actually installed
+		// them. Before copyComplete, those paths either already hold
+		// the original (move-aside failed before completion) or are
+		// empty; in neither case is there an installed file to clean
+		// up, and deleting blindly would clobber an original sidecar.
+		if copyComplete {
+			for _, p := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+				if rmErr := os.Remove(p); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+					rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback remove %s: %w", p, rmErr))
+				}
 			}
 		}
 		// Restore each moved-aside file, in reverse order.
@@ -118,6 +149,7 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 	if err := copyFile(snapshotPath, dbPath); err != nil {
 		return RestoreResult{}, fmt.Errorf("copy snapshot: %w", err)
 	}
+	copyComplete = true
 	if err := syncDir(filepath.Dir(dbPath)); err != nil {
 		return RestoreResult{}, fmt.Errorf("fsync db dir: %w", err)
 	}
@@ -151,6 +183,11 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 // and by the CLI `backup restore --dry-run` so an operator finds out
 // about a bad snapshot before any move-aside runs. Reads only — the
 // rw mode is just to share buildDSN; integrity_check does not write.
+//
+// Rejects zero-byte files (which mode=rw is willing to open as a fresh
+// empty DB) and SQLite files with an empty schema, both of which would
+// otherwise pass integrity_check but produce a useless restore that
+// silently overwrites the live DB with an empty one.
 func ValidateSnapshot(ctx context.Context, path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -158,6 +195,9 @@ func ValidateSnapshot(ctx context.Context, path string) error {
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("%s is not a regular file", path)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("%s is zero bytes (not a SQLite database)", path)
 	}
 	dsn := buildDSN(path)
 	d, err := sql.Open("sqlite", dsn)
@@ -171,6 +211,18 @@ func ValidateSnapshot(ctx context.Context, path string) error {
 	}
 	if s != "ok" {
 		return fmt.Errorf("integrity_check returned %q", s)
+	}
+	// Reject empty-schema DBs: a freshly initialized SQLite file has
+	// integrity_check=ok but zero rows in sqlite_master. Restoring
+	// from such a file would silently replace the live DB with an
+	// empty one. Any real fotobank snapshot has the migrations table
+	// at minimum.
+	var schemaCount int
+	if err := d.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master").Scan(&schemaCount); err != nil {
+		return fmt.Errorf("count sqlite_master: %w", err)
+	}
+	if schemaCount == 0 {
+		return fmt.Errorf("%s has empty schema (not a fotobank snapshot)", path)
 	}
 	return nil
 }

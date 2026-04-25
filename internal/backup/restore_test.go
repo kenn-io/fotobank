@@ -245,3 +245,33 @@ func TestValidateSnapshotAcceptsValidSqlite(t *testing.T) {
 	makeBaselineDB(t, snap)
 	require.NoError(t, ValidateSnapshot(context.Background(), snap))
 }
+
+// A zero-byte file would otherwise be silently opened as a fresh empty
+// SQLite DB by mode=rw with create-on-open; the size guard surfaces it
+// as a clear error before any move-aside runs.
+func TestValidateSnapshotRejectsZeroByteFile(t *testing.T) {
+	tmp := t.TempDir()
+	snap := filepath.Join(tmp, "empty.sqlite")
+	require.NoError(t, os.WriteFile(snap, nil, 0o600))
+	err := ValidateSnapshot(context.Background(), snap)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "zero bytes")
+}
+
+// A valid SQLite file with no tables (integrity_check=ok, sqlite_master
+// empty) would pass the original integrity check but silently destroy
+// the live DB on restore.
+func TestValidateSnapshotRejectsEmptySchema(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	snap := filepath.Join(tmp, "empty-schema.sqlite")
+	d, err := sql.Open("sqlite", snap+"?_pragma=busy_timeout(5000)")
+	r.NoError(err)
+	// Force the DB file to materialize without creating any tables.
+	_, err = d.ExecContext(context.Background(), "PRAGMA user_version=0")
+	r.NoError(err)
+	r.NoError(d.Close())
+	err = ValidateSnapshot(context.Background(), snap)
+	r.Error(err)
+	r.Contains(err.Error(), "empty schema")
+}
