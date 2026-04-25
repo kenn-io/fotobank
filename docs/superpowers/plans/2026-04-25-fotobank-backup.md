@@ -1324,7 +1324,7 @@ type RestoreResult struct {
 // with errors.Join.
 func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res RestoreResult, retErr error) {
 	// 1. Validate the snapshot file is a real SQLite DB.
-	if err := ValidateSnapshot(snapshotPath); err != nil {
+	if err := ValidateSnapshot(ctx, snapshotPath); err != nil {
 		return RestoreResult{}, fmt.Errorf("validate snapshot: %w", err)
 	}
 
@@ -1429,7 +1429,7 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 // and by the CLI `backup restore --dry-run` so an operator finds out
 // about a bad snapshot before any move-aside runs. Reads only — the
 // rw mode is just to share buildDSN; integrity_check does not write.
-func ValidateSnapshot(path string) error {
+func ValidateSnapshot(ctx context.Context, path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
@@ -1444,7 +1444,7 @@ func ValidateSnapshot(path string) error {
 	}
 	defer d.Close()
 	var s string
-	if err := d.QueryRow("PRAGMA integrity_check").Scan(&s); err != nil {
+	if err := d.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&s); err != nil {
 		return fmt.Errorf("integrity_check: %w", err)
 	}
 	if s != "ok" {
@@ -2400,7 +2400,7 @@ func restoreDryRun(cmd *cobra.Command, snap, dbPath, lockPath string, asJSON boo
 	// dry-run must surface that pre-emptively. backup.ValidateSnapshot
 	// (exported in T6) opens the file read-only and runs PRAGMA
 	// integrity_check.
-	if err := backup.ValidateSnapshot(snap); err != nil {
+	if err := backup.ValidateSnapshot(cmd.Context(), snap); err != nil {
 		return fmt.Errorf("validate snapshot: %w", err)
 	}
 	// Try to acquire and immediately release the lock.

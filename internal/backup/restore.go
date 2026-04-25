@@ -17,7 +17,7 @@ import (
 )
 
 // RestoreResult describes a successful restore. PreRestoreSuffix is the
-// common suffix appended to the moved-aside files (".pre-restore.{ms-
+// common suffix appended to the moved-aside files (".pre-restore.{ns-
 // timestamp}") so the operator can identify them in stderr output.
 // MovedAside lists each file that was actually moved aside; missing
 // sidecars (flash-loss recovery) are absent.
@@ -31,7 +31,7 @@ type RestoreResult struct {
 // Restore replaces dbPath with the contents of snapshotPath, holding a
 // non-blocking flock on lockPath for the duration to prevent races with
 // a live server. On success, the previous DB and its sidecars are
-// preserved at "{path}.pre-restore.{ms-timestamp}" — the operator
+// preserved at "{path}.pre-restore.{ns-timestamp}" — the operator
 // deletes them when satisfied.
 //
 // Failure paths roll back: any post-move-aside failure restores the
@@ -45,10 +45,8 @@ type RestoreResult struct {
 // Returns are named so the rollback-on-failure defer can wrap retErr
 // with errors.Join.
 func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res RestoreResult, retErr error) {
-	_ = ctx // reserved for future cancellation support; Restore is fast/synchronous today.
-
 	// 1. Validate the snapshot file is a real SQLite DB.
-	if err := ValidateSnapshot(snapshotPath); err != nil {
+	if err := ValidateSnapshot(ctx, snapshotPath); err != nil {
 		return RestoreResult{}, fmt.Errorf("validate snapshot: %w", err)
 	}
 
@@ -65,7 +63,7 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 
 	// 3. Arm rollback BEFORE any move-aside. This guards against partial
 	//    move-aside failure (first rename succeeds, second fails).
-	suffix := ".pre-restore." + time.Now().UTC().Format("20060102T150405.000Z")
+	suffix := ".pre-restore." + time.Now().UTC().Format("20060102T150405.000000000Z")
 	var movedAside []string
 	var success bool
 	var openedDB *db.DB
@@ -153,7 +151,7 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 // and by the CLI `backup restore --dry-run` so an operator finds out
 // about a bad snapshot before any move-aside runs. Reads only — the
 // rw mode is just to share buildDSN; integrity_check does not write.
-func ValidateSnapshot(path string) error {
+func ValidateSnapshot(ctx context.Context, path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
@@ -168,7 +166,7 @@ func ValidateSnapshot(path string) error {
 	}
 	defer d.Close()
 	var s string
-	if err := d.QueryRow("PRAGMA integrity_check").Scan(&s); err != nil {
+	if err := d.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&s); err != nil {
 		return fmt.Errorf("integrity_check: %w", err)
 	}
 	if s != "ok" {

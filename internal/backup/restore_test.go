@@ -183,3 +183,65 @@ func TestRestoreRetriesAfterLockReleased(t *testing.T) {
 	r.NotEmpty(res.MovedAside)
 	r.Equal("after-stop", readRow(t, dbPath, "live"))
 }
+
+// TestRestoreTwiceProducesDistinctPreRestoreFiles guards against the
+// pre-restore suffix colliding when two restores happen in rapid
+// succession. The suffix uses nanosecond resolution; back-to-back calls
+// on the same wall clock must still produce distinct suffixes so the
+// second restore does not overwrite the first pre-restore set.
+func TestRestoreTwiceProducesDistinctPreRestoreFiles(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "live.sqlite")
+	snap1 := filepath.Join(tmp, "snap1.sqlite")
+	snap2 := filepath.Join(tmp, "snap2.sqlite")
+	lockPath := dbPath + ".lock"
+
+	makeBaselineDB(t, dbPath)
+	putRow(t, dbPath, "live", "v0")
+
+	makeBaselineDB(t, snap1)
+	putRow(t, snap1, "live", "v1")
+	res1, err := Restore(context.Background(), snap1, dbPath, lockPath)
+	r.NoError(err)
+	r.Equal("v1", readRow(t, dbPath, "live"))
+
+	// Mutate live DB to a known second value before the second snapshot,
+	// so the second pre-restore set captures distinct content.
+	putRow(t, dbPath, "live", "v1.5")
+
+	makeBaselineDB(t, snap2)
+	putRow(t, snap2, "live", "v2")
+	res2, err := Restore(context.Background(), snap2, dbPath, lockPath)
+	r.NoError(err)
+	r.Equal("v2", readRow(t, dbPath, "live"))
+
+	r.NotEqual(res1.PreRestoreSuffix, res2.PreRestoreSuffix,
+		"back-to-back restores must produce distinct pre-restore suffixes")
+	r.FileExists(dbPath+res1.PreRestoreSuffix,
+		"first pre-restore set must survive a subsequent restore")
+	r.FileExists(dbPath+res2.PreRestoreSuffix,
+		"second pre-restore set must exist after the second restore")
+}
+
+func TestValidateSnapshotMissingFile(t *testing.T) {
+	tmp := t.TempDir()
+	err := ValidateSnapshot(context.Background(), filepath.Join(tmp, "no-such.sqlite"))
+	require.Error(t, err)
+}
+
+func TestValidateSnapshotRejectsDirectory(t *testing.T) {
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, "snap-dir")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	err := ValidateSnapshot(context.Background(), dir)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "regular file")
+}
+
+func TestValidateSnapshotAcceptsValidSqlite(t *testing.T) {
+	tmp := t.TempDir()
+	snap := filepath.Join(tmp, "snap.sqlite")
+	makeBaselineDB(t, snap)
+	require.NoError(t, ValidateSnapshot(context.Background(), snap))
+}
