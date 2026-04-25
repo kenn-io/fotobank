@@ -76,6 +76,8 @@ poll_interval = "1s"
 lease_timeout = "2m"
 [broker]
 mode = "exec"
+[broker.exec]
+command = "/bin/true"
 [backup]
 snapshot_interval = "1h"
 snapshot_retention = 48
@@ -327,4 +329,69 @@ handle = "toml-handle"
 	r.Equal("env-hub", cfg.Identity.Stub.Hub)
 	r.Equal("env-user", cfg.Identity.Stub.UserID)
 	r.Equal("env-handle", cfg.Identity.Stub.Handle)
+}
+
+func TestBrokerExecRequiresCommand(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[broker]
+mode = "exec"
+`), 0o600))
+	_, err := config.Load(p)
+	require.Error(t, err)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+}
+
+func TestBrokerExecDefaultsCallTimeout(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[broker]
+mode = "exec"
+[broker.exec]
+command = "/usr/local/bin/fb-broker"
+`), 0o600))
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	require.Equal(t, 30*time.Second, cfg.Broker.Exec.CallTimeout)
+}
+
+func TestBrokerExecAcceptsArgsless(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	r.NoError(os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[broker]
+mode = "exec"
+[broker.exec]
+command = "/usr/local/bin/fb-broker"
+`), 0o600))
+	cfg, err := config.Load(p)
+	r.NoError(err)
+	r.Empty(cfg.Broker.Exec.PublishScopeArgs)
+	r.Empty(cfg.Broker.Exec.RevokeScopeArgs)
+}
+
+func TestBrokerExecRejectsNegativeTimeout(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[broker]
+mode = "exec"
+[broker.exec]
+command = "/usr/local/bin/fb-broker"
+call_timeout = "-1s"
+`), 0o600))
+	_, err := config.Load(p)
+	require.Error(t, err)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
 }

@@ -131,8 +131,11 @@ type Broker struct {
 }
 
 type BrokerExec struct {
-	Command           string   `toml:"command"`
-	RegisterScopeArgs []string `toml:"register_scope_args"`
+	Command          string        `toml:"command"`
+	PublishScopeArgs []string      `toml:"publish_scope_args"`
+	RevokeScopeArgs  []string      `toml:"revoke_scope_args"`
+	CallTimeout      time.Duration `toml:"call_timeout"`
+	Env              []string      `toml:"env"`
 }
 
 type Backup struct {
@@ -203,7 +206,21 @@ func (c *Config) Validate() error {
 			errs.ErrBadConfiguration, c.Storage.Mode)
 	}
 	switch c.Broker.Mode {
-	case "stub", "exec":
+	case "stub":
+		// nothing extra
+	case "exec":
+		if strings.TrimSpace(c.Broker.Exec.Command) == "" {
+			return fmt.Errorf("%w: [broker.exec].command is required when mode=exec",
+				errs.ErrBadConfiguration)
+		}
+		// call_timeout: 0 is allowed because applyDefaults has already
+		// run by this point and replaced 0 with 30s. Negative values
+		// are rejected so a future refactor that moves Validate ahead
+		// of applyDefaults doesn't silently accept them.
+		if c.Broker.Exec.CallTimeout < 0 {
+			return fmt.Errorf("%w: [broker.exec].call_timeout must be >= 0",
+				errs.ErrBadConfiguration)
+		}
 	default:
 		return fmt.Errorf("%w: [broker].mode=%q (must be stub|exec)",
 			errs.ErrBadConfiguration, c.Broker.Mode)
@@ -311,6 +328,9 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	}
 	if c.Broker.Mode == "" {
 		c.Broker.Mode = "stub"
+	}
+	if c.Broker.Exec.CallTimeout == 0 {
+		c.Broker.Exec.CallTimeout = 30 * time.Second
 	}
 	if c.Backup.SnapshotInterval == 0 {
 		c.Backup.SnapshotInterval = 15 * time.Minute

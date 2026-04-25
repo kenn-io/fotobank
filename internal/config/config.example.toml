@@ -62,10 +62,23 @@ lease_timeout = "10m"                # working rows reclaimed after this
 mode = "stub"
 
 [broker.exec]
-# Reserved for Phase 2. Example shape (broker name omitted
-# intentionally; fill in when the broker CLI is available):
-# command = "/usr/local/bin/<broker-cli>"
-# register_scope_args = ["scope", "register", "--app", "fotobank", ...]
+# Required when mode = "exec". Path to the broker CLI executable.
+# command = "/usr/local/bin/fb-broker"
+#
+# Optional. Static argv passed to the broker CLI; the per-call JSON
+# payload (with operation = "publish" | "revoke") flows on stdin.
+# publish_scope_args = ["scope", "publish"]
+# revoke_scope_args  = ["scope", "revoke"]
+#
+# Optional. Per-call timeout, default 30s. Per-call timeouts surface
+# as broker.ErrBrokerTransient, not context.DeadlineExceeded, so the
+# share worker counts attempts and eventually flips to failed.
+# call_timeout = "30s"
+#
+# Optional. Non-secret env entries merged onto os.Environ() by key
+# (configured values win over inherited). Secrets should come from
+# the service manager via inherited environment, not from TOML.
+# env = ["FB_BROKER_ENV=prod"]
 
 [backup]
 snapshot_interval = "15m"
