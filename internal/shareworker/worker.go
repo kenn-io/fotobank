@@ -131,7 +131,7 @@ func (w *Worker) processPending(ctx context.Context, s share.Scope) error {
 	}
 	w.recordFailure(ctx, s, share.StatusPending, err)
 	if w.cfg.Metrics != nil {
-		result := publishResult(err, s.BrokerAttempts)
+		result := failureResult(err, s.BrokerAttempts)
 		w.cfg.Metrics.SharePublishes(result).Inc()
 		w.cfg.Metrics.SharePublishDuration(result).Update(time.Since(start).Seconds())
 	}
@@ -157,7 +157,7 @@ func (w *Worker) processRevoking(ctx context.Context, s share.Scope) error {
 	}
 	w.recordFailure(ctx, s, share.StatusRevoking, err)
 	if w.cfg.Metrics != nil {
-		result := publishResult(err, s.BrokerAttempts)
+		result := failureResult(err, s.BrokerAttempts)
 		w.cfg.Metrics.ShareRevokes(result).Inc()
 		w.cfg.Metrics.ShareRevokeDuration(result).Update(time.Since(start).Seconds())
 	}
@@ -165,7 +165,7 @@ func (w *Worker) processRevoking(ctx context.Context, s share.Scope) error {
 }
 
 func (w *Worker) recordFailure(ctx context.Context, s share.Scope, phase share.BrokerStatus, err error) {
-	if terminalIfFailed(err, s.BrokerAttempts) {
+	if isTerminal(err, s.BrokerAttempts) {
 		if _, merr := w.cfg.Repo.MarkFailed(ctx, s.UUID, phase, err.Error()); merr != nil && !isCtxErr(merr) {
 			w.cfg.Logger.Error("mark-failed call errored", "uuid", s.UUID, "err", merr)
 		}
@@ -177,19 +177,20 @@ func (w *Worker) recordFailure(ctx context.Context, s share.Scope, phase share.B
 	}
 }
 
-// terminalIfFailed reports whether the next attempt would call
-// MarkFailed (true) versus MarkAttemptFailed (false). Used both by
-// recordFailure to choose the mark, and by callers to label the
-// emitted result counter so the counter and the actual mark stay
-// coherent.
-func terminalIfFailed(err error, attempts int) bool {
+// isTerminal reports whether the next attempt would call MarkFailed
+// (true) versus MarkAttemptFailed (false). Phase-agnostic: applies
+// equally to publish and revoke. Used both by recordFailure to choose
+// the mark, and by callers to label the emitted result counter so the
+// counter and the actual mark stay coherent.
+func isTerminal(err error, attempts int) bool {
 	return errors.Is(err, broker.ErrBrokerPermanent) || attempts+1 >= share.MaxBrokerAttempts
 }
 
-// publishResult maps a non-nil, non-ctx broker error and the current
-// attempt count to the metric result label.
-func publishResult(err error, attempts int) string {
-	if terminalIfFailed(err, attempts) {
+// failureResult maps a non-nil, non-ctx broker error and the current
+// attempt count to the metric result label. Phase-agnostic: returns
+// the same label for publish and revoke failures.
+func failureResult(err error, attempts int) string {
+	if isTerminal(err, attempts) {
 		return "terminal_fail"
 	}
 	return "retry"
