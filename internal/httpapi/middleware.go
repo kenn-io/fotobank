@@ -59,6 +59,10 @@ type requestObs struct {
 	logger        *slog.Logger // augmented by identityWrap with principal fields
 }
 
+// obsFromContext returns the per-request requestObs allocated by
+// metricsWrap, or nil if no middleware ran in front of the caller.
+// Callers may mutate the fields on the returned struct; mutations are
+// visible to the outer metricsWrap layer after the inner chain returns.
 func obsFromContext(ctx context.Context) *requestObs {
 	o, _ := ctx.Value(ctxKeyObs).(*requestObs)
 	return o
@@ -88,6 +92,11 @@ func WrapMuxHandler(h http.Handler) http.Handler {
 // is outside identity so 401/403 still count as 4xx. The X-Request-ID
 // response header is set BEFORE identity resolution so identity-
 // rejection logs carry req_id.
+//
+// httpapi.New (api.go) inserts WithPrincipalDisplayCache between the
+// identity layer and the registered mux when deps.PrincipalDisplay !=
+// nil; the production request chain is therefore metrics → recovery →
+// identity → display-cache → mux.
 //
 // Per-request mutable state (route template + augmented logger) lives
 // in a *requestObs allocated by metricsWrap and stored in ctx. Inner
