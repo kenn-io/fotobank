@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/httpapi"
 	"github.com/wesm/fotobank/internal/identity"
+	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/testutil"
@@ -24,12 +26,24 @@ func newDiscardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// withTestMiddleware wraps next with the new metrics+recovery+identity
+// middleware using a discard logger and a test metrics registry. Used
+// by the existing identity-focused tests that don't need to assert on
+// log output or counters.
+func withTestMiddleware(idp identity.Provider) func(http.Handler) http.Handler {
+	return httpapi.WithMiddleware(httpapi.WithMiddlewareDeps{
+		Provider: idp,
+		Logger:   newDiscardLogger(),
+		Metrics:  obs.NewTestMetrics(),
+	})
+}
+
 func TestMiddlewareAttachesIdentityToContext(t *testing.T) {
 	r := require.New(t)
 	idp := identity.NewStub(owners.Principal{Hub: "h", UserID: "u"}, "User")
 
 	var captured identity.Identity
-	h := httpapi.WithMiddleware(idp)(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+	h := withTestMiddleware(idp)(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
 		captured, _ = httpapi.IdentityFromContext(req.Context())
 	}))
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
@@ -41,7 +55,7 @@ func TestMiddlewareAttachesIdentityToContext(t *testing.T) {
 func TestMiddlewareGeneratesRequestIDIfAbsent(t *testing.T) {
 	idp := identity.NewStub(owners.Principal{Hub: "h", UserID: "u"}, "")
 	var got string
-	h := httpapi.WithMiddleware(idp)(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+	h := withTestMiddleware(idp)(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
 		got = httpapi.RequestIDFromContext(req.Context())
 	}))
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
@@ -51,7 +65,7 @@ func TestMiddlewareGeneratesRequestIDIfAbsent(t *testing.T) {
 func TestMiddlewareSurfacesIdentityError(t *testing.T) {
 	r := require.New(t)
 	idp := &errIdentityProvider{err: errs.ErrIdentityMissing}
-	h := httpapi.WithMiddleware(idp)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	h := withTestMiddleware(idp)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	rec := httptest.NewRecorder()
@@ -68,7 +82,7 @@ func TestMiddlewareSanitizesInternalErrorBody(t *testing.T) {
 	r := require.New(t)
 	leakySecret := "password=hunter2 internal trace: /etc/foo"
 	idp := &errIdentityProvider{err: errors.New(leakySecret)}
-	h := httpapi.WithMiddleware(idp)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	h := withTestMiddleware(idp)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	rec := httptest.NewRecorder()
@@ -89,7 +103,7 @@ func TestMiddlewareSanitizesWrappedSentinel(t *testing.T) {
 	r := require.New(t)
 	leaky := "db path /srv/fotobank/nas"
 	idp := &errIdentityProvider{err: fmt.Errorf("%s: %w", leaky, errs.ErrIdentityMissing)}
-	h := httpapi.WithMiddleware(idp)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	h := withTestMiddleware(idp)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	rec := httptest.NewRecorder()
@@ -106,6 +120,104 @@ type errIdentityProvider struct{ err error }
 
 func (e *errIdentityProvider) FromRequest(context.Context, *http.Request) (identity.Identity, error) {
 	return identity.Identity{}, e.err
+}
+
+// failingProvider is a local test adapter — there is no
+// identity.ProviderFunc in the production package; tests construct a
+// tiny struct that implements identity.Provider.
+type failingProvider struct{ err error }
+
+func (f failingProvider) FromRequest(context.Context, *http.Request) (identity.Identity, error) {
+	return identity.Identity{}, f.err
+}
+
+func TestRequestIDHeaderSetBeforeIdentity(t *testing.T) {
+	r := require.New(t)
+	failing := failingProvider{err: errs.ErrIdentityMissing}
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	m := obs.NewTestMetrics()
+
+	mw := httpapi.WithMiddleware(httpapi.WithMiddlewareDeps{
+		Provider: failing,
+		Logger:   logger,
+		Metrics:  m,
+	})
+	reachedHandler := false
+	h := mw(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		reachedHandler = true
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/x", nil))
+	r.False(reachedHandler, "identity-rejected request must not reach handler")
+	r.Equal(401, rec.Code)
+	r.NotEmpty(rec.Header().Get("X-Request-ID"),
+		"X-Request-ID must be set before identity resolution")
+	r.Contains(logBuf.String(), `"req_id"`)
+	// Identity-rejected request still increments the 4xx counter.
+	r.EqualValues(1, m.HTTPRequests("GET", "unmatched", "4xx").Get(),
+		"metrics must record 4xx for identity rejection")
+}
+
+func TestPanicRecoveryRecordsAs5xx(t *testing.T) {
+	r := require.New(t)
+	idp := identity.NewStub(owners.Principal{Hub: "h", UserID: "u"}, "")
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	m := obs.NewTestMetrics()
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /panic", httpapi.WrapMuxHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("expected by test")
+	})))
+	mw := httpapi.WithMiddleware(httpapi.WithMiddlewareDeps{
+		Provider: idp,
+		Logger:   logger,
+		Metrics:  m,
+	})
+	srv := httptest.NewServer(mw(mux))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/panic")
+	r.NoError(err)
+	defer resp.Body.Close()
+	r.Equal(500, resp.StatusCode)
+	r.EqualValues(1, m.HTTPRequests("GET", "/panic", "5xx").Get(),
+		"panic must be recorded as 5xx after recovery")
+}
+
+func TestSuccessfulRequestRecordedAs2xxAndCarriesDurMs(t *testing.T) {
+	r := require.New(t)
+	idp := identity.NewStub(owners.Principal{Hub: "h", UserID: "u"}, "")
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	m := obs.NewTestMetrics()
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/healthz", httpapi.WrapMuxHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})))
+	mw := httpapi.WithMiddleware(httpapi.WithMiddlewareDeps{
+		Provider: idp,
+		Logger:   logger,
+		Metrics:  m,
+	})
+	srv := httptest.NewServer(mw(mux))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/healthz")
+	r.NoError(err)
+	defer resp.Body.Close()
+	r.Equal(200, resp.StatusCode)
+	r.EqualValues(1, m.HTTPRequests("GET", "/api/v1/healthz", "2xx").Get())
+
+	out := logBuf.String()
+	r.Contains(out, `"dur_ms"`, "log must use dur_ms field name")
+	r.Contains(out, `"req_id"`, "log must use req_id field name")
+	r.NotContains(out, `"dur":`, "legacy dur field must be gone")
+	r.NotContains(out, `"req":`, "legacy req field must be gone")
+	r.Contains(out, `"component":"httpapi"`)
+	r.Contains(out, `"principal_hub":"h"`)
+	r.Contains(out, `"principal_user_id":"u"`)
 }
 
 func TestPrincipalDisplayCacheUpsertsSynchronously(t *testing.T) {

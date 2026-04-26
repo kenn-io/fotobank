@@ -23,8 +23,8 @@ func registerSharedBytes(mux *http.ServeMux, svc *service.SharedReadService) {
 	if svc == nil {
 		return
 	}
-	mux.Handle("GET /api/v1/shared/media/{id}/thumb", sharedThumbHandler(svc))
-	mux.Handle("GET /api/v1/shared/media/{id}/original", sharedOriginalHandler(svc))
+	mux.Handle("GET /api/v1/shared/media/{id}/thumb", WrapMuxHandler(sharedThumbHandler(svc)))
+	mux.Handle("GET /api/v1/shared/media/{id}/original", WrapMuxHandler(sharedOriginalHandler(svc)))
 }
 
 // sharedThumbHandler serves cached thumb bytes for a grantee-accessible

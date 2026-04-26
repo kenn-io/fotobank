@@ -12,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
 	"github.com/wesm/fotobank/internal/identity"
+	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/service"
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/version"
@@ -54,6 +55,13 @@ type Deps struct {
 	// middleware — handles won't be refreshed from live traffic but the
 	// rest of the API keeps working.
 	PrincipalDisplay *share.PrincipalDisplayRepo
+	// Logger is the base slog.Logger used by the request middleware to
+	// build per-request loggers. nil falls back to slog.Default().
+	Logger *slog.Logger
+	// Metrics is the obs.Metrics registry used to record per-request
+	// counters and histograms. nil disables metric recording but the
+	// rest of the middleware still runs.
+	Metrics *obs.Metrics
 }
 
 // New constructs the Fotobank HTTP handler: a net/http.ServeMux with a
@@ -71,7 +79,11 @@ func New(deps Deps) (http.Handler, error) {
 		handler = WithPrincipalDisplayCache(deps.PrincipalDisplay, slog.Default())(handler)
 	}
 	if deps.IdentityProvider != nil {
-		handler = WithMiddleware(deps.IdentityProvider)(handler)
+		handler = WithMiddleware(WithMiddlewareDeps{
+			Provider: deps.IdentityProvider,
+			Logger:   deps.Logger,
+			Metrics:  deps.Metrics,
+		})(handler)
 	}
 	return handler, nil
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/identity"
+	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/share"
 )
@@ -21,17 +23,89 @@ type ctxKey int
 const (
 	ctxKeyIdentity ctxKey = iota
 	ctxKeyRequestID
+	ctxKeyObs
 )
 
-// WithMiddleware returns a net/http middleware that resolves the caller
-// Identity via the given Provider, attaches Identity and a request ID to
-// the request context, logs each request, and maps identity errors to
-// HTTP status codes (401 for ErrIdentityMissing, 403 for
-// ErrDirectAccessBlocked, 500 otherwise).
-func WithMiddleware(idp identity.Provider) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
+// WithMiddlewareDeps groups the collaborators consumed by the
+// main-listener middleware stack. Provider resolves Identity; Logger
+// is the base logger augmented per request; Metrics is the registry
+// counter/histogram emitter (nil disables emission).
+type WithMiddlewareDeps struct {
+	// Provider resolves the caller Identity from the inbound request.
+	Provider identity.Provider
+	// Logger is the base slog.Logger. Per-request loggers are derived
+	// from this with component=httpapi, req_id, and (post identity
+	// resolution) principal_* attrs. nil falls back to slog.Default().
+	Logger *slog.Logger
+	// Metrics is the obs.Metrics registry used to record per-request
+	// counters and histograms. nil disables metric recording but the
+	// rest of the middleware still runs.
+	Metrics *obs.Metrics
+	// RequestIDHeader is the inbound header name to read for an
+	// upstream-supplied request ID. Empty means generate a fresh UUID
+	// per request.
+	RequestIDHeader string
+}
+
+// requestObs is per-request mutable state shared across the middleware
+// chain via context. The outer metrics+log layer allocates one per
+// request; inner layers (identity, the route-capture handler wrapper)
+// mutate fields on it; the outer layer reads them after the chain
+// returns. The indirection exists because r.WithContext clones
+// *Request, so outer-layer reads of inner mutations on r (such as
+// r.Pattern set by ServeMux) would otherwise be lost.
+type requestObs struct {
+	routeTemplate string       // "unmatched" until WrapMuxHandler runs
+	logger        *slog.Logger // augmented by identityWrap with principal fields
+}
+
+func obsFromContext(ctx context.Context) *requestObs {
+	o, _ := ctx.Value(ctxKeyObs).(*requestObs)
+	return o
+}
+
+// WrapMuxHandler captures r.Pattern from the request that ServeMux
+// dispatches into the per-request observability state. ServeMux sets
+// Pattern on the request it passes to the handler — this wrapper IS
+// the handler from ServeMux's perspective, so it sees the populated
+// Pattern. Without this wrapper, the outer metrics layer records every
+// request as route="unmatched". Apply at registration time wherever
+// handlers are mounted on the main mux.
+func WrapMuxHandler(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if o := obsFromContext(r.Context()); o != nil {
+			o.routeTemplate = normalizeRouteTemplate(r.Pattern)
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// WithMiddleware composes the main-listener middleware stack:
+//
+//	metrics → recovery → identity → handler
+//
+// Recovery is inside metrics so a recovered 5xx is recorded; metrics
+// is outside identity so 401/403 still count as 4xx. The X-Request-ID
+// response header is set BEFORE identity resolution so identity-
+// rejection logs carry req_id.
+//
+// Per-request mutable state (route template + augmented logger) lives
+// in a *requestObs allocated by metricsWrap and stored in ctx. Inner
+// layers mutate its fields; the outer layer reads them after the
+// inner chain returns. This indirection exists because Go's
+// r.WithContext clones the Request, so outer-layer reads of inner
+// mutations on r (such as r.Pattern set by ServeMux) would otherwise
+// be lost.
+func WithMiddleware(deps WithMiddlewareDeps) func(http.Handler) http.Handler {
+	idp := deps.Provider
+	baseLogger := deps.Logger
+	if baseLogger == nil {
+		baseLogger = slog.Default()
+	}
+	m := deps.Metrics
+
+	identityWrap := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			start := time.Now()
 			id, err := idp.FromRequest(r.Context(), r)
 			if err != nil {
 				status := http.StatusInternalServerError
@@ -47,26 +121,132 @@ func WithMiddleware(idp identity.Provider) func(http.Handler) http.Handler {
 				// errors.Is still matches. Log the full err
 				// server-side; return only the status text to clients.
 				http.Error(w, http.StatusText(status), status)
-				slog.Warn("request rejected",
-					"method", r.Method, "path", r.URL.Path,
-					"status", status, "err", err, "dur", time.Since(start))
+				if o := obsFromContext(r.Context()); o != nil && o.logger != nil {
+					o.logger.Warn("request rejected",
+						"method", r.Method, "path", r.URL.Path,
+						"status", status, "err", err)
+				}
 				return
 			}
-			reqID := id.RequestID
+			ctx := context.WithValue(r.Context(), ctxKeyIdentity, id)
+			// Augment the per-request logger via SHARED state so the
+			// outer layer reads the augmented logger after this layer
+			// returns (forking ctx with a new logger would leave the
+			// outer ctx unchanged).
+			if o := obsFromContext(ctx); o != nil {
+				o.logger = o.logger.With(
+					"principal_hub", id.Principal.Hub,
+					"principal_user_id", id.Principal.UserID,
+					"principal", id.Principal.OwnersPrincipal().String(),
+				)
+				ctx = WithLogger(ctx, o.logger)
+			}
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+
+	recoveryWrap := WithRecovery(baseLogger.With("component", "httpapi"))
+
+	metricsWrap := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+
+			reqID := ""
+			if deps.RequestIDHeader != "" {
+				reqID = r.Header.Get(deps.RequestIDHeader)
+			}
 			if reqID == "" {
 				reqID = uuid.NewString()
 			}
-			ctx := context.WithValue(r.Context(), ctxKeyIdentity, id)
+			w.Header().Set("X-Request-ID", reqID)
+
+			ro := &requestObs{
+				routeTemplate: "unmatched",
+				logger:        baseLogger.With("component", "httpapi", "req_id", reqID),
+			}
+			ctx := context.WithValue(r.Context(), ctxKeyObs, ro)
 			ctx = context.WithValue(ctx, ctxKeyRequestID, reqID)
+			ctx = WithLogger(ctx, ro.logger)
 
 			rw := &statusCapture{ResponseWriter: w, code: http.StatusOK}
 			next.ServeHTTP(rw, r.WithContext(ctx))
 
-			slog.Info("request",
-				"method", r.Method, "path", r.URL.Path,
-				"status", rw.code, "principal", id.Principal.OwnersPrincipal().String(),
-				"req", reqID, "dur", time.Since(start))
+			method := normalizeMethod(r.Method)
+			route := ro.routeTemplate
+			class := statusClass(rw.code)
+
+			if m != nil {
+				m.HTTPRequests(method, route, class).Inc()
+				m.HTTPRequestDuration(method, route).
+					Update(time.Since(start).Seconds())
+			}
+
+			ro.logger.Info("request",
+				"method", method, "route", route, "status", rw.code,
+				"dur_ms", time.Since(start).Milliseconds())
 		})
+	}
+	return func(next http.Handler) http.Handler {
+		return metricsWrap(recoveryWrap(identityWrap(next)))
+	}
+}
+
+func normalizeMethod(m string) string {
+	switch m {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
+		return m
+	default:
+		return "OTHER"
+	}
+}
+
+// normalizeRouteTemplate normalizes a registered ServeMux pattern for
+// use as a metric label. Returns "unmatched" when pat is empty.
+// Strips method and host prefixes; rewrites "{name}" placeholders to
+// ":name" so the metric label is stable across renames.
+func normalizeRouteTemplate(pat string) string {
+	if pat == "" {
+		return "unmatched"
+	}
+	if i := strings.IndexByte(pat, ' '); i >= 0 {
+		pat = pat[i+1:]
+	}
+	if pat == "" {
+		return "unmatched"
+	}
+	if i := strings.Index(pat, "/"); i > 0 {
+		pat = pat[i:]
+	}
+	var b strings.Builder
+	b.Grow(len(pat))
+	for i := 0; i < len(pat); {
+		if pat[i] == '{' {
+			j := strings.IndexByte(pat[i:], '}')
+			if j > 0 {
+				name := pat[i+1 : i+j]
+				name = strings.TrimSuffix(name, "...")
+				b.WriteByte(':')
+				b.WriteString(name)
+				i += j + 1
+				continue
+			}
+		}
+		b.WriteByte(pat[i])
+		i++
+	}
+	return b.String()
+}
+
+func statusClass(status int) string {
+	switch {
+	case status >= 200 && status < 300:
+		return "2xx"
+	case status >= 300 && status < 400:
+		return "3xx"
+	case status >= 400 && status < 500:
+		return "4xx"
+	default:
+		return "5xx"
 	}
 }
 

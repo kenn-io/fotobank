@@ -30,7 +30,7 @@ func registerMediaThumb(mux *http.ServeMux, svc *service.ThumbService) {
 	if svc == nil {
 		return
 	}
-	mux.Handle("GET /api/v1/media/{id}/thumb", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /api/v1/media/{id}/thumb", WrapMuxHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		ident, ok := IdentityFromContext(r.Context())
 		if !ok {
@@ -98,5 +98,5 @@ func registerMediaThumb(mux *http.ServeMux, svc *service.ThumbService) {
 		writeThumbResponse(w, r, func() (io.ReadCloser, error) {
 			return rc, nil
 		})
-	}))
+	})))
 }

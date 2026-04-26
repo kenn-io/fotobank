@@ -22,7 +22,7 @@ func registerMediaOriginal(mux *http.ServeMux, svc *service.MediaService) {
 	if svc == nil {
 		return
 	}
-	mux.Handle("GET /api/v1/media/{id}/original", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /api/v1/media/{id}/original", WrapMuxHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		ident, ok := IdentityFromContext(r.Context())
 		if !ok {
@@ -61,7 +61,7 @@ func registerMediaOriginal(mux *http.ServeMux, svc *service.MediaService) {
 			rc, _, err := svc.OpenOriginal(r.Context(), id, caller, off, length)
 			return rc, err
 		})
-	}))
+	})))
 }
 
 // etagMatches reports whether an If-None-Match header value matches the
