@@ -40,12 +40,20 @@ type ReadyCheck struct {
 }
 
 // ReadyzConfig tunes the deadline and cache TTL. Production uses 2s/5s;
-// unit tests use 20-50ms / 0.
+// unit tests use 20-50ms / 0. DeadlineTotal must be > 0 (a zero duration
+// passes through context.WithTimeout and produces an already-cancelled
+// context, which fails every check immediately). CacheTTL == 0 disables
+// caching — every probe runs a fresh check pass.
 type ReadyzConfig struct {
 	DeadlineTotal time.Duration
 	CacheTTL      time.Duration
 }
 
+// readyzResult is the cached output of one check pass. Once published
+// (assigned to h.cache or sent on a follower channel), no field is
+// mutated — concurrent readers share the same Body backing array
+// safely. A future change that appends to or reassigns Body would
+// silently corrupt every concurrent reader; don't.
 type readyzResult struct {
 	StatusOK bool
 	At       time.Time
@@ -157,6 +165,9 @@ func (h *readyzHandler) runChecks(parent context.Context) readyzResult {
 	if !allOK {
 		body.Status = "fail"
 	}
+	// body has only string and []struct-of-strings fields; json.Marshal
+	// cannot fail unless someone adds a chan/func/cycle, which would be
+	// a programmer error caught by tests.
 	bodyBytes, _ := json.Marshal(body)
 	return readyzResult{StatusOK: allOK, At: time.Now(), Body: bodyBytes}
 }
