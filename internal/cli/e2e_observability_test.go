@@ -110,7 +110,12 @@ func TestE2EObservabilityAdminScrape(t *testing.T) {
 	r.Equal(200, resp.StatusCode)
 
 	cancel()
-	<-done
+	select {
+	case code := <-done:
+		r.Equal(0, code, "server must exit cleanly on context cancel")
+	case <-time.After(10 * time.Second):
+		r.Fail("server did not exit within 10s of cancel")
+	}
 }
 
 func TestE2EObservabilityShutdownReadyz(t *testing.T) {
@@ -160,7 +165,12 @@ func TestE2EObservabilityShutdownReadyz(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	r.True(saw503OrClosed, "expected /readyz to flip to 503 or refuse before listener closed")
-	<-done
+	select {
+	case code := <-done:
+		r.Equal(0, code, "server must exit cleanly after readyz flip")
+	case <-time.After(10 * time.Second):
+		r.Fail("server did not exit within 10s of cancel")
+	}
 }
 
 func TestE2EObservabilityRejectsNonLoopbackAdmin(t *testing.T) {
@@ -193,9 +203,23 @@ file_lock_path = "`+filepath.Join(tmp, "import.lock")+`"
 [observability]
 admin_listen = "0.0.0.0:9090"
 `), 0o600))
+	// Bounded ctx + goroutine: if validation regresses and the server
+	// accepts 0.0.0.0, RunContext would block on Serve indefinitely.
+	// The 5s timeout forces a clean exit and surfaces the regression
+	// as a test failure rather than a hang.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	var so, se bytes.Buffer
-	code := cli.RunContext(context.Background(),
-		[]string{"server", "--config", cfgPath}, &so, &se)
+	codeCh := make(chan int, 1)
+	go func() {
+		codeCh <- cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &so, &se)
+	}()
+	var code int
+	select {
+	case code = <-codeCh:
+	case <-time.After(5 * time.Second):
+		r.Fail("server did not exit within 5s — non-loopback admin_listen must be rejected at validation")
+	}
 	r.NotEqual(0, code, "non-loopback admin_listen must be rejected at validation")
 	r.Contains(strings.ToLower(se.String()+so.String()), "loopback")
 }

@@ -239,7 +239,12 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		PrincipalDisplay: displayRepo,
 		Logger:           logger,
 		Metrics:          metricsObj,
-		RequestIDHeader:  cfg.Identity.Header.RequestIDHeader,
+		// RequestIDHeader is only honored in header mode. In stub mode
+		// the config defaulting still populates the field, but stub
+		// identity does not enroll a trusted upstream proxy, so a
+		// caller-supplied value would let any client control the
+		// server-issued X-Request-ID and request-scoped log lines.
+		RequestIDHeader: requestIDHeaderFor(cfg),
 	})
 	if err != nil {
 		return err
@@ -278,9 +283,18 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	// port surfaces as a bare return — there are no workers to join,
 	// and the deferred d.Close cannot race a mid-flight DB caller. The
 	// admin Serve goroutine starts later, after all workers are alive.
+	//
+	// adminDone is closed by the admin goroutine when Serve returns,
+	// signalling shutdown completion. adminFatal carries an unexpected
+	// Serve error (anything other than ErrServerClosed) so the main
+	// select can treat an admin-side failure as fatal — without it, a
+	// transient admin crash would leave the server running silently
+	// without /metrics or /readyz. adminFatal stays nil when admin is
+	// disabled so its select case is permanently un-selectable.
 	ready := obs.NewReady()
 	var adminLn net.Listener
-	adminDone := make(chan error, 1)
+	var adminFatal chan error
+	adminDone := make(chan struct{})
 	if cfg.Observability.AdminEnabled {
 		var berr error
 		adminLn, berr = bindListener(cfg.Observability.AdminListen)
@@ -294,6 +308,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 				fmt.Fprintln(opts.stderr, "admin sink write failed:", werr)
 			}
 		}
+		adminFatal = make(chan error, 1)
 	} else {
 		// Closed channel makes the final wait a no-op so callers don't
 		// need to special-case the disabled path.
@@ -439,11 +454,10 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		})
 		adminSrv = &http.Server{Handler: adminMux}
 		go func() {
+			defer close(adminDone)
 			if err := adminSrv.Serve(adminLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				adminDone <- err
-				return
+				adminFatal <- err
 			}
-			adminDone <- nil
 		}()
 	}
 
@@ -480,6 +494,24 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		bgWG.Wait()
 		shutdownAdmin()
 		return err
+	case err := <-adminFatal:
+		// Admin Serve crashed unexpectedly (e.g. listener died after
+		// boot). Without surfacing this, the server would keep running
+		// invisibly without /metrics or /readyz — operators wouldn't
+		// notice until next deploy. Treat as fatal: drain main API,
+		// join workers, return the error.
+		logger.Error("admin listener exited", "err", err)
+		ready.Store(false)
+		stop()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if serr := srv.Shutdown(shutdownCtx); serr != nil {
+			_ = srv.Close()
+		}
+		<-serveErr
+		bgWG.Wait()
+		<-adminDone
+		return fmt.Errorf("admin listener: %w", err)
 	case <-sigCtx.Done():
 		// 1. Flip readiness false so /readyz returns 503 — load
 		//    balancers see "shutting down" before requests start
@@ -546,6 +578,20 @@ func obsBackupCheck(cfg *config.Config, dir string) obs.ReadyCheck {
 // bindListener dispatches on the "unix:" prefix: addresses starting
 // with "unix:" bind a Unix domain socket; everything else is treated
 // as a host:port TCP bind. This matches the validator in internal/config.
+// requestIDHeaderFor returns the inbound request-ID header name only
+// when identity is in header mode, where a trusted upstream proxy is
+// the source of the ID. In stub mode, no proxy is enrolled, so any
+// caller-supplied value would let an arbitrary client control the
+// server-issued X-Request-ID and request-scoped log fields. Returning
+// "" in stub mode forces the middleware to generate a fresh UUID per
+// request.
+func requestIDHeaderFor(cfg *config.Config) string {
+	if cfg.Identity.Mode == "header" {
+		return cfg.Identity.Header.RequestIDHeader
+	}
+	return ""
+}
+
 func bindListener(addr string) (net.Listener, error) {
 	if after, ok := strings.CutPrefix(addr, "unix:"); ok {
 		return net.Listen("unix", after)
