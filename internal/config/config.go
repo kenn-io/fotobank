@@ -317,6 +317,8 @@ func isLoopbackBind(addr string) bool {
 // /metrics and optionally pprof, so non-loopback binds are rejected at
 // validation time as defense in depth.
 func isLoopbackOrUnixListen(addr string) bool {
+	// `unix:` prefix has no host:port shape; check first so SplitHostPort
+	// does not treat the path as a port.
 	if strings.HasPrefix(addr, "unix:") {
 		return true
 	}
@@ -324,8 +326,10 @@ func isLoopbackOrUnixListen(addr string) bool {
 	if err != nil {
 		return false
 	}
-	switch host {
-	case "127.0.0.1", "::1", "localhost":
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
 		return true
 	}
 	return false
@@ -424,27 +428,20 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	}
 	// Observability defaults: admin listener on by default at loopback
 	// 9090; auto-format logging at info; pprof off; add_source off.
-	// Treat the zero value of the parsed Observability table as "config
-	// did not provide [observability]" and apply defaults wholesale.
-	if c.Observability == (Observability{}) {
-		c.Observability = Observability{
-			AdminEnabled: true,
-			AdminListen:  "127.0.0.1:9090",
-			Logging: ObservabilityLogging{
-				Format: "auto",
-				Level:  "info",
-			},
-		}
-	} else {
-		if c.Observability.AdminListen == "" {
-			c.Observability.AdminListen = "127.0.0.1:9090"
-		}
-		if c.Observability.Logging.Format == "" {
-			c.Observability.Logging.Format = "auto"
-		}
-		if c.Observability.Logging.Level == "" {
-			c.Observability.Logging.Level = "info"
-		}
+	// Use meta.IsDefined so an operator who writes [observability] for
+	// other fields (e.g. pprof_enabled) still gets AdminEnabled=true
+	// unless they explicitly set admin_enabled=false.
+	if !meta.IsDefined("observability", "admin_enabled") {
+		c.Observability.AdminEnabled = true
+	}
+	if c.Observability.AdminListen == "" {
+		c.Observability.AdminListen = "127.0.0.1:9090"
+	}
+	if c.Observability.Logging.Format == "" {
+		c.Observability.Logging.Format = "auto"
+	}
+	if c.Observability.Logging.Level == "" {
+		c.Observability.Logging.Level = "info"
 	}
 }
 

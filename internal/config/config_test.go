@@ -513,6 +513,7 @@ func TestObservabilityAcceptsLoopbackAndUnix(t *testing.T) {
 [nas]
 root = "/tmp/nas"
 [observability]
+admin_enabled = true
 admin_listen = "`+addr+`"
 `), 0o600))
 		_, err := config.Load(p)
@@ -533,6 +534,24 @@ admin_listen = "192.168.1.5:9090"
 	cfg, err := config.Load(p)
 	require.NoError(t, err)
 	require.False(t, cfg.Observability.AdminEnabled)
+}
+
+func TestObservabilityPartialBlockKeepsDefaultAdmin(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	r.NoError(os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[observability]
+pprof_enabled = true
+`), 0o600))
+	cfg, err := config.Load(p)
+	r.NoError(err)
+	r.True(cfg.Observability.AdminEnabled,
+		"writing [observability] for an unrelated field must NOT silently disable the admin listener")
+	r.True(cfg.Observability.PprofEnabled)
+	r.Equal("127.0.0.1:9090", cfg.Observability.AdminListen)
 }
 
 func TestObservabilityRejectsBadFormatAndLevel(t *testing.T) {
