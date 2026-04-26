@@ -90,3 +90,57 @@ func TestNewMetrics_ProcessMetricsAppended(t *testing.T) {
 	require.True(t, strings.Contains(out, "go_memstats") || strings.Contains(out, "process_"),
 		"expected at least one go_memstats_* or process_* series; got %q", out)
 }
+
+func TestNewMetrics_PullSourceClosuresArePerState(t *testing.T) {
+	r := require.New(t)
+	thumbCalls := make(map[string]int)
+	shareCalls := make(map[string]int)
+
+	m := NewMetrics(MetricSources{
+		ThumbQueueDepth: func(state string) int64 {
+			thumbCalls[state]++
+			switch state {
+			case "pending":
+				return 1
+			case "working":
+				return 2
+			case "failed":
+				return 3
+			case "no_preview":
+				return 4
+			}
+			return 0
+		},
+		SharePendingByOp: func(op string) int64 {
+			shareCalls[op]++
+			switch op {
+			case "publish":
+				return 11
+			case "revoke":
+				return 22
+			}
+			return 0
+		},
+	}, BuildInfo{})
+
+	var buf bytes.Buffer
+	m.WritePrometheus(&buf)
+	out := buf.String()
+
+	// Each labeled gauge must invoke its closure with the correct state/op.
+	r.Equal(1, thumbCalls["pending"], "closure for state=pending fired %d times, want 1", thumbCalls["pending"])
+	r.Equal(1, thumbCalls["working"])
+	r.Equal(1, thumbCalls["failed"])
+	r.Equal(1, thumbCalls["no_preview"])
+	r.Equal(1, shareCalls["publish"])
+	r.Equal(1, shareCalls["revoke"])
+
+	// Output reflects each closure's distinct return value (proves the
+	// captured state/op variables don't all alias the loop's last value).
+	r.Contains(out, `fotobank_thumb_queue_depth{state="pending"} 1`)
+	r.Contains(out, `fotobank_thumb_queue_depth{state="working"} 2`)
+	r.Contains(out, `fotobank_thumb_queue_depth{state="failed"} 3`)
+	r.Contains(out, `fotobank_thumb_queue_depth{state="no_preview"} 4`)
+	r.Contains(out, `fotobank_share_pending_total{op="publish"} 11`)
+	r.Contains(out, `fotobank_share_pending_total{op="revoke"} 22`)
+}

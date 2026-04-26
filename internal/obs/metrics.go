@@ -105,6 +105,13 @@ func (m *Metrics) SetBackupLastSuccess(unix int64) {
 // HTTPRequests returns the counter for a (method, route, status_class)
 // triple. Counters are auto-created on first call and cached by the
 // upstream Set under their full name+labels signature.
+//
+// CARDINALITY CONTRACT: route MUST be the registered ServeMux pattern
+// (e.g. "/api/v1/media/{id}"), NOT the raw r.URL.Path. Passing raw
+// paths is a cardinality bomb — every photo ID, album ID, and
+// path-traversal probe becomes a permanent series. T9's middleware
+// (httpapi/middleware.go) is responsible for normalizing routes via
+// r.Pattern + {x}→:x rewrite before calling this accessor.
 func (m *Metrics) HTTPRequests(method, route, statusClass string) *metrics.Counter {
 	return m.set.GetOrCreateCounter(`fotobank_http_requests_total{method="` +
 		escapeLabel(method) + `",route="` + escapeLabel(route) +
@@ -112,7 +119,8 @@ func (m *Metrics) HTTPRequests(method, route, statusClass string) *metrics.Count
 }
 
 // HTTPRequestDuration returns the explicit-le-bucketed histogram for a
-// (method, route) pair.
+// (method, route) pair. See HTTPRequests for the route-template
+// cardinality contract — same rule applies here.
 func (m *Metrics) HTTPRequestDuration(method, route string) *metrics.PrometheusHistogram {
 	return m.getOrCreatePrometheusHistogram(
 		`fotobank_http_request_duration_seconds`,
@@ -121,10 +129,14 @@ func (m *Metrics) HTTPRequestDuration(method, route string) *metrics.PrometheusH
 	)
 }
 
+// ThumbJobs returns the result counter for the thumbnail worker.
+// result ∈ {"ok", "failed", "no_preview"}.
 func (m *Metrics) ThumbJobs(result string) *metrics.Counter {
 	return m.set.GetOrCreateCounter(`fotobank_thumb_jobs_total{result="` + escapeLabel(result) + `"}`)
 }
 
+// ThumbJobDuration returns the result histogram for the thumbnail worker.
+// result ∈ {"ok", "failed", "no_preview"}; uses workerDurationBuckets.
 func (m *Metrics) ThumbJobDuration(result string) *metrics.PrometheusHistogram {
 	return m.getOrCreatePrometheusHistogram(
 		`fotobank_thumb_job_duration_seconds`,
@@ -133,14 +145,20 @@ func (m *Metrics) ThumbJobDuration(result string) *metrics.PrometheusHistogram {
 	)
 }
 
+// ThumbLeasesSwept counts stale-lease rows reclaimed by the thumb
+// worker's periodic SweepLeases call.
 func (m *Metrics) ThumbLeasesSwept() *metrics.Counter {
 	return m.set.GetOrCreateCounter(`fotobank_thumb_leases_swept_total`)
 }
 
+// SharePublishes counts share-broker publish results.
+// result ∈ {"ok", "retry", "terminal_fail"}.
 func (m *Metrics) SharePublishes(result string) *metrics.Counter {
 	return m.set.GetOrCreateCounter(`fotobank_share_publishes_total{result="` + escapeLabel(result) + `"}`)
 }
 
+// SharePublishDuration is the publish-result histogram.
+// result ∈ {"ok", "retry", "terminal_fail"}; uses workerDurationBuckets.
 func (m *Metrics) SharePublishDuration(result string) *metrics.PrometheusHistogram {
 	return m.getOrCreatePrometheusHistogram(
 		`fotobank_share_publish_duration_seconds`,
@@ -149,10 +167,14 @@ func (m *Metrics) SharePublishDuration(result string) *metrics.PrometheusHistogr
 	)
 }
 
+// ShareRevokes counts share-broker revoke results.
+// result ∈ {"ok", "retry", "terminal_fail"}.
 func (m *Metrics) ShareRevokes(result string) *metrics.Counter {
 	return m.set.GetOrCreateCounter(`fotobank_share_revokes_total{result="` + escapeLabel(result) + `"}`)
 }
 
+// ShareRevokeDuration is the revoke-result histogram.
+// result ∈ {"ok", "retry", "terminal_fail"}; uses workerDurationBuckets.
 func (m *Metrics) ShareRevokeDuration(result string) *metrics.PrometheusHistogram {
 	return m.getOrCreatePrometheusHistogram(
 		`fotobank_share_revoke_duration_seconds`,
@@ -161,10 +183,14 @@ func (m *Metrics) ShareRevokeDuration(result string) *metrics.PrometheusHistogra
 	)
 }
 
+// BackupSnapshots counts per-tick backup snapshot outcomes.
+// result ∈ {"ok", "failed"}.
 func (m *Metrics) BackupSnapshots(result string) *metrics.Counter {
 	return m.set.GetOrCreateCounter(`fotobank_backup_snapshots_total{result="` + escapeLabel(result) + `"}`)
 }
 
+// BackupSnapshotDuration is the snapshot-outcome histogram.
+// result ∈ {"ok", "failed"}; uses workerDurationBuckets.
 func (m *Metrics) BackupSnapshotDuration(result string) *metrics.PrometheusHistogram {
 	return m.getOrCreatePrometheusHistogram(
 		`fotobank_backup_snapshot_duration_seconds`,
@@ -173,10 +199,14 @@ func (m *Metrics) BackupSnapshotDuration(result string) *metrics.PrometheusHisto
 	)
 }
 
+// BackupRetentionSweeps counts the per-tick retention sweep outcomes.
+// result ∈ {"ok", "failed"}.
 func (m *Metrics) BackupRetentionSweeps(result string) *metrics.Counter {
 	return m.set.GetOrCreateCounter(`fotobank_backup_retention_sweeps_total{result="` + escapeLabel(result) + `"}`)
 }
 
+// BackupRetentionDeleted counts files deleted by the retention sweep.
+// Incremented by the per-tick Sweep result count.
 func (m *Metrics) BackupRetentionDeleted() *metrics.Counter {
 	return m.set.GetOrCreateCounter(`fotobank_backup_retention_deleted_total`)
 }
@@ -185,6 +215,14 @@ func (m *Metrics) BackupRetentionDeleted() *metrics.Counter {
 // followed by stdlib runtime/process metrics from the upstream helper.
 // metrics.WriteProcessMetrics reads runtime state directly and does
 // not depend on the upstream global registry.
+//
+// Safe under concurrent scrapes per upstream metrics v1.43.2; revisit
+// the assumption on upgrade. Concurrent scrape × backup-write race:
+// fotobank_backup_last_success_unix and fotobank_backup_seconds_since_last_success
+// each call lastBackupUnix.Load() in independent gauge closures, so a
+// scrape that overlaps with SetBackupLastSuccess can emit a torn pair
+// where seconds_since is slightly under-estimated. The deviation is
+// bounded by a single backup write and is harmless to consumers.
 func (m *Metrics) WritePrometheus(w io.Writer) {
 	m.set.WritePrometheus(w)
 	metrics.WriteProcessMetrics(w)

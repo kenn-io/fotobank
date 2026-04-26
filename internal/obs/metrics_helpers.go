@@ -9,7 +9,14 @@ import (
 
 // escapeLabel applies Prometheus label-value escaping required by the
 // upstream metrics library: backslash and double-quote must be \-escaped;
-// newline becomes \n. Defensive escaping; we never expect newlines.
+// newline becomes \n.
+//
+// fotobank's callers always pass enum-bounded strings (HTTP method,
+// status_class, route template, result/op enums, build labels). A
+// label value containing \r, control bytes, or unescaped " is a
+// misuse upstream — this function exists to make any future caller
+// safe by default for the three cases above, not to validate every
+// possible Prometheus exposition violation.
 func escapeLabel(s string) string {
 	if !strings.ContainsAny(s, `"\`+"\n") {
 		return s
