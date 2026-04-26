@@ -5,6 +5,17 @@ import (
 	"net/http/pprof"
 )
 
+// SECURITY NOTE on the pprof import: net/http/pprof's package init()
+// registers /debug/pprof/* handlers on http.DefaultServeMux. Those
+// handlers are unreachable in this binary because every http.Server
+// we construct passes an explicit Handler (see cli/server.go's
+// http.Server{Handler: handler}); nothing in fotobank serves nil
+// (which would route to DefaultServeMux). The PprofEnabled gate
+// below therefore controls runtime exposure on the admin listener;
+// the import side effect is dormant by code-review invariant. Adding
+// any new http.Server with a nil Handler in this binary would break
+// that invariant.
+
 // AdminConfig assembles the admin listener.
 type AdminConfig struct {
 	Metrics      *Metrics
