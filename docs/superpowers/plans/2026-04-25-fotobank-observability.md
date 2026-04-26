@@ -2733,7 +2733,20 @@ After the `db.Open` call (so the queues/repos exist):
 
 ```go
 metricsObj := obs.NewMetrics(obs.MetricSources{
-	ThumbQueueDepth:  thumbQueue.DepthByState,
+	// thumbQueue.DepthByState has signature (ctx, state) (int64, error);
+	// MetricSources.ThumbQueueDepth wants func(state) int64. Wrap with
+	// an adapter that supplies a short-lived ctx and discards errors —
+	// gauge sources are best-effort during scrape and must not panic.
+	ThumbQueueDepth: func(state string) int64 {
+		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		defer cancel()
+		n, err := thumbQueue.DepthByState(ctx, state)
+		if err != nil {
+			logger.Warn("thumb queue depth source", "state", state, "err", err)
+			return 0
+		}
+		return n
+	},
 	SharePendingByOp: sharesRepo.CountPendingByOp,
 }, obs.BuildInfo{
 	Version:   version.Version,
@@ -2742,7 +2755,7 @@ metricsObj := obs.NewMetrics(obs.MetricSources{
 })
 ```
 
-If `thumbQueue.DepthByState` or `sharesRepo.CountPendingByOp` don't exist, add minimal implementations: each returns `int64` for a state/op string by running a `SELECT count(*) FROM ...` against the read DB. Skipping is acceptable for v1 if either source is wired with a `nil` closure (the gauge then reports 0).
+If `sharesRepo.CountPendingByOp` doesn't exist, add a minimal implementation that returns `int64` for an op string by running a `SELECT count(*) FROM ...` against the read DB. (The shape is `func(op string) int64`; if it ends up shaped like `DepthByState` (ctx + error), wrap the same way.) Skipping is acceptable for v1 if either source is wired with a `nil` closure (the gauge then reports 0).
 
 - [ ] **Step 3: Thread metrics + logger into existing worker Configs**
 

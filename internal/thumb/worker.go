@@ -218,6 +218,13 @@ func (w *Worker) drain(ctx context.Context) {
 // start is captured at the top so the result-labelled duration histogram
 // covers decode + emit + finalize for every terminal path (ok, no_preview,
 // failed). All metric emissions are guarded against a nil Metrics.
+//
+// Result counters can over-count when SweepLeases reclaims a row from a
+// stalled worker that still finishes processOne later. The reclaiming
+// worker re-marks the row, so both increments fire for one logical
+// job. The inflation bound is the sweep-vs-stall race rate, which is
+// rare in practice; v1 accepts the imprecision rather than gate every
+// metric increment on the Mark* outcome.
 func (w *Worker) processOne(ctx context.Context, c Claim) {
 	start := time.Now()
 	m := c.Media
