@@ -8,9 +8,11 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/wesm/fotobank/internal/media"
+	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/storage"
 	"github.com/wesm/fotobank/internal/testutil"
@@ -372,4 +375,90 @@ func TestWorkerRunReturnsOnlyAfterDrainGoroutinesExit(t *testing.T) {
 	r.LessOrEqualf(after, baseline+tolerance,
 		"goroutine leak: baseline=%d after=%d (tolerance=%d)",
 		baseline, after, tolerance)
+}
+
+func TestWorkerEmitsResultMetricsAndLeaseSweep(t *testing.T) {
+	r := require.New(t)
+	fx := newWorkerFixture(t)
+
+	photoID := seedPhotoRow(t, fx, "2024/a-"+uuid.NewString()+".jpg")
+	videoID := seedVideoRow(t, fx)
+
+	// Insert a third row pre-claimed with a stale lease so SweepLeases
+	// has a row to bump back to pending and increment the swept counter.
+	staleID := uuid.NewString()
+	staleM := media.Media{
+		ID: staleID, Owner: fx.owner, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/stale-" + staleID + ".jpg",
+		OriginalFilename: "stale.jpg",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Size:             1, Checksum: uuid.NewString(),
+		ThumbStatus: "working",
+	}
+	r.NoError(fx.repo.Insert(context.Background(), staleM))
+	_, err := fx.rw.ExecContext(context.Background(),
+		`UPDATE media SET thumb_claimed_at = ? WHERE id = ?`,
+		time.Now().Add(-time.Hour).UTC(), staleID)
+	r.NoError(err)
+
+	m := obs.NewTestMetrics()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+		WorkerConcurrency: 1,
+		PollInterval:      20 * time.Millisecond,
+		LeaseTimeout:      time.Minute,
+		SweepInterval:     50 * time.Millisecond,
+		Metrics:           m,
+	})
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	waitForStatus(t, fx.rw, photoID, "ready")
+	waitForStatus(t, fx.rw, videoID, "no_preview")
+
+	require.Eventually(t, func() bool {
+		return m.ThumbLeasesSwept().Get() >= 1
+	}, 3*time.Second, 20*time.Millisecond,
+		"stale-lease sweep counter must increment within the worker's tick")
+
+	cancel()
+	<-done
+
+	r.GreaterOrEqual(m.ThumbJobs("ok").Get(), uint64(1))
+	r.GreaterOrEqual(m.ThumbJobs("no_preview").Get(), uint64(1))
+	r.GreaterOrEqual(m.ThumbLeasesSwept().Get(), uint64(1))
+}
+
+func TestThumbWorkerLogsCarryComponent(t *testing.T) {
+	r := require.New(t)
+	fx := newWorkerFixture(t)
+	id := seedPhotoRow(t, fx, "2024/c-"+uuid.NewString()+".jpg")
+
+	// bytes.Buffer is safe here ONLY because the buffer is read AFTER
+	// <-done joins the worker goroutine. If you adapt this template to
+	// poll logBuf.String() inside require.Eventually, switch to a
+	// mutex-wrapped buffer (see backup/worker_test.go syncBuf) to
+	// avoid a -race failure.
+	var logBuf bytes.Buffer
+	base := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+		WorkerConcurrency: 1,
+		PollInterval:      20 * time.Millisecond,
+		LeaseTimeout:      time.Minute,
+		Logger:            base.With("component", "thumb"),
+		Metrics:           obs.NewTestMetrics(),
+	})
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+	waitForStatus(t, fx.rw, id, "ready")
+	cancel()
+	<-done
+	// Per-line scan: every emitted line must carry component=thumb.
+	for line := range strings.SplitSeq(strings.TrimSpace(logBuf.String()), "\n") {
+		r.Contains(line, `"component":"thumb"`,
+			"every thumb-worker log line must carry component=thumb")
+	}
 }

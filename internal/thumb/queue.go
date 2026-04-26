@@ -217,6 +217,20 @@ func (q *Queue) finalize(
 	return nil
 }
 
+// DepthByState returns the count of rows in thumb_status = state.
+// Used as a closure source for the obs.Metrics ThumbQueueDepth gauge,
+// which T13 wires via MetricSources at server boot. Reads from the
+// reader pool so a slow scrape cannot contend with the writer.
+func (q *Queue) DepthByState(ctx context.Context, state string) (int64, error) {
+	var n int64
+	err := q.ro.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM media WHERE thumb_status = ?`, state).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("thumb queue depth %q: %w", state, err)
+	}
+	return n, nil
+}
+
 // Enqueue bumps thumb_version and sets thumb_status='pending' on every
 // row matching filter. Returns the number of rows updated.
 func (q *Queue) Enqueue(ctx context.Context, filter EnqueueFilter) (int, error) {

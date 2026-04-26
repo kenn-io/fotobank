@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wesm/fotobank/internal/media"
+	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/storage"
 )
 
@@ -34,6 +35,21 @@ type Config struct {
 	// to LeaseTimeout/2 so the worker surrenders gracefully before a
 	// sweep bumps the version. Defaults to 10m.
 	LeaseTimeout time.Duration
+	// SweepInterval is how often runSweep calls SweepLeases. Independent
+	// of PollInterval so a stuck decode cannot delay sweep. Defaults to
+	// defaultSweepInterval (1m); tests can shorten it to observe
+	// sweep-driven side effects (e.g. ThumbLeasesSwept counter).
+	SweepInterval time.Duration
+	// Logger receives every operational log line emitted by the worker.
+	// nil falls back to slog.Default() in NewWorker so callers may leave
+	// it unset; production wiring sets a logger with a "component"=thumb
+	// attribute so all worker lines carry the component label.
+	Logger *slog.Logger
+	// Metrics receives terminal-result counters and duration histograms
+	// for each processed claim, plus a counter incremented per
+	// lease-sweep batch. nil disables emission — every metric call site
+	// in the worker is guarded so a nil Metrics never panics.
+	Metrics *obs.Metrics
 }
 
 func (c Config) concurrency() int {
@@ -57,6 +73,13 @@ func (c Config) leaseTimeout() time.Duration {
 	return c.LeaseTimeout
 }
 
+func (c Config) sweepInterval() time.Duration {
+	if c.SweepInterval <= 0 {
+		return defaultSweepInterval
+	}
+	return c.SweepInterval
+}
+
 // Worker drains the thumbnail Queue: it claims pending rows in batches,
 // decodes + resizes + encodes each one, writes all sizes to the Store,
 // and finalizes the row. A background sweep returns rows whose lease
@@ -74,16 +97,25 @@ type Worker struct {
 // NewWorker constructs a Worker. Call Run to start processing; Run blocks
 // until ctx is cancelled or a fatal sweep error is observed.
 func NewWorker(q *Queue, store storage.Store, cfg Config) *Worker {
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
 	return &Worker{q: q, store: store, cfg: cfg}
 }
 
 // Run drives the worker until ctx is cancelled. Spawns two goroutines:
 // runPoll (drains on PollInterval) and runSweep (calls SweepLeases every
-// defaultSweepInterval). Sweep runs independently so a stuck decode in
-// drain cannot delay lease recovery. Returns ctx.Err() so callers can
+// SweepInterval). Sweep runs independently so a stuck decode in drain
+// cannot delay lease recovery. Returns ctx.Err() so callers can
 // distinguish context.Canceled (graceful shutdown) from
 // context.DeadlineExceeded (forced).
 func (w *Worker) Run(ctx context.Context) error {
+	w.cfg.Logger.Info("thumb worker starting",
+		"concurrency", w.cfg.concurrency(),
+		"poll_interval", w.cfg.pollInterval(),
+		"lease_timeout", w.cfg.leaseTimeout(),
+		"sweep_interval", w.cfg.sweepInterval())
+	defer w.cfg.Logger.Info("thumb worker stopped")
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -116,15 +148,17 @@ func (w *Worker) runPoll(ctx context.Context) {
 }
 
 func (w *Worker) runSweep(ctx context.Context) {
-	t := time.NewTicker(defaultSweepInterval)
+	t := time.NewTicker(w.cfg.sweepInterval())
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if _, err := w.q.SweepLeases(ctx, w.cfg.leaseTimeout()); err != nil {
-				slog.Error("thumb: sweep leases", "err", err)
+			if n, err := w.q.SweepLeases(ctx, w.cfg.leaseTimeout()); err != nil {
+				w.cfg.Logger.Error("thumb: sweep leases", "err", err)
+			} else if n > 0 && w.cfg.Metrics != nil {
+				w.cfg.Metrics.ThumbLeasesSwept().Add(n)
 			}
 		}
 	}
@@ -147,7 +181,7 @@ func (w *Worker) drain(ctx context.Context) {
 	conc := w.cfg.concurrency()
 	claims, err := w.q.ClaimBatch(ctx, 2*conc)
 	if err != nil {
-		slog.Error("thumb: claim batch", "err", err)
+		w.cfg.Logger.Error("thumb: claim batch", "err", err)
 		return
 	}
 	if len(claims) == 0 {
@@ -180,59 +214,76 @@ func (w *Worker) drain(ctx context.Context) {
 // MarkNoPreview (known un-decodable formats) vs MarkFailed (transient or
 // unexpected); ErrClaimLost from Mark* is tolerated so a stale worker
 // does not overwrite a fresher claim.
+//
+// start is captured at the top so the result-labelled duration histogram
+// covers decode + emit + finalize for every terminal path (ok, no_preview,
+// failed). All metric emissions are guarded against a nil Metrics.
 func (w *Worker) processOne(ctx context.Context, c Claim) {
+	start := time.Now()
 	m := c.Media
 	if skipFormat(m) {
-		w.finalizeNoPreview(ctx, c)
+		w.finalizeNoPreview(ctx, c, start)
 		return
 	}
 	img, err := w.decodeSource(ctx, m)
 	if err != nil {
 		if errors.Is(err, ErrNoPreview) {
-			w.finalizeNoPreview(ctx, c)
+			w.finalizeNoPreview(ctx, c, start)
 			return
 		}
-		w.finalizeFailed(ctx, c, err)
+		w.finalizeFailed(ctx, c, err, start)
 		return
 	}
 	if err := w.emitSizes(ctx, m, img); err != nil {
-		w.finalizeFailed(ctx, c, err)
+		w.finalizeFailed(ctx, c, err, start)
 		return
 	}
 	if err := w.q.MarkReady(ctx, m.ID, m.ThumbVersion, c.ClaimedAt); err != nil {
-		logClaimFinalize("mark ready", m.ID, err)
+		w.logClaimFinalize("mark ready", m.ID, err)
+	}
+	if w.cfg.Metrics != nil {
+		w.cfg.Metrics.ThumbJobs("ok").Inc()
+		w.cfg.Metrics.ThumbJobDuration("ok").Update(time.Since(start).Seconds())
 	}
 }
 
-func (w *Worker) finalizeNoPreview(ctx context.Context, c Claim) {
+func (w *Worker) finalizeNoPreview(ctx context.Context, c Claim, start time.Time) {
 	err := w.q.MarkNoPreview(ctx, c.Media.ID, c.Media.ThumbVersion, c.ClaimedAt)
 	if err != nil {
-		logClaimFinalize("mark no_preview", c.Media.ID, err)
+		w.logClaimFinalize("mark no_preview", c.Media.ID, err)
+	}
+	if w.cfg.Metrics != nil {
+		w.cfg.Metrics.ThumbJobs("no_preview").Inc()
+		w.cfg.Metrics.ThumbJobDuration("no_preview").Update(time.Since(start).Seconds())
 	}
 }
 
-func (w *Worker) finalizeFailed(ctx context.Context, c Claim, cause error) {
+func (w *Worker) finalizeFailed(ctx context.Context, c Claim, cause error, start time.Time) {
 	// Context errors during graceful shutdown are not operational
 	// failures — the sweep will re-queue the row. Log at Warn so we
 	// do not spam production ERROR logs on every cancellation.
 	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
-		slog.Warn("thumb: process interrupted", "id", c.Media.ID, "cause", cause)
+		w.cfg.Logger.Warn("thumb: process interrupted", "id", c.Media.ID, "cause", cause)
 	} else {
-		slog.Error("thumb: process failed", "id", c.Media.ID, "err", cause)
+		w.cfg.Logger.Error("thumb: process failed", "id", c.Media.ID, "err", cause)
 	}
 	err := w.q.MarkFailed(ctx, c.Media.ID, c.Media.ThumbVersion, c.ClaimedAt, cause)
 	if err != nil {
-		logClaimFinalize("mark failed", c.Media.ID, err)
+		w.logClaimFinalize("mark failed", c.Media.ID, err)
+	}
+	if w.cfg.Metrics != nil {
+		w.cfg.Metrics.ThumbJobs("failed").Inc()
+		w.cfg.Metrics.ThumbJobDuration("failed").Update(time.Since(start).Seconds())
 	}
 }
 
 // logClaimFinalize swallows ErrClaimLost (the claim was superseded by a
 // sweep or Enqueue, nothing to do) and surfaces every other error.
-func logClaimFinalize(op, id string, err error) {
+func (w *Worker) logClaimFinalize(op, id string, err error) {
 	if errors.Is(err, ErrClaimLost) {
 		return
 	}
-	slog.Error("thumb: "+op, "id", id, "err", err)
+	w.cfg.Logger.Error("thumb: "+op, "id", id, "err", err)
 }
 
 // decodeSource picks the correct decoder for m and returns the decoded
