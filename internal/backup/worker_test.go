@@ -212,11 +212,13 @@ func TestWorkerEmitsFailedSnapshotMetric(t *testing.T) {
 		Metrics:  m,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = w.Run(ctx) }()
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
 	require.Eventually(t, func() bool {
 		return m.BackupSnapshots("failed").Get() >= 1
 	}, 2*time.Second, 10*time.Millisecond)
 	cancel()
+	r.NoError(<-done)
 }
 
 // TestWorkerLogsCarryComponent: when the caller wires a logger derived
@@ -233,7 +235,10 @@ func TestWorkerLogsCarryComponent(t *testing.T) {
 	r.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	var logBuf bytes.Buffer
+	// syncBuf (defined at the top of this file) wraps bytes.Buffer with
+	// a mutex so the worker goroutine's slog writes don't race with the
+	// polling goroutine inside require.Eventually that reads via String().
+	var logBuf syncBuf
 	base := slog.New(slog.NewJSONHandler(&logBuf, nil))
 	w := NewWorker(Config{
 		DB:       db,
@@ -251,6 +256,11 @@ func TestWorkerLogsCarryComponent(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 	cancel()
 	r.NoError(<-done)
-	r.Contains(logBuf.String(), `"component":"backup"`,
-		"every backup-worker log line must carry component=backup")
+	// Per-line scan: enforce that EVERY emitted line carries
+	// component=backup, not just at least one. A stray non-component
+	// line would slip past a single Contains check.
+	for line := range strings.SplitSeq(strings.TrimSpace(logBuf.String()), "\n") {
+		r.Contains(line, `"component":"backup"`,
+			"every backup-worker log line must carry component=backup")
+	}
 }

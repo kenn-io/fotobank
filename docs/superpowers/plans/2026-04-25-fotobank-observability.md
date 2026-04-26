@@ -2197,11 +2197,13 @@ func TestWorkerEmitsFailedSnapshotMetric(t *testing.T) {
 		Metrics:  m,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = w.Run(ctx) }()
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
 	require.Eventually(t, func() bool {
 		return m.BackupSnapshots("failed").Get() >= 1
 	}, 2*time.Second, 10*time.Millisecond)
 	cancel()
+	r.NoError(<-done)
 }
 
 // TestWorkerLogsCarryComponent is the field-contract test the spec
@@ -2219,7 +2221,11 @@ func TestWorkerLogsCarryComponent(t *testing.T) {
 	r.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	var logBuf bytes.Buffer
+	// syncBuf (existing helper at the top of worker_test.go) wraps
+	// bytes.Buffer with a mutex; required because the worker goroutine
+	// writes via slog while require.Eventually's polling goroutine
+	// reads via String(). Plain bytes.Buffer here triggers -race.
+	var logBuf syncBuf
 	base := slog.New(slog.NewJSONHandler(&logBuf, nil))
 	w := NewWorker(Config{
 		DB:       db,
@@ -2237,8 +2243,13 @@ func TestWorkerLogsCarryComponent(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 	cancel()
 	r.NoError(<-done)
-	r.Contains(logBuf.String(), `"component":"backup"`,
-		"every backup-worker log line must carry component=backup")
+	// Per-line scan: every emitted line must carry component=backup.
+	// A single Contains check would let a stray non-component line
+	// slip through.
+	for line := range strings.SplitSeq(strings.TrimSpace(logBuf.String()), "\n") {
+		r.Contains(line, `"component":"backup"`,
+			"every backup-worker log line must carry component=backup")
+	}
 }
 ```
 
@@ -2439,8 +2450,11 @@ func TestThumbWorkerLogsCarryComponent(t *testing.T) {
 	waitForStatus(t, fx.rw, id, "ready")
 	cancel()
 	<-done
-	r.Contains(logBuf.String(), `"component":"thumb"`,
-		"every thumb-worker log line must carry component=thumb")
+	// Per-line scan: every emitted line must carry component=thumb.
+	for line := range strings.SplitSeq(strings.TrimSpace(logBuf.String()), "\n") {
+		r.Contains(line, `"component":"thumb"`,
+			"every thumb-worker log line must carry component=thumb")
+	}
 }
 ```
 
@@ -2612,8 +2626,11 @@ func TestShareWorkerLogsCarryComponent(t *testing.T) {
 	_ = fx.insertPending(t)
 	_, err := fx.w.RunOnce(context.Background())
 	r.NoError(err)
-	r.Contains(logBuf.String(), `"component":"share"`,
-		"every share-worker log line must carry component=share")
+	// Per-line scan: every emitted line must carry component=share.
+	for line := range strings.SplitSeq(strings.TrimSpace(logBuf.String()), "\n") {
+		r.Contains(line, `"component":"share"`,
+			"every share-worker log line must carry component=share")
+	}
 }
 ```
 
