@@ -82,7 +82,11 @@ func New(deps Deps) (http.Handler, error) {
 	mux, _ := buildAPI(deps)
 	var handler http.Handler = mux
 	if deps.PrincipalDisplay != nil {
-		handler = WithPrincipalDisplayCache(deps.PrincipalDisplay, slog.Default())(handler)
+		dispLogger := deps.Logger
+		if dispLogger == nil {
+			dispLogger = slog.Default()
+		}
+		handler = WithPrincipalDisplayCache(deps.PrincipalDisplay, dispLogger)(handler)
 	}
 	if deps.IdentityProvider != nil {
 		handler = WithMiddleware(WithMiddlewareDeps{

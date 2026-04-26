@@ -273,6 +273,33 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Bind the admin listener BEFORE any bgWG-tracked goroutine is
+	// spawned, so a port-conflict (or other bind failure) on the admin
+	// port surfaces as a bare return — there are no workers to join,
+	// and the deferred d.Close cannot race a mid-flight DB caller. The
+	// admin Serve goroutine starts later, after all workers are alive.
+	ready := obs.NewReady()
+	var adminLn net.Listener
+	adminDone := make(chan error, 1)
+	if cfg.Observability.AdminEnabled {
+		var berr error
+		adminLn, berr = bindListener(cfg.Observability.AdminListen)
+		if berr != nil {
+			return fmt.Errorf("bind admin listener: %w", berr)
+		}
+		// FOTOBANK_TEST_ADMIN_ADDR_SINK lets e2e tests discover the
+		// post-bind address when admin_listen is "127.0.0.1:0".
+		if sink := os.Getenv("FOTOBANK_TEST_ADMIN_ADDR_SINK"); sink != "" {
+			if werr := os.WriteFile(sink, []byte(adminLn.Addr().String()), 0o600); werr != nil {
+				fmt.Fprintln(opts.stderr, "admin sink write failed:", werr)
+			}
+		}
+	} else {
+		// Closed channel makes the final wait a no-op so callers don't
+		// need to special-case the disabled path.
+		close(adminDone)
+	}
+
 	// bgWG joins every goroutine that holds references to d (SQL) or
 	// storeLayer so runServer does not return — and thus `defer d.Close`
 	// does not fire — until all of them have observed sigCtx.Done and
@@ -370,15 +397,14 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		})
 	}
 
-	// Build the admin listener (metrics + readyz + optional pprof) on
-	// its own goroutine OUTSIDE bgWG. Shutdown is sequenced so that
-	// admin remains reachable while the main API drains: ready=false
-	// → main API Shutdown → bgWG.Wait → admin Shutdown. Operators can
-	// scrape /readyz during graceful shutdown and observe the 503.
-	ready := obs.NewReady()
+	// Start the admin Serve goroutine on its own goroutine OUTSIDE
+	// bgWG. The listener was already bound earlier in runServer to
+	// fail-fast on a port conflict; this point only constructs the
+	// mux and starts serving. Shutdown is sequenced so admin remains
+	// reachable while the main API drains: ready=false → main API
+	// Shutdown → bgWG.Wait → admin Shutdown.
 	var adminSrv *http.Server
-	adminDone := make(chan error, 1)
-	if cfg.Observability.AdminEnabled {
+	if adminLn != nil {
 		adminMux := obs.NewAdminMux(obs.AdminConfig{
 			Metrics: metricsObj,
 			Ready:   ready,
@@ -404,17 +430,6 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			},
 			PprofEnabled: cfg.Observability.PprofEnabled,
 		})
-		adminLn, berr := bindListener(cfg.Observability.AdminListen)
-		if berr != nil {
-			return fmt.Errorf("bind admin listener: %w", berr)
-		}
-		// FOTOBANK_TEST_ADMIN_ADDR_SINK lets e2e tests discover the
-		// post-bind address when admin_listen is "127.0.0.1:0".
-		if sink := os.Getenv("FOTOBANK_TEST_ADMIN_ADDR_SINK"); sink != "" {
-			if werr := os.WriteFile(sink, []byte(adminLn.Addr().String()), 0o600); werr != nil {
-				fmt.Fprintln(opts.stderr, "admin sink write failed:", werr)
-			}
-		}
 		adminSrv = &http.Server{Handler: adminMux}
 		go func() {
 			if err := adminSrv.Serve(adminLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -423,10 +438,6 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			}
 			adminDone <- nil
 		}()
-	} else {
-		// Closed channel makes the final wait a no-op so callers don't
-		// need to special-case the disabled path.
-		close(adminDone)
 	}
 
 	serveErr := make(chan error, 1)
@@ -438,6 +449,20 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		serveErr <- nil
 	}()
 
+	// shutdownAdmin tears down the admin listener with a bounded
+	// timeout so a misbehaving long-lived scraper cannot hold the
+	// process open. Mirrors the main API's shutdownTimeout for
+	// symmetry.
+	shutdownAdmin := func() {
+		if adminSrv == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		_ = adminSrv.Shutdown(ctx)
+		<-adminDone
+	}
+
 	select {
 	case err := <-serveErr:
 		// Serve exited on its own (bind loss, unrecoverable error).
@@ -446,10 +471,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		ready.Store(false)
 		stop()
 		bgWG.Wait()
-		if adminSrv != nil {
-			_ = adminSrv.Shutdown(context.Background())
-			<-adminDone
-		}
+		shutdownAdmin()
 		return err
 	case <-sigCtx.Done():
 		// 1. Flip readiness false so /readyz returns 503 — load
@@ -469,10 +491,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			// soon as runServer returns, and a mid-flight processOne
 			// must not hit a closed DB handle.
 			bgWG.Wait()
-			if adminSrv != nil {
-				_ = adminSrv.Shutdown(context.Background())
-				<-adminDone
-			}
+			shutdownAdmin()
 			return err
 		}
 		<-serveErr
@@ -480,10 +499,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		bgWG.Wait()
 		// 4. Shut down admin LAST so /readyz stays scrapeable through
 		//    the bgWG drain.
-		if adminSrv != nil {
-			_ = adminSrv.Shutdown(context.Background())
-			<-adminDone
-		}
+		shutdownAdmin()
 		return nil
 	}
 }
@@ -505,8 +521,12 @@ func obsBackupCheck(cfg *config.Config, dir string) obs.ReadyCheck {
 	return obs.ReadyCheck{
 		Name: "snapshot_dir",
 		Fn: func(_ context.Context) error {
+			// O_TRUNC (not O_EXCL): a leftover .readyz-probe from a
+			// crashed prior check would otherwise wedge readiness in
+			// permanent failure. The probe is a write-permission test,
+			// not a uniqueness contract.
 			probe := filepath.Join(dir, ".readyz-probe")
-			f, err := os.OpenFile(probe, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+			f, err := os.OpenFile(probe, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 			if err != nil {
 				return err
 			}
