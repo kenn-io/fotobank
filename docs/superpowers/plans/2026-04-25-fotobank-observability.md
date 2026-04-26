@@ -2434,6 +2434,11 @@ func TestThumbWorkerLogsCarryComponent(t *testing.T) {
 	fx := newWorkerFixture(t)
 	id := seedPhotoRow(t, fx, "2024/c-"+uuid.NewString()+".jpg")
 
+	// bytes.Buffer is safe here ONLY because the buffer is read AFTER
+	// <-done joins the worker goroutine. If you adapt this template to
+	// poll logBuf.String() inside require.Eventually, switch to a
+	// mutex-wrapped buffer (see backup/worker_test.go syncBuf) to
+	// avoid a -race failure.
 	var logBuf bytes.Buffer
 	base := slog.New(slog.NewJSONHandler(&logBuf, nil))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2613,6 +2618,10 @@ func TestShareWorkerLogsCarryComponent(t *testing.T) {
 	r := require.New(t)
 	fx := newWorkerFixture(t)
 
+	// bytes.Buffer is safe here because RunOnce returns synchronously
+	// before the buffer is read — single goroutine throughout. If you
+	// adapt this to a goroutine + Eventually pattern, switch to a
+	// mutex-wrapped buffer (see backup/worker_test.go syncBuf).
 	var logBuf bytes.Buffer
 	base := slog.New(slog.NewJSONHandler(&logBuf, nil))
 	fx.w = shareworker.New(shareworker.Config{
