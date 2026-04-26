@@ -31,6 +31,8 @@ user_id = "alice"
 handle = "Alice"
 [http]
 listen_address = "127.0.0.1:0"
+[observability]
+admin_listen = "127.0.0.1:0"
 `, filepath.Join(tmp, "nas"), filepath.Join(tmp, "flash")), 0o600))
 	t.Setenv("FOTOBANK_CONFIG", cfg)
 	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))

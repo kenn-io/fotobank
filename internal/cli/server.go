@@ -26,12 +26,14 @@ import (
 	"github.com/wesm/fotobank/internal/httpapi"
 	"github.com/wesm/fotobank/internal/identity"
 	"github.com/wesm/fotobank/internal/media"
+	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service"
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/shareworker"
 	"github.com/wesm/fotobank/internal/storage"
 	"github.com/wesm/fotobank/internal/thumb"
+	"github.com/wesm/fotobank/internal/version"
 )
 
 // shutdownTimeout bounds how long graceful shutdown waits for in-flight
@@ -94,6 +96,26 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			return err
 		}
 	}
+
+	logger := obs.NewLogger(obs.LoggerConfig{
+		Format:    cfg.Observability.Logging.Format,
+		Level:     cfg.Observability.Logging.Level,
+		AddSource: cfg.Observability.Logging.AddSource,
+	}, opts.stderr)
+	// FOTOBANK_LOG_LEVEL bogus values fall through silently inside
+	// obs.NewLogger because at construction time there is no logger
+	// to emit on. Now that we have one, surface the issue so an
+	// operator setting a typoed level isn't left wondering why the
+	// override "didn't work".
+	if raw := os.Getenv("FOTOBANK_LOG_LEVEL"); raw != "" && !obs.IsValidLogLevel(raw) {
+		logger.Warn("FOTOBANK_LOG_LEVEL ignored — not a valid level",
+			"raw", raw, "valid", "debug|info|warn|error")
+	}
+	// Anything still emitting via slog.Default() (third-party libs,
+	// pre-T9 helpers we haven't migrated) inherits the configured
+	// formatter and level, tagged component=legacy so an operator can
+	// see at a glance which lines came through the implicit channel.
+	slog.SetDefault(logger.With("component", "legacy"))
 
 	dbPath := resolveDBPath(cfg)
 
@@ -159,13 +181,45 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		storeLayer,
 	)
 
+	// metricsObj owns the private VictoriaMetrics set. Pull-source
+	// closures resolve at scrape time from the queues/repos already
+	// constructed above. Each closure takes a 250ms timeout so a
+	// hung DB cannot block the scrape; on error we log warn and
+	// report 0 because gauge sources are advisory, not authoritative.
+	metricsObj := obs.NewMetrics(obs.MetricSources{
+		ThumbQueueDepth: func(state string) int64 {
+			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			defer cancel()
+			n, qerr := thumbQueue.DepthByState(ctx, state)
+			if qerr != nil {
+				logger.Warn("thumb queue depth source", "state", state, "err", qerr)
+				return 0
+			}
+			return n
+		},
+		SharePendingByOp: func(op string) int64 {
+			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			defer cancel()
+			n, qerr := sharesRepo.CountPendingByOp(ctx, op)
+			if qerr != nil {
+				logger.Warn("share pending source", "op", op, "err", qerr)
+				return 0
+			}
+			return n
+		},
+	}, obs.BuildInfo{
+		Version:   version.Short,
+		Commit:    version.Commit,
+		BuildDate: version.BuildDate,
+	})
+
 	// Grantee-side plumbing: display-handle cache, resolver, and
 	// SharedReadService. The resolver uses nil for its clock so it
 	// defaults to time.Now().UTC; the display cache middleware is
 	// driven off the same repo in httpapi.New when PrincipalDisplay is
 	// non-nil.
 	displayRepo := share.NewPrincipalDisplayRepo(d.WriteDB(), d.ReadDB())
-	resolver := share.NewScopeResolver(sharesRepo, nil, slog.Default())
+	resolver := share.NewScopeResolver(sharesRepo, nil, logger.With("component", "share"))
 	sharedSvc := service.NewSharedReadService(
 		sharesRepo,
 		media.NewRepo(d.WriteDB(), d.ReadDB()),
@@ -183,6 +237,9 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		ShareService:     shareSvc,
 		SharedRead:       sharedSvc,
 		PrincipalDisplay: displayRepo,
+		Logger:           logger,
+		Metrics:          metricsObj,
+		RequestIDHeader:  cfg.Identity.Header.RequestIDHeader,
 	})
 	if err != nil {
 		return err
@@ -208,8 +265,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	// Build the broker client before spawning bgWG-tracked workers.
 	// An error here must short-circuit with a bare return, which only
 	// fires d.Close — there are no running goroutines to join yet.
-	logger := slog.New(slog.NewTextHandler(opts.stderr, nil))
-	brokerClient, err := newBrokerClient(cfg.Broker, logger)
+	brokerClient, err := newBrokerClient(cfg.Broker, logger.With("component", "broker"))
 	if err != nil {
 		return fmt.Errorf("broker init: %w", err)
 	}
@@ -241,6 +297,8 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		WorkerConcurrency: cfg.Thumbs.WorkerConcurrency,
 		PollInterval:      cfg.Thumbs.PollInterval,
 		LeaseTimeout:      cfg.Thumbs.LeaseTimeout,
+		Logger:            logger.With("component", "thumb"),
+		Metrics:           metricsObj,
 	})
 	bgWG.Go(func() {
 		if err := thumbWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
@@ -249,9 +307,10 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	})
 
 	shareCfg := shareworker.Config{
-		Repo:   sharesRepo,
-		Broker: brokerClient,
-		Logger: logger,
+		Repo:    sharesRepo,
+		Broker:  brokerClient,
+		Logger:  logger.With("component", "share"),
+		Metrics: metricsObj,
 	}
 	// FOTOBANK_TEST_SHARE_WORKER_TICK is a test-only escape hatch that
 	// overrides the default 15s tick so e2e tests can observe state
@@ -270,8 +329,12 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		}
 	})
 
+	// backupDir is captured outside the cfg.Backup.Enabled block so the
+	// admin listener's snapshot_dir readyz check can refer to it. The
+	// helper itself short-circuits to a no-op when backups are disabled,
+	// so an empty value here is harmless.
+	backupDir := backupDirFor(cfg)
 	if cfg.Backup.Enabled {
-		backupDir := backupDirFor(cfg)
 		interval := 15 * time.Minute
 		if raw := os.Getenv("FOTOBANK_TEST_BACKUP_INTERVAL"); raw != "" {
 			dur, err := time.ParseDuration(raw)
@@ -297,13 +360,73 @@ func runServer(ctx context.Context, opts serverOpts) error {
 				KeepHourly: cfg.Backup.KeepHourly,
 				KeepDaily:  cfg.Backup.KeepDaily,
 			},
-			Logger: logger,
+			Logger:  logger.With("component", "backup"),
+			Metrics: metricsObj,
 		})
 		bgWG.Go(func() {
 			if err := bw.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
 				fmt.Fprintln(opts.stderr, "backup worker exited:", err)
 			}
 		})
+	}
+
+	// Build the admin listener (metrics + readyz + optional pprof) on
+	// its own goroutine OUTSIDE bgWG. Shutdown is sequenced so that
+	// admin remains reachable while the main API drains: ready=false
+	// → main API Shutdown → bgWG.Wait → admin Shutdown. Operators can
+	// scrape /readyz during graceful shutdown and observe the 503.
+	ready := obs.NewReady()
+	var adminSrv *http.Server
+	adminDone := make(chan error, 1)
+	if cfg.Observability.AdminEnabled {
+		adminMux := obs.NewAdminMux(obs.AdminConfig{
+			Metrics: metricsObj,
+			Ready:   ready,
+			Checks: []obs.ReadyCheck{
+				{
+					Name: "db_ping",
+					Fn: func(ctx context.Context) error {
+						return d.WriteDB().PingContext(ctx)
+					},
+				},
+				obsBackupCheck(cfg, backupDir),
+				{
+					Name: "nas_root",
+					Fn: func(_ context.Context) error {
+						_, err := os.Stat(cfg.NAS.Root)
+						return err
+					},
+				},
+			},
+			ReadyzCfg: obs.ReadyzConfig{
+				DeadlineTotal: 2 * time.Second,
+				CacheTTL:      5 * time.Second,
+			},
+			PprofEnabled: cfg.Observability.PprofEnabled,
+		})
+		adminLn, berr := bindListener(cfg.Observability.AdminListen)
+		if berr != nil {
+			return fmt.Errorf("bind admin listener: %w", berr)
+		}
+		// FOTOBANK_TEST_ADMIN_ADDR_SINK lets e2e tests discover the
+		// post-bind address when admin_listen is "127.0.0.1:0".
+		if sink := os.Getenv("FOTOBANK_TEST_ADMIN_ADDR_SINK"); sink != "" {
+			if werr := os.WriteFile(sink, []byte(adminLn.Addr().String()), 0o600); werr != nil {
+				fmt.Fprintln(opts.stderr, "admin sink write failed:", werr)
+			}
+		}
+		adminSrv = &http.Server{Handler: adminMux}
+		go func() {
+			if err := adminSrv.Serve(adminLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				adminDone <- err
+				return
+			}
+			adminDone <- nil
+		}()
+	} else {
+		// Closed channel makes the final wait a no-op so callers don't
+		// need to special-case the disabled path.
+		close(adminDone)
 	}
 
 	serveErr := make(chan error, 1)
@@ -320,10 +443,20 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		// Serve exited on its own (bind loss, unrecoverable error).
 		// Cancel sigCtx so background workers unwind, then join them
 		// before returning so deferred d.Close cannot race.
+		ready.Store(false)
 		stop()
 		bgWG.Wait()
+		if adminSrv != nil {
+			_ = adminSrv.Shutdown(context.Background())
+			<-adminDone
+		}
 		return err
 	case <-sigCtx.Done():
+		// 1. Flip readiness false so /readyz returns 503 — load
+		//    balancers see "shutting down" before requests start
+		//    failing.
+		ready.Store(false)
+		// 2. Drain the main API listener.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -336,12 +469,50 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			// soon as runServer returns, and a mid-flight processOne
 			// must not hit a closed DB handle.
 			bgWG.Wait()
+			if adminSrv != nil {
+				_ = adminSrv.Shutdown(context.Background())
+				<-adminDone
+			}
 			return err
 		}
 		<-serveErr
-		// Must join before returning: see comment above.
+		// 3. Drain workers (must join before returning: see above).
 		bgWG.Wait()
+		// 4. Shut down admin LAST so /readyz stays scrapeable through
+		//    the bgWG drain.
+		if adminSrv != nil {
+			_ = adminSrv.Shutdown(context.Background())
+			<-adminDone
+		}
 		return nil
+	}
+}
+
+// obsBackupCheck builds the snapshot_dir readyz probe. When backups
+// are disabled the probe is a no-op so the admin listener doesn't
+// fail readiness on a path the operator never asked us to maintain.
+// When enabled, it round-trips a probe file through the snapshot dir
+// to verify both directory existence and write permission — the
+// retention worker hits both as part of its tick, so a passing probe
+// proves the worker would also succeed.
+func obsBackupCheck(cfg *config.Config, dir string) obs.ReadyCheck {
+	if !cfg.Backup.Enabled {
+		return obs.ReadyCheck{
+			Name: "snapshot_dir",
+			Fn:   func(context.Context) error { return nil },
+		}
+	}
+	return obs.ReadyCheck{
+		Name: "snapshot_dir",
+		Fn: func(_ context.Context) error {
+			probe := filepath.Join(dir, ".readyz-probe")
+			f, err := os.OpenFile(probe, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+			if err != nil {
+				return err
+			}
+			_ = f.Close()
+			return os.Remove(probe)
+		},
 	}
 }
 

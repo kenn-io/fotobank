@@ -104,6 +104,8 @@ env = [
   "BROKEREXEC_TEST_EXIT=0",
   "BROKEREXEC_TEST_RECORD_FILE=%s",
 ]
+[observability]
+admin_listen = "127.0.0.1:0"
 `, nasRoot, flashRoot, filepath.Join(tmp, "import.lock"),
 		self, brokerhelper.EnvVar, brokerRecord), 0o600))
 

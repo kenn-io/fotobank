@@ -36,6 +36,8 @@ root = %q
 root = %q
 [http]
 listen_address = "127.0.0.1:0"
+[observability]
+admin_listen = "127.0.0.1:0"
 `, nasRoot, filepath.Join(tmp, "flash")), 0o600))
 
 	addrFile := filepath.Join(tmp, "addr")
@@ -106,6 +108,8 @@ listen_address = "127.0.0.1:0"
 [thumbs]
 poll_interval = "20ms"
 worker_concurrency = 1
+[observability]
+admin_listen = "127.0.0.1:0"
 `, nasRoot, filepath.Join(tmp, "flash")), 0o600))
 
 	dbPath := filepath.Join(tmp, "fotobank.sqlite")
@@ -214,6 +218,8 @@ listen_address = "127.0.0.1:0"
 [thumbs]
 poll_interval = "10ms"
 worker_concurrency = 4
+[observability]
+admin_listen = "127.0.0.1:0"
 `, nasRoot, filepath.Join(tmp, "flash")), 0o600))
 
 	dbPath := filepath.Join(tmp, "fotobank.sqlite")
@@ -325,6 +331,8 @@ mode = "flash_cache"
 originals_cache_days = 1
 [http]
 listen_address = "127.0.0.1:0"
+[observability]
+admin_listen = "127.0.0.1:0"
 `, nasRoot, flashRoot), 0o600))
 
 	addrFile := filepath.Join(tmp, "addr")
@@ -379,6 +387,8 @@ root = %q
 root = %q
 [http]
 listen_address = "unix:%s"
+[observability]
+admin_listen = "127.0.0.1:0"
 `, nasRoot, filepath.Join(tmp, "flash"), sockPath), 0o600))
 
 	t.Setenv("FOTOBANK_CONFIG", cfgPath)
@@ -448,6 +458,8 @@ root = %q
 mode = "header"
 [http]
 listen_address = "127.0.0.1:0"
+[observability]
+admin_listen = "127.0.0.1:0"
 `, nasRoot, filepath.Join(tmp, "flash")), 0o600))
 
 	t.Setenv("FOTOBANK_CONFIG", cfgPath)

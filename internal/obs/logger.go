@@ -73,6 +73,16 @@ func tryParseLevel(s string) (slog.Level, bool) {
 	return 0, false
 }
 
+// IsValidLogLevel reports whether s is a recognized level string.
+// Used by callers (cli/server.go) to warn the operator when an env
+// override like FOTOBANK_LOG_LEVEL is bogus and was therefore ignored
+// by NewLogger. NewLogger itself swallows the bad value silently
+// because at construction time there is no logger yet to emit on.
+func IsValidLogLevel(s string) bool {
+	_, ok := tryParseLevel(s)
+	return ok
+}
+
 // isTerminal is the test seam over term.IsTerminal. Tests stub it to
 // force terminal/non-terminal decisions independent of the actual
 // stdout/stderr the test harness inherits.

@@ -55,6 +55,8 @@ listen_address = "127.0.0.1:0"
 file_lock_path = %q
 [thumbs]
 poll_interval = "100ms"
+[observability]
+admin_listen = "127.0.0.1:0"
 `, nasRoot, flashRoot, filepath.Join(tmp, "import.lock")), 0o600))
 
 	t.Setenv("FOTOBANK_CONFIG", cfg)

@@ -130,6 +130,8 @@ storage_key = "alice-sk"
 listen_address = "127.0.0.1:0"
 [imports]
 file_lock_path = "`+filepath.Join(tmp, "import.lock")+`"
+[observability]
+admin_listen = "127.0.0.1:0"
 `), 0o600))
 	return cfgPath
 }

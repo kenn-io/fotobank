@@ -904,6 +904,32 @@ SELECT a.id, MAX(v.allow_download)
 	return out, rows.Err()
 }
 
+// CountPendingByOp returns the number of scopes whose broker work for
+// op is still in flight. op ∈ {"publish","revoke"}; "publish" maps to
+// broker_status='pending' (queued for PublishScope), "revoke" maps to
+// broker_status='revoking' (queued for RevokeScope). Used as the
+// closure source for the obs.Metrics SharePendingByOp gauge — gauges
+// are scrape-time best-effort, so callers wrap this in a short-lived
+// ctx and treat errors as "report 0".
+func (r *Repo) CountPendingByOp(ctx context.Context, op string) (int64, error) {
+	var status BrokerStatus
+	switch op {
+	case "publish":
+		status = StatusPending
+	case "revoke":
+		status = StatusRevoking
+	default:
+		return 0, fmt.Errorf("CountPendingByOp: unknown op %q", op)
+	}
+	var n int64
+	err := r.ro.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM scopes WHERE broker_status = ?`, string(status)).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count scopes by broker_status: %w", err)
+	}
+	return n, nil
+}
+
 // CountSharedMediaByScope returns the number of media covered by the
 // scope: scope_media rows for media_set, album_media rows for
 // album_live. Returns errs.ErrNotFound if the scope row does not exist.

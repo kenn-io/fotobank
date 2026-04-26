@@ -62,6 +62,12 @@ type Deps struct {
 	// counters and histograms. nil disables metric recording but the
 	// rest of the middleware still runs.
 	Metrics *obs.Metrics
+	// RequestIDHeader is the inbound header name to read for an
+	// upstream-supplied request ID. Empty means generate a fresh UUID
+	// per request. Wired from cfg.Identity.Header.RequestIDHeader so
+	// the middleware honours the configured proxy header in header
+	// mode (and ignores any request-supplied value in stub mode).
+	RequestIDHeader string
 }
 
 // New constructs the Fotobank HTTP handler: a net/http.ServeMux with a
@@ -80,9 +86,10 @@ func New(deps Deps) (http.Handler, error) {
 	}
 	if deps.IdentityProvider != nil {
 		handler = WithMiddleware(WithMiddlewareDeps{
-			Provider: deps.IdentityProvider,
-			Logger:   deps.Logger,
-			Metrics:  deps.Metrics,
+			Provider:        deps.IdentityProvider,
+			Logger:          deps.Logger,
+			Metrics:         deps.Metrics,
+			RequestIDHeader: deps.RequestIDHeader,
 		})(handler)
 	}
 	return handler, nil
