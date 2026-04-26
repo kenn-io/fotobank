@@ -10,6 +10,7 @@ import (
 )
 
 func TestNewLogger_BufferAutoIsJSON(t *testing.T) {
+	hermeticLoggerEnv(t)
 	var buf bytes.Buffer
 	lg := NewLogger(LoggerConfig{Format: "auto", Level: "info"}, &buf)
 	lg.Info("hello", "k", "v")
@@ -19,6 +20,7 @@ func TestNewLogger_BufferAutoIsJSON(t *testing.T) {
 }
 
 func TestNewLogger_TerminalAutoIsText(t *testing.T) {
+	hermeticLoggerEnv(t)
 	prev := isTerminal
 	isTerminal = func(uintptr) bool { return true }
 	t.Cleanup(func() { isTerminal = prev })
@@ -34,6 +36,7 @@ func TestNewLogger_TerminalAutoIsText(t *testing.T) {
 }
 
 func TestNewLogger_ForcedJSON(t *testing.T) {
+	hermeticLoggerEnv(t)
 	var buf bytes.Buffer
 	lg := NewLogger(LoggerConfig{Format: "json", Level: "info"}, &buf)
 	lg.Info("x")
@@ -41,6 +44,7 @@ func TestNewLogger_ForcedJSON(t *testing.T) {
 }
 
 func TestNewLogger_ForcedText(t *testing.T) {
+	hermeticLoggerEnv(t)
 	var buf bytes.Buffer
 	lg := NewLogger(LoggerConfig{Format: "text", Level: "info"}, &buf)
 	lg.Info("x")
@@ -48,6 +52,7 @@ func TestNewLogger_ForcedText(t *testing.T) {
 }
 
 func TestNewLogger_LevelDebugVisible(t *testing.T) {
+	hermeticLoggerEnv(t)
 	var buf bytes.Buffer
 	lg := NewLogger(LoggerConfig{Format: "json", Level: "debug"}, &buf)
 	lg.Debug("dbg")
@@ -55,6 +60,7 @@ func TestNewLogger_LevelDebugVisible(t *testing.T) {
 }
 
 func TestNewLogger_LevelInfoSuppressesDebug(t *testing.T) {
+	hermeticLoggerEnv(t)
 	var buf bytes.Buffer
 	lg := NewLogger(LoggerConfig{Format: "json", Level: "info"}, &buf)
 	lg.Debug("dbg")
@@ -81,6 +87,7 @@ func TestNewLogger_BogusEnvLevelFallsBackSilently(t *testing.T) {
 }
 
 func TestNewLogger_AddSource(t *testing.T) {
+	hermeticLoggerEnv(t)
 	var buf bytes.Buffer
 	lg := NewLogger(LoggerConfig{Format: "json", Level: "info", AddSource: true}, &buf)
 	lg.Info("here")
@@ -98,3 +105,13 @@ func (t *ttyWriter) Fd() uintptr                 { return 1 }
 
 // Ensure slog uses our handler, not the default.
 var _ slog.Handler = (*slog.JSONHandler)(nil)
+
+// hermeticLoggerEnv clears FOTOBANK_LOG_LEVEL for the duration of t so
+// a developer running the suite with the env set cannot perturb level
+// expectations in tests that don't specifically exercise the override.
+// Tests that intentionally drive the env path call t.Setenv themselves
+// after this helper.
+func hermeticLoggerEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("FOTOBANK_LOG_LEVEL", "")
+}

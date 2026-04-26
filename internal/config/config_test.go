@@ -521,6 +521,26 @@ admin_listen = "`+addr+`"
 	}
 }
 
+// TestObservabilityRejectsLocalhostHostname pins the security choice
+// that `localhost` is NOT an acceptable admin bind, even though it
+// commonly resolves to a loopback address. /etc/hosts mappings can
+// vary and the unauthenticated admin listener must rely on the kernel
+// giving it a literal loopback IP, not on hostname resolution.
+func TestObservabilityRejectsLocalhostHostname(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[observability]
+admin_enabled = true
+admin_listen = "localhost:9090"
+`), 0o600))
+	_, err := config.Load(p)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+	require.Contains(t, err.Error(), "loopback")
+}
+
 func TestObservabilityDisabledSkipsAdminListenValidation(t *testing.T) {
 	tmp := t.TempDir()
 	p := filepath.Join(tmp, "c.toml")

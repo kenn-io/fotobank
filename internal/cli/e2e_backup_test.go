@@ -42,11 +42,14 @@ func stableCopySnapshot(t *testing.T, snapDir, dst string) string {
 			time.Sleep(retryGap)
 			continue
 		}
-		if copyAtomic(src, dst) {
+		if copyAtomic(t, src, dst) {
 			return dst
 		}
-		// Either the source vanished mid-copy or dst was left over
-		// from a partial prior attempt; the worker won this race.
+		// The source vanished mid-pick or dst was left over from a
+		// partial prior attempt; the worker won this race. Hard I/O
+		// failures (permission, disk-full, etc.) are NOT funneled
+		// through this retry — copyAtomic fails the test directly via
+		// require so we don't mask them as "ran out of retries".
 		_ = os.Remove(dst)
 		time.Sleep(retryGap)
 	}
@@ -70,31 +73,31 @@ func pickAnySnapshot(t *testing.T, dir string) string {
 	return ""
 }
 
-// copyAtomic copies src to dst, returning false if any step in the
-// sequence is racy in a recoverable way (source vanished, dst left
-// over from a partial prior attempt). Hard I/O errors panic via the
-// caller's require helper.
-func copyAtomic(src, dst string) bool {
+// copyAtomic copies src to dst. Returns false ONLY for the two
+// recoverable race conditions: the source vanished between
+// pickAnySnapshot and Open (worker swept it), or dst already exists
+// from a partial prior attempt. Every other I/O failure (permission
+// denied, ENOSPC, partial write) fails the test immediately via
+// require — the helper is not a generic best-effort copy and must
+// never paper over hard errors as "another retry needed".
+func copyAtomic(t *testing.T, src, dst string) bool {
+	t.Helper()
+	r := require.New(t)
 	in, err := os.Open(src)
 	if errors.Is(err, os.ErrNotExist) {
 		return false
 	}
-	if err != nil {
-		return false
-	}
+	r.NoError(err, "copyAtomic: open source %s", src)
 	defer in.Close()
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if errors.Is(err, os.ErrExist) {
 		return false
 	}
-	if err != nil {
-		return false
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return false
-	}
-	return out.Close() == nil
+	r.NoError(err, "copyAtomic: create dst %s", dst)
+	_, err = io.Copy(out, in)
+	r.NoError(err, "copyAtomic: copy %s -> %s", src, dst)
+	r.NoError(out.Close(), "copyAtomic: close dst %s", dst)
+	return true
 }
 
 // writeBackupE2EConfig produces a TOML config sufficient for a server

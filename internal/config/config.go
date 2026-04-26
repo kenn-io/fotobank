@@ -315,7 +315,10 @@ func isLoopbackBind(addr string) bool {
 // isLoopbackOrUnixListen reports whether addr is a loopback TCP bind or
 // a unix-socket path. The admin listener carries unauthenticated
 // /metrics and optionally pprof, so non-loopback binds are rejected at
-// validation time as defense in depth.
+// validation time as defense in depth. We accept only literal loopback
+// IPs (127.0.0.1, ::1, expanded forms) and unix: paths — `localhost` is
+// rejected because /etc/hosts mappings can vary and could resolve to a
+// non-loopback address in unusual environments.
 func isLoopbackOrUnixListen(addr string) bool {
 	// `unix:` prefix has no host:port shape; check first so SplitHostPort
 	// does not treat the path as a port.
@@ -325,9 +328,6 @@ func isLoopbackOrUnixListen(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return false
-	}
-	if host == "localhost" {
-		return true
 	}
 	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
 		return true
