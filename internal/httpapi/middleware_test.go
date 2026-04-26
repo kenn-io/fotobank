@@ -202,3 +202,17 @@ func TestPrincipalDisplayCacheTTLSuppressesRepeatUpsert(t *testing.T) {
 	r.True(ok2)
 	r.Equal("Alice2", h2, "TTL suppression: second request within ttl must not re-upsert")
 }
+
+func TestLoggerFromContext_FallbackToDefault(t *testing.T) {
+	// No logger in context -> returns slog.Default(); never returns nil.
+	lg := httpapi.LoggerFromContext(context.Background())
+	require.NotNil(t, lg)
+}
+
+func TestLoggerFromContext_ReturnsAttached(t *testing.T) {
+	r := require.New(t)
+	want := slog.New(slog.NewJSONHandler(io.Discard, nil)).With("k", "v")
+	ctx := httpapi.WithLogger(context.Background(), want)
+	got := httpapi.LoggerFromContext(ctx)
+	r.Equal(want, got)
+}
