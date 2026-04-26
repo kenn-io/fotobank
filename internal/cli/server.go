@@ -362,6 +362,13 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	// so an empty value here is harmless.
 	backupDir := backupDirFor(cfg)
 	if cfg.Backup.Enabled {
+		// Pre-create the snapshot dir at boot so /readyz's snapshot_dir
+		// probe doesn't report 503 during the window between server
+		// start and the worker's first 15-minute tick. The retention
+		// worker would otherwise create it lazily on first Snapshot.
+		if err := os.MkdirAll(backupDir, 0o700); err != nil {
+			return fmt.Errorf("create backup dir: %w", err)
+		}
 		interval := 15 * time.Minute
 		if raw := os.Getenv("FOTOBANK_TEST_BACKUP_INTERVAL"); raw != "" {
 			dur, err := time.ParseDuration(raw)

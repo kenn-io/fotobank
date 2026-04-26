@@ -79,6 +79,7 @@ Design docs live in `docs/superpowers/specs/`, plans in `docs/superpowers/plans/
 - **Plan C** — Thumbnail pipeline (queue, worker, flash cache subdir, `/thumb` endpoint). **Done.**
 - **Plan D** — Albums (CRUD service + HTTP + CLI; no sharing). **In design.**
 - **Plan E** — Sharing: scopes, broker registration, outbox worker, cross-owner reads. **Deferred.**
+- **Observability** — Structured logging (slog), Prometheus metrics, /readyz, admin HTTP listener. **Done.**
 
 ## Instructions for agents
 
