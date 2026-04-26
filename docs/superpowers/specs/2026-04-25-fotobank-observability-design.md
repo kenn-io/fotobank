@@ -473,16 +473,27 @@ and have no registration step to confine.
 
 ### Cardinality budget
 
+PrometheusHistogram emits `<name>_bucket{le=...}` × N buckets, plus
+`_sum`, `_count` per labeled instance — call this the "histogram fan
+factor": HTTP histograms have 11 le buckets → 13 series per (method,
+route); worker histograms have 10 le buckets → 12 series per labeled
+instance. Counters are 1 series per label tuple.
+
 | Group | Series at idle | Bound under load |
 |---|---|---|
-| HTTP counters | 0 | ~30 (8 methods × small route set × 4 classes; sparse in practice) |
-| HTTP duration | 0 | ~10 (per active method+route) |
-| Worker counters/durations | 11 | 11 |
-| Gauges | 7 | 7 |
-| Build/runtime | ~10 | ~10 |
-| **Total** | **~28** | **~70** |
+| HTTP counters (`http_requests_total{method,route,status_class}`) | 0 | ~30 (8 methods × small route set × 4 classes; sparse) |
+| HTTP duration (`http_request_duration_seconds`, 13 ser/instance) | 0 | ~130 (~10 active method+route × 13) |
+| Worker counters: thumb (3) + share publish (3) + share revoke (3) + backup snap (2) + backup retention sweep (2) + thumb leases swept (1) + backup retention deleted (1) | 15 | 15 |
+| Worker durations (5 histograms × ~3 result labels avg × 12 ser) | ~60 | ~180 |
+| Gauges (build_info ×1 + backup unix ×1 + backup seconds_since ×1 + thumb_queue_depth ×4 + share_pending ×2) | 9 | 9 |
+| Build/runtime (`go_*`, `process_*` from WriteProcessMetrics) | ~30 | ~30 |
+| **Total** | **~115** | **~395** |
 
-Comfortable for a single-Prometheus homelab.
+Still comfortable for a single-Prometheus homelab — the bound under
+load is dominated by the histogram fan, not by labeled cardinality.
+The previous "~70 series total" estimate undercounted histograms by
+treating each labeled instance as one series; the corrected numbers
+above account for the per-bucket fan-out.
 
 ### What's deliberately NOT in v1
 
@@ -592,20 +603,28 @@ Changes:
 4. Bind admin listener (when `cfg.Observability.AdminEnabled`) on its
    own `http.Server` and `Serve` it from a dedicated goroutine tracked
    by a separate `var adminDone chan error`. **Not** part of `bgWG` —
-   `bgWG` is for goroutines that hold references to `d` (SQL) or
-   `storeLayer`; the admin listener references neither (it serves
-   metrics from `obs.Metrics` and runs `/readyz` checks via injected
-   closures), so its lifecycle is independent.
+   `bgWG` exists for the worker goroutines we wait on before tearing
+   down DB/storage; the admin listener's lifecycle is decoupled so
+   that `bgWG.Wait()` doesn't deadlock waiting on the admin server.
+   The admin listener's request handlers DO touch shared state (DB
+   pings via `/readyz`, snapshot dir stat, metrics scrapers reading
+   pull-source closures over the thumb queue and share repo) — that
+   state must remain alive until step 5.4 below. Concretely: do NOT
+   `db.Close()` or release `storeLayer` until after `adminDone` returns.
 5. On graceful shutdown, run in this order:
    1. `obs.Ready.Store(false)` — next `/readyz` returns 503 immediately.
    2. Shut down main API listener (`mainSrv.Shutdown`).
    3. `bgWG.Wait()` — workers drain.
    4. Shut down admin listener (`adminSrv.Shutdown`); wait on
       `adminDone` for the serve goroutine to return.
+   5. Only now release admin-listener-dependent resources (`d.Close()`,
+      `storeLayer` cleanup). Releasing earlier risks an in-flight
+      scrape or `/readyz` probe seeing closed handles.
    This sequence guarantees: admin Serve does not deadlock `bgWG.Wait()`
    (admin is not in it); a Prometheus scrape during shutdown sees the
    `/readyz` flip before any listener closes; the metrics endpoint is
-   the last thing to disappear.
+   the last thing to disappear; admin's DB/storage dependencies stay
+   live until after admin has stopped accepting connections.
 
 ### `internal/httpapi/middleware.go`
 

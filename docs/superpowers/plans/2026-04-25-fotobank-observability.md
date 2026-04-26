@@ -200,37 +200,27 @@ type ObservabilityLogging struct {
 
 - [ ] **Step 4: Add defaults in `applyDefaults`**
 
-Append to the function body (after the existing `Backup` defaults block):
+Use `meta.IsDefined("observability", "admin_enabled")` to detect explicit opt-out, matching the existing `Backup.Enabled` pattern. The earlier zero-value-vs-else-block approach was a footgun: an operator writing `[observability]\npprof_enabled = true` would silently disable the admin listener. Append to the function body (after the existing `Backup` defaults block):
 
 ```go
 	// Observability defaults: admin listener on by default at loopback
 	// 9090; auto-format logging at info; pprof off; add_source off.
-	// AdminEnabled is a tri-state via toml MetaData would be over-engineered;
-	// we treat the zero value of the parsed Observability table as "config
-	// did not provide [observability]" and apply defaults wholesale.
-	if c.Observability == (Observability{}) {
-		c.Observability = Observability{
-			AdminEnabled: true,
-			AdminListen:  "127.0.0.1:9090",
-			Logging: ObservabilityLogging{
-				Format: "auto",
-				Level:  "info",
-			},
-		}
-	} else {
-		if c.Observability.AdminListen == "" {
-			c.Observability.AdminListen = "127.0.0.1:9090"
-		}
-		if c.Observability.Logging.Format == "" {
-			c.Observability.Logging.Format = "auto"
-		}
-		if c.Observability.Logging.Level == "" {
-			c.Observability.Logging.Level = "info"
-		}
+	// Use meta.IsDefined so an operator who writes [observability] for
+	// other fields (e.g. pprof_enabled) still gets AdminEnabled=true
+	// unless they explicitly set admin_enabled=false.
+	if !meta.IsDefined("observability", "admin_enabled") {
+		c.Observability.AdminEnabled = true
+	}
+	if c.Observability.AdminListen == "" {
+		c.Observability.AdminListen = "127.0.0.1:9090"
+	}
+	if c.Observability.Logging.Format == "" {
+		c.Observability.Logging.Format = "auto"
+	}
+	if c.Observability.Logging.Level == "" {
+		c.Observability.Logging.Level = "info"
 	}
 ```
-
-Note: the default for `AdminEnabled` is **true** when the whole table is zero-valued. When the operator provides `[observability]` without `admin_enabled`, TOML decodes `false` (Go's zero value) — that is "explicit opt-out" by the user. This matches the spec: a config file with no `[observability]` block boots cleanly with admin on; a file that mentions `[observability]` without setting `admin_enabled` is taken at face value.
 
 - [ ] **Step 5: Add validation in `Validate`**
 
@@ -263,7 +253,10 @@ Add the helper at the bottom of the file:
 // isLoopbackOrUnixListen reports whether addr is a loopback TCP bind or
 // a unix-socket path. The admin listener carries unauthenticated
 // /metrics and optionally pprof, so non-loopback binds are rejected at
-// validation time as defense in depth.
+// validation time as defense in depth. We accept only literal loopback
+// IPs (127.0.0.1, ::1, expanded forms) and unix: paths — `localhost`
+// is rejected because /etc/hosts mappings can vary and could resolve
+// to a non-loopback address in unusual environments.
 func isLoopbackOrUnixListen(addr string) bool {
 	if strings.HasPrefix(addr, "unix:") {
 		return true
@@ -272,8 +265,7 @@ func isLoopbackOrUnixListen(addr string) bool {
 	if err != nil {
 		return false
 	}
-	switch host {
-	case "127.0.0.1", "::1", "localhost":
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
 		return true
 	}
 	return false
@@ -1827,6 +1819,15 @@ Expected: `WithMiddlewareDeps` undefined / signature mismatch.
 
 - [ ] **Step 3: Replace `WithMiddleware` in `internal/httpapi/middleware.go`**
 
+**Important architectural note (do not skip):** the metrics + final-access-log layer cannot read `r.Pattern` and per-request logger fields directly from the outer `r` after the inner chain returns. Two reasons:
+
+1. `r.WithContext(ctx)` creates a fresh `*Request` — pattern set on the inner request never propagates back to the outer one.
+2. `ServeMux` sets `r.Pattern` on a fresh `*Request` it constructs internally just before calling the route handler — control returns to the outer middleware via the original `r` that has no `Pattern` set.
+
+Fix: store a pointer to a small mutable `requestObs` struct in the context. Inner layers (identity, the route-pattern capture handler) update its fields. The outer metrics+log layer reads from it after the chain returns.
+
+For pattern capture: every handler registered on the main mux must be wrapped with `WrapMuxHandler` (defined below), which copies `r.Pattern` from the request that ServeMux passes to the handler into the shared `requestObs`. T13's `cli/server.go` is responsible for applying `WrapMuxHandler` at registration time.
+
 Replace the existing `func WithMiddleware(idp identity.Provider) ...` body and signature with:
 
 ```go
@@ -1839,6 +1840,41 @@ type WithMiddlewareDeps struct {
 	RequestIDHeader string
 }
 
+// requestObs is per-request mutable state shared across the middleware
+// chain via context. The outer metrics+log layer allocates one per
+// request; inner layers (identity, the route-capture handler wrapper)
+// mutate fields on it; the outer layer reads them after the chain
+// returns. Stored as a pointer so the value the outer layer reads is
+// the same one inner layers wrote to.
+type requestObs struct {
+	routeTemplate string       // "unmatched" until WrapMuxHandler runs
+	logger        *slog.Logger // augmented by identityWrap with principal fields
+}
+
+type ctxKeyObsType struct{}
+
+var ctxKeyObs ctxKeyObsType
+
+func obsFromContext(ctx context.Context) *requestObs {
+	o, _ := ctx.Value(ctxKeyObs).(*requestObs)
+	return o
+}
+
+// WrapMuxHandler is the per-route wrapper that captures r.Pattern into
+// the shared per-request state. ServeMux sets Pattern on the request
+// it dispatches to the handler — this wrapper is THE handler from
+// ServeMux's perspective, so it sees the populated Pattern. Without
+// this wrapper, the outer metrics layer records every request as
+// route="unmatched". Apply at registration time via T13's wiring.
+func WrapMuxHandler(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if o := obsFromContext(r.Context()); o != nil {
+			o.routeTemplate = normalizeRouteTemplate(r.Pattern)
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
 // WithMiddleware composes the main-listener middleware stack:
 //
 //	metrics → recovery → identity → display-cache (when configured) → handler
@@ -1847,11 +1883,19 @@ type WithMiddlewareDeps struct {
 // is outside identity so 401/403 still count as 4xx. The X-Request-ID
 // response header is set BEFORE identity resolution so identity-
 // rejection logs carry req_id.
+//
+// Per-request mutable state (route template + augmented logger) lives
+// in a *requestObs allocated by metricsWrap and stored in ctx. Inner
+// layers mutate its fields; the outer layer reads them after the
+// inner chain returns. This indirection is necessary because Go's
+// r.WithContext clones the Request, so outer-layer reads of inner
+// mutations on r (such as r.Pattern set by ServeMux) would otherwise
+// be lost.
 func WithMiddleware(deps WithMiddlewareDeps) func(http.Handler) http.Handler {
 	idp := deps.Provider
-	logger := deps.Logger
-	if logger == nil {
-		logger = slog.Default()
+	baseLogger := deps.Logger
+	if baseLogger == nil {
+		baseLogger = slog.Default()
 	}
 	m := deps.Metrics
 
@@ -1867,24 +1911,30 @@ func WithMiddleware(deps WithMiddlewareDeps) func(http.Handler) http.Handler {
 					status = http.StatusForbidden
 				}
 				http.Error(w, http.StatusText(status), status)
-				LoggerFromContext(r.Context()).Warn("request rejected",
-					"method", r.Method, "path", r.URL.Path,
-					"status", status, "err", err)
+				if o := obsFromContext(r.Context()); o != nil && o.logger != nil {
+					o.logger.Warn("request rejected",
+						"method", r.Method, "path", r.URL.Path,
+						"status", status, "err", err)
+				}
 				return
 			}
 			ctx := context.WithValue(r.Context(), ctxKeyIdentity, id)
-			// Augment the per-request logger with principal fields.
-			lg := LoggerFromContext(ctx).With(
-				"principal_hub", id.Principal.Hub,
-				"principal_user_id", id.Principal.UserID,
-				"principal", id.Principal.OwnersPrincipal().String(),
-			)
-			ctx = WithLogger(ctx, lg)
+			// Augment the per-request logger with principal fields by
+			// updating the SHARED state, not by attaching a new logger
+			// to a forked context (the outer layer wouldn't see it).
+			if o := obsFromContext(ctx); o != nil {
+				o.logger = o.logger.With(
+					"principal_hub", id.Principal.Hub,
+					"principal_user_id", id.Principal.UserID,
+					"principal", id.Principal.OwnersPrincipal().String(),
+				)
+				ctx = WithLogger(ctx, o.logger)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 
-	recoveryWrap := WithRecovery(logger.With("component", "httpapi"))
+	recoveryWrap := WithRecovery(baseLogger.With("component", "httpapi"))
 
 	metricsWrap := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1899,15 +1949,20 @@ func WithMiddleware(deps WithMiddlewareDeps) func(http.Handler) http.Handler {
 				reqID = uuid.NewString()
 			}
 			w.Header().Set("X-Request-ID", reqID)
-			ctx := context.WithValue(r.Context(), ctxKeyRequestID, reqID)
-			lg := logger.With("component", "httpapi", "req_id", reqID)
-			ctx = WithLogger(ctx, lg)
+
+			obs := &requestObs{
+				routeTemplate: "unmatched",
+				logger:        baseLogger.With("component", "httpapi", "req_id", reqID),
+			}
+			ctx := context.WithValue(r.Context(), ctxKeyObs, obs)
+			ctx = context.WithValue(ctx, ctxKeyRequestID, reqID)
+			ctx = WithLogger(ctx, obs.logger)
 
 			rw := &statusCapture{ResponseWriter: w, code: http.StatusOK}
 			next.ServeHTTP(rw, r.WithContext(ctx))
 
 			method := normalizeMethod(r.Method)
-			route := routeTemplate(r)
+			route := obs.routeTemplate // populated by WrapMuxHandler if matched
 			class := statusClass(rw.code)
 
 			if m != nil {
@@ -1916,8 +1971,9 @@ func WithMiddleware(deps WithMiddlewareDeps) func(http.Handler) http.Handler {
 					Update(time.Since(start).Seconds())
 			}
 
-			// Final access log carries the resolved fields.
-			LoggerFromContext(ctx).Info("request",
+			// Final access log uses the augmented logger (now with
+			// principal_* fields if identity resolved).
+			obs.logger.Info("request",
 				"method", method, "route", route, "status", rw.code,
 				"dur_ms", time.Since(start).Milliseconds())
 		})
@@ -1938,13 +1994,18 @@ func normalizeMethod(m string) string {
 	}
 }
 
-// routeTemplate returns the registered ServeMux pattern for r, or
-// "unmatched" when the request didn't match any route. The returned
-// value has its method prefix and trailing slashes stripped, and
-// "{name}" path-segment placeholders are replaced with ":name" so
-// the metric label remains stable across renames of the placeholder.
-func routeTemplate(r *http.Request) string {
-	pat := r.Pattern
+// normalizeRouteTemplate normalizes a registered ServeMux pattern for
+// use as a metric label. Returns "unmatched" when pat is empty (the
+// route didn't match any registered handler). Strips method prefix and
+// host prefix, then rewrites "{name}" path-segment placeholders to
+// ":name" so the metric label is stable across renames.
+//
+// Called by WrapMuxHandler with r.Pattern from the request that
+// ServeMux dispatched to a registered handler. Outer middleware never
+// calls this directly because the outer Request has no Pattern set
+// (ServeMux mutates Pattern on a freshly-cloned Request before
+// invoking the handler — see the architectural note above).
+func normalizeRouteTemplate(pat string) string {
 	if pat == "" {
 		return "unmatched"
 	}
