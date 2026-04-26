@@ -55,15 +55,16 @@ func EnsureDefault(path string) (bool, error) {
 }
 
 type Config struct {
-	Flash    Flash    `toml:"flash"`
-	NAS      NAS      `toml:"nas"`
-	Storage  Storage  `toml:"storage"`
-	Identity Identity `toml:"identity"`
-	HTTP     HTTP     `toml:"http"`
-	Imports  Imports  `toml:"imports"`
-	Thumbs   Thumbs   `toml:"thumbs"`
-	Broker   Broker   `toml:"broker"`
-	Backup   Backup   `toml:"backup"`
+	Flash         Flash         `toml:"flash"`
+	NAS           NAS           `toml:"nas"`
+	Storage       Storage       `toml:"storage"`
+	Identity      Identity      `toml:"identity"`
+	HTTP          HTTP          `toml:"http"`
+	Imports       Imports       `toml:"imports"`
+	Thumbs        Thumbs        `toml:"thumbs"`
+	Broker        Broker        `toml:"broker"`
+	Backup        Backup        `toml:"backup"`
+	Observability Observability `toml:"observability"`
 }
 
 type Flash struct {
@@ -144,6 +145,19 @@ type Backup struct {
 	Keep15Min  int    `toml:"keep_15min"`
 	KeepHourly int    `toml:"keep_hourly"`
 	KeepDaily  int    `toml:"keep_daily"`
+}
+
+type Observability struct {
+	AdminEnabled bool                 `toml:"admin_enabled"`
+	AdminListen  string               `toml:"admin_listen"`
+	PprofEnabled bool                 `toml:"pprof_enabled"`
+	Logging      ObservabilityLogging `toml:"logging"`
+}
+
+type ObservabilityLogging struct {
+	Format    string `toml:"format"`
+	Level     string `toml:"level"`
+	AddSource bool   `toml:"add_source"`
 }
 
 // Load reads the file at path, parses it as TOML, applies defaults,
@@ -249,6 +263,24 @@ func (c *Config) Validate() error {
 	if c.Backup.Dir != "" && !filepath.IsAbs(c.Backup.Dir) {
 		return fmt.Errorf("%w: backup.dir must be absolute when set", errs.ErrBadConfiguration)
 	}
+	if c.Observability.AdminEnabled {
+		if !isLoopbackOrUnixListen(c.Observability.AdminListen) {
+			return fmt.Errorf("%w: observability.admin_listen must be loopback (127.0.0.1, ::1) or unix:; got %q",
+				errs.ErrBadConfiguration, c.Observability.AdminListen)
+		}
+	}
+	switch c.Observability.Logging.Format {
+	case "auto", "json", "text":
+	default:
+		return fmt.Errorf("%w: observability.logging.format=%q (must be auto|json|text)",
+			errs.ErrBadConfiguration, c.Observability.Logging.Format)
+	}
+	switch c.Observability.Logging.Level {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("%w: observability.logging.level=%q (must be debug|info|warn|error)",
+			errs.ErrBadConfiguration, c.Observability.Logging.Level)
+	}
 	return nil
 }
 
@@ -278,6 +310,25 @@ func isLoopbackBind(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// isLoopbackOrUnixListen reports whether addr is a loopback TCP bind or
+// a unix-socket path. The admin listener carries unauthenticated
+// /metrics and optionally pprof, so non-loopback binds are rejected at
+// validation time as defense in depth.
+func isLoopbackOrUnixListen(addr string) bool {
+	if strings.HasPrefix(addr, "unix:") {
+		return true
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	switch host {
+	case "127.0.0.1", "::1", "localhost":
+		return true
+	}
+	return false
 }
 
 func applyDefaults(c *Config, meta toml.MetaData) {
@@ -370,6 +421,30 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	}
 	if !meta.IsDefined("backup", "keep_daily") {
 		c.Backup.KeepDaily = 7
+	}
+	// Observability defaults: admin listener on by default at loopback
+	// 9090; auto-format logging at info; pprof off; add_source off.
+	// Treat the zero value of the parsed Observability table as "config
+	// did not provide [observability]" and apply defaults wholesale.
+	if c.Observability == (Observability{}) {
+		c.Observability = Observability{
+			AdminEnabled: true,
+			AdminListen:  "127.0.0.1:9090",
+			Logging: ObservabilityLogging{
+				Format: "auto",
+				Level:  "info",
+			},
+		}
+	} else {
+		if c.Observability.AdminListen == "" {
+			c.Observability.AdminListen = "127.0.0.1:9090"
+		}
+		if c.Observability.Logging.Format == "" {
+			c.Observability.Logging.Format = "auto"
+		}
+		if c.Observability.Logging.Level == "" {
+			c.Observability.Logging.Level = "info"
+		}
 	}
 }
 

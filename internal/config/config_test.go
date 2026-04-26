@@ -471,3 +471,84 @@ keep_daily = 0
 	require.NoError(t, err)
 	require.False(t, cfg.Backup.Enabled)
 }
+
+func TestObservabilityDefaults(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	r.NoError(os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+`), 0o600))
+	cfg, err := config.Load(p)
+	r.NoError(err)
+	r.True(cfg.Observability.AdminEnabled)
+	r.Equal("127.0.0.1:9090", cfg.Observability.AdminListen)
+	r.False(cfg.Observability.PprofEnabled)
+	r.Equal("auto", cfg.Observability.Logging.Format)
+	r.Equal("info", cfg.Observability.Logging.Level)
+	r.False(cfg.Observability.Logging.AddSource)
+}
+
+func TestObservabilityRejectsNonLoopbackAdmin(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[observability]
+admin_enabled = true
+admin_listen = "0.0.0.0:9090"
+`), 0o600))
+	_, err := config.Load(p)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+	require.Contains(t, err.Error(), "loopback")
+}
+
+func TestObservabilityAcceptsLoopbackAndUnix(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:9090", "[::1]:0", "unix:/tmp/fb.sock"} {
+		tmp := t.TempDir()
+		p := filepath.Join(tmp, "c.toml")
+		require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[observability]
+admin_listen = "`+addr+`"
+`), 0o600))
+		_, err := config.Load(p)
+		require.NoError(t, err, "addr=%s must be accepted", addr)
+	}
+}
+
+func TestObservabilityDisabledSkipsAdminListenValidation(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[observability]
+admin_enabled = false
+admin_listen = "192.168.1.5:9090"
+`), 0o600))
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	require.False(t, cfg.Observability.AdminEnabled)
+}
+
+func TestObservabilityRejectsBadFormatAndLevel(t *testing.T) {
+	for _, body := range []string{
+		`[observability.logging]
+format = "xml"`,
+		`[observability.logging]
+level = "verbose"`,
+	} {
+		tmp := t.TempDir()
+		p := filepath.Join(tmp, "c.toml")
+		require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+`+body), 0o600))
+		_, err := config.Load(p)
+		require.ErrorIs(t, err, errs.ErrBadConfiguration, "body=%q must reject", body)
+	}
+}
