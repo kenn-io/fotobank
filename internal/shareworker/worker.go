@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wesm/fotobank/internal/broker"
+	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/share"
 )
 
@@ -28,6 +29,10 @@ type Config struct {
 	Rand *rand.Rand
 	// Logger is optional; a silent slog.Logger is used if nil.
 	Logger *slog.Logger
+	// Metrics is optional; when nil, no observability counters/histograms
+	// are emitted. Production wires this from obs.NewMetrics; tests use
+	// obs.NewTestMetrics or leave nil to skip the assertion surface.
+	Metrics *obs.Metrics
 }
 
 // Worker drives the outbox. Call New to construct, then Run (long-
@@ -108,10 +113,16 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 }
 
 func (w *Worker) processPending(ctx context.Context, s share.Scope) error {
+	start := time.Now()
 	err := w.cfg.Broker.PublishScope(ctx, s)
 	if err == nil {
 		if _, merr := w.cfg.Repo.MarkPublished(ctx, s.UUID, w.cfg.Now()); merr != nil && !isCtxErr(merr) {
 			w.cfg.Logger.Error("mark-published call errored", "uuid", s.UUID, "err", merr)
+		}
+		w.cfg.Logger.Info("scope publish ok", "uuid", s.UUID)
+		if w.cfg.Metrics != nil {
+			w.cfg.Metrics.SharePublishes("ok").Inc()
+			w.cfg.Metrics.SharePublishDuration("ok").Update(time.Since(start).Seconds())
 		}
 		return nil
 	}
@@ -119,14 +130,25 @@ func (w *Worker) processPending(ctx context.Context, s share.Scope) error {
 		return err
 	}
 	w.recordFailure(ctx, s, share.StatusPending, err)
+	if w.cfg.Metrics != nil {
+		result := publishResult(err, s.BrokerAttempts)
+		w.cfg.Metrics.SharePublishes(result).Inc()
+		w.cfg.Metrics.SharePublishDuration(result).Update(time.Since(start).Seconds())
+	}
 	return nil
 }
 
 func (w *Worker) processRevoking(ctx context.Context, s share.Scope) error {
+	start := time.Now()
 	err := w.cfg.Broker.RevokeScope(ctx, s.UUID)
 	if err == nil {
 		if _, merr := w.cfg.Repo.MarkRevoked(ctx, s.UUID, w.cfg.Now()); merr != nil && !isCtxErr(merr) {
 			w.cfg.Logger.Error("mark-revoked call errored", "uuid", s.UUID, "err", merr)
+		}
+		w.cfg.Logger.Info("scope revoke ok", "uuid", s.UUID)
+		if w.cfg.Metrics != nil {
+			w.cfg.Metrics.ShareRevokes("ok").Inc()
+			w.cfg.Metrics.ShareRevokeDuration("ok").Update(time.Since(start).Seconds())
 		}
 		return nil
 	}
@@ -134,13 +156,16 @@ func (w *Worker) processRevoking(ctx context.Context, s share.Scope) error {
 		return err
 	}
 	w.recordFailure(ctx, s, share.StatusRevoking, err)
+	if w.cfg.Metrics != nil {
+		result := publishResult(err, s.BrokerAttempts)
+		w.cfg.Metrics.ShareRevokes(result).Inc()
+		w.cfg.Metrics.ShareRevokeDuration(result).Update(time.Since(start).Seconds())
+	}
 	return nil
 }
 
 func (w *Worker) recordFailure(ctx context.Context, s share.Scope, phase share.BrokerStatus, err error) {
-	permanent := errors.Is(err, broker.ErrBrokerPermanent)
-	exhausted := s.BrokerAttempts+1 >= share.MaxBrokerAttempts
-	if permanent || exhausted {
+	if terminalIfFailed(err, s.BrokerAttempts) {
 		if _, merr := w.cfg.Repo.MarkFailed(ctx, s.UUID, phase, err.Error()); merr != nil && !isCtxErr(merr) {
 			w.cfg.Logger.Error("mark-failed call errored", "uuid", s.UUID, "err", merr)
 		}
@@ -150,6 +175,24 @@ func (w *Worker) recordFailure(ctx context.Context, s share.Scope, phase share.B
 	if _, merr := w.cfg.Repo.MarkAttemptFailed(ctx, s.UUID, phase, err.Error(), nextAt); merr != nil && !isCtxErr(merr) {
 		w.cfg.Logger.Error("mark-attempt-failed call errored", "uuid", s.UUID, "err", merr)
 	}
+}
+
+// terminalIfFailed reports whether the next attempt would call
+// MarkFailed (true) versus MarkAttemptFailed (false). Used both by
+// recordFailure to choose the mark, and by callers to label the
+// emitted result counter so the counter and the actual mark stay
+// coherent.
+func terminalIfFailed(err error, attempts int) bool {
+	return errors.Is(err, broker.ErrBrokerPermanent) || attempts+1 >= share.MaxBrokerAttempts
+}
+
+// publishResult maps a non-nil, non-ctx broker error and the current
+// attempt count to the metric result label.
+func publishResult(err error, attempts int) string {
+	if terminalIfFailed(err, attempts) {
+		return "terminal_fail"
+	}
+	return "retry"
 }
 
 // isCtxErr reports whether err is a context cancellation / deadline error.

@@ -1,9 +1,12 @@
 package shareworker_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"log/slog"
 	"math/rand"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +15,7 @@ import (
 
 	"github.com/wesm/fotobank/internal/broker"
 	"github.com/wesm/fotobank/internal/broker/brokertest"
+	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/shareworker"
@@ -250,4 +254,106 @@ func TestWorkerRunExitsOnContextDeadline(t *testing.T) {
 	got, err := fx.repo.GetByUUID(context.Background(), id)
 	r.NoError(err)
 	r.Equal(share.StatusActive, got.BrokerStatus)
+}
+
+func TestWorkerEmitsPublishResultMetrics(t *testing.T) {
+	r := require.New(t)
+
+	// ok: clean publish, no scripted error.
+	fxOK := newWorkerFixture(t)
+	mOK := obs.NewTestMetrics()
+	fxOK.w = shareworker.New(shareworker.Config{
+		Repo:    fxOK.repo,
+		Broker:  fxOK.fake,
+		Now:     func() time.Time { return fxOK.now },
+		Rand:    rand.New(rand.NewSource(1)),
+		Metrics: mOK,
+	})
+	_ = fxOK.insertPending(t)
+	_, err := fxOK.w.RunOnce(context.Background())
+	r.NoError(err)
+	r.EqualValues(1, mOK.SharePublishes("ok").Get())
+
+	// retry: transient error scripted.
+	fxRetry := newWorkerFixture(t)
+	mRetry := obs.NewTestMetrics()
+	fxRetry.w = shareworker.New(shareworker.Config{
+		Repo:    fxRetry.repo,
+		Broker:  fxRetry.fake,
+		Now:     func() time.Time { return fxRetry.now },
+		Rand:    rand.New(rand.NewSource(1)),
+		Metrics: mRetry,
+	})
+	idR := fxRetry.insertPending(t)
+	fxRetry.fake.QueuePublishError(idR, broker.ErrBrokerTransient)
+	_, err = fxRetry.w.RunOnce(context.Background())
+	r.NoError(err)
+	r.EqualValues(1, mRetry.SharePublishes("retry").Get())
+	r.EqualValues(0, mRetry.SharePublishes("terminal_fail").Get(),
+		"transient under MaxBrokerAttempts must classify as retry, not terminal_fail")
+
+	// terminal_fail (permanent): scripted permanent error.
+	fxPerm := newWorkerFixture(t)
+	mPerm := obs.NewTestMetrics()
+	fxPerm.w = shareworker.New(shareworker.Config{
+		Repo:    fxPerm.repo,
+		Broker:  fxPerm.fake,
+		Now:     func() time.Time { return fxPerm.now },
+		Rand:    rand.New(rand.NewSource(1)),
+		Metrics: mPerm,
+	})
+	idP := fxPerm.insertPending(t)
+	fxPerm.fake.QueuePublishError(idP, broker.ErrBrokerPermanent)
+	_, err = fxPerm.w.RunOnce(context.Background())
+	r.NoError(err)
+	r.EqualValues(1, mPerm.SharePublishes("terminal_fail").Get())
+
+	// terminal_fail (max-attempts): transient at the boundary.
+	fxMax := newWorkerFixture(t)
+	mMax := obs.NewTestMetrics()
+	fxMax.w = shareworker.New(shareworker.Config{
+		Repo:    fxMax.repo,
+		Broker:  fxMax.fake,
+		Now:     func() time.Time { return fxMax.now },
+		Rand:    rand.New(rand.NewSource(1)),
+		Metrics: mMax,
+	})
+	idM := fxMax.insertPending(t)
+	_, err = fxMax.db.ExecContext(context.Background(),
+		`UPDATE scopes SET broker_attempts = ?, broker_next_attempt_at = NULL WHERE uuid = ?`,
+		share.MaxBrokerAttempts-1, idM)
+	r.NoError(err)
+	fxMax.fake.QueuePublishError(idM, broker.ErrBrokerTransient)
+	_, err = fxMax.w.RunOnce(context.Background())
+	r.NoError(err)
+	r.EqualValues(1, mMax.SharePublishes("terminal_fail").Get(),
+		"transient at MaxBrokerAttempts must classify as terminal_fail")
+}
+
+func TestShareWorkerLogsCarryComponent(t *testing.T) {
+	r := require.New(t)
+	fx := newWorkerFixture(t)
+
+	// bytes.Buffer is safe here because RunOnce returns synchronously
+	// before the buffer is read — single goroutine throughout. If you
+	// adapt this to a goroutine + Eventually pattern, switch to a
+	// mutex-wrapped buffer (see backup/worker_test.go syncBuf).
+	var logBuf bytes.Buffer
+	base := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	fx.w = shareworker.New(shareworker.Config{
+		Repo:    fx.repo,
+		Broker:  fx.fake,
+		Now:     func() time.Time { return fx.now },
+		Rand:    rand.New(rand.NewSource(1)),
+		Logger:  base.With("component", "share"),
+		Metrics: obs.NewTestMetrics(),
+	})
+	_ = fx.insertPending(t)
+	_, err := fx.w.RunOnce(context.Background())
+	r.NoError(err)
+	// Per-line scan: every emitted line must carry component=share.
+	for line := range strings.SplitSeq(strings.TrimSpace(logBuf.String()), "\n") {
+		r.Contains(line, `"component":"share"`,
+			"every share-worker log line must carry component=share")
+	}
 }
