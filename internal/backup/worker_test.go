@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/wesm/fotobank/internal/obs"
 	_ "modernc.org/sqlite"
 )
 
@@ -97,7 +98,7 @@ func TestWorkerLogsSnapshotSuccessFields(t *testing.T) {
 
 	logs := buf.String()
 	r.Contains(logs, "size_bytes=")
-	r.Contains(logs, "duration_ms=")
+	r.Contains(logs, "dur_ms=")
 	r.Contains(logs, "kept_15min=")
 }
 
@@ -152,4 +153,104 @@ func TestWorkerStaleWarningSuppression(t *testing.T) {
 	w.maybeWarnStale(time.Now())
 	after := strings.Count(buf.String(), "backup snapshot stale")
 	r.Equal(before, after, "stale warn must rate-limit to one per 48h")
+}
+
+func TestWorkerEmitsMetricsAndPushesLastSuccess(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src.sqlite")
+	makeSourceDB(t, src)
+	db, err := sql.Open("sqlite", src+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	r.NoError(err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	m := obs.NewTestMetrics()
+	w := NewWorker(Config{
+		DB:       db,
+		Dir:      filepath.Join(tmp, "snaps"),
+		Interval: 30 * time.Millisecond,
+		Policy:   Policy{Keep15Min: 4, KeepHourly: 24, KeepDaily: 7},
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Metrics:  m,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+	require.Eventually(t, func() bool {
+		return m.BackupSnapshots("ok").Get() >= 1
+	}, 2*time.Second, 10*time.Millisecond)
+	cancel()
+	r.NoError(<-done)
+
+	r.Positive(m.BackupSnapshots("ok").Get())
+	// last_success_unix gauge must have been pushed.
+	var buf bytes.Buffer
+	m.WritePrometheus(&buf)
+	out := buf.String()
+	r.NotContains(out, "fotobank_backup_last_success_unix 0",
+		"last_success_unix must have a real timestamp after a successful tick")
+	r.NotContains(out, "fotobank_backup_seconds_since_last_success -1",
+		"seconds_since_last_success must be derived now that last_success is set")
+}
+
+func TestWorkerEmitsFailedSnapshotMetric(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	// Use a missing source DB — Snapshot will fail.
+	src := filepath.Join(tmp, "missing.sqlite")
+	db, err := sql.Open("sqlite", "file:"+src+"?mode=rw")
+	r.NoError(err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	m := obs.NewTestMetrics()
+	w := NewWorker(Config{
+		DB:       db,
+		Dir:      filepath.Join(tmp, "snaps"),
+		Interval: 30 * time.Millisecond,
+		Policy:   Policy{Keep15Min: 4, KeepHourly: 24, KeepDaily: 7},
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Metrics:  m,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = w.Run(ctx) }()
+	require.Eventually(t, func() bool {
+		return m.BackupSnapshots("failed").Get() >= 1
+	}, 2*time.Second, 10*time.Millisecond)
+	cancel()
+}
+
+// TestWorkerLogsCarryComponent: when the caller wires a logger derived
+// via .With("component", "backup") (as cli/server.go does), the
+// worker's log lines carry that component attribute. We construct the
+// same wrapper here so the assertion is robust against future log
+// additions in the worker.
+func TestWorkerLogsCarryComponent(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src.sqlite")
+	makeSourceDB(t, src)
+	db, err := sql.Open("sqlite", src+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	r.NoError(err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	var logBuf bytes.Buffer
+	base := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	w := NewWorker(Config{
+		DB:       db,
+		Dir:      filepath.Join(tmp, "snaps"),
+		Interval: 30 * time.Millisecond,
+		Policy:   Policy{Keep15Min: 4, KeepHourly: 24, KeepDaily: 7},
+		Logger:   base.With("component", "backup"),
+		Metrics:  obs.NewTestMetrics(),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+	require.Eventually(t, func() bool {
+		return strings.Contains(logBuf.String(), `"msg":"backup snapshot ok"`)
+	}, 2*time.Second, 10*time.Millisecond)
+	cancel()
+	r.NoError(<-done)
+	r.Contains(logBuf.String(), `"component":"backup"`,
+		"every backup-worker log line must carry component=backup")
 }

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/wesm/fotobank/internal/obs"
 )
 
 // Config configures a Worker. Production constructs one from
@@ -18,6 +20,7 @@ type Config struct {
 	Interval time.Duration
 	Policy   Policy
 	Logger   *slog.Logger
+	Metrics  *obs.Metrics
 }
 
 // Worker takes periodic snapshots and runs retention sweeps. One
@@ -91,27 +94,44 @@ func (w *Worker) tick(ctx context.Context) {
 	if err := Snapshot(ctx, w.cfg.DB, dst); err != nil {
 		w.cfg.Logger.Error("backup snapshot failed",
 			"err", err, "dst", dst,
-			"duration_ms", time.Since(start).Milliseconds())
+			"dur_ms", time.Since(start).Milliseconds())
+		if w.cfg.Metrics != nil {
+			w.cfg.Metrics.BackupSnapshots("failed").Inc()
+			w.cfg.Metrics.BackupSnapshotDuration("failed").
+				Update(time.Since(start).Seconds())
+		}
 		return
 	}
 	w.lastSuccessAt = time.Now()
+	if w.cfg.Metrics != nil {
+		w.cfg.Metrics.BackupSnapshots("ok").Inc()
+		w.cfg.Metrics.BackupSnapshotDuration("ok").
+			Update(time.Since(start).Seconds())
+		w.cfg.Metrics.SetBackupLastSuccess(w.lastSuccessAt.Unix())
+	}
 	var size int64
 	if info, err := os.Stat(dst); err == nil {
 		size = info.Size()
 	}
 
-	res, err := Sweep(w.cfg.Dir, w.cfg.Policy, time.Now(), w.cfg.Logger)
-	if err != nil {
-		w.cfg.Logger.Warn("backup retention sweep failed", "err", err, "dir", w.cfg.Dir)
-		// Snapshot still succeeded; don't suppress the success log.
+	res, sweepErr := Sweep(w.cfg.Dir, w.cfg.Policy, time.Now(), w.cfg.Logger)
+	if sweepErr != nil {
+		w.cfg.Logger.Warn("backup retention sweep failed",
+			"err", sweepErr, "dir", w.cfg.Dir)
+		if w.cfg.Metrics != nil {
+			w.cfg.Metrics.BackupRetentionSweeps("failed").Inc()
+		}
+	} else if w.cfg.Metrics != nil {
+		w.cfg.Metrics.BackupRetentionSweeps("ok").Inc()
+		w.cfg.Metrics.BackupRetentionDeleted().Add(res.Deleted)
 	}
 
 	attrs := []any{
 		"path", dst,
 		"size_bytes", size,
-		"duration_ms", time.Since(start).Milliseconds(),
+		"dur_ms", time.Since(start).Milliseconds(),
 	}
-	if err == nil {
+	if sweepErr == nil {
 		attrs = append(attrs,
 			"kept_15min", res.Kept15Min,
 			"kept_hourly", res.KeptHourly,
