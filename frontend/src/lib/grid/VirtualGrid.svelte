@@ -1,5 +1,6 @@
 <script lang="ts">
   import MonthChunk, { type MediaLite } from "./MonthChunk.svelte";
+  import StickyMonthBar from "../components/StickyMonthBar.svelte";
   import type { Month, Media } from "../media/mediaStore.svelte";
   import { selection } from "../selection/selectionStore.svelte";
 
@@ -12,6 +13,7 @@
   let containerEl: HTMLDivElement | null = $state(null);
   let containerWidth = $state(800);
   let sentinel: HTMLDivElement | null = $state(null);
+  let activeMonth = $state<string>("");
 
   $effect(() => {
     if (!containerEl) return;
@@ -29,6 +31,27 @@
       if (entries[0]?.isIntersecting) onLoadMore?.();
     }, { rootMargin: "800px 0px" });
     io.observe(sentinel);
+    return () => io.disconnect();
+  });
+
+  // Track which month is pinned to the top of the scroll viewport so the
+  // sticky bar always reflects the chunk currently under the bar. The
+  // rootMargin slices a 1px sliver at the very top: only the chunk whose
+  // wrapper is currently crossing that line counts as "active". Re-runs
+  // when the months array changes so newly mounted chunks are observed
+  // and removed ones are unobserved.
+  $effect(() => {
+    if (!containerEl) return;
+    void months;
+    const io = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          const key = entry.target.getAttribute("data-month");
+          if (key) activeMonth = key;
+        }
+      }
+    }, { rootMargin: "-1px 0px -100% 0px" });
+    containerEl.querySelectorAll<HTMLElement>("[data-month]").forEach((el) => io.observe(el));
     return () => io.disconnect();
   });
 
@@ -58,23 +81,26 @@
 </script>
 
 <div bind:this={containerEl} class="grid">
+  <StickyMonthBar label={activeMonth} />
   {#each months as month (month.key)}
-    <MonthChunk
-      items={toLite(month.items)}
-      label={month.key}
-      options={{ containerWidth, targetRowHeight, gap: 4 }}
-    >
-      {#snippet renderCell(m)}
-        <a
-          href={`/media/${m.id}`}
-          aria-label={`Photo ${m.id}`}
-          class:selected={selection.ids.has(m.id)}
-          onclick={(e) => handleCellClick(e, m.id)}
-        >
-          <img src={m.thumbUrl} alt="" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover" />
-        </a>
-      {/snippet}
-    </MonthChunk>
+    <div data-month={month.key}>
+      <MonthChunk
+        items={toLite(month.items)}
+        label={month.key}
+        options={{ containerWidth, targetRowHeight, gap: 4 }}
+      >
+        {#snippet renderCell(m)}
+          <a
+            href={`/media/${m.id}`}
+            aria-label={`Photo ${m.id}`}
+            class:selected={selection.ids.has(m.id)}
+            onclick={(e) => handleCellClick(e, m.id)}
+          >
+            <img src={m.thumbUrl} alt="" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover" />
+          </a>
+        {/snippet}
+      </MonthChunk>
+    </div>
   {/each}
   <div bind:this={sentinel} style="height:1px"></div>
 </div>
