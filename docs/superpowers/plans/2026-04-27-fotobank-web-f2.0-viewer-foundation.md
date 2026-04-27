@@ -57,6 +57,8 @@ cd /Users/wesm/code/fotobank/frontend && bun run typecheck && bun run test
 
 Expected: both green. If anything is red on master before starting, stop and fix that first. (Per CLAUDE.md, all work commits directly to master; there is no feature branch.)
 
+> **One-time vitest prerequisite for Svelte 5 component tests.** Task 7 is the first task in this plan that renders a Svelte component under vitest. `@testing-library/svelte` 5.x ships a Vite plugin (`@testing-library/svelte/vite`) that adds the `browser` resolve condition under VITEST so Svelte 5's client-mode `mount(...)` is reachable from jsdom; without it the renderer hits Svelte's SSR build and tests fail with `mount(...) is not available on the server`. If `frontend/vite.config.ts` does not already register `svelteTesting()` alongside `svelte()`, add it as part of Task 7. The plugin gates itself behind `process.env.VITEST` and is a no-op in `vite build`.
+
 ---
 
 ## Task 1: RouterStore class + matcher tests
@@ -1002,8 +1004,13 @@ describe("MediaCell", () => {
   });
 
   it("renders a placeholder when thumbUrl is missing", () => {
+    // `MediaLite.thumbUrl?: string` + `exactOptionalPropertyTypes: true`
+    // means an explicit `thumbUrl: undefined` is rejected by tsc — omit
+    // the property instead. Both forms set `media.thumbUrl === undefined`
+    // at runtime, exercising the same `!media.thumbUrl` placeholder
+    // branch.
     const { container } = render(MediaCell, {
-      media: { id: "x", aspect: 1, thumbUrl: undefined },
+      media: { id: "x", aspect: 1 },
       selected: false, onCellClick: () => {},
     });
     expect(container.querySelector("img")).toBeNull();
