@@ -5,6 +5,7 @@
   import AppHeader from "./lib/components/AppHeader.svelte";
   import Sidebar from "./lib/components/Sidebar.svelte";
   import Library from "./routes/Library.svelte";
+  import Sessions from "./routes/Sessions.svelte";
   import { ThemeStore } from "./lib/theme/themeStore.svelte";
   import { EventsStore } from "./lib/events/eventsStore.svelte";
   import { selection } from "./lib/selection/selectionStore.svelte";
@@ -58,7 +59,7 @@
     {#if route.startsWith("/settings")}
       <div style="padding:20px">Settings (placeholder; theme = {themeStore.theme})</div>
     {:else if route.startsWith("/sessions")}
-      <div style="padding:20px">Sessions route — Task 27</div>
+      <Sessions />
     {:else}
       <Library />
     {/if}
