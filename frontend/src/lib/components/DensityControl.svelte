@@ -1,13 +1,13 @@
 <!-- frontend/src/lib/components/DensityControl.svelte -->
 <script lang="ts">
   import type { DensityStore, Preset } from "../density/densityStore.svelte";
+  import { isEditableTarget } from "../dom/editable";
   let { store }: { store: DensityStore } = $props();
   const presets: Preset[] = ["compact", "comfortable", "large"];
 
   $effect(() => {
     function onKey(e: KeyboardEvent) {
-      const target = e.target as HTMLElement | null;
-      if (target && target.tagName === "INPUT") return;
+      if (isEditableTarget(e.target)) return;
       if (e.key === "+" || e.key === "=") {
         store.nudge(1);
         e.preventDefault();

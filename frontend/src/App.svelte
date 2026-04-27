@@ -8,6 +8,7 @@
   import { ThemeStore } from "./lib/theme/themeStore.svelte";
   import { EventsStore } from "./lib/events/eventsStore.svelte";
   import { selection } from "./lib/selection/selectionStore.svelte";
+  import { isEditableTarget } from "./lib/dom/editable";
   import { api } from "./lib/api/client";
 
   const themeStore = new ThemeStore(api);
@@ -34,8 +35,7 @@
       if (selection.ids.size === 0) return;
       // Don't steal Escape from text inputs — Esc there usually means
       // "dismiss the dropdown / cancel the edit", not "clear selection".
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (isEditableTarget(e.target)) return;
       selection.clear();
     };
     window.addEventListener("keydown", onKey);
