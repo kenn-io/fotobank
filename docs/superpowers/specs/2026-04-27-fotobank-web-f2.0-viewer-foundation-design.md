@@ -440,15 +440,15 @@ for o in owners: Queue.Enqueue(EnqueueFilter{Owner: o, All: true})
 each Enqueue: UPDATE media SET thumb_version = thumb_version + 1, thumb_status = 'pending' WHERE owner = ?
 the running fotobank server's thumb worker drains pending rows; emits 3 sizes per claim
 frontend: cached <img src=...?v=N> 404s in any open tab; MediaCell falls back to placeholder
-the open tab keeps its placeholder until either:
-  • a media-list refetch (e.g. SSE-driven merge) replaces the cached row with v=N+1, or
-  • the operator reloads the tab (full re-fetch hits v=N+1)
+the open tab keeps its placeholder until the operator reloads it (full
+  re-fetch hits v=N+1)
 ```
 
-F2.0 does NOT add an automatic refresh path — the SSE bus is
-populated by the import pipeline, not by thumb regeneration. Open
-tabs holding cached `?v=N` URLs remain on placeholders until reload.
-This is documented as a runbook caveat in §8.
+F2.0 does NOT add an automatic refresh path. The SSE bus is populated
+by the import pipeline, not by thumb regeneration, so the running
+client never learns the row's `thumb_version` changed. Open tabs
+holding cached `?v=N` URLs remain on placeholders until reload. This
+is documented as a runbook caveat in §8.
 
 ## 6. Error handling
 
