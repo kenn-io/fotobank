@@ -7,6 +7,7 @@
   import Library from "./routes/Library.svelte";
   import { ThemeStore } from "./lib/theme/themeStore.svelte";
   import { EventsStore } from "./lib/events/eventsStore.svelte";
+  import { selection } from "./lib/selection/selectionStore.svelte";
   import { api } from "./lib/api/client";
 
   const themeStore = new ThemeStore(api);
@@ -23,6 +24,14 @@
     const onPop = () => (route = window.location.pathname || "/library");
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
+  });
+
+  $effect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") selection.clear();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   });
 
   function activeId(path: string): string {

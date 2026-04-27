@@ -1,6 +1,7 @@
 <script lang="ts">
   import MonthChunk, { type MediaLite } from "./MonthChunk.svelte";
   import type { Month, Media } from "../media/mediaStore.svelte";
+  import { selection } from "../selection/selectionStore.svelte";
 
   let { months, onLoadMore, targetRowHeight = 200 }: {
     months: Month[];
@@ -34,6 +35,21 @@
   function toLite(items: Media[]): MediaLite[] {
     return items.map((m) => ({ id: m.id, aspect: m.aspect, thumbUrl: m.thumbUrl }));
   }
+
+  function allIds(ms: Month[]): string[] {
+    return ms.flatMap((m) => m.items.map((it) => it.id));
+  }
+
+  function handleCellClick(e: MouseEvent, id: string) {
+    if (e.shiftKey) {
+      e.preventDefault();
+      selection.range(id, allIds(months));
+    } else if (e.metaKey || e.ctrlKey) {
+      e.preventDefault();
+      selection.toggle(id);
+    }
+    // else: let the anchor navigate normally
+  }
 </script>
 
 <div bind:this={containerEl} class="grid">
@@ -44,7 +60,12 @@
       options={{ containerWidth, targetRowHeight, gap: 4 }}
     >
       {#snippet renderCell(m)}
-        <a href={`/media/${m.id}`} aria-label={`Photo ${m.id}`}>
+        <a
+          href={`/media/${m.id}`}
+          aria-label={`Photo ${m.id}`}
+          class:selected={selection.ids.has(m.id)}
+          onclick={(e) => handleCellClick(e, m.id)}
+        >
           <img src={m.thumbUrl} alt="" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover" />
         </a>
       {/snippet}
@@ -55,4 +76,9 @@
 
 <style>
   .grid { padding: 8px; }
+  .grid :global(a.selected) {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+    border-radius: 2px;
+  }
 </style>
