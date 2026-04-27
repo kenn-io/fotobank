@@ -6,6 +6,9 @@
   import { DensityStore } from "../lib/density/densityStore.svelte";
   import DensityControl from "../lib/components/DensityControl.svelte";
   import { api } from "../lib/api/client";
+  import MediaCell from "../lib/grid/MediaCell.svelte";
+  import { router } from "../lib/router/router.svelte";
+  import { selection } from "../lib/selection/selectionStore.svelte";
 
   let { mediaStore }: { mediaStore: MediaStore } = $props();
 
@@ -13,6 +16,25 @@
   density.load();
   const flat = $derived(mediaStore.months.flatMap((m) => m.items));
   const sessions = $derived(groupIntoSessions(flat, { gapHours: 4 }));
+  const orderedIds = $derived(
+    sessions.flatMap((s) => s.items.map((it) => it.id)),
+  );
+
+  function handleCellClick(e: MouseEvent, id: string) {
+    if (e.button !== 0) return;
+    if (e.shiftKey) {
+      e.preventDefault();
+      selection.range(id, orderedIds);
+      return;
+    }
+    if (e.metaKey || e.ctrlKey) {
+      e.preventDefault();
+      selection.toggle(id);
+      return;
+    }
+    e.preventDefault();
+    router.navigate(`/media/${id}`);
+  }
 
   let containerEl: HTMLDivElement | null = $state(null);
   let containerWidth = $state(800);
@@ -56,9 +78,11 @@
         options={{ containerWidth, targetRowHeight: density.targetRowHeight, gap: 4 }}
       >
         {#snippet renderCell(m)}
-          <a href={`/media/${m.id}`}>
-            <img src={m.thumbUrl} alt="" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover" />
-          </a>
+          <MediaCell
+            media={m}
+            selected={selection.ids.has(m.id)}
+            onCellClick={(e) => handleCellClick(e, m.id)}
+          />
         {/snippet}
       </MonthChunk>
     {/if}
