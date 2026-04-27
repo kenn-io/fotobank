@@ -16,9 +16,12 @@ describe("groupIntoSessions", () => {
     ];
     const sessions = groupIntoSessions(items, { gapHours: 4 });
     expect(sessions).toHaveLength(3);
-    expect(sessions[0]?.items.map(i => i.id)).toEqual(["a", "b"]);
+    // Outer order is newest-session-first to match mediaStore's
+    // descending month layout. Items within each session stay in
+    // chronological order so a beach trip reads forward in time.
+    expect(sessions[0]?.items.map(i => i.id)).toEqual(["d"]);
     expect(sessions[1]?.items.map(i => i.id)).toEqual(["c"]);
-    expect(sessions[2]?.items.map(i => i.id)).toEqual(["d"]);
+    expect(sessions[2]?.items.map(i => i.id)).toEqual(["a", "b"]);
   });
 
   it("returns empty for empty input", () => {

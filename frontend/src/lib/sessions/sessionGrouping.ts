@@ -21,5 +21,10 @@ export function groupIntoSessions(
     prev = m;
   }
   if (current.length) out.push({ id: current[0]!.id, items: current });
-  return out;
+  // Newest sessions first so the Sessions route opens on the most
+  // recent activity, matching mediaStore's descending month order.
+  // Items inside each session stay in chronological order — within a
+  // single ~4h cluster the forward-time read is more natural than
+  // mirroring the outer reversal.
+  return out.reverse();
 }
