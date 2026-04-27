@@ -44,6 +44,11 @@ CREATE TABLE media (
 
     duration_ms       INTEGER,
 
+    latitude          REAL,
+    longitude         REAL,
+    gps_at            TIMESTAMP,
+    location_label    TEXT,
+
     thumb_status      TEXT NOT NULL CHECK (
         thumb_status IN ('pending', 'working', 'ready', 'no_preview', 'failed')
     ),
@@ -60,6 +65,9 @@ CREATE INDEX media_owner_timestamp_idx ON media(owner_hub, owner_user_id, timest
 CREATE INDEX media_owner_imported_idx  ON media(owner_hub, owner_user_id, imported_at DESC);
 CREATE INDEX media_thumb_pending_idx   ON media(thumb_status, thumb_claimed_at)
     WHERE thumb_status IN ('pending', 'working');
+CREATE INDEX media_owner_geo_idx
+    ON media(owner_hub, owner_user_id, latitude, longitude)
+    WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
 
 -- Albums.
 CREATE TABLE albums (
