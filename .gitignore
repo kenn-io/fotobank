@@ -20,6 +20,9 @@ downloads/
 eggs/
 .eggs/
 lib/
+# Re-enable the frontend lib tree; its api/generated/.gitignore carves
+# out the committed schema.ts placeholder files and ignores the rest.
+!frontend/src/lib/
 lib64/
 parts/
 sdist/

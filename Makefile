@@ -98,8 +98,9 @@ nilaway: ## Run nilaway (pre-push tier)
 tidy: ## go mod tidy
 	go mod tidy
 
-api-generate: ## Regenerate OpenAPI spec
-	go run ./cmd/fotobank-openapi > openapi.json
+api-generate: ## Regenerate OpenAPI spec + TypeScript schema
+	go run ./cmd/fotobank-openapi -out openapi.json
+	cd frontend && bun install && bunx openapi-typescript ../openapi.json -o src/lib/api/generated/schema.ts
 
 install-hooks: ## Install prek git hooks
 	prek install -f
