@@ -496,23 +496,34 @@ parameter; populates the four GPS fields per §3 data flow.
 
 ### 7.2 Caller updates
 
-- `internal/cli/server.go` — server boot. Calls `geo.NewNaturalEarth()`
-  once; failure aborts boot. Passes the resolver into `NewImporter`.
-- `internal/cli/import.go` — one-shot `fotobank import`. Same.
-- `internal/cli/gps.go` — backfill (new). Same.
-- `internal/ingest/importer_test.go` — existing tests pass `nil`;
-  unaffected. A new test case passes a stub resolver and asserts all
-  four GPS fields land in the inserted row.
+The current production constructor of `*ingest.Importer` is
+**only** `internal/cli/import.go` (the `fotobank import` one-shot CLI);
+`internal/cli/server.go` does not construct one. F2.1 therefore touches
+two production callers, not three:
+
+- `internal/cli/import.go` — one-shot `fotobank import`. Calls
+  `geo.NewNaturalEarth()` once at command entry; failure aborts the
+  command. Passes the resolver into `NewImporter`.
+- `internal/cli/gps.go` — backfill (new). Same pattern.
+- `internal/ingest/importer_test.go` — existing tests pass `nil` for
+  `places`; unaffected. A new test case passes a stub resolver and
+  asserts all four GPS fields land in the inserted row.
+
+If a future server-side ingest endpoint is added (currently none
+exists), it can pick up `*geo.NaturalEarth` as part of that work; F2.1
+does not preemptively wire it through server boot.
 
 ### 7.3 Service method
 
 ```go
-// internal/service/media.go
+// internal/service/media_service.go
 //
 // UpdateGPS persists the four GPS columns on a row owned by caller.
-// Uses Get(ctx, id, caller) for the owner check, then repo.UpdateGPS.
-// The CLI orchestrates "open NAS bytes, run exifread, resolve label"
-// itself — the service layer stays simple and auth-scoped.
+// Uses Get(ctx, id, caller) for the owner check (which returns
+// errs.ErrNotFound on caller mismatch — preserving the existing
+// anti-probing convention), then repo.UpdateGPS. The CLI orchestrates
+// "open NAS bytes, run exifread, resolve label" itself — the service
+// layer stays simple and auth-scoped.
 func (s *MediaService) UpdateGPS(
     ctx context.Context,
     caller owners.Principal,
@@ -583,7 +594,7 @@ mode == relabel:
 
 mode == full | fill-missing:
     rc, err := store.ReadRange(ctx, owner, row.Path, 0, -1)
-    meta := exifread.parseFromReader(rc)   # or read to temp + ExtractPhoto
+    meta := exifread.ExtractPhotoFromReader(rc)   # new exported helper, §7.5 trailing
     if meta has GPS:
         lat, lon, gpsAt = meta.Latitude, meta.Longitude, meta.GPSAt
         label, _ = places.Resolve(*lat, *lon)
@@ -596,11 +607,13 @@ mode == full | fill-missing:
 service.UpdateGPS(ctx, caller, row.ID, new...)
 ```
 
-`exifread` may need a small sibling to `ExtractPhoto` that takes an
-`io.Reader` instead of a path; if so, `ExtractPhoto` becomes a thin
-wrapper that opens the file and delegates. (The existing implementation
-already uses `os.Open` then `SearchAndExtractExifWithReader`, so the
-refactor is tiny.)
+`exifread` adds a new exported sibling `ExtractPhotoFromReader(io.Reader)
+(Metadata, error)` so the CLI can read directly from
+`storage.Store.ReadRange` without writing to a temp file. The existing
+`ExtractPhoto(path string)` becomes a thin wrapper that opens the file
+and delegates to `ExtractPhotoFromReader`. The refactor is tiny — the
+existing implementation already uses
+`exif.SearchAndExtractExifWithReader` internally.
 
 ### 7.6 Progress + summary
 
@@ -632,8 +645,11 @@ with EXIF GPS, passes a stub `PlaceResolver` returning
 resulting `media.Media` row has all four GPS fields set as expected.
 
 `internal/service/media_test.go`: a new case for `UpdateGPS` —
-caller-mismatch returns `errs.ErrOwnerMismatch`-mapped error;
-caller-match writes through to the repo.
+**caller-mismatch returns `errs.ErrNotFound`** (not
+`errs.ErrOwnerMismatch`), preserving the existing anti-probing
+convention from `MediaService.Get` (`internal/service/media_service.go:31`,
+"caller-not-owner is indistinguishable from row-not-existing").
+Caller-match writes through to the repo.
 
 ## 8. HTTP DTO + Frontend MediaDetail
 
@@ -677,8 +693,11 @@ In `internal/httpapi/media_test.go`:
 
 ### 8.3 Frontend `Media` type
 
-The frontend `Media` type (in `frontend/src/lib/media/types.ts`) gains
-five fields:
+The frontend `Media` type is currently defined inline in
+`frontend/src/lib/media/mediaStore.svelte.ts` (around line 3). F2.1 does
+not refactor it into a separate `types.ts` — extract-the-type is its own
+concern. Edit the existing inline declaration in place and add five
+fields:
 
 ```ts
 export interface Media {
@@ -805,10 +824,10 @@ the markup explicit and unambiguous:
     <dt>Camera</dt><dd>{[media.make, media.model].filter(Boolean).join(" ")}</dd>
   {/if}
   ...
-  {#if media.location_label}
+  {#if media.location_label || (media.latitude != null && media.longitude != null)}
     <dt>Location</dt>
     <dd>
-      {media.location_label}
+      {#if media.location_label}{media.location_label}{/if}
       {#if media.latitude != null && media.longitude != null}
         <small class="coord">{formatCoord(media.latitude, media.longitude)}</small>
       {/if}
@@ -816,6 +835,13 @@ the markup explicit and unambiguous:
   {/if}
 </dl>
 ```
+
+The `<dl>` row appears when **either** `location_label` is set **or**
+both coords are set. The label block and the coords block are each
+guarded independently so a row with only coords (no resolver match —
+e.g., open ocean that somehow got past the null-island drop) still
+renders the coords; a row with only a label (impossible in practice
+but defensive) still renders the label.
 
 `gps_at` is NOT surfaced in the F2.1 UI — it's stored for future use
 (e.g. F2.x camera-clock-drift detection) but the info panel doesn't
