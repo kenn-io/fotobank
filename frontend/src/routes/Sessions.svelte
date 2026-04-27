@@ -1,17 +1,17 @@
 <!-- frontend/src/routes/Sessions.svelte -->
 <script lang="ts">
   import MonthChunk from "../lib/grid/MonthChunk.svelte";
-  import { MediaStore } from "../lib/media/mediaStore.svelte";
+  import type { MediaStore } from "../lib/media/mediaStore.svelte";
   import { groupIntoSessions } from "../lib/sessions/sessionGrouping";
   import { DensityStore } from "../lib/density/densityStore.svelte";
   import DensityControl from "../lib/components/DensityControl.svelte";
   import { api } from "../lib/api/client";
 
-  const store = new MediaStore(api);
-  store.loadInitial();
+  let { mediaStore }: { mediaStore: MediaStore } = $props();
+
   const density = new DensityStore(api, "sessions");
   density.load();
-  const flat = $derived(store.months.flatMap((m) => m.items));
+  const flat = $derived(mediaStore.months.flatMap((m) => m.items));
   const sessions = $derived(groupIntoSessions(flat, { gapHours: 4 }));
 
   let containerEl: HTMLDivElement | null = $state(null);
@@ -35,7 +35,7 @@
   $effect(() => {
     if (!sentinel) return;
     const io = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting) store.loadMore();
+      if (entries[0]?.isIntersecting) mediaStore.loadMore();
     }, { rootMargin: "800px 0px" });
     io.observe(sentinel);
     return () => io.disconnect();
@@ -66,9 +66,9 @@
   <div bind:this={sentinel} style="height:1px"></div>
 </div>
 
-{#if store.loading}
+{#if mediaStore.loading}
   <div style="padding:12px; color: var(--text-muted)">Loading…</div>
 {/if}
-{#if store.months.length === 0 && !store.loading}
+{#if mediaStore.months.length === 0 && !mediaStore.loading}
   <div style="padding:24px; color: var(--text-secondary)">No photos yet.</div>
 {/if}

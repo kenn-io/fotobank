@@ -11,6 +11,7 @@
   import NotFound from "./routes/NotFound.svelte";
   import { ThemeStore } from "./lib/theme/themeStore.svelte";
   import { EventsStore } from "./lib/events/eventsStore.svelte";
+  import { MediaStore } from "./lib/media/mediaStore.svelte";
   import { selection } from "./lib/selection/selectionStore.svelte";
   import { router, type RouteMatch } from "./lib/router/router.svelte";
   import { isEditableTarget } from "./lib/dom/editable";
@@ -23,6 +24,9 @@
   // HMR remounts the root component; without an explicit teardown the
   // EventSource accumulates duplicate connections each reload.
   onDestroy(() => events.disconnect());
+
+  const mediaStore = new MediaStore(api);
+  mediaStore.loadInitial();
 
   $effect(() => {
     const onPop = () => router.syncFromLocation();
@@ -65,9 +69,9 @@
   {/snippet}
   {#snippet main()}
     {#if router.current.route === "library"}
-      <Library />
+      <Library {mediaStore} />
     {:else if router.current.route === "sessions"}
-      <Sessions />
+      <Sessions {mediaStore} />
     {:else if router.current.route === "media"}
       <MediaDetail id={router.current.id} />
     {:else if router.current.route === "settings"}
