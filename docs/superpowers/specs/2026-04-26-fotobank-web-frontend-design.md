@@ -837,7 +837,7 @@ The master vision describes Phase 2.5+ "viewer-only accounts" managed by an exte
 
 The implementation plan should verify these before assuming:
 
-- `/api/v1/media/{id}/original` Range header support — present per `internal/httpapi/media_original.go`; verify end-to-end via Playwright video tests.
+- `/api/v1/media/{id}/original` Range header support — route in `internal/httpapi/media_original.go`, range parsing/serving in `internal/httpapi/originals.go`; verify end-to-end via Playwright video tests.
 - Existing thumb pipeline can produce 2560 px and 4096 px tiers (vipsthumbnail-equivalent in pure Go).
 - Reconciler / backfill task can re-extract EXIF for existing media (GPS retrofitting).
 - SSE event delivery survives reverse-proxy buffering (NGINX/Caddy default config) — verify with Playwright e2e.
