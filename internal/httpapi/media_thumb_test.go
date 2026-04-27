@@ -174,6 +174,12 @@ func TestThumbRouteLargeHappyPath(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	r.Equal(http.StatusOK, resp.StatusCode)
 	r.Equal("image/jpeg", resp.Header.Get("Content-Type"))
+	// Asserting on body bytes (not just status) catches a future bug
+	// where the handler resolves ?size=large to a different size's
+	// blob (e.g., "grid bytes") yet still returns 200.
+	body, err := io.ReadAll(resp.Body)
+	r.NoError(err)
+	r.Equal([]byte("large bytes"), body)
 }
 
 func TestThumbRouteStaleReadyRowReturns404ForNewSize(t *testing.T) {

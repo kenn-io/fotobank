@@ -6,7 +6,7 @@ import (
 	"database/sql"
 	"image"
 	"image/color"
-	_ "image/jpeg" // register JPEG decoder for image.Decode in TestWorkerEmitsAllSizesPerClaim
+	"image/jpeg"
 	"image/png"
 	"io"
 	"log/slog"
@@ -468,11 +468,13 @@ func TestWorkerEmitsAllSizesPerClaim(t *testing.T) {
 		// Looser thresholds (e.g. >100) would not catch a truncated or
 		// wrong-codec write.
 		r.Greaterf(len(bs), 512, "size %s emitted suspiciously small bytes (%d)", sz, len(bs))
-		// Decoding back proves we wrote a syntactically valid JPEG —
-		// catches "wrong codec written" or "wrong byte order" failures
-		// that a length-only check would miss.
-		_, _, err = image.Decode(bytes.NewReader(bs))
-		r.NoErrorf(err, "size %s did not decode as image", sz)
+		// jpeg.Decode (not image.Decode) is the load-bearing check:
+		// the test file imports image/png, so image.Decode would
+		// happily accept a PNG written under a .jpg key — defeating
+		// the "wrong codec written" guard. jpeg.Decode rejects any
+		// non-JPEG payload.
+		_, err = jpeg.Decode(bytes.NewReader(bs))
+		r.NoErrorf(err, "size %s did not decode as JPEG", sz)
 	}
 
 	cancel()

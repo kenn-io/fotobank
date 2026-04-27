@@ -59,8 +59,21 @@ test("SPA nav library→sessions→back does not re-issue the initial media fetc
     initialPageCalls.push(req.url());
   });
 
+  // Wait for the actual /api/v1/media?offset=0 response — NOT just the
+  // header text. If we proceed while the initial request is still in
+  // flight, MediaStore.loading would suppress duplicate loads and the
+  // test could pass even if a second offset=0 fetch fired post-settle.
+  // Waiting for the response first guarantees the store is settled
+  // before we measure the baseline.
+  const initialResponse = page.waitForResponse(
+    (resp) => {
+      const url = new URL(resp.url());
+      return url.pathname === "/api/v1/media" && url.searchParams.get("offset") === "0";
+    },
+    { timeout: 5_000 },
+  );
   await page.goto("/library");
-  // Wait for the initial fetch to settle so we have a stable baseline.
+  await initialResponse;
   await expect(page.getByText("fotobank")).toBeVisible();
   const baseline = initialPageCalls.length;
   expect(baseline).toBeGreaterThanOrEqual(1);
