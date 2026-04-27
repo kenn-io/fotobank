@@ -487,7 +487,8 @@ Otherwise eager init at boot time is fine.
 // ingest still extracts and stores latitude/longitude/gps_at from EXIF
 // and leaves LocationLabel empty. This keeps integration tests cheap
 // and avoids forcing geo init in narrowly scoped paths. Production
-// callers (server, fotobank import) MUST pass a real *geo.NaturalEarth.
+// callers (the `fotobank import` and `fotobank gps backfill` CLIs)
+// MUST pass a real *geo.NaturalEarth.
 func NewImporter(store storage.Store, repo *media.Repo, places PlaceResolver) *Importer
 ```
 
@@ -549,7 +550,13 @@ default stub-mode-required check, mirroring `thumbs regenerate`):
 Time filter:
 
   --since=DURATION        Only rows where imported_at >= now - DURATION.
-                          DURATION is a Go time.Duration (e.g. 24h, 7d).
+                          DURATION is a Go time.Duration string parsed by
+                          time.ParseDuration, e.g. 24h, 168h, 30m.
+                          Note: time.ParseDuration does NOT accept day or
+                          week suffixes (`7d`, `1w`); use the equivalent
+                          hour count (`168h`). If a future need warrants
+                          day/week ergonomics, a custom parser is its own
+                          feature, not bundled into F2.1.
                           Must be > 0; 0/negative/malformed is a usage
                           error (exit 2) raised BEFORE opening the DB.
 
@@ -760,11 +767,15 @@ identically to `Library.svelte` and `Sessions.svelte` in F2.0:
 
 ```svelte
 <script lang="ts">
-  import type { MediaStore } from "$lib/media/store";
+  import type { MediaStore } from "../lib/media/mediaStore.svelte";
   let { mediaStore }: { mediaStore: MediaStore } = $props();
   ...
 </script>
 ```
+
+(The frontend has no `$lib` path alias — existing routes such as
+`Library.svelte` and `Sessions.svelte` use the relative
+`../lib/media/mediaStore.svelte` style.)
 
 On mount, look up the row via `mediaStore.get(id)`. On miss, fetch
 `/api/v1/media/{id}` once and merge the result into the store. On
