@@ -31,9 +31,12 @@ F2.4 lightbox) can target a coherent shell:
   `grid=256`/`preview=1024`/`lightbox=2048`. F2.0 changes `preview` to **2560**,
   adds `large=4096`, and removes `lightbox`. The worker emits all configured
   sizes per claim already (via `thumb.AllSizes`); F2.0 is mostly vocabulary.
-- **Operator-driven regenerate.** A `fotobank thumbs regenerate` CLI bumps
-  `thumb_version` and flips rows back to `pending` so cached thumbs invalidate
-  immediately and the worker drains them in the background.
+- **Operator-driven regenerate, scoped by owner.** The existing
+  `fotobank thumbs regenerate` subcommand already bumps `thumb_version`
+  and flips rows to `pending` for the configured stub principal. F2.0
+  adds owner-scope flags (`--owner <hub>:<user>`, `--all-owners`) that
+  let an operator regenerate for a specific principal or every
+  principal in the database, without touching `identity.mode`.
 
 ## 2. Scope
 
@@ -51,7 +54,10 @@ F2.4 lightbox) can target a coherent shell:
 - MediaStore hoisted to App.svelte (or shared module singleton), consumed by
   Library and Sessions.
 - `internal/thumb/sizes.go` — `preview=2560`, `large=4096`, drop `lightbox`.
-- `internal/cli/thumbs.go` — `regenerate` subcommand with selectors.
+- `internal/cli/thumbs.go` — extend the existing `regenerate` subcommand
+  with `--owner <hub>:<user>` and `--all-owners` scope flags. Existing
+  content selectors (`--all`, `--id`, `--type`, `--status`, `--since`)
+  are unchanged.
 
 **Not in scope (later F2.x)**
 
@@ -100,7 +106,7 @@ internal/thumb/sizes.go          ← grid=256, preview=2560, large=4096
 internal/thumb/worker.go         ← already loops over AllSizes(); just inherits
 internal/thumb/raw.go            ← single decode → resize per AllSizes(); large
                                    is just another resize from the existing path
-internal/cli/thumbs.go           ← new `regenerate` subcommand
+internal/cli/thumbs.go           ← extend existing `regenerate` with --owner/--all-owners
 ```
 
 The schema policy is pre-prod squash (per `CLAUDE.md`): if a column or
@@ -327,28 +333,58 @@ preview + large all emitted on a successful claim.
 
 ### 4.9 `internal/cli/thumbs.go` — `regenerate` subcommand
 
-Behaviors:
+The existing subcommand already accepts `--all`, `--id`, `--type`,
+`--status`, `--since` as **content selectors** and validates that at
+least one is set (`internal/cli/thumbs.go:104`). F2.0 keeps that
+contract verbatim and adds two **owner scope** flags. Owner scope and
+content selection are independent dimensions:
+
+- **Owner scope** (mutually exclusive; default = configured stub principal):
+  - (no owner flag) — caller is the configured stub principal.
+    Requires `identity.mode=stub` (existing precondition,
+    `internal/cli/thumbs.go:86`).
+  - `--owner <hub>:<user>` — that single principal. Bypasses the
+    `identity.mode=stub` check (admin maintenance).
+  - `--all-owners` — every principal returned by `owners.Repo.List(ctx)`.
+    Bypasses the `identity.mode=stub` check (admin maintenance).
+- **Content selectors** (existing; at least one required):
+  - `--all`, `--id` (repeatable), `--type photo|video`,
+    `--status pending|working|ready|failed|no_preview`,
+    `--since RFC3339`.
+
+For each owner in scope, F2.0 builds the same `EnqueueFilter` the F1
+code already constructs (`internal/cli/thumbs.go:115`), substituting
+the owner. `--all-owners` iterates owners and calls `Queue.Enqueue`
+once per owner, summing the row counts.
+
+Behavior matrix (illustrative; not exhaustive):
 
 | Invocation | Identity requirement | Effect |
 |---|---|---|
-| `fotobank thumbs regenerate` | usage error | Selector required. |
-| `fotobank thumbs regenerate --all` | `identity.mode=stub` | Enqueue all rows for the configured stub principal. |
-| `fotobank thumbs regenerate --owner local:alice` | none (admin maintenance) | Enqueue all rows for `local:alice`. |
-| `fotobank thumbs regenerate --all-owners` | none (admin maintenance) | List owners via `owners.Repo.List(ctx)`; enqueue per owner. |
-| `fotobank thumbs regenerate --owner foo` | usage error | Malformed owner; missing `:` separator. |
-| `fotobank thumbs regenerate --owner foo:bar` | none | Valid format; `Enqueue` matches 0 rows; CLI prints `queued 0 rows for foo:bar`. Not an error. |
+| `fotobank thumbs regenerate` | usage error | At least one content selector required (existing message). |
+| `fotobank thumbs regenerate --all` | `identity.mode=stub` | All rows for the configured stub principal (existing). |
+| `fotobank thumbs regenerate --status failed` | `identity.mode=stub` | Failed rows for the configured stub principal (existing). |
+| `fotobank thumbs regenerate --owner local:alice` | none (admin maintenance) | usage error: a content selector is still required. |
+| `fotobank thumbs regenerate --owner local:alice --all` | none (admin maintenance) | All rows for `local:alice`. |
+| `fotobank thumbs regenerate --owner local:alice --status failed` | none (admin maintenance) | Failed rows for `local:alice`. |
+| `fotobank thumbs regenerate --all-owners` | usage error | A content selector is required. |
+| `fotobank thumbs regenerate --all-owners --all` | none (admin maintenance) | All rows for every principal in `owners.Repo.List(ctx)`. |
+| `fotobank thumbs regenerate --owner foo --all` | usage error | Malformed owner; missing `:` separator. |
+| `fotobank thumbs regenerate --owner foo:bar --all` | none | Valid format; `Enqueue` matches 0 rows; CLI prints `queued 0 rows for foo:bar`. Not an error. |
+| `fotobank thumbs regenerate --owner X --all-owners --all` | usage error | `--owner` and `--all-owners` are mutually exclusive. |
 
-All variants set `EnqueueFilter{All: true}`. `Enqueue` already does
-`thumb_version = thumb_version + 1, thumb_status = 'pending'` in one statement
+`Enqueue` already does `thumb_version = thumb_version + 1,
+thumb_status = 'pending'` in one statement
 (`internal/thumb/queue.go:244`), so the upgrade flow is:
 
-1. Operator runs `regenerate`.
+1. Operator runs `regenerate` with a content selector.
 2. `Enqueue` immediately bumps `thumb_version` on matched rows.
 3. Frontend `?v=N` URLs now mismatch → `404 Cache-Control: no-store`.
 4. Worker drains pending rows in the background; new size files keyed by `v=N+1`.
 5. `MarkReady` flips `thumb_status='ready'` (does not bump version).
 
-Output: `queued <n> rows for <hub>:<user>` per principal.
+Output: one `queued <n> rows for <hub>:<user>` line per principal
+processed (existing single-principal output extended over the loop).
 
 ## 5. Data flow
 
@@ -383,8 +419,9 @@ ignored by the matcher; future routes that need query params (e.g.
 ### 5.4 MediaStore.merge after `/api/v1/media/:id` PUT
 
 ```
-client PUT /api/v1/media/abc { taken_at: "2025-12-01T..." } succeeds
-client refetches → mediaStore.merge([row])
+client PUT /api/v1/media/abc with a new timestamp succeeds
+client refetches → receives the updated media row (with `timestamp` field)
+                 → mediaStore.merge([row])
 byId.get("abc") = "2026-04"; new monthKey = "2025-12"
 byMonth["2026-04"].delete("abc"); dirty += "2026-04"
 if byMonth["2026-04"].size === 0: prune
@@ -397,14 +434,21 @@ months snapshot rebuilt; "2026-04" and "2025-12" rebuilt; everything else
 ### 5.5 Operator regenerate
 
 ```
-operator runs: fotobank thumbs regenerate --all-owners
+operator runs: fotobank thumbs regenerate --all-owners --all
 CLI: owners := owners.Repo.List(ctx)
 for o in owners: Queue.Enqueue(EnqueueFilter{Owner: o, All: true})
 each Enqueue: UPDATE media SET thumb_version = thumb_version + 1, thumb_status = 'pending' WHERE owner = ?
-worker (server or `fotobank thumbs work`) drains pending; emits 3 sizes per claim
-frontend: cached <img src=...?v=N> 404s, falls back to MediaCell placeholder
-once MarkReady fires, the row's <img src=...?v=N+1> succeeds on next nav
+the running fotobank server's thumb worker drains pending rows; emits 3 sizes per claim
+frontend: cached <img src=...?v=N> 404s in any open tab; MediaCell falls back to placeholder
+the open tab keeps its placeholder until either:
+  • a media-list refetch (e.g. SSE-driven merge) replaces the cached row with v=N+1, or
+  • the operator reloads the tab (full re-fetch hits v=N+1)
 ```
+
+F2.0 does NOT add an automatic refresh path — the SSE bus is
+populated by the import pipeline, not by thumb regeneration. Open
+tabs holding cached `?v=N` URLs remain on placeholders until reload.
+This is documented as a runbook caveat in §8.
 
 ## 6. Error handling
 
@@ -423,13 +467,21 @@ once MarkReady fires, the row's <img src=...?v=N+1> succeeds on next nav
 
 **Backend**
 
-- `regenerate` with no flags → usage error, exit code 2.
-- `regenerate --owner foo` (missing `:`) → usage error: `owner must be hub:user`.
-- `regenerate --owner foo:bar` for nonexistent owner → 0 rows queued; exit 0.
-- `regenerate --all-owners` on empty DB → `no owners found`; exit 0.
-- `regenerate --owner ...` and `--all-owners` together → usage error.
-- `regenerate --all` outside stub mode → usage error: `--all requires
-  identity.mode=stub; use --owner or --all-owners`.
+- `regenerate` with no content selector → usage error, exit code 2
+  (existing behavior preserved).
+- `regenerate --owner local:alice` (no content selector) → usage error.
+- `regenerate --all-owners` (no content selector) → usage error.
+- `regenerate --owner foo --all` (missing `:`) → usage error:
+  `owner must be hub:user`.
+- `regenerate --owner foo:bar --all` for an owner whose row set is
+  empty → 0 rows queued; exit 0.
+- `regenerate --all-owners --all` against an empty `owners` table →
+  `no owners found`; exit 0.
+- `regenerate --owner ... --all-owners ...` → usage error
+  (mutually exclusive scope flags).
+- `regenerate --all` (or any selector) without `--owner`/`--all-owners`
+  outside stub mode → existing usage error: `requires identity.mode=stub`
+  (`internal/cli/thumbs.go:86`).
 - Worker decode failures on regenerated rows → existing `failed` /
   `no_preview` transitions cover; F2.0 doesn't change failure paths.
 
@@ -468,14 +520,24 @@ once MarkReady fires, the row's <img src=...?v=N+1> succeeds on next nav
 - `internal/thumb/worker_test.go` (or per-claim emission test): assert
   `grid` + `preview` + `large` all emitted on a successful claim. Uses real
   decode + storage (existing test harness).
-- `internal/cli/thumbs_test.go`: add `regenerate --all-owners` against
-  `testutil.OpenTestDB(t)` seeded with 3 owners + N rows each:
-  - Asserts each row transitions to `thumb_status='pending'`.
-  - Asserts `thumb_version` increments by exactly 1 per row.
-  - Does NOT spin up a worker — that's the worker test's responsibility.
-- `internal/cli/thumbs_test.go`: usage-error tests for no-flags,
-  `--owner foo` (malformed), `--all` outside stub mode, `--owner` +
-  `--all-owners` together.
+- `internal/cli/thumbs_test.go`: keep all existing selector tests
+  (`--all`, `--id`, `--type`, `--status`, `--since`, RFC3339 parse
+  errors). Add:
+  - `regenerate --owner local:alice --all` against a fixture seeded with
+    rows for `local:alice` and rows for a different owner — asserts only
+    `local:alice` rows transition to `pending` and bump `thumb_version`.
+  - `regenerate --all-owners --all` against `testutil.OpenTestDB(t)` seeded
+    with 3 owners + N rows each — asserts every row transitions to
+    `pending` and `thumb_version` increments by exactly 1 per row. Does
+    NOT spin up a worker (worker test's responsibility).
+  - `regenerate --owner local:alice --status failed` — confirms owner
+    scope and content selector compose; only failed rows for that owner
+    are enqueued.
+  - Usage-error tests: `regenerate --owner local:alice` (no content
+    selector), `regenerate --all-owners` (no content selector),
+    `regenerate --owner foo --all` (malformed), `regenerate --all`
+    outside stub mode (existing), `regenerate --owner X --all-owners --all`
+    (mutually exclusive).
 - `internal/httpapi/media_thumb_test.go`: `?size=lightbox` → 400; add
   `?size=large&v=N` happy path.
 
@@ -485,9 +547,14 @@ once MarkReady fires, the row's <img src=...?v=N+1> succeeds on next nav
   store lifecycle; F2.0 removes that. Mitigation: explicit task with the
   no-refetch Playwright assertion. The plan calls out the new component
   contract.
-- **Regenerate cache-bust window.** Operators with running browser tabs see
-  thumbnail placeholders for the few seconds-to-minutes the worker takes to
-  drain. Plan note in the runbook: run during low-use hours.
+- **Regenerate cache-bust window.** Once `Enqueue` bumps `thumb_version`,
+  cached `<img src=...?v=N>` URLs in any open tab return 404 and fall back
+  to MediaCell's placeholder. The hoisted MediaStore keeps those cached
+  rows in `byMonth` indefinitely — F2.0 has no SSE event or polling path
+  that swaps `?v=N` for `?v=N+1`. Open tabs stay on placeholders until the
+  user reloads the page (or until a future media-list refetch from a
+  different code path lands). Runbook: regenerate during low-use hours
+  and tell active operators to reload tabs after the worker drains.
 - **`large=4096` wall-clock.** Decoding RAW + resizing to 4096 is ~1s/row on
   Apple Silicon. Per-row total time roughly doubles vs grid+preview. Not a
   correctness risk; flag in the runbook.
