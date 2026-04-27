@@ -178,18 +178,18 @@ func TestThumbRouteLargeHappyPath(t *testing.T) {
 
 func TestThumbRouteStaleReadyRowReturns404ForNewSize(t *testing.T) {
 	// F2.0 upgrade contract: rows whose thumb_status='ready' was set
-	// under the F1 vocabulary have grid + preview + lightbox bytes
-	// but no large.jpg. After F2.0 deploy, ?size=large&v=N for those
-	// rows must 404 (not 500, not silently rewrite to a different
-	// size) until an operator runs `thumbs regenerate`. The 404 is
-	// what MediaCell's placeholder fallback keys off of; this locks
-	// the contract so a future "convenience fallback" can't silently
-	// degrade to ?size=preview.
+	// under the F1 vocabulary lack the new large.jpg blob (F1 emitted
+	// grid + preview + lightbox; F2.0 emits grid + preview + large).
+	// After F2.0 deploy, ?size=large&v=N for those rows must 404 (not
+	// 500, not silently rewrite to a different size) until an operator
+	// runs `thumbs regenerate`. The 404 is what MediaCell's placeholder
+	// fallback keys off of; this locks the contract so a future
+	// "convenience fallback" can't silently degrade to ?size=preview.
 	r := require.New(t)
 	srv, repo, p, store := newThumbAPITest(t)
 	m := seedReadyThumb(t, repo, store, p, 5)
-	// Simulate an F1-vintage row: row is ready + has grid + preview
-	// bytes, but no large.jpg.
+	// Simulate an F1-vintage row by removing the large blob — leaves
+	// the ready row with the F1-era set on disk (grid + preview).
 	r.NoError(store.Delete(context.Background(), p,
 		thumb.ThumbKey(m.ID, m.ThumbVersion, thumb.SizeLarge)))
 	url := fmt.Sprintf("%s/api/v1/media/%s/thumb?size=large&v=%d", srv.URL, m.ID, m.ThumbVersion)
