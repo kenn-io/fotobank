@@ -361,9 +361,9 @@ func (r *Repo) ListGPSBackfillCandidates(
 	conds := []string{
 		"owner_hub = ?",
 		"owner_user_id = ?",
-		"media_type = 'photo'",
+		"media_type = ?",
 	}
-	args := []any{owner.Hub, owner.UserID}
+	args := []any{owner.Hub, owner.UserID, string(TypePhoto)}
 
 	switch mode {
 	case GPSBackfillModeFull:
@@ -373,7 +373,7 @@ func (r *Repo) ListGPSBackfillCandidates(
 	case GPSBackfillModeRelabel:
 		conds = append(conds, "latitude IS NOT NULL AND longitude IS NOT NULL")
 	default:
-		return nil, fmt.Errorf("list gps backfill candidates: unknown mode %d", mode)
+		return nil, fmt.Errorf("%w: unknown GPSBackfillMode %d", errs.ErrInvalidArgument, mode)
 	}
 	if since != nil {
 		conds = append(conds, "imported_at >= ?")

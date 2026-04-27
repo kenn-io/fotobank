@@ -588,16 +588,16 @@ func TestListGPSBackfillCandidatesSinceFilter(t *testing.T) {
 	)
 	r.NoError(err)
 
-	old := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	new := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	older := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
 	r.NoError(repo.Insert(context.Background(), media.Media{
 		ID: "old-id", Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "old.jpg", ImportedAt: old, Size: 1, Checksum: "c-old",
+		Path: "old.jpg", ImportedAt: older, Size: 1, Checksum: "c-old",
 		ThumbStatus: "pending",
 	}))
 	r.NoError(repo.Insert(context.Background(), media.Media{
 		ID: "new-id", Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "new.jpg", ImportedAt: new, Size: 1, Checksum: "c-new",
+		Path: "new.jpg", ImportedAt: newer, Size: 1, Checksum: "c-new",
 		ThumbStatus: "pending",
 	}))
 
