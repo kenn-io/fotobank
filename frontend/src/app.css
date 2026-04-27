@@ -1,5 +1,10 @@
 /* frontend/src/app.css */
 :root {
+  /* color-scheme tells the UA to render native scrollbars, form
+     widgets, and default backgrounds in the matching mode. Without
+     this, the dark @media block below switches our custom variables
+     but native controls stay light. */
+  color-scheme: light dark;
   --bg-primary:   #ffffff;
   --bg-surface:   #f6f7f9;
   --bg-elevated:  #ffffff;

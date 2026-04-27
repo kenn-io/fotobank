@@ -37,4 +37,17 @@ describe("computeJustified", () => {
   it("returns empty rows for empty input", () => {
     expect(computeJustified([], { containerWidth: 800, targetRowHeight: 200, gap: 0 }).rows).toEqual([]);
   });
+
+  it("does not overflow containerWidth for very wide items", () => {
+    // A single panorama-aspect item whose natural row height (budget /
+    // aspect) falls below the default minRowHeight used to be clamped
+    // upward, pushing total width past containerWidth. The layout must
+    // accept a short row instead so items never exceed the container.
+    const items = [{ aspect: 10 }];
+    const layout = computeJustified(items, { containerWidth: 900, targetRowHeight: 200, gap: 0 });
+    for (const row of layout.rows) {
+      const totalW = row.items.reduce((s, it) => s + it.width, 0);
+      expect(totalW).toBeLessThanOrEqual(900 + 1);
+    }
+  });
 });

@@ -1,5 +1,6 @@
 <!-- frontend/src/App.svelte -->
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import ThreeColumnLayout from "./lib/components/ThreeColumnLayout.svelte";
   import AppHeader from "./lib/components/AppHeader.svelte";
   import Sidebar from "./lib/components/Sidebar.svelte";
@@ -11,6 +12,9 @@
   themeStore.load();
   const events = new EventsStore();
   events.connect();
+  // HMR remounts the root component; without an explicit teardown the
+  // EventSource accumulates duplicate connections each reload.
+  onDestroy(() => events.disconnect());
 
   let route = $state(window.location.pathname || "/library");
 

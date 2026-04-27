@@ -60,9 +60,18 @@ func HandlerFor(sub fs.FS) http.Handler {
 		// Static assets must 404 cleanly so build issues surface. Vite
 		// emits all hashed bundle output under /assets/ (see
 		// frontend/vite.config.ts); expand this list if the build tool
-		// changes. FileServer is the right tool here because we want
-		// 404s for missing assets, not redirects.
-		if strings.HasPrefix(path, "assets/") {
+		// changes. FileServer is the right tool for files but renders a
+		// directory listing for /assets/ (which would expose every hashed
+		// bundle name) — and after the trailing-slash strip above, both
+		// /assets/ and /assets resolve to the directory "assets". Stat
+		// the path and refuse anything that isn't a regular file before
+		// handing off to FileServer.
+		if strings.HasPrefix(path, "assets/") || path == "assets" {
+			info, err := fs.Stat(sub, path)
+			if err != nil || info.IsDir() {
+				http.NotFound(w, r)
+				return
+			}
 			fsHandler.ServeHTTP(w, r)
 			return
 		}

@@ -4,7 +4,6 @@ export type LayoutOptions = {
   containerWidth: number;
   targetRowHeight: number;
   gap?: number;
-  minRowHeight?: number;
   maxRowHeight?: number;
 };
 
@@ -18,7 +17,6 @@ export type Layout = { rows: Row[]; totalHeight: number };
 
 export function computeJustified(items: LayoutItem[], opts: LayoutOptions): Layout {
   const gap = opts.gap ?? 4;
-  const minH = opts.minRowHeight ?? Math.floor(opts.targetRowHeight * 0.6);
   const maxH = opts.maxRowHeight ?? Math.ceil(opts.targetRowHeight * 1.6);
   const rows: Row[] = [];
   let y = 0;
@@ -35,7 +33,12 @@ export function computeJustified(items: LayoutItem[], opts: LayoutOptions): Layo
       // Final, possibly under-filled row: cap at targetRowHeight.
       height = Math.min(height, opts.targetRowHeight);
     } else {
-      height = Math.max(minH, Math.min(maxH, height));
+      // At natural height (budget / pendingAspectSum) the row's total
+      // width equals containerWidth, so any clamp UP to minH would push
+      // total width past the container. Only clamp DOWN to maxH; for
+      // very wide single items (e.g., a panorama) accept the short row
+      // rather than overflow. Matches Flickr/Google-Photos behavior.
+      height = Math.min(maxH, height);
     }
     let x = 0;
     const rowItems: Row["items"] = [];
