@@ -1120,7 +1120,7 @@ Expected: FAIL with module-not-found.
 cd /Users/wesm/code/fotobank/frontend && bun run test -- src/lib/grid/MediaCell.test.ts
 ```
 
-Expected: PASS — 5 tests.
+Expected: PASS — 6 tests.
 
 - [ ] **Step 5: Run typecheck and the full vitest suite.**
 
