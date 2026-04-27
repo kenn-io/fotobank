@@ -126,5 +126,6 @@ coverage.out
 *~
 .DS_Store
 
-# brainstorm visual companion
-.superpowers/
+# brainstorm visual companion (only ephemeral output; allow committed
+# artifacts elsewhere under .superpowers/ if needed in future)
+.superpowers/brainstorm/

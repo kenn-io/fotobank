@@ -218,7 +218,11 @@ admin_listen = "0.0.0.0:9090"
 	select {
 	case code = <-codeCh:
 	case <-time.After(5 * time.Second):
-		r.Fail("server did not exit within 5s — non-loopback admin_listen must be rejected at validation")
+		// Force the goroutine to exit before we read so/se to avoid a
+		// data race on the buffers and to stop a runaway Serve.
+		cancel()
+		<-codeCh
+		r.FailNow("server did not exit within 5s — non-loopback admin_listen must be rejected at validation")
 	}
 	r.NotEqual(0, code, "non-loopback admin_listen must be rejected at validation")
 	r.Contains(strings.ToLower(se.String()+so.String()), "loopback")
