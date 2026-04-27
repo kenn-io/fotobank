@@ -29,6 +29,7 @@ import (
 	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service"
+	"github.com/wesm/fotobank/internal/service/usersettings"
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/shareworker"
 	"github.com/wesm/fotobank/internal/storage"
@@ -228,6 +229,9 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		resolver,
 	)
 
+	usersettingsSvc := usersettings.NewService(usersettings.NewRepo(d.WriteDB(), d.ReadDB()))
+	eventBus := httpapi.NewEventBus()
+
 	handler, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: idp,
 		OwnerService:     ownerSvc,
@@ -236,6 +240,8 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		ThumbService:     thumbSvc,
 		ShareService:     shareSvc,
 		SharedRead:       sharedSvc,
+		UserSettings:     usersettingsSvc,
+		EventBus:         eventBus,
 		PrincipalDisplay: displayRepo,
 		Logger:           logger,
 		Metrics:          metricsObj,

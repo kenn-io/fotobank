@@ -93,6 +93,10 @@ func (b *EventBus) Publish(p owners.Principal, ev Event) {
 // returns the channel plus a cancellation function that removes the
 // subscriber and closes the channel. The channel is buffered so a
 // brief stall in the consumer does not block the publisher.
+//
+// subscribe is retained for tests that want to exercise the registration
+// path without snapshotting the ring; the production handler uses
+// subscribeFrom so the snapshot and registration happen atomically.
 func (b *EventBus) subscribe(p owners.Principal) (chan Event, func()) {
 	ch := make(chan Event, 16)
 	b.mu.Lock()
@@ -103,7 +107,15 @@ func (b *EventBus) subscribe(p owners.Principal) (chan Event, func()) {
 	}
 	r.subs = append(r.subs, ch)
 	b.mu.Unlock()
-	return ch, func() {
+	return ch, b.makeUnsub(p, ch)
+}
+
+// makeUnsub returns the cancellation closure used by subscribe and
+// subscribeFrom. Both code paths must remove ch from the ring's subs
+// list under b.mu and close the channel exactly once; sharing the
+// closure keeps that invariant in one place.
+func (b *EventBus) makeUnsub(p owners.Principal, ch chan Event) func() {
+	return func() {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		r := b.bufs[p]
@@ -124,31 +136,74 @@ func (b *EventBus) subscribe(p owners.Principal) (chan Event, func()) {
 // greater than lastID, in monotonic ID order. The returned slice is a
 // fresh copy so callers may iterate without holding b.mu.
 //
+// replayAfter is retained for tests that want to inspect the ring
+// independent of subscription; the production handler uses
+// subscribeFrom because a separate replay+subscribe pair leaves a
+// window where Publish'd events are lost (neither replayed nor
+// delivered live).
+func (b *EventBus) replayAfter(p owners.Principal, lastID int64) []Event {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	events, _ := snapshotLocked(b.bufs[p], b.bufLen, lastID)
+	return events
+}
+
+// snapshotLocked returns the events in r whose ID is greater than
+// lastID (in monotonic order) along with the oldest retained ID
+// currently in the ring. The caller must hold b.mu.
+//
 // Once the ring has wrapped, the underlying slice is logically rotated
 // — the oldest entry sits at index r.next, not index 0 — so iteration
 // must start there to preserve chronological order. Pre-wraparound,
 // r.next is still 0 and the loop walks the slice in the natural
 // append order.
-func (b *EventBus) replayAfter(p owners.Principal, lastID int64) []Event {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	r := b.bufs[p]
+//
+// When the ring is empty (or r is nil), oldestID is 0 so callers can
+// distinguish "no events ever" from "events exist".
+func snapshotLocked(r *ring, bufLen int, lastID int64) (events []Event, oldestID int64) {
 	if r == nil {
-		return nil
+		return nil, 0
 	}
 	n := len(r.events)
-	out := make([]Event, 0, n)
+	if n == 0 {
+		return nil, 0
+	}
 	start := 0
-	if n == b.bufLen {
+	if n == bufLen {
 		start = r.next
 	}
+	oldestID = r.events[start].ID
+	out := make([]Event, 0, n)
 	for i := range n {
 		ev := r.events[(start+i)%n]
 		if ev.ID > lastID {
 			out = append(out, ev)
 		}
 	}
-	return out
+	return out, oldestID
+}
+
+// subscribeFrom atomically captures the events with id > lastID and
+// registers a live subscription so no events are lost in the seam
+// between bootstrap and live delivery. The returned oldestID is the
+// smallest event ID currently retained in the ring (0 when the ring
+// is empty), which the handler uses to decide whether the client's
+// Last-Event-ID predates the retained window.
+func (b *EventBus) subscribeFrom(p owners.Principal, lastID int64) (
+	replay []Event, oldestID int64, ch chan Event, unsub func(),
+) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	r := b.bufs[p]
+	if r == nil {
+		r = &ring{events: make([]Event, 0, b.bufLen)}
+		b.bufs[p] = r
+	}
+	replay, oldestID = snapshotLocked(r, b.bufLen, lastID)
+	ch = make(chan Event, 16)
+	r.subs = append(r.subs, ch)
+	unsub = b.makeUnsub(p, ch)
+	return replay, oldestID, ch, unsub
 }
 
 // eventsHandler returns the raw HTTP handler that serves
@@ -157,20 +212,19 @@ func (b *EventBus) replayAfter(p owners.Principal, lastID int64) []Event {
 // WithMiddleware), so the handler must be registered behind the same
 // middleware chain that powers the huma routes.
 //
-// On connect the handler emits a synthetic "hello" event (id=0) whose
-// JSON data carries {"principal": "<userID>"}. If the client supplied
-// a Last-Event-ID header, the handler either replays the buffered
-// events newer than that ID or, if none are available, emits a
-// "catchup-required" event (also id=0) so the client knows to refetch
-// state via REST. After the bootstrap phase the handler subscribes to
-// the per-principal channel and forwards each Event as a standard SSE
-// frame until the request context is cancelled.
+// On connect the handler emits a synthetic "hello" control event
+// whose JSON data carries {"principal": "<userID>"}. If the client
+// supplied a Last-Event-ID header, the handler either replays the
+// buffered events newer than that ID or, when the client's ID predates
+// the retained window (or the ring is empty), emits a "catchup-required"
+// control event so the client knows to refetch state via REST.
 //
-// id=0 is reserved for control events (hello, catchup-required).
-// Clients MUST NOT record control event IDs as their Last-Event-ID
-// high-water mark; doing so would cause the server to either re-replay
-// the same events or, in the catchup-required case, loop forever
-// reissuing the control event on every reconnect.
+// Control events are written without an SSE id field so EventSource
+// does not advance the client's lastEventId past them. Clients track
+// lastEventId only via writeSSE-emitted (domain) frames. After the
+// bootstrap phase the handler subscribes to the per-principal channel
+// and forwards each Event as a standard SSE frame until the request
+// context is cancelled.
 func eventsHandler(bus *EventBus) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := IdentityFromContext(r.Context())
@@ -194,7 +248,7 @@ func eventsHandler(bus *EventBus) http.HandlerFunc {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
-		writeSSE(w, Event{ID: 0, Type: "hello", Data: hello})
+		writeControlSSE(w, "hello", hello)
 		flusher.Flush()
 
 		var lastID int64
@@ -203,21 +257,29 @@ func eventsHandler(bus *EventBus) http.HandlerFunc {
 				lastID = n
 			}
 		}
+
+		// Atomic snapshot + subscribe under bus.mu so events Publish'd
+		// between the snapshot and the subscription are never lost.
+		replay, oldestID, ch, unsub := bus.subscribeFrom(caller, lastID)
+		defer unsub()
+
 		if lastID > 0 {
-			missed := bus.replayAfter(caller, lastID)
-			if len(missed) == 0 {
-				// id=0 marks this as a control event; see eventsHandler doc.
-				writeSSE(w, Event{ID: 0, Type: "catchup-required", Data: json.RawMessage(`{}`)})
+			// gap: the client's last-seen ID predates the retained
+			// window (or the ring is empty), so events between lastID
+			// and oldestID may have been evicted. Tell the client to
+			// refetch state via REST instead of silently skipping
+			// the gap.
+			gap := oldestID == 0 || lastID < oldestID-1
+			if gap {
+				writeControlSSE(w, "catchup-required", json.RawMessage(`{}`))
 			} else {
-				for _, ev := range missed {
+				for _, ev := range replay {
 					writeSSE(w, ev)
 				}
 			}
 			flusher.Flush()
 		}
 
-		ch, unsub := bus.subscribe(caller)
-		defer unsub()
 		for {
 			select {
 			case <-r.Context().Done():
@@ -233,11 +295,20 @@ func eventsHandler(bus *EventBus) http.HandlerFunc {
 	}
 }
 
-// writeSSE serialises ev as a single SSE frame on w. Network errors
-// here are unrecoverable from the handler's vantage (the client has
-// disconnected), so they are intentionally not propagated; the next
-// flusher.Flush call or the next select on ctx.Done will pick the
-// failure up and end the loop.
+// writeSSE serialises a domain event with its monotonic id so the
+// client's EventSource records it as the new Last-Event-ID. Network
+// errors here are unrecoverable from the handler's vantage (the client
+// has disconnected), so they are intentionally not propagated; the
+// next flusher.Flush call or the next select on ctx.Done will pick
+// the failure up and end the loop.
 func writeSSE(w http.ResponseWriter, ev Event) {
 	fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", ev.ID, ev.Type, string(ev.Data))
+}
+
+// writeControlSSE serialises a control event (hello, catchup-required)
+// without an id field so EventSource does not advance the client's
+// lastEventId past sentinel frames. Per the SSE spec, omitting the
+// id field leaves lastEventId unchanged for the dispatched message.
+func writeControlSSE(w http.ResponseWriter, eventType string, data json.RawMessage) {
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, string(data))
 }

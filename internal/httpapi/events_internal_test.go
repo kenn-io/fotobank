@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -74,5 +75,115 @@ func TestEventBusSlowSubscriberDoesNotBlockPublisher(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		r.FailNow("Publish blocked on slow subscriber")
+	}
+}
+
+// TestEventBusSubscribeFromReportsOldestID exercises the gap-detection
+// path: after the ring has wrapped, a client whose Last-Event-ID
+// predates the retained window must observe the oldestID returned by
+// subscribeFrom so the handler can emit catchup-required instead of
+// silently skipping the evicted range.
+func TestEventBusSubscribeFromReportsOldestID(t *testing.T) {
+	r := require.New(t)
+	bus := NewEventBusWithSize(4)
+	p := owners.Principal{Hub: "local", UserID: "alice"}
+
+	// Publish 6 events into a 4-slot ring; IDs 1 and 2 are evicted,
+	// IDs 3..6 survive. The oldest retained ID is therefore 3.
+	for i := int64(1); i <= 6; i++ {
+		bus.Publish(p, Event{ID: i, Type: "test", Data: json.RawMessage(`{}`)})
+	}
+
+	// Client claims it last saw ID 1 (evicted). subscribeFrom should
+	// report oldestID=3 so the handler detects lastID < oldestID-1
+	// and emits catchup-required.
+	replay, oldestID, ch, unsub := bus.subscribeFrom(p, 1)
+	defer unsub()
+	r.NotNil(ch)
+	r.Equal(int64(3), oldestID, "oldest retained ID after wraparound should be 3")
+	r.Len(replay, 4, "replay covers 4 surviving events even though gap is detected")
+
+	// Verify the handler-side gap check would fire: lastID=1 < oldestID-1=2.
+	r.Less(int64(1), oldestID-1, "lastID=1 must be strictly less than oldestID-1 to trigger catchup-required")
+}
+
+// TestEventBusSubscribeFromEmptyRing covers the cold-start case: a
+// client reconnects with Last-Event-ID set, but the server has nothing
+// buffered. The handler relies on oldestID==0 to emit catchup-required
+// rather than treating an empty replay as "fully caught up".
+func TestEventBusSubscribeFromEmptyRing(t *testing.T) {
+	r := require.New(t)
+	bus := NewEventBusWithSize(4)
+	p := owners.Principal{Hub: "local", UserID: "alice"}
+
+	replay, oldestID, ch, unsub := bus.subscribeFrom(p, 5)
+	defer unsub()
+	r.NotNil(ch)
+	r.Empty(replay, "no events to replay from an empty ring")
+	r.Equal(int64(0), oldestID, "empty ring reports oldestID=0")
+}
+
+// TestEventBusSubscribeFromAtomic confirms the snapshot-then-subscribe
+// seam is closed: an event published concurrently with subscribeFrom
+// must surface either via the replay slice or via the live channel,
+// never disappear in the middle. Without the single-mu guarantee the
+// previous handler had a window between replayAfter and subscribe
+// where Publish'd events were lost. The test races a goroutine that
+// fires N events against repeated subscribeFrom calls and asserts
+// that for every iteration the union of replay+channel covers every
+// published ID.
+func TestEventBusSubscribeFromAtomic(t *testing.T) {
+	r := require.New(t)
+	bus := NewEventBusWithSize(256)
+	p := owners.Principal{Hub: "local", UserID: "alice"}
+
+	const iterations = 100
+	for iter := range iterations {
+		// Each iteration subscribes from the watermark of the
+		// previous iteration's tail, then a goroutine publishes a
+		// fresh event concurrently. Whether the event lands in
+		// replay or arrives via channel depends on scheduling, but
+		// it must NEVER be lost.
+		baseID := int64(iter * 10)
+		bus.Publish(p, Event{ID: baseID + 1, Type: "pre", Data: json.RawMessage(`{}`)})
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		raceID := baseID + 2
+		go func() {
+			defer wg.Done()
+			bus.Publish(p, Event{ID: raceID, Type: "race", Data: json.RawMessage(`{}`)})
+		}()
+
+		replay, _, ch, unsub := bus.subscribeFrom(p, baseID)
+
+		// Drain channel for a short window; whichever path the race
+		// event took, it must be observable.
+		seen := map[int64]bool{}
+		for _, ev := range replay {
+			seen[ev.ID] = true
+		}
+		// Wait up to 250ms for the live event if it didn't land in
+		// replay. The publisher goroutine is racing under bus.mu so
+		// it must complete promptly once subscribeFrom releases.
+		wg.Wait()
+		deadline := time.After(250 * time.Millisecond)
+	drain:
+		for !seen[raceID] {
+			select {
+			case ev, open := <-ch:
+				if !open {
+					break drain
+				}
+				seen[ev.ID] = true
+			case <-deadline:
+				break drain
+			}
+		}
+		unsub()
+
+		r.Truef(seen[baseID+1], "iter %d: pre-existing event %d missing", iter, baseID+1)
+		r.Truef(seen[raceID], "iter %d: raced event %d lost between snapshot and subscribe",
+			iter, raceID)
 	}
 }
