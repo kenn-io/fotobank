@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -35,12 +36,15 @@ func newThumbsCmd() *cobra.Command {
 }
 
 type regenerateOpts struct {
-	cfgPath string
-	all     bool
-	ids     []string
-	kind    string
-	status  string
-	since   string
+	cfgPath   string
+	all       bool
+	ids       []string
+	kind      string
+	status    string
+	since     string     // raw RFC3339 string from the flag
+	sinceTime *time.Time // parsed during validateSelectors; nil when --since is empty
+	owner     string     // "<hub>:<user>"; empty = use stub principal
+	allOwners bool       // iterate every principal in owners table
 }
 
 // newThumbsRegenerateCmd wires the `fotobank thumbs regenerate` subcommand.
@@ -69,12 +73,17 @@ func newThumbsRegenerateCmd() *cobra.Command {
 		"filter by current thumb_status (pending/working/ready/failed/no_preview)")
 	cmd.Flags().StringVar(&opts.since, "since", "",
 		"filter: imported_at >= RFC3339 date")
+	cmd.Flags().StringVar(&opts.owner, "owner", "",
+		"admin: regenerate for a single principal in <hub>:<user> form")
+	cmd.Flags().BoolVar(&opts.allOwners, "all-owners", false,
+		"admin: regenerate for every registered principal")
 	return cmd
 }
 
-// loadThumbsConfig loads and validates the config for the thumbs command,
-// enforcing the stub identity mode requirement.
-func loadThumbsConfig(cfgPath string) (*config.Config, error) {
+// loadThumbsConfig loads and validates the config for the thumbs command.
+// requireStub enforces identity.mode = "stub"; admin scope flags
+// (--owner / --all-owners) bypass that check.
+func loadThumbsConfig(cfgPath string, requireStub bool) (*config.Config, error) {
 	path := cfgPath
 	if path == "" {
 		path = config.DefaultConfigPath()
@@ -83,8 +92,8 @@ func loadThumbsConfig(cfgPath string) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Identity.Mode != "stub" {
-		return nil, fmt.Errorf(
+	if requireStub && cfg.Identity.Mode != "stub" {
+		return nil, newUsageError(
 			"fotobank thumbs regenerate requires identity.mode = stub (got %q)",
 			cfg.Identity.Mode)
 	}
@@ -102,19 +111,55 @@ func openDB(cfg *config.Config) (*db.DB, error) {
 }
 
 // validateSelectors returns a usage error when no selector flag is set.
-func validateSelectors(opts regenerateOpts) error {
+// It also parses --since up front so a malformed timestamp errors before
+// any DB file is created.
+func validateSelectors(opts *regenerateOpts) error {
 	if !opts.all && len(opts.ids) == 0 && opts.kind == "" && opts.status == "" && opts.since == "" {
 		return newUsageError(
 			"at least one of --all, --id, --type, --status, --since is required")
 	}
+	if opts.since != "" {
+		ts, err := time.Parse(time.RFC3339, opts.since)
+		if err != nil {
+			return newUsageError("--since must be RFC3339: %v", err)
+		}
+		opts.sinceTime = &ts
+	}
 	return nil
 }
 
-// buildFilter constructs a thumb.EnqueueFilter from cfg and opts, including
-// RFC3339 parsing for --since.
-func buildFilter(cfg *config.Config, opts regenerateOpts) (thumb.EnqueueFilter, error) {
+// validateScope checks the owner-scope flags are consistent: --owner and
+// --all-owners are mutually exclusive, and --owner must parse as
+// <hub>:<user>.
+func validateScope(opts regenerateOpts) error {
+	if opts.owner != "" && opts.allOwners {
+		return newUsageError(
+			"--owner and --all-owners are mutually exclusive")
+	}
+	if opts.owner != "" {
+		if _, err := parseOwner(opts.owner); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// parseOwner parses an "<hub>:<user>" string into a Principal.
+func parseOwner(s string) (owners.Principal, error) {
+	hub, user, ok := strings.Cut(s, ":")
+	if !ok || hub == "" || user == "" {
+		return owners.Principal{}, newUsageError(
+			"owner must be hub:user (got %q)", s)
+	}
+	return owners.Principal{Hub: hub, UserID: user}, nil
+}
+
+// buildFilter constructs a thumb.EnqueueFilter from a Principal and opts.
+// --since parsing happened in validateSelectors, so this function is
+// infallible.
+func buildFilter(p owners.Principal, opts regenerateOpts) thumb.EnqueueFilter {
 	filter := thumb.EnqueueFilter{
-		Owner: owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID},
+		Owner: p,
 		All:   opts.all,
 		IDs:   opts.ids,
 	}
@@ -124,29 +169,54 @@ func buildFilter(cfg *config.Config, opts regenerateOpts) (thumb.EnqueueFilter, 
 	if opts.status != "" {
 		filter.Status = opts.status
 	}
-	if opts.since != "" {
-		ts, err := time.Parse(time.RFC3339, opts.since)
-		if err != nil {
-			return thumb.EnqueueFilter{}, newUsageError("--since must be RFC3339: %v", err)
-		}
-		filter.Since = &ts
+	if opts.sinceTime != nil {
+		filter.Since = opts.sinceTime
 	}
-	return filter, nil
+	return filter
 }
 
-// runThumbsRegenerate loads the config, opens the DB, resolves the stub
-// owner, and drives thumb.Queue.Enqueue. All selector validation —
-// including RFC3339 parsing of --since — runs before opening the
-// database so a misuse fails fast without touching the filesystem.
+// resolveOwners returns the principals to iterate over: every owner in
+// the DB for --all-owners, the parsed --owner principal, or the stub
+// principal from the config.
+func resolveOwners(ctx context.Context, d *db.DB, cfg *config.Config, opts regenerateOpts) ([]owners.Principal, error) {
+	if opts.allOwners {
+		repo := owners.NewRepo(d.WriteDB(), d.ReadDB())
+		list, err := repo.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]owners.Principal, 0, len(list))
+		for _, o := range list {
+			out = append(out, o.Principal)
+		}
+		return out, nil
+	}
+	if opts.owner != "" {
+		p, err := parseOwner(opts.owner)
+		if err != nil {
+			return nil, err
+		}
+		return []owners.Principal{p}, nil
+	}
+	return []owners.Principal{
+		{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID},
+	}, nil
+}
+
+// runThumbsRegenerate validates selectors and scope, opens the DB,
+// resolves the principals to enqueue for, and drives thumb.Queue.Enqueue
+// once per principal. All selector validation — including RFC3339
+// parsing of --since — runs before opening the database so a misuse
+// fails fast without touching the filesystem.
 func runThumbsRegenerate(ctx context.Context, opts regenerateOpts, stdout, _ io.Writer) error {
-	if err := validateSelectors(opts); err != nil {
+	if err := validateSelectors(&opts); err != nil {
 		return err
 	}
-	cfg, err := loadThumbsConfig(opts.cfgPath)
-	if err != nil {
+	if err := validateScope(opts); err != nil {
 		return err
 	}
-	filter, err := buildFilter(cfg, opts)
+	requireStub := opts.owner == "" && !opts.allOwners
+	cfg, err := loadThumbsConfig(opts.cfgPath, requireStub)
 	if err != nil {
 		return err
 	}
@@ -156,11 +226,23 @@ func runThumbsRegenerate(ctx context.Context, opts regenerateOpts, stdout, _ io.
 	}
 	defer func() { _ = d.Close() }()
 
-	q := thumb.NewQueue(d.WriteDB(), d.ReadDB())
-	n, err := q.Enqueue(ctx, filter)
+	scope, err := resolveOwners(ctx, d, cfg, opts)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "%d rows enqueued for regeneration.\n", n)
+	if len(scope) == 0 {
+		fmt.Fprintln(stdout, "no owners found")
+		return nil
+	}
+
+	q := thumb.NewQueue(d.WriteDB(), d.ReadDB())
+	for _, p := range scope {
+		filter := buildFilter(p, opts)
+		n, err := q.Enqueue(ctx, filter)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "%d rows enqueued for %s:%s.\n", n, p.Hub, p.UserID)
+	}
 	return nil
 }
