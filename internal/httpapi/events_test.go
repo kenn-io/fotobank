@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -121,4 +122,53 @@ func TestEventsCatchupRequiredOnGap(t *testing.T) {
 			"catchup-required is a control event and MUST NOT carry an id field: frame=%v",
 			catchup)
 	}
+}
+
+// TestEventsSurvivesShortWriteTimeout asserts the SSE handler clears
+// the per-connection write deadline so the server's WriteTimeout
+// doesn't silently kill long-poll subscribers between events.
+// httptest.Server has no WriteTimeout, which is why the other tests
+// don't catch this — we must spin a real *http.Server here.
+func TestEventsSurvivesShortWriteTimeout(t *testing.T) {
+	r := require.New(t)
+	prov := identity.NewStub(owners.Principal{Hub: "local", UserID: "alice"}, "Alice")
+	bus := httpapi.NewEventBus()
+	h, err := httpapi.New(httpapi.Deps{IdentityProvider: prov, EventBus: bus})
+	r.NoError(err)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	r.NoError(err)
+	srv := &http.Server{
+		Handler:           h,
+		WriteTimeout:      100 * time.Millisecond,
+		ReadHeaderTimeout: time.Second,
+	}
+	go func() { _ = srv.Serve(ln) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+ln.Addr().String()+"/api/v1/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	r.NoError(err)
+	defer resp.Body.Close()
+	r.Equal(http.StatusOK, resp.StatusCode)
+
+	br := bufio.NewReader(resp.Body)
+	hello := readSSEFrame(br, time.Now().Add(time.Second))
+	r.NotEmpty(hello, "expected hello frame before WriteTimeout could trip")
+
+	// Sleep past WriteTimeout, then publish. Without the deadline
+	// reset the server would have closed the connection by now.
+	time.Sleep(250 * time.Millisecond)
+	bus.Publish(owners.Principal{Hub: "local", UserID: "alice"},
+		httpapi.Event{ID: 1, Type: "ping", Data: json.RawMessage(`{}`)})
+
+	frame := readSSEFrame(br, time.Now().Add(time.Second))
+	r.NotEmpty(frame, "expected ping frame to arrive after WriteTimeout window")
+	r.Contains(frame, "event: ping")
 }

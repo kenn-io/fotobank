@@ -27,11 +27,14 @@ type userSettingPathInput struct {
 
 // userSettingPutInput is the PUT payload: same path constraints plus a
 // JSON body whose Value field is the opaque string the caller wants
-// stored.
+// stored. Cap the value at 4 KiB — UI preferences are tiny JSON
+// (booleans, enum strings, short id lists) and an explicit cap stops
+// a misbehaving client (or a multi-tenant deployment) from filling
+// SQLite with arbitrarily large blobs under one user's row.
 type userSettingPutInput struct {
 	Key  string `path:"key" maxLength:"128" pattern:"^[A-Za-z0-9_.-]+$"`
 	Body struct {
-		Value string `json:"value"`
+		Value string `json:"value" maxLength:"4096"`
 	}
 }
 

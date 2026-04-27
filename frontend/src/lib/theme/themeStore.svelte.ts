@@ -9,6 +9,11 @@ export type Theme = "system" | "light" | "dark";
 export class ThemeStore {
   theme = $state<Theme>("system");
   loaded = $state(false);
+  // App.svelte fires load() at boot. If a system-prefers-color-scheme
+  // listener or another caller flips theme via set() before that GET
+  // resolves, the late server response must not stomp the newer
+  // choice. Same pattern as densityStore; see its dirty-flag comment.
+  private dirty = false;
 
   constructor(private client: Pick<Client, "GET" | "PUT">) {}
 
@@ -16,7 +21,7 @@ export class ThemeStore {
     const res = await this.client.GET("/api/v1/settings/user/{key}", {
       params: { path: { key: "theme" } },
     });
-    if (res.data?.value) {
+    if (!this.dirty && res.data?.value) {
       try {
         const parsed = JSON.parse(res.data.value);
         if (parsed === "light" || parsed === "dark" || parsed === "system") {
@@ -32,6 +37,7 @@ export class ThemeStore {
 
   async set(theme: Theme) {
     this.theme = theme;
+    this.dirty = true;
     this.apply();
     await this.client.PUT("/api/v1/settings/user/{key}", {
       params: { path: { key: "theme" } },

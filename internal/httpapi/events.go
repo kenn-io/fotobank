@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/wesm/fotobank/internal/owners"
 )
@@ -242,6 +243,14 @@ func eventsHandler(bus *EventBus) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("X-Accel-Buffering", "no")
+
+		// SSE connections sit idle between events for arbitrarily long
+		// periods. Disable the per-connection write deadline so the
+		// server's WriteTimeout (60s by default) doesn't silently kill
+		// long-poll subscribers. NewResponseController returns a
+		// non-nil controller for any ResponseWriter; SetWriteDeadline
+		// returning ErrNotSupported is harmless on test transports.
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
 		hello, err := json.Marshal(map[string]any{"principal": caller.UserID})
 		if err != nil {

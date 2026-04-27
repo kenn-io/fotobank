@@ -303,6 +303,14 @@ func (c *statusCapture) Flush() {
 	}
 }
 
+// Unwrap exposes the inner ResponseWriter so http.NewResponseController
+// can reach the underlying *http.conn for SetWriteDeadline. Without
+// this, SSE handlers can't clear the server's WriteTimeout and
+// long-poll subscribers get silently disconnected after the deadline.
+func (c *statusCapture) Unwrap() http.ResponseWriter {
+	return c.ResponseWriter
+}
+
 // displayCacheLRU tracks recent (hub, user_id) upserts so a burst of
 // requests does not hammer principal_display. Process-local; not shared
 // across server instances.
