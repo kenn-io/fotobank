@@ -7,7 +7,7 @@ hooks = [
   { id = "check-case-conflict" },
   { id = "check-merge-conflict", args = ["--assume-in-merge"] },
   { id = "detect-private-key" },
-  { id = "check-added-large-files", args = ["--maxkb=1024"] },
+  { id = "check-added-large-files", args = ["--maxkb=1024"], exclude = "^internal/geo/data/.*\\.geojson$" },
   { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"] },
   { id = "end-of-file-fixer" },
   { id = "check-toml" },
