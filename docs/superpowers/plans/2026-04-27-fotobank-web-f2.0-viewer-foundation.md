@@ -2006,13 +2006,15 @@ func loadThumbsConfig(cfgPath string, requireStub bool) (*config.Config, error) 
 		return nil, err
 	}
 	if requireStub && cfg.Identity.Mode != "stub" {
-		return nil, fmt.Errorf(
+		return nil, newUsageError(
 			"fotobank thumbs regenerate requires identity.mode = stub (got %q)",
 			cfg.Identity.Mode)
 	}
 	return cfg, nil
 }
 ```
+
+> The stub-mode mismatch is a usage error, not a runtime error: it means the operator passed an incompatible config combination. `newUsageError` yields exit code 2, which `TestThumbsRegenerateOwnerScopeBypassesStubModeRequirement` asserts (`r.Equal(2, code, "default scope without stub must error")`). Using `fmt.Errorf` would yield exit code 1 and break that test.
 
 Replace the body of `runThumbsRegenerate` (lines 141–166) with:
 
