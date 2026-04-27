@@ -5,6 +5,8 @@
   import YearScrubber from "../components/YearScrubber.svelte";
   import type { Month, Media } from "../media/mediaStore.svelte";
   import { selection } from "../selection/selectionStore.svelte";
+  import MediaCell from "./MediaCell.svelte";
+  import { router } from "../router/router.svelte";
 
   let { months, onLoadMore, targetRowHeight = 200 }: {
     months: Month[];
@@ -102,11 +104,17 @@
     if (e.shiftKey) {
       e.preventDefault();
       selection.range(id, orderedIds);
-    } else if (e.metaKey || e.ctrlKey) {
+      return;
+    }
+    if (e.metaKey || e.ctrlKey) {
       e.preventDefault();
       selection.toggle(id);
+      return;
     }
-    // else: let the anchor navigate normally
+    // Plain click: SPA-route via the router instead of the anchor's
+    // default full-page navigation.
+    e.preventDefault();
+    router.navigate(`/media/${id}`);
   }
 </script>
 
@@ -121,14 +129,11 @@
         options={{ containerWidth, targetRowHeight, gap: 4 }}
       >
         {#snippet renderCell(m)}
-          <a
-            href={`/media/${m.id}`}
-            aria-label={`Photo ${m.id}`}
-            class:selected={selection.ids.has(m.id)}
-            onclick={(e) => handleCellClick(e, m.id)}
-          >
-            <img src={m.thumbUrl} alt="" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover" />
-          </a>
+          <MediaCell
+            media={m}
+            selected={selection.ids.has(m.id)}
+            onCellClick={(e) => handleCellClick(e, m.id)}
+          />
         {/snippet}
       </MonthChunk>
     </div>
@@ -138,9 +143,4 @@
 
 <style>
   .grid { padding: 8px; }
-  .grid :global(a.selected) {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-    border-radius: 2px;
-  }
 </style>
