@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DAY_HEADER_HEIGHT, computeMonthLayout, type MediaLite } from "./MonthChunk.svelte";
+import { DAY_HEADER_HEIGHT, computeMonthLayout, type MediaLite } from "./monthChunkLayout";
 
 describe("computeMonthLayout", () => {
   it("returns intrinsic height for content-visibility:auto skipping", () => {

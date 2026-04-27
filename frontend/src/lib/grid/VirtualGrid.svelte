@@ -1,5 +1,6 @@
 <script lang="ts">
-  import MonthChunk, { type MediaLite } from "./MonthChunk.svelte";
+  import MonthChunk from "./MonthChunk.svelte";
+  import type { MediaLite } from "./monthChunkLayout";
   import StickyMonthBar from "../components/StickyMonthBar.svelte";
   import YearScrubber from "../components/YearScrubber.svelte";
   import type { Month, Media } from "../media/mediaStore.svelte";
