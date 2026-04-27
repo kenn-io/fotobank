@@ -1,5 +1,7 @@
 <!-- frontend/src/lib/components/Sidebar.svelte -->
 <script lang="ts">
+  import { handleInternalLinkClick } from "../router/router.svelte";
+
   let { active }: { active: string } = $props();
 
   const items = [
@@ -19,7 +21,12 @@
       <div class="group">{section.group}</div>
     {/if}
     {#each section.entries as entry (entry.id)}
-      <a class="entry" class:active={active === entry.id} href={entry.href}>{entry.label}</a>
+      <a
+        class="entry"
+        class:active={active === entry.id}
+        href={entry.href}
+        onclick={(e) => handleInternalLinkClick(e, entry.href)}
+      >{entry.label}</a>
     {/each}
   {/each}
 </nav>
