@@ -7,6 +7,7 @@
   import Sidebar from "./lib/components/Sidebar.svelte";
   import Library from "./routes/Library.svelte";
   import Sessions from "./routes/Sessions.svelte";
+  import MediaDetail from "./routes/MediaDetail.svelte";
   import { ThemeStore } from "./lib/theme/themeStore.svelte";
   import { EventsStore } from "./lib/events/eventsStore.svelte";
   import { selection } from "./lib/selection/selectionStore.svelte";
@@ -22,6 +23,13 @@
   onDestroy(() => events.disconnect());
 
   let route = $state(window.location.pathname || "/library");
+
+  function mediaIdFromRoute(p: string): string | null {
+    const m = p.match(/^\/media\/([^/]+)$/);
+    return m?.[1] ?? null;
+  }
+
+  const mediaId = $derived(mediaIdFromRoute(route));
 
   $effect(() => {
     const onPop = () => (route = window.location.pathname || "/library");
@@ -62,6 +70,8 @@
       <div style="padding:20px">Settings (placeholder; theme = {themeStore.theme})</div>
     {:else if route.startsWith("/sessions")}
       <Sessions />
+    {:else if mediaId}
+      <MediaDetail id={mediaId} />
     {:else}
       <Library />
     {/if}
