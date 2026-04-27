@@ -291,6 +291,18 @@ func (c *statusCapture) WriteHeader(code int) {
 	c.ResponseWriter.WriteHeader(code)
 }
 
+// Flush forwards to the underlying ResponseWriter when it implements
+// http.Flusher. Streaming handlers (notably the SSE route at
+// /api/v1/events) type-assert their writer to http.Flusher to push
+// frames as they're produced; an embedded http.ResponseWriter does not
+// promote Flush onto the wrapper, so without this forward the assertion
+// fails and the handler returns 500.
+func (c *statusCapture) Flush() {
+	if f, ok := c.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // displayCacheLRU tracks recent (hub, user_id) upserts so a burst of
 // requests does not hammer principal_display. Process-local; not shared
 // across server instances.

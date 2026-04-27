@@ -55,6 +55,11 @@ type Deps struct {
 	// means those handlers answer 503 Service Unavailable so the OpenAPI
 	// dumper can still emit the schema.
 	UserSettings *usersettings.Service
+	// EventBus is the SSE fanout for GET /api/v1/events. Nil means the
+	// route is not registered (matching registerMediaOriginal /
+	// registerMediaThumb), so the OpenAPI dumper and tests that don't
+	// need streaming can pass Deps without one.
+	EventBus *EventBus
 	// PrincipalDisplay is the write side of the display-handle cache
 	// (populated by WithPrincipalDisplayCache). Nil disables the
 	// middleware — handles won't be refreshed from live traffic but the
@@ -125,7 +130,23 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerShared(api, deps.SharedRead)
 	registerSharedBytes(mux, deps.SharedRead)
 	registerUserSettings(api, deps.UserSettings)
+	registerEvents(mux, deps.EventBus)
 	return mux, api
+}
+
+// registerEvents wires GET /api/v1/events onto mux as a raw streaming
+// route (SSE is not a JSON route, so it is not mounted via huma). bus
+// may be nil; in that case the route is not registered and clients
+// receive whatever default the surrounding mux returns. The handler
+// reads the caller's Identity from the request context, which means
+// the route must sit behind the same middleware chain that powers the
+// huma routes — buildAPI is called before httpapi.New wraps the mux
+// with WithMiddleware, so this requirement is satisfied automatically.
+func registerEvents(mux *http.ServeMux, bus *EventBus) {
+	if bus == nil {
+		return
+	}
+	mux.Handle("GET /api/v1/events", WrapMuxHandler(eventsHandler(bus)))
 }
 
 type healthzOutput struct {
