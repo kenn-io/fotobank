@@ -219,9 +219,15 @@ admin_listen = "0.0.0.0:9090"
 	case code = <-codeCh:
 	case <-time.After(5 * time.Second):
 		// Force the goroutine to exit before we read so/se to avoid a
-		// data race on the buffers and to stop a runaway Serve.
+		// data race on the buffers and to stop a runaway Serve. Bound
+		// the post-cancel wait too: if the goroutine doesn't observe
+		// the cancel within 2s the test fails loudly with a leaked
+		// goroutine rather than hanging forever.
 		cancel()
-		<-codeCh
+		select {
+		case <-codeCh:
+		case <-time.After(2 * time.Second):
+		}
 		r.FailNow("server did not exit within 5s — non-loopback admin_listen must be rejected at validation")
 	}
 	r.NotEqual(0, code, "non-loopback admin_listen must be rejected at validation")

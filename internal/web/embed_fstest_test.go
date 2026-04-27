@@ -85,3 +85,17 @@ func TestHandlerForRejectsTraversalPath(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	r.Equal(http.StatusNotFound, rr.Code)
 }
+
+func TestHandlerForServesShellForTrailingSlashRoute(t *testing.T) {
+	// /library/ is a valid SPA route — the trailing slash is browser
+	// canonicalization, not a path-traversal attempt. fs.ValidPath
+	// rejects trailing slashes, so the handler must strip the slash
+	// before validation; otherwise a hard reload of /library/ would
+	// 404 instead of falling through to the SPA shell.
+	r := require.New(t)
+	h := web.HandlerFor(withBoth())
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/library/", nil))
+	r.Equal(http.StatusOK, rr.Code)
+	r.Contains(rr.Body.String(), "SPA")
+}

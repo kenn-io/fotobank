@@ -13,7 +13,12 @@ import (
 	"strings"
 )
 
-//go:embed all:dist
+// The default embed directive (no `all:` prefix) excludes files whose
+// name starts with `.` or `_`. That's what we want: dotfiles like
+// .gitignore and .gitkeep live in the dist tree purely for git's
+// directory-tracking and should never be reachable over HTTP.
+//
+//go:embed dist
 var distFS embed.FS
 
 // Handler returns an http.Handler that serves the embedded SPA. Construct
@@ -38,9 +43,16 @@ func HandlerFor(sub fs.FS) http.Handler {
 	shell := pickShell(sub) // "index.html" or "stub.html"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
-		// Reject malformed paths (`..` segments, absolute paths) up
-		// front so they 404 cleanly instead of getting cleaned to "/"
-		// and silently rewritten to the SPA shell.
+		// Strip the trailing slash before validation: a hard reload of
+		// /library/ is the browser's canonicalization, not a path
+		// traversal attempt, and fs.ValidPath would otherwise reject it
+		// (rejecting trailing slashes, repeated slashes, and `..`
+		// segments alike) and bounce a legitimate SPA route to 404.
+		path = strings.TrimSuffix(path, "/")
+		// Reject malformed paths (`..` segments, absolute paths,
+		// repeated slashes) up front so they 404 cleanly instead of
+		// getting cleaned to "/" and silently rewritten to the SPA
+		// shell.
 		if path != "" && !fs.ValidPath(path) {
 			http.NotFound(w, r)
 			return
@@ -67,9 +79,10 @@ func HandlerFor(sub fs.FS) http.Handler {
 }
 
 // pickShell returns "index.html" if a built SPA is present, else
-// "stub.html". The dist directory always contains at least stub.html
-// (committed alongside .gitkeep / .gitignore) so the handler always has
-// a fallback target.
+// "stub.html". stub.html is committed in the dist tree (the dotfile
+// siblings .gitkeep / .gitignore are excluded from the embed by the
+// default //go:embed directive) so the handler always has a fallback
+// target even on a fresh checkout before `make frontend`.
 func pickShell(sub fs.FS) string {
 	if exists(sub, "index.html") {
 		return "index.html"

@@ -118,7 +118,20 @@ func New(deps Deps) (http.Handler, error) {
 // a spec for the routes that need no wiring.
 func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	mux := http.NewServeMux()
-	api := humago.New(mux, huma.DefaultConfig("Fotobank", version.Short))
+	cfg := huma.DefaultConfig("Fotobank", version.Short)
+	// Huma's defaults register the OpenAPI spec, schemas, and docs UI at
+	// the document root (/openapi.{json,yaml}, /schemas, /docs). The
+	// outer mux in cmd/fotobank/server mounts this handler under /api/
+	// only, so anything at the root is routed to the SPA handler instead
+	// — which would swallow these paths and serve HTML. Move all three
+	// under /api/ so the doc surface lives alongside the JSON routes
+	// (huma appends .json/.yaml to OpenAPIPath automatically, so the
+	// runtime URLs become /api/openapi.json, /api/openapi.yaml,
+	// /api/docs, /api/schemas/{name}).
+	cfg.OpenAPIPath = "/api/openapi"
+	cfg.DocsPath = "/api/docs"
+	cfg.SchemasPath = "/api/schemas"
+	api := humago.New(mux, cfg)
 	api.OpenAPI().Info.Description = "Fotobank HTTP API"
 	registerHealthz(api)
 	registerMe(api)

@@ -364,7 +364,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/AddAlbumMediaInputBody.json
+             * @example https://example.com/api/schemas/AddAlbumMediaInputBody.json
              */
             readonly $schema?: string;
             media_ids: string[] | null;
@@ -373,7 +373,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/AddAlbumMediaOutputBody.json
+             * @example https://example.com/api/schemas/AddAlbumMediaOutputBody.json
              */
             readonly $schema?: string;
             /** Format: int64 */
@@ -385,7 +385,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/AlbumDTO.json
+             * @example https://example.com/api/schemas/AlbumDTO.json
              */
             readonly $schema?: string;
             cover?: components["schemas"]["CoverDTO"];
@@ -407,7 +407,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/CreateAlbumInputBody.json
+             * @example https://example.com/api/schemas/CreateAlbumInputBody.json
              */
             readonly $schema?: string;
             name: string;
@@ -416,7 +416,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/CreateShareInputBody.json
+             * @example https://example.com/api/schemas/CreateShareInputBody.json
              */
             readonly $schema?: string;
             album_id?: string;
@@ -440,7 +440,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/ErrorModel.json
+             * @example https://example.com/api/schemas/ErrorModel.json
              */
             readonly $schema?: string;
             /**
@@ -479,7 +479,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/HealthzOutputBody.json
+             * @example https://example.com/api/schemas/HealthzOutputBody.json
              */
             readonly $schema?: string;
             status: string;
@@ -488,7 +488,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/ListAlbumMediaOutputBody.json
+             * @example https://example.com/api/schemas/ListAlbumMediaOutputBody.json
              */
             readonly $schema?: string;
             items: components["schemas"]["MediaDTO"][] | null;
@@ -499,7 +499,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/ListAlbumsOutputBody.json
+             * @example https://example.com/api/schemas/ListAlbumsOutputBody.json
              */
             readonly $schema?: string;
             items: components["schemas"]["AlbumDTO"][] | null;
@@ -510,7 +510,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/ListMediaOutputBody.json
+             * @example https://example.com/api/schemas/ListMediaOutputBody.json
              */
             readonly $schema?: string;
             items: components["schemas"]["MediaDTO"][] | null;
@@ -523,7 +523,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/ListSharesOutputBody.json
+             * @example https://example.com/api/schemas/ListSharesOutputBody.json
              */
             readonly $schema?: string;
             items: components["schemas"]["ScopeDTO"][] | null;
@@ -532,7 +532,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/MeOutputBody.json
+             * @example https://example.com/api/schemas/MeOutputBody.json
              */
             readonly $schema?: string;
             principal: components["schemas"]["PrincipalStruct"];
@@ -542,7 +542,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/MediaDTO.json
+             * @example https://example.com/api/schemas/MediaDTO.json
              */
             readonly $schema?: string;
             /** Format: double */
@@ -579,7 +579,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/PatchAlbumInputBody.json
+             * @example https://example.com/api/schemas/PatchAlbumInputBody.json
              */
             readonly $schema?: string;
             name: string;
@@ -606,7 +606,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/PreviewShareDTO.json
+             * @example https://example.com/api/schemas/PreviewShareDTO.json
              */
             readonly $schema?: string;
             album?: components["schemas"]["PreviewAlbumDTO"];
@@ -627,7 +627,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/ScopeDTO.json
+             * @example https://example.com/api/schemas/ScopeDTO.json
              */
             readonly $schema?: string;
             allow_download: boolean;
@@ -668,7 +668,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/SharedAlbumDTO.json
+             * @example https://example.com/api/schemas/SharedAlbumDTO.json
              */
             readonly $schema?: string;
             can_download: boolean;
@@ -687,7 +687,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/SharedListAlbumsOutputBody.json
+             * @example https://example.com/api/schemas/SharedListAlbumsOutputBody.json
              */
             readonly $schema?: string;
             items: components["schemas"]["SharedAlbumDTO"][] | null;
@@ -696,7 +696,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/SharedListScopesOutputBody.json
+             * @example https://example.com/api/schemas/SharedListScopesOutputBody.json
              */
             readonly $schema?: string;
             items: components["schemas"]["SharedScopeDTO"][] | null;
@@ -705,7 +705,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/SharedMediaDTO.json
+             * @example https://example.com/api/schemas/SharedMediaDTO.json
              */
             readonly $schema?: string;
             can_download: boolean;
@@ -731,7 +731,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/SharedMediaListOutputBody.json
+             * @example https://example.com/api/schemas/SharedMediaListOutputBody.json
              */
             readonly $schema?: string;
             has_more: boolean;
@@ -748,7 +748,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/SharedScopeDTO.json
+             * @example https://example.com/api/schemas/SharedScopeDTO.json
              */
             readonly $schema?: string;
             allow_download: boolean;
@@ -767,7 +767,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/UserSettingPutInputBody.json
+             * @example https://example.com/api/schemas/UserSettingPutInputBody.json
              */
             readonly $schema?: string;
             value: string;
@@ -776,7 +776,7 @@ export interface components {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/UserSettingValueBody.json
+             * @example https://example.com/api/schemas/UserSettingValueBody.json
              */
             readonly $schema?: string;
             value: string;
