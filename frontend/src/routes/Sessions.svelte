@@ -8,37 +8,52 @@
   import { api } from "../lib/api/client";
 
   const store = new MediaStore(api);
-  // F1: only the first page is loaded. Library gets infinite scroll
-  // through VirtualGrid's IntersectionObserver sentinel; Sessions
-  // bypasses VirtualGrid (clusters don't bucket like months) and so
-  // caps at MediaStore.loadInitial's first page. A later sub-plan
-  // will add a sentinel here once the grouping output is known to
-  // exceed one page in real libraries.
   store.loadInitial();
   const density = new DensityStore(api, "sessions");
   density.load();
   const flat = $derived(store.months.flatMap((m) => m.items));
   const sessions = $derived(groupIntoSessions(flat, { gapHours: 4 }));
 
-  // F1: hardcoded width. VirtualGrid uses a ResizeObserver against
-  // its grid container, but Sessions bypasses VirtualGrid. A later
-  // sub-plan that extracts a shared cell can also share the observed
-  // width; until then this gives stable layout for the smoke fixture.
-  const CONTAINER_WIDTH = 1100;
+  let containerEl: HTMLDivElement | null = $state(null);
+  let containerWidth = $state(800);
+  let sentinel: HTMLDivElement | null = $state(null);
+
+  $effect(() => {
+    if (!containerEl) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w) containerWidth = w;
+    });
+    ro.observe(containerEl);
+    return () => ro.disconnect();
+  });
+
+  // Pull more pages when the user scrolls near the bottom — sessions
+  // cluster across the full library, so capping at the first page hides
+  // older trips. The 800px rootMargin matches VirtualGrid's so the next
+  // page is in flight before the sentinel is on-screen.
+  $effect(() => {
+    if (!sentinel) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) store.loadMore();
+    }, { rootMargin: "800px 0px" });
+    io.observe(sentinel);
+    return () => io.disconnect();
+  });
 </script>
 
 <header style="display:flex; justify-content: flex-end; padding: 6px 12px;">
   <DensityControl store={density} />
 </header>
 
-<div style="padding: 8px;">
+<div bind:this={containerEl} style="padding: 8px;">
   {#each sessions as s (s.id)}
     {@const first = s.items[0]}
     {#if first}
       <MonthChunk
         items={s.items.map((m) => ({ id: m.id, aspect: m.aspect, thumbUrl: m.thumbUrl }))}
         label={`${first.taken.toUTCString().slice(0, 16)} · ${s.items.length} photos`}
-        options={{ containerWidth: CONTAINER_WIDTH, targetRowHeight: density.targetRowHeight, gap: 4 }}
+        options={{ containerWidth, targetRowHeight: density.targetRowHeight, gap: 4 }}
       >
         {#snippet renderCell(m)}
           <a href={`/media/${m.id}`}>
@@ -48,6 +63,7 @@
       </MonthChunk>
     {/if}
   {/each}
+  <div bind:this={sentinel} style="height:1px"></div>
 </div>
 
 {#if store.loading}

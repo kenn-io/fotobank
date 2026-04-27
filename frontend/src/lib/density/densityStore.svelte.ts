@@ -17,6 +17,12 @@ const ORDER: Preset[] = ["compact", "comfortable", "large"];
 export class DensityStore {
   preset = $state<Preset>("comfortable");
   loaded = $state(false);
+  // Routes call load() at mount and the user can click a preset before
+  // that GET resolves. Without this guard the late server response
+  // could overwrite the user's fresher choice. Once set() has run, the
+  // local value is canonical for this session — load() must not stomp
+  // it.
+  private dirty = false;
 
   constructor(
     private client: Pick<Client, "GET" | "PUT">,
@@ -31,7 +37,7 @@ export class DensityStore {
     const res = await this.client.GET("/api/v1/settings/user/{key}", {
       params: { path: { key: `density.${this.context}` } },
     });
-    if (res.data?.value) {
+    if (!this.dirty && res.data?.value) {
       try {
         const v = JSON.parse(res.data.value);
         if (v === "compact" || v === "comfortable" || v === "large") {
@@ -46,6 +52,7 @@ export class DensityStore {
 
   async set(p: Preset) {
     this.preset = p;
+    this.dirty = true;
     await this.client.PUT("/api/v1/settings/user/{key}", {
       params: { path: { key: `density.${this.context}` } },
       body: { value: JSON.stringify(p) },
