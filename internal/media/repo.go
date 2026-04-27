@@ -295,6 +295,121 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// GPSBackfillMode discriminates what `gps backfill` considers a target.
+// See spec §4.7 / §7.4.
+type GPSBackfillMode int
+
+const (
+	// GPSBackfillModeFull selects every photo row regardless of GPS state.
+	GPSBackfillModeFull GPSBackfillMode = iota
+	// GPSBackfillModeFillMissing selects only photo rows where BOTH
+	// latitude AND longitude are NULL. Rows with one coord set are
+	// partial state from a prior run and are intentionally not targets
+	// of fill-missing.
+	GPSBackfillModeFillMissing
+	// GPSBackfillModeRelabel selects only photo rows where lat AND lon
+	// are NOT NULL. Used to refresh location_label after the embedded
+	// gazetteer is bumped.
+	GPSBackfillModeRelabel
+)
+
+// UpdateGPS sets the four GPS columns on an existing row. Used by the
+// backfill CLI; the importer uses Insert. Returns errs.ErrNotFound if
+// the row is gone.
+func (r *Repo) UpdateGPS(
+	ctx context.Context,
+	id string,
+	lat, lon *float64,
+	gpsAt *time.Time,
+	label string,
+) error {
+	res, err := r.rw.ExecContext(ctx,
+		`UPDATE media
+		    SET latitude = ?, longitude = ?, gps_at = ?, location_label = ?
+		  WHERE id = ?`,
+		nullFloat(lat),
+		nullFloat(lon),
+		nullTime(gpsAt),
+		nullStr(label),
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("update media gps: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update media gps rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: media id=%s", errs.ErrNotFound, id)
+	}
+	return nil
+}
+
+// ListGPSBackfillCandidates enumerates rows for `gps backfill`. Always
+// excludes media_type='video' (video GPS is out of scope per spec §5.5).
+// Pages via LIMIT/OFFSET; rows are ordered by id for stable paging.
+//
+// `since` filters by imported_at >= *since; pass nil to disable.
+func (r *Repo) ListGPSBackfillCandidates(
+	ctx context.Context,
+	owner owners.Principal,
+	mode GPSBackfillMode,
+	since *time.Time,
+	limit, offset int,
+) ([]Media, error) {
+	conds := []string{
+		"owner_hub = ?",
+		"owner_user_id = ?",
+		"media_type = 'photo'",
+	}
+	args := []any{owner.Hub, owner.UserID}
+
+	switch mode {
+	case GPSBackfillModeFull:
+		// no GPS predicate
+	case GPSBackfillModeFillMissing:
+		conds = append(conds, "latitude IS NULL AND longitude IS NULL")
+	case GPSBackfillModeRelabel:
+		conds = append(conds, "latitude IS NOT NULL AND longitude IS NOT NULL")
+	default:
+		return nil, fmt.Errorf("list gps backfill candidates: unknown mode %d", mode)
+	}
+	if since != nil {
+		conds = append(conds, "imported_at >= ?")
+		args = append(args, *since)
+	}
+
+	if limit <= 0 {
+		limit = defaultListLimit
+	}
+	offset = max(offset, 0)
+
+	query := mediaSelect +
+		" WHERE " + strings.Join(conds, " AND ") +
+		" ORDER BY id LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	rows, err := r.ro.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list gps backfill candidates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []Media
+	for rows.Next() {
+		m, err := scanMedia(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan gps backfill candidate: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate gps backfill candidates: %w", err)
+	}
+	return out, nil
+}
+
 // rowScanner is the common surface of *sql.Row and *sql.Rows for Scan.
 type rowScanner interface {
 	Scan(dest ...any) error

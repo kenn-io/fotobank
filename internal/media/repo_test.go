@@ -459,3 +459,151 @@ func TestRepoInsertGetByIDPreservesAbsentGPS(t *testing.T) {
 	r.Nil(got.GPSAt)
 	r.Empty(got.LocationLabel)
 }
+
+func TestUpdateGPSRoundTrips(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	id := uuid.NewString()
+	r.NoError(repo.Insert(context.Background(), media.Media{
+		ID: id, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
+		ThumbStatus: "pending",
+	}))
+
+	lat, lon := 48.8566, 2.3522
+	gps := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	r.NoError(repo.UpdateGPS(context.Background(), id, &lat, &lon, &gps, "Paris, France"))
+
+	got, err := repo.GetByID(context.Background(), id)
+	r.NoError(err)
+	r.NotNil(got.Latitude)
+	r.InDelta(48.8566, *got.Latitude, 1e-9)
+	r.InDelta(2.3522, *got.Longitude, 1e-9)
+	r.True(got.GPSAt.Equal(gps))
+	r.Equal("Paris, France", got.LocationLabel)
+}
+
+func TestUpdateGPSClearsAllFieldsWhenNil(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	lat, lon := 1.0, 2.0
+	id := uuid.NewString()
+	r.NoError(repo.Insert(context.Background(), media.Media{
+		ID: id, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
+		Latitude: &lat, Longitude: &lon, LocationLabel: "Old", ThumbStatus: "pending",
+	}))
+
+	r.NoError(repo.UpdateGPS(context.Background(), id, nil, nil, nil, ""))
+
+	got, err := repo.GetByID(context.Background(), id)
+	r.NoError(err)
+	r.Nil(got.Latitude)
+	r.Nil(got.Longitude)
+	r.Nil(got.GPSAt)
+	r.Empty(got.LocationLabel)
+}
+
+func TestUpdateGPSReturnsNotFoundForMissingRow(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+
+	err := repo.UpdateGPS(context.Background(), "no-such-id", nil, nil, nil, "")
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestListGPSBackfillCandidatesByMode(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	mk := func(id string, t media.Type, lat, lon *float64) {
+		r.NoError(repo.Insert(context.Background(), media.Media{
+			ID: id, Owner: owner, Type: t, MimeType: "image/jpeg",
+			Path: id + ".jpg", ImportedAt: time.Now().UTC(),
+			Size: 1, Checksum: "c-" + id,
+			Latitude: lat, Longitude: lon, ThumbStatus: "pending",
+		}))
+	}
+	one := 1.0
+	mk("photo-no-gps", media.TypePhoto, nil, nil)
+	mk("photo-with-gps", media.TypePhoto, &one, &one)
+	mk("video-with-gps", media.TypeVideo, &one, &one) // must be excluded
+	// Partial-coord row (one coord set, one nil). fill-missing should
+	// still skip it because it requires BOTH null.
+	mk("photo-partial-coord", media.TypePhoto, &one, nil)
+
+	ids := func(ms []media.Media) []string {
+		out := make([]string, 0, len(ms))
+		for _, m := range ms {
+			out = append(out, m.ID)
+		}
+		return out
+	}
+
+	full, err := repo.ListGPSBackfillCandidates(context.Background(), owner, media.GPSBackfillModeFull, nil, 100, 0)
+	r.NoError(err)
+	r.ElementsMatch([]string{"photo-no-gps", "photo-with-gps", "photo-partial-coord"}, ids(full))
+
+	missing, err := repo.ListGPSBackfillCandidates(context.Background(), owner, media.GPSBackfillModeFillMissing, nil, 100, 0)
+	r.NoError(err)
+	r.ElementsMatch([]string{"photo-no-gps"}, ids(missing))
+
+	relabel, err := repo.ListGPSBackfillCandidates(context.Background(), owner, media.GPSBackfillModeRelabel, nil, 100, 0)
+	r.NoError(err)
+	r.ElementsMatch([]string{"photo-with-gps"}, ids(relabel))
+}
+
+func TestListGPSBackfillCandidatesSinceFilter(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	old := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	new := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	r.NoError(repo.Insert(context.Background(), media.Media{
+		ID: "old-id", Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "old.jpg", ImportedAt: old, Size: 1, Checksum: "c-old",
+		ThumbStatus: "pending",
+	}))
+	r.NoError(repo.Insert(context.Background(), media.Media{
+		ID: "new-id", Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "new.jpg", ImportedAt: new, Size: 1, Checksum: "c-new",
+		ThumbStatus: "pending",
+	}))
+
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	got, err := repo.ListGPSBackfillCandidates(context.Background(), owner, media.GPSBackfillModeFull, &cutoff, 100, 0)
+	r.NoError(err)
+	r.Len(got, 1)
+	r.Equal("new-id", got[0].ID)
+}
