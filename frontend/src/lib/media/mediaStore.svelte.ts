@@ -31,6 +31,7 @@ export class MediaStore {
 
   async loadMore() {
     if (this.loading || this.exhausted) return;
+    // Synchronous before any await — required as the re-entry guard.
     this.loading = true;
     try {
       const res = await this.client.GET("/api/v1/media", {
@@ -50,18 +51,22 @@ export class MediaStore {
   }
 
   private merge(items: Media[]) {
-    const byMonth = new Map<string, Media[]>();
-    for (const m of this.months) byMonth.set(m.key, m.items.slice());
+    const byMonth = new Map<string, Map<string, Media>>();
+    for (const m of this.months) {
+      const inner = new Map<string, Media>();
+      for (const it of m.items) inner.set(it.id, it);
+      byMonth.set(m.key, inner);
+    }
     for (const it of items) {
       const k = monthKey(it.taken);
-      const list = byMonth.get(k) ?? [];
-      list.push(it);
-      byMonth.set(k, list);
+      const inner = byMonth.get(k) ?? new Map<string, Media>();
+      inner.set(it.id, it);
+      byMonth.set(k, inner);
     }
     this.months = Array.from(byMonth.entries())
-      .map(([key, items]) => ({
+      .map(([key, inner]) => ({
         key,
-        items: items.sort((a, b) => +b.taken - +a.taken),
+        items: Array.from(inner.values()).sort((a, b) => +b.taken - +a.taken),
       }))
       .sort((a, b) => (a.key < b.key ? 1 : -1));
   }
@@ -69,19 +74,19 @@ export class MediaStore {
 
 function toMedia(raw: Record<string, unknown>): Media | null {
   const id = raw["id"];
-  const ts = raw["timestamp"];
+  const ts = typeof raw["timestamp"] === "string" ? raw["timestamp"] : raw["imported_at"];
   const w = raw["width"];
   const h = raw["height"];
   if (typeof id !== "string" || typeof ts !== "string") return null;
   const taken = new Date(ts);
   if (isNaN(+taken)) return null;
-  const wn = typeof w === "number" ? w : 1;
-  const hn = typeof h === "number" ? h : 1;
+  const wn = typeof w === "number" && Number.isFinite(w) && w > 0 ? w : 1;
+  const hn = typeof h === "number" && Number.isFinite(h) && h > 0 ? h : 1;
   return {
     id,
     timestamp: ts,
     taken,
-    aspect: hn === 0 ? 1 : wn / hn,
+    aspect: wn / hn,
     thumbUrl: `/api/v1/media/${id}/thumb`,
   };
 }
