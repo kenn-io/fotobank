@@ -10,7 +10,7 @@ LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 BIN_DIR := bin
 BINARY  := $(BIN_DIR)/fotobank
 
-.PHONY: build build-release install dev test test-short vet lint nilaway \
+.PHONY: build build-release install dev test test-short test-e2e vet lint nilaway \
         testify-helper-check migration-history-check tidy api-generate \
         install-hooks clean help \
         ensure-embed-dir frontend frontend-dev frontend-check air-install
@@ -78,6 +78,11 @@ test: ensure-embed-dir ## Run full test suite
 
 test-short: ensure-embed-dir ## Run short tests only
 	go test ./... -short -shuffle=on
+
+test-e2e: frontend ## Run Playwright e2e suite against built backend
+	mkdir -p tmp
+	go build -o tmp/e2e-server ./cmd/e2e-server
+	cd frontend && bun run test:e2e
 
 vet: ## Run go vet
 	go vet ./...
