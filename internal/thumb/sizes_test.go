@@ -11,8 +11,8 @@ import (
 func TestSizeMaxEdge(t *testing.T) {
 	r := require.New(t)
 	r.Equal(256, thumb.SizeGrid.MaxEdge())
-	r.Equal(1024, thumb.SizePreview.MaxEdge())
-	r.Equal(2048, thumb.SizeLightbox.MaxEdge())
+	r.Equal(2560, thumb.SizePreview.MaxEdge())
+	r.Equal(4096, thumb.SizeLarge.MaxEdge())
 }
 
 func TestParseSizeValid(t *testing.T) {
@@ -22,7 +22,7 @@ func TestParseSizeValid(t *testing.T) {
 	}{
 		{"grid", thumb.SizeGrid},
 		{"preview", thumb.SizePreview},
-		{"lightbox", thumb.SizeLightbox},
+		{"large", thumb.SizeLarge},
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
@@ -38,9 +38,18 @@ func TestParseSizeInvalid(t *testing.T) {
 	require.ErrorIs(t, err, thumb.ErrUnknownSize)
 }
 
+func TestParseSizeLightboxIsRemoved(t *testing.T) {
+	// SizeLightbox was retired in F2.0 (preview now covers fit, large
+	// covers 1:1). Any caller still asking for "lightbox" must get
+	// ErrUnknownSize so the HTTP handler 400s instead of silently
+	// matching some other size.
+	_, err := thumb.ParseSize("lightbox")
+	require.ErrorIs(t, err, thumb.ErrUnknownSize)
+}
+
 func TestAllSizes(t *testing.T) {
 	require.Equal(t,
-		[]thumb.Size{thumb.SizeGrid, thumb.SizePreview, thumb.SizeLightbox},
+		[]thumb.Size{thumb.SizeGrid, thumb.SizePreview, thumb.SizeLarge},
 		thumb.AllSizes(),
 	)
 }

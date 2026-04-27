@@ -28,7 +28,7 @@ func registerSharedBytes(mux *http.ServeMux, svc *service.SharedReadService) {
 }
 
 // sharedThumbHandler serves cached thumb bytes for a grantee-accessible
-// media row. Query args ?size=grid|preview|lightbox (default grid) and
+// media row. Query args ?size=grid|preview|large (default grid) and
 // ?v=N (thumb_version). Grantee authorisation is gated by
 // CheckMediaAccess — download is *not* required, mirroring the owner
 // thumb contract (thumbs are previews).

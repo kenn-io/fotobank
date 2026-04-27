@@ -13,25 +13,31 @@ import (
 type Size string
 
 const (
-	SizeGrid     Size = "grid"
-	SizePreview  Size = "preview"
-	SizeLightbox Size = "lightbox"
+	SizeGrid    Size = "grid"
+	SizePreview Size = "preview"
+	SizeLarge   Size = "large"
 )
 
 // ErrUnknownSize is returned by ParseSize when the input isn't a
 // recognized size name. HTTP handlers translate this to 400.
 var ErrUnknownSize = errors.New("thumb: unknown size")
 
-// MaxEdge returns the target pixel length of the longest edge. Values
-// match the vision spec §12.
+// MaxEdge returns the target pixel length of the longest edge.
+//   - grid (256) drives the library grid thumbnails.
+//   - preview (2560) is the lightbox "fit" source (covers most laptop
+//     and mobile displays at native pixel ratio without RAW decode).
+//   - large (4096) is the lightbox 1:1 source for high-DPI / 4K
+//     displays. Heavy to encode (~1s/row on Apple Silicon RAW), so
+//     it's emitted lazily via the same emitSizes loop alongside grid
+//     and preview rather than fetched on demand.
 func (s Size) MaxEdge() int {
 	switch s {
 	case SizeGrid:
 		return 256
 	case SizePreview:
-		return 1024
-	case SizeLightbox:
-		return 2048
+		return 2560
+	case SizeLarge:
+		return 4096
 	}
 	return 0
 }
@@ -45,8 +51,8 @@ func ParseSize(s string) (Size, error) {
 		return SizeGrid, nil
 	case "preview":
 		return SizePreview, nil
-	case "lightbox":
-		return SizeLightbox, nil
+	case "large":
+		return SizeLarge, nil
 	}
 	return "", fmt.Errorf("%w: %q", ErrUnknownSize, s)
 }
@@ -54,7 +60,7 @@ func ParseSize(s string) (Size, error) {
 // AllSizes returns every Size in the order the worker emits them.
 // Returns a fresh slice so callers can iterate freely.
 func AllSizes() []Size {
-	return []Size{SizeGrid, SizePreview, SizeLightbox}
+	return []Size{SizeGrid, SizePreview, SizeLarge}
 }
 
 // ThumbKey is the storage key for one thumbnail. The versioned v{N}/

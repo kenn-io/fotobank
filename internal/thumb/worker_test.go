@@ -430,6 +430,43 @@ func TestWorkerEmitsResultMetricsAndLeaseSweep(t *testing.T) {
 	r.GreaterOrEqual(m.ThumbLeasesSwept().Get(), uint64(1))
 }
 
+// TestWorkerEmitsAllSizesPerClaim is the contract guard for the F2.0
+// vocabulary change: every Size returned by AllSizes() must land
+// non-empty bytes at its versioned key after a single ready row, so
+// the lightbox can rely on `?size=preview` and `?size=large` being
+// present without falling back to the original bytes.
+func TestWorkerEmitsAllSizesPerClaim(t *testing.T) {
+	r := require.New(t)
+	fx := newWorkerFixture(t)
+	id := seedPhotoRow(t, fx, "2024/a-"+uuid.NewString()+".jpg")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+		WorkerConcurrency: 2,
+		PollInterval:      20 * time.Millisecond,
+		LeaseTimeout:      5 * time.Minute,
+	})
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	waitForStatus(t, fx.rw, id, "ready")
+
+	version := readThumbVersionFor(t, fx.rw, id)
+	for _, sz := range thumb.AllSizes() {
+		key := thumb.ThumbKey(id, version, sz)
+		rc, err := fx.store.ReadRange(context.Background(), fx.owner, key, 0, -1)
+		r.NoErrorf(err, "open %s", sz)
+		bs, err := io.ReadAll(rc)
+		r.NoErrorf(err, "read %s", sz)
+		r.NoError(rc.Close())
+		r.Greaterf(len(bs), 100, "size %s emitted empty bytes", sz)
+	}
+
+	cancel()
+	<-done
+}
+
 func TestThumbWorkerLogsCarryComponent(t *testing.T) {
 	r := require.New(t)
 	fx := newWorkerFixture(t)
