@@ -27,9 +27,11 @@ var ErrUnknownSize = errors.New("thumb: unknown size")
 //   - preview (2560) is the lightbox "fit" source (covers most laptop
 //     and mobile displays at native pixel ratio without RAW decode).
 //   - large (4096) is the lightbox 1:1 source for high-DPI / 4K
-//     displays. Heavy to encode (~1s/row on Apple Silicon RAW), so
-//     it's emitted lazily via the same emitSizes loop alongside grid
-//     and preview rather than fetched on demand.
+//     displays. Heavy to encode (~1s/row on Apple Silicon RAW), but
+//     produced eagerly inside emitSizes alongside grid and preview
+//     rather than computed on demand at request time. The lightbox UI
+//     can therefore assume ?size=large&v=N is present whenever the
+//     row's thumb_status is "ready".
 func (s Size) MaxEdge() int {
 	switch s {
 	case SizeGrid:

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"image"
 	"image/color"
+	_ "image/jpeg" // register JPEG decoder for image.Decode in TestWorkerEmitsAllSizesPerClaim
 	"image/png"
 	"io"
 	"log/slog"
@@ -460,7 +461,18 @@ func TestWorkerEmitsAllSizesPerClaim(t *testing.T) {
 		bs, err := io.ReadAll(rc)
 		r.NoErrorf(err, "read %s", sz)
 		r.NoError(rc.Close())
-		r.Greaterf(len(bs), 100, "size %s emitted empty bytes", sz)
+		// 512 bytes comfortably exceeds a baseline JPEG header (SOI +
+		// APP0 + DQT + DHT + SOF + SOS ≈ 600 bytes including the
+		// minimum entropy-coded data) but stays loose enough that the
+		// 2x2 test fixture produces well over the floor at every size.
+		// Looser thresholds (e.g. >100) would not catch a truncated or
+		// wrong-codec write.
+		r.Greaterf(len(bs), 512, "size %s emitted suspiciously small bytes (%d)", sz, len(bs))
+		// Decoding back proves we wrote a syntactically valid JPEG —
+		// catches "wrong codec written" or "wrong byte order" failures
+		// that a length-only check would miss.
+		_, _, err = image.Decode(bytes.NewReader(bs))
+		r.NoErrorf(err, "size %s did not decode as image", sz)
 	}
 
 	cancel()
