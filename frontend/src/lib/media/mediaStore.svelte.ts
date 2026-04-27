@@ -35,7 +35,12 @@ export class MediaStore {
     this.loading = true;
     try {
       const res = await this.client.GET("/api/v1/media", {
-        params: { query: { limit: 200, offset: this.nextOffset ?? 0 } } as never,
+        // sort_desc: true so the library opens at the most-recent
+        // capture (the backend defaults to ascending). Pagination then
+        // walks backwards in time as the user scrolls down.
+        params: {
+          query: { limit: 200, offset: this.nextOffset ?? 0, sort_desc: true },
+        } as never,
       });
       if (res.error || !res.data) return;
       const items = ((res.data as { items?: Array<Record<string, unknown>> }).items ?? [])
@@ -82,11 +87,18 @@ function toMedia(raw: Record<string, unknown>): Media | null {
   if (isNaN(+taken)) return null;
   const wn = typeof w === "number" && Number.isFinite(w) && w > 0 ? w : 1;
   const hn = typeof h === "number" && Number.isFinite(h) && h > 0 ? h : 1;
+  // The thumb endpoint requires a non-negative integer ?v= matching
+  // the row's thumb_version; without it the handler returns 404 (see
+  // internal/httpapi/media_thumb.go). Fall back to 0 when the field is
+  // missing or invalid — backend will 404, which surfaces the data
+  // gap instead of silently rendering nothing on a "good" URL.
+  const tv = raw["thumb_version"];
+  const thumbVersion = typeof tv === "number" && Number.isFinite(tv) && tv >= 0 ? tv : 0;
   return {
     id,
     timestamp: ts,
     taken,
     aspect: wn / hn,
-    thumbUrl: `/api/v1/media/${id}/thumb`,
+    thumbUrl: `/api/v1/media/${id}/thumb?size=grid&v=${thumbVersion}`,
   };
 }

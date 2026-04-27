@@ -118,6 +118,47 @@ describe("MediaStore", () => {
     expect(store.months[0]?.items.map((i) => i.id)).toEqual(["2"]);
   });
 
+  it("builds thumbUrl with size=grid and v=thumb_version", async () => {
+    // Backend (internal/httpapi/media_thumb.go) returns 404 unless ?v=
+    // matches the row's thumb_version, so the store MUST surface
+    // thumb_version in the URL. Defaults to v=0 when the field is
+    // absent/invalid (server then 404s, exposing the data gap).
+    const fakeClient = {
+      GET: vi.fn().mockResolvedValue({
+        data: {
+          items: [
+            { id: "x", timestamp: "2026-04-18T12:00:00Z", width: 1, height: 1, thumb_version: 7 },
+            { id: "y", timestamp: "2026-04-18T12:00:00Z", width: 1, height: 1 },
+          ],
+          next_offset: null,
+        },
+        error: undefined,
+      }),
+    };
+    const store = new MediaStore(fakeClient as never);
+    await store.loadMore();
+    const items = store.months[0]?.items ?? [];
+    const byId = new Map(items.map((i) => [i.id, i.thumbUrl]));
+    expect(byId.get("x")).toBe("/api/v1/media/x/thumb?size=grid&v=7");
+    expect(byId.get("y")).toBe("/api/v1/media/y/thumb?size=grid&v=0");
+  });
+
+  it("requests sort_desc=true so the library opens at the most recent capture", async () => {
+    // The list endpoint defaults to ascending order; without sort_desc
+    // the user lands on their oldest photos.
+    const fakeClient = {
+      GET: vi.fn().mockResolvedValue({
+        data: { items: [], next_offset: null },
+        error: undefined,
+      }),
+    };
+    const store = new MediaStore(fakeClient as never);
+    await store.loadMore();
+    expect(fakeClient.GET).toHaveBeenCalledTimes(1);
+    const call = fakeClient.GET.mock.calls[0];
+    expect(call?.[1]?.params?.query?.sort_desc).toBe(true);
+  });
+
   it("dedupes overlapping ids across pages", async () => {
     const page1 = {
       data: {
