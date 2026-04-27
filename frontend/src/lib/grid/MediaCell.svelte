@@ -16,13 +16,19 @@
   // better than the browser's broken-image glyph.
   let imgError = $state(false);
 
-  // Reset the error flag whenever media.thumbUrl changes, so once a
-  // refetch lands the v=N+1 URL we re-attempt the load. Without this
-  // the cell is stuck on the placeholder for the lifetime of the
-  // component even after the worker drains.
+  // Reset imgError ONLY when the URL string actually changes — not on
+  // every parent rerender. VirtualGrid's toLite() allocates a fresh
+  // MediaLite object per render even when underlying fields are
+  // unchanged; without this gate every parent rerender would clear
+  // imgError and re-attempt the same broken URL, defeating the
+  // placeholder fallback. Comparing to the previous URL string makes
+  // the reset key the actual URL identity, not the prop reference.
+  let lastThumbUrl: string | undefined = undefined;
   $effect(() => {
-    media.thumbUrl;
-    imgError = false;
+    if (media.thumbUrl !== lastThumbUrl) {
+      lastThumbUrl = media.thumbUrl;
+      imgError = false;
+    }
   });
 </script>
 

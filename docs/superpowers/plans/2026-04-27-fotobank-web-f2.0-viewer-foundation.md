@@ -1599,7 +1599,37 @@ func TestThumbRouteLargeHappyPath(t *testing.T) {
 	r.Equal(http.StatusOK, resp.StatusCode)
 	r.Equal("image/jpeg", resp.Header.Get("Content-Type"))
 }
+
+func TestThumbRouteStaleReadyRowReturns404ForNewSize(t *testing.T) {
+	// F2.0 upgrade contract: rows whose thumb_status='ready' was set
+	// under the F1 vocabulary have grid + preview + lightbox bytes on
+	// disk but no large.jpg. After F2.0 deploy, ?size=large&v=N for
+	// those rows must 404 (not 500, not silently rewrite to a
+	// different size) until an operator runs `thumbs regenerate`,
+	// which bumps thumb_version and re-emits the new size set under
+	// v=N+1. The 404 is what MediaCell's placeholder fallback keys
+	// off of; this regression-locks that path so a future "convenience
+	// fallback" can't silently degrade to ?size=preview without
+	// failing this test.
+	r := require.New(t)
+	srv, m := newThumbTestServerWithReadyRow(t)
+	defer srv.Close()
+	// newThumbTestServerWithReadyRow seeds bytes for AllSizes() per the
+	// helper note above. To simulate a stale F1 row, delete the large
+	// key from storage before the request.
+	require.NoError(t, deleteSizeFromStore(t, srv, m, thumb.SizeLarge))
+
+	url := fmt.Sprintf("%s/api/v1/media/%s/thumb?size=large&v=%d",
+		srv.URL, m.ID, m.ThumbVersion)
+	resp, err := http.Get(url)
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusNotFound, resp.StatusCode,
+		"stale F1 ready row must 404 for size=large until regenerate runs")
+}
 ```
+
+> The `deleteSizeFromStore(t, srv, m, sz)` helper is whatever shape the harness already exposes (e.g., reach into `srv.testStore.Delete(...)` or rebuild the row with the matching version under different bytes). The intent: the row stays `thumb_status='ready'` and `thumb_version=N`, but the on-disk `v=N/large.jpg` is missing. If the harness has no Delete, write a zero-length file under a different key so `ReadRange(... v=N/large)` returns NotFound — the contract is that the bytes for the requested size are missing.
 
 > If the existing test file does NOT already define `newThumbTestServer` / `newThumbTestServerWithReadyRow`, model the new tests on whatever existing helper writes a ready row + JPEG bytes (see e.g. `TestThumbRouteReturnsBytesOnMatchingVersion`). The two tests above are the contract; the harness call shape is project-specific.
 >
@@ -1619,7 +1649,7 @@ Replace any leftover `?size=lightbox` URLs in pre-existing tests with `?size=pre
 cd /Users/wesm/code/fotobank && go test ./internal/httpapi -run "TestThumbRoute" -v
 ```
 
-Expected: all 6 prior thumb tests + 2 new tests pass.
+Expected: all 6 prior thumb tests + 3 new tests pass.
 
 - [ ] **Step 5: Run the full backend suite.**
 
@@ -2145,7 +2175,7 @@ Five new Playwright tests lock the F2.0 SPA contract:
 4. SPA nav `/library → /sessions → back` does NOT re-issue the initial `limit=200&offset=0` media-list fetch (because MediaStore is hoisted and survives nav). Pagination sentinels are permitted to fire and don't count.
 5. The MediaDetail back link SPA-routes to `/library` without a document fetch — proves the Task 4 wiring isn't a no-op and protects the Task 6 hoist from regressing if someone reverts the MediaDetail anchor.
 
-- [ ] **Step 1: Append the four tests.**
+- [ ] **Step 1: Append the five tests.**
 
 ```ts
 // Append to frontend/tests/e2e/library.spec.ts

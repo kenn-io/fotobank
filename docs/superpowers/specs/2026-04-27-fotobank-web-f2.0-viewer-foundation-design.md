@@ -578,6 +578,17 @@ is documented as a runbook caveat in §8.
 - **Removed `SizeLightbox`.** Any external bookmarked URL using
   `?size=lightbox` starts returning 400. F1 frontend never used it; the only
   consumer would be a future external tool. Plan accepts the clean cut.
+- **Existing F1 ready rows lack `large.jpg`.** Rows whose `thumb_status='ready'`
+  was set under the F1 vocabulary have `grid.jpg` + `preview.jpg` (1024) +
+  `lightbox.jpg` (2048) on disk. After F2.0 deploy, `?size=large&v=N` for those
+  rows will 404 until an operator runs `fotobank thumbs regenerate --all-owners
+  --all`, which bumps `thumb_version` and re-emits the new size set under
+  `v=N+1`. The HTTP 404 is the correct interim behavior — it's how the
+  frontend's MediaCell placeholder fallback discovers the gap and shows a
+  neutral tile rather than rendering a broken-image glyph. Runbook: schedule
+  the regenerate as part of the F2.0 deploy. Not a correctness risk; locked by
+  the Task 11 happy-path test asserting `?size=large` succeeds for
+  newly-emitted rows.
 
 ## 9. Dependencies on later sub-plans
 

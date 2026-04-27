@@ -85,4 +85,31 @@ describe("MediaCell", () => {
     expect(img).not.toBeNull();
     expect(img!.getAttribute("src")).toBe("/api/v1/media/x/thumb?size=grid&v=2");
   });
+
+  it("stays on the placeholder when the parent rerenders with a fresh media object but the same thumbUrl", async () => {
+    // VirtualGrid's toLite() allocates a new MediaLite per render even
+    // when the underlying fields are unchanged, so the cell receives
+    // a fresh prop reference on every parent rerender. The reset
+    // effect must key on the URL string, not the prop reference, or
+    // every unrelated rerender clears imgError and re-fetches the
+    // same broken URL — defeating the placeholder fallback.
+    const url = "/api/v1/media/x/thumb?size=grid&v=1";
+    const { container, rerender } = render(MediaCell, {
+      media: { id: "x", aspect: 1, thumbUrl: url },
+      selected: false, onCellClick: () => {},
+    });
+    await fireEvent.error(container.querySelector("img")!);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector(".placeholder")).not.toBeNull();
+
+    // Rerender with a fresh object literal — same URL string. This
+    // mirrors a parent rerender that emits a new MediaLite without
+    // changing thumb_version.
+    await rerender({
+      media: { id: "x", aspect: 1, thumbUrl: url },
+      selected: false, onCellClick: () => {},
+    });
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector(".placeholder")).not.toBeNull();
+  });
 });
