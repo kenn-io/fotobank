@@ -580,7 +580,10 @@ CREATE TABLE media_tags (
     prompt_version    TEXT NOT NULL,
     generated_at      TIMESTAMP NOT NULL,
     status            TEXT NOT NULL,  -- active|candidate|stale
-    PRIMARY KEY (media_id, tag_key, model_id, prompt_version)
+    -- generated_at is part of the PK so a successful re-run can mark the
+    -- prior row stale and insert the new active row atomically without
+    -- conflicting with the old (model_id, prompt_version) tuple.
+    PRIMARY KEY (media_id, tag_key, model_id, prompt_version, generated_at)
 );
 
 CREATE INDEX media_tags_active_idx
@@ -594,7 +597,7 @@ CREATE TABLE media_captions (
     text              TEXT NOT NULL,
     generated_at      TIMESTAMP NOT NULL,
     status            TEXT NOT NULL,
-    PRIMARY KEY (media_id, model_id, prompt_version)
+    PRIMARY KEY (media_id, model_id, prompt_version, generated_at)
 );
 
 CREATE TABLE media_embeddings (
@@ -605,7 +608,7 @@ CREATE TABLE media_embeddings (
     dim               INTEGER NOT NULL,
     generated_at      TIMESTAMP NOT NULL,
     status            TEXT NOT NULL,
-    PRIMARY KEY (media_id, model_id, prompt_version)
+    PRIMARY KEY (media_id, model_id, prompt_version, generated_at)
 );
 
 CREATE TABLE ai_active_models (
@@ -666,7 +669,7 @@ CREATE TABLE user_settings (
 );
 ```
 
-**Down file shape (`000001_initial_schema.down.sql`):** Since the up file edits existing CREATE TABLE statements in place, the down file is the *prior* schema state — the `media` CREATE TABLE without the five new columns, the `albums` CREATE TABLE without the two new columns, and none of the new tables / triggers / indexes / virtual tables. There are no `ALTER TABLE … DROP COLUMN` statements; the down file is a complete pre-change schema snapshot.
+**Down file shape (`000001_initial_schema.down.sql`):** golang-migrate runs `.down.sql` against the *current* schema, so the down file is an inverse teardown that drops the new tables, triggers, indexes, and virtual tables in reverse dependency order. The pre-prod policy (§12.1) means we squash F1 schema changes into the existing `000001` pair rather than creating new migration files; the down file's job is still inverse teardown of the squashed up file, not a snapshot. Specifically: drop `user_settings`, `media_fts`, `ai_reindex_failures`, `ai_jobs`, `ai_active_models`, `media_embeddings`, `media_captions`, `media_tags`, `auth_hidden_session`, `auth_hidden_passcode`, `user_album_prefs`, the cover-consistency triggers, and the new media indexes. The new columns added in place to `media` and `albums` are dropped via `ALTER TABLE … DROP COLUMN` (modernc.org/sqlite supports this since SQLite 3.35).
 
 ### 12.3 New packages
 
@@ -705,7 +708,7 @@ CREATE TABLE user_settings (
   - `share.status.changed` — `{ scope_id, status, attempts, last_error? }` from the share broker.
   - `ai.health.changed` — `{ embed: ..., vision: ..., backlog: ... }` whenever the AI indicator state flips.
 - **Reconnect semantics:** browsers reconnect automatically. The server replays buffered events whose `id` is greater than the supplied `Last-Event-ID`. Events older than the buffer are dropped — the SPA falls back to refetching state from REST endpoints when it observes a buffer miss (server signals `event: catchup-required`).
-- **Backpressure:** if a client is slow, the server drops events from its per-principal buffer (oldest first); the next reconnect with `Last-Event-ID` triggers `catchup-required`.
+- **Backpressure:** the broadcaster never blocks. Each subscriber has a small bounded channel (16 frames); sends are non-blocking — if the channel is full, the frame is dropped from that subscriber, while the per-principal ring keeps the canonical history. A slow client's reconnect with `Last-Event-ID` either catches up via replay or receives `catchup-required` if its watermark predates the retained window. The HTTP write loop also runs under the request context, so a stalled TCP write trips `ctx.Done()` and tears down the subscription rather than blocking the bus.
 
 ### 12.5 Settings persistence
 
