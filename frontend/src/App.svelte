@@ -4,10 +4,13 @@
   import AppHeader from "./lib/components/AppHeader.svelte";
   import Sidebar from "./lib/components/Sidebar.svelte";
   import { ThemeStore } from "./lib/theme/themeStore.svelte";
+  import { EventsStore } from "./lib/events/eventsStore.svelte";
   import { api } from "./lib/api/client";
 
   const themeStore = new ThemeStore(api);
   themeStore.load();
+  const events = new EventsStore();
+  events.connect();
 
   let route = $state(window.location.pathname || "/library");
 
