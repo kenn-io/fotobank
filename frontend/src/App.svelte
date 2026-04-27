@@ -48,6 +48,11 @@
   function activeId(route: RouteMatch): string {
     if (route.route === "sessions") return "sessions";
     if (route.route === "settings") return "settings";
+    // notfound returns "" so the sidebar highlights nothing — landing
+    // on a 404 shouldn't make Library look like the active section.
+    if (route.route === "notfound") return "";
+    // library and media: media-detail belongs in the library context,
+    // so the sidebar keeps Library highlighted while a photo is open.
     return "library";
   }
 </script>

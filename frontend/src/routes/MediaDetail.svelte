@@ -1,10 +1,16 @@
 <!-- frontend/src/routes/MediaDetail.svelte -->
 <script lang="ts">
+  import { handleInternalLinkClick } from "../lib/router/router.svelte";
   let { id }: { id: string } = $props();
 </script>
 
 <div class="wrap">
-  <a href="/library" class="back" aria-label="Back to library">←</a>
+  <a
+    href="/library"
+    class="back"
+    aria-label="Back to library"
+    onclick={(e) => handleInternalLinkClick(e, "/library")}
+  >←</a>
   <img src={`/api/v1/media/${encodeURIComponent(id)}/thumb?size=preview&v=0`} alt="" />
   <p class="note">F2 will replace this with the full lightbox.</p>
 </div>

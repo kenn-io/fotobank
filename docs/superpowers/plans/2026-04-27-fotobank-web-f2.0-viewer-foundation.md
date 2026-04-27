@@ -40,7 +40,7 @@
 
 **Unchanged but referenced:**
 
-- `frontend/src/routes/MediaDetail.svelte` — already exists as a `{ id }`-prop stub with a back link; F2.0 leaves it alone (F2.4 replaces it).
+- `frontend/src/routes/MediaDetail.svelte` — already exists as a `{ id }`-prop stub. Task 4 wires its `/library` back link through `handleInternalLinkClick` so SPA nav back to the library doesn't full-reload (and so the hoisted MediaStore survives). F2.4 replaces the stub with the full lightbox.
 - `internal/web/embed.go` — SPA fallback already implemented (returns shell for unknown non-`/api/`, non-`/assets/` paths). F2.0 only verifies behavior via Playwright.
 - `internal/thumb/worker.go` — `emitSizes` already loops over `AllSizes()` and uses `sz.MaxEdge()`. The size-vocabulary change is picked up automatically.
 
@@ -442,12 +442,13 @@ git commit -m "feat(frontend): replace inline routing in App.svelte with RouterS
 
 ---
 
-## Task 4: Sidebar uses handleInternalLinkClick
+## Task 4: Sidebar + MediaDetail use handleInternalLinkClick
 
 **Files:**
 - Modify: `frontend/src/lib/components/Sidebar.svelte`
+- Modify: `frontend/src/routes/MediaDetail.svelte`
 
-Add an `onclick` to each entry so clicks SPA-route instead of full-reloading.
+Add an `onclick` to each entry so clicks SPA-route instead of full-reloading. The MediaDetail back link is wired through the same helper — without it, navigating back from `/media/:id` triggers a full document load and discards the hoisted MediaStore (which Task 6 set up specifically so library state survives in-app nav).
 
 - [ ] **Step 1: Edit Sidebar.svelte.**
 
@@ -475,7 +476,31 @@ And add the import at the top of the script block:
 import { handleInternalLinkClick } from "../router/router.svelte";
 ```
 
-- [ ] **Step 2: Run typecheck.**
+- [ ] **Step 2: Edit MediaDetail.svelte.**
+
+In `frontend/src/routes/MediaDetail.svelte`, add the import and wire the back link:
+
+```svelte
+<script lang="ts">
+  import { handleInternalLinkClick } from "../lib/router/router.svelte";
+  let { id }: { id: string } = $props();
+</script>
+
+<!-- before -->
+<a href="/library" class="back" aria-label="Back to library">←</a>
+
+<!-- after -->
+<a
+  href="/library"
+  class="back"
+  aria-label="Back to library"
+  onclick={(e) => handleInternalLinkClick(e, "/library")}
+>←</a>
+```
+
+The rest of `MediaDetail.svelte` is unchanged — F2.4 will replace the whole component with the lightbox.
+
+- [ ] **Step 3: Run typecheck.**
 
 ```bash
 cd /Users/wesm/code/fotobank/frontend && bun run typecheck
@@ -483,20 +508,22 @@ cd /Users/wesm/code/fotobank/frontend && bun run typecheck
 
 Expected: clean.
 
-- [ ] **Step 3: Smoke-test in dev server.**
+- [ ] **Step 4: Smoke-test in dev server.**
 
 ```bash
 cd /Users/wesm/code/fotobank && make frontend-dev &
 # Open http://127.0.0.1:5181, click Library/Sessions/Settings in the
 # sidebar. Network tab should show NO document fetch on those clicks
 # (only XHR /api/* calls). Browser back/forward still works.
+# Also: open /media/foo, click the back arrow — Network tab should
+# show NO document fetch and the page must SPA-render /library.
 ```
 
-- [ ] **Step 4: Commit.**
+- [ ] **Step 5: Commit.**
 
 ```bash
-git add frontend/src/lib/components/Sidebar.svelte
-git commit -m "feat(frontend): SPA-route sidebar links via handleInternalLinkClick"
+git add frontend/src/lib/components/Sidebar.svelte frontend/src/routes/MediaDetail.svelte
+git commit -m "feat(frontend): SPA-route sidebar + MediaDetail back via handleInternalLinkClick"
 ```
 
 ---
@@ -982,6 +1009,29 @@ describe("MediaCell", () => {
     expect(container.querySelector("img")).toBeNull();
     expect(container.querySelector(".placeholder")).not.toBeNull();
   });
+
+  it("re-attempts the image when media.thumbUrl changes after an error", async () => {
+    // Regression-locks the thumb-regenerate cache-bust path: when an
+    // operator runs `thumbs regenerate`, thumb_version bumps and a
+    // cached row still pointing at ?v=N 404s. Once a refetch lands the
+    // ?v=N+1 URL, MediaCell must re-attempt the load instead of
+    // staying on the placeholder forever.
+    const { container, rerender } = render(MediaCell, {
+      media: { id: "x", aspect: 1, thumbUrl: "/api/v1/media/x/thumb?size=grid&v=1" },
+      selected: false, onCellClick: () => {},
+    });
+    await fireEvent.error(container.querySelector("img")!);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector(".placeholder")).not.toBeNull();
+
+    await rerender({
+      media: { id: "x", aspect: 1, thumbUrl: "/api/v1/media/x/thumb?size=grid&v=2" },
+      selected: false, onCellClick: () => {},
+    });
+    const img = container.querySelector("img");
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute("src")).toBe("/api/v1/media/x/thumb?size=grid&v=2");
+  });
 });
 ```
 
@@ -1013,6 +1063,15 @@ Expected: FAIL with module-not-found.
   // until the worker drains. Showing a neutral placeholder is much
   // better than the browser's broken-image glyph.
   let imgError = $state(false);
+
+  // Reset the error flag whenever media.thumbUrl changes, so once a
+  // refetch lands the v=N+1 URL we re-attempt the load. Without this
+  // the cell is stuck on the placeholder for the lifetime of the
+  // component even after the worker drains.
+  $effect(() => {
+    media.thumbUrl;
+    imgError = false;
+  });
 </script>
 
 <a
@@ -1536,6 +1595,8 @@ func TestThumbRouteLargeHappyPath(t *testing.T) {
 ```
 
 > If the existing test file does NOT already define `newThumbTestServer` / `newThumbTestServerWithReadyRow`, model the new tests on whatever existing helper writes a ready row + JPEG bytes (see e.g. `TestThumbRouteReturnsBytesOnMatchingVersion`). The two tests above are the contract; the harness call shape is project-specific.
+>
+> **Important:** verify the seed helper writes JPEG bytes for **every size** in `thumb.AllSizes()`, not just `SizeGrid`. The existing fixture for the F1 happy-path test may only have written grid bytes (the only size F1 frontend used), in which case `?size=large&v=N` will 404 against a "ready" row even though the row's `thumb_status` says it's done. If the helper is grid-only, extend it to write bytes for grid + preview + large before adding `TestThumbRouteLargeHappyPath`.
 
 - [ ] **Step 3: Audit the rest of the file for any `lightbox` / `2048` references.**
 
@@ -1788,6 +1849,31 @@ func TestThumbsRegenerateOwnerScopeBypassesStubModeRequirement(t *testing.T) {
 	// thing under test, not the row count.
 	r.Equal(0, code, "stderr=%s stdout=%s", eout.String(), out.String())
 }
+
+func TestThumbsRegenerateBadSinceErrorsBeforeOpeningDB(t *testing.T) {
+	// `--since bad-date` must be rejected upfront, before any DB file
+	// is created or migrated. Otherwise a typo on a fresh box silently
+	// materializes the SQLite file, runs migrations, and only then
+	// reports the usage error — confusing under cron-style invocations
+	// (and a real bug in F1).
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_CONFIG", cfgPath)
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	var out, eout bytes.Buffer
+	code := cli.RunContext(context.Background(),
+		[]string{"thumbs", "regenerate", "--all-owners",
+			"--since", "not-a-date", "--config", cfgPath},
+		&out, &eout)
+	r.Equal(2, code)
+	r.Contains(eout.String(), "--since must be RFC3339")
+	_, statErr := os.Stat(dbPath)
+	r.Truef(os.IsNotExist(statErr),
+		"DB must not be created when --since fails to parse: stat=%v", statErr)
+}
 ```
 
 - [ ] **Step 2: Run; expect failures (the new flags are not yet wired).**
@@ -1796,7 +1882,7 @@ func TestThumbsRegenerateOwnerScopeBypassesStubModeRequirement(t *testing.T) {
 cd /Users/wesm/code/fotobank && go test ./internal/cli -run "TestThumbsRegenerate" -v
 ```
 
-Expected: the 6 new tests fail; the 3 existing ones pass.
+Expected: the 7 new tests fail; the 3 existing ones pass.
 
 - [ ] **Step 3: Extend `regenerateOpts` and the cobra flags.**
 
@@ -1809,11 +1895,14 @@ type regenerateOpts struct {
 	ids       []string
 	kind      string
 	status    string
-	since     string
-	owner     string // "<hub>:<user>"; empty = use stub principal
-	allOwners bool   // iterate every principal in owners table
+	since     string     // raw RFC3339 string from the flag
+	sinceTime *time.Time // parsed during validateSelectors; nil when --since is empty
+	owner     string     // "<hub>:<user>"; empty = use stub principal
+	allOwners bool       // iterate every principal in owners table
 }
 ```
+
+`sinceTime` is populated by `validateSelectors` so the parse happens before any DB or owner-resolution work — a malformed `--since` must not create or open the DB file.
 
 Update `newThumbsRegenerateCmd` (after the existing flags around line 71):
 
@@ -1892,7 +1981,9 @@ Replace the body of `runThumbsRegenerate` (lines 141–166) with:
 
 ```go
 func runThumbsRegenerate(ctx context.Context, opts regenerateOpts, stdout, _ io.Writer) error {
-	if err := validateSelectors(opts); err != nil {
+	// Validation must run before loadThumbsConfig/openDB so a bad
+	// --since (or empty selector set) can't side-effect the DB file.
+	if err := validateSelectors(&opts); err != nil {
 		return err
 	}
 	if err := validateScope(opts); err != nil {
@@ -1920,10 +2011,7 @@ func runThumbsRegenerate(ctx context.Context, opts regenerateOpts, stdout, _ io.
 
 	q := thumb.NewQueue(d.WriteDB(), d.ReadDB())
 	for _, p := range scope {
-		filter, err := buildFilter(p, opts)
-		if err != nil {
-			return err
-		}
+		filter := buildFilter(p, opts)
 		n, err := q.Enqueue(ctx, filter)
 		if err != nil {
 			return err
@@ -1962,10 +2050,10 @@ func resolveOwners(ctx context.Context, d *db.DB, cfg *config.Config, opts regen
 }
 ```
 
-Update `buildFilter` (lines 115–135) to accept a Principal directly and stop reading `cfg.Identity.Stub`:
+Update `buildFilter` (lines 115–135) to accept a Principal directly, stop reading `cfg.Identity.Stub`, and reuse `opts.sinceTime` instead of re-parsing:
 
 ```go
-func buildFilter(p owners.Principal, opts regenerateOpts) (thumb.EnqueueFilter, error) {
+func buildFilter(p owners.Principal, opts regenerateOpts) thumb.EnqueueFilter {
 	filter := thumb.EnqueueFilter{
 		Owner: p,
 		All:   opts.all,
@@ -1977,18 +2065,38 @@ func buildFilter(p owners.Principal, opts regenerateOpts) (thumb.EnqueueFilter, 
 	if opts.status != "" {
 		filter.Status = opts.status
 	}
-	if opts.since != "" {
-		ts, err := time.Parse(time.RFC3339, opts.since)
-		if err != nil {
-			return thumb.EnqueueFilter{}, newUsageError("--since must be RFC3339: %v", err)
-		}
-		filter.Since = &ts
+	if opts.sinceTime != nil {
+		filter.Since = opts.sinceTime
 	}
-	return filter, nil
+	return filter
 }
 ```
 
-> The original `buildFilter` did not return an error on a normal call path; the only error was RFC3339 parsing. The signature stays `(thumb.EnqueueFilter, error)` so the parser path is preserved.
+`buildFilter` no longer returns an error: the only previous error path was RFC3339 parsing of `--since`, which is now done upfront in `validateSelectors`. The new signature also makes per-owner construction inside the loop infallible, so the caller doesn't need a `for { … err := buildFilter; if err … }` wrapper.
+
+Update `validateSelectors` (lines 104–111) to take a pointer and parse `--since` once into `opts.sinceTime`:
+
+```go
+// validateSelectors enforces "at least one selector" and parses --since
+// upfront so a malformed timestamp is reported before the DB is opened
+// or owners are resolved.
+func validateSelectors(opts *regenerateOpts) error {
+	if !opts.all && len(opts.ids) == 0 && opts.kind == "" && opts.status == "" && opts.since == "" {
+		return newUsageError(
+			"at least one of --all, --id, --type, --status, --since is required")
+	}
+	if opts.since != "" {
+		ts, err := time.Parse(time.RFC3339, opts.since)
+		if err != nil {
+			return newUsageError("--since must be RFC3339: %v", err)
+		}
+		opts.sinceTime = &ts
+	}
+	return nil
+}
+```
+
+The pointer receiver is required so the parsed `sinceTime` survives back to `runThumbsRegenerate` for the per-owner `buildFilter` call. The `time` import is already present.
 
 The pre-existing single-principal output line `"%d rows enqueued for regeneration.\n"` becomes `"%d rows enqueued for <hub>:<user>.\n"`. Update `TestThumbsRegenerateAllBumpsVersion` and `TestThumbsRegenerateByIDTargetsOnlyMatch` — both currently assert `"1 rows enqueued"` on stdout, which still substring-matches. Confirm both still pass without modification.
 
@@ -1998,7 +2106,7 @@ The pre-existing single-principal output line `"%d rows enqueued for regeneratio
 cd /Users/wesm/code/fotobank && go test ./internal/cli -run "TestThumbsRegenerate" -v
 ```
 
-Expected: 9 tests pass (3 existing + 6 new).
+Expected: 10 tests pass (3 existing + 7 new).
 
 - [ ] **Step 7: Run the full backend suite.**
 
@@ -2022,12 +2130,13 @@ git commit -m "feat(cli): thumbs regenerate accepts --owner and --all-owners"
 **Files:**
 - Modify: `frontend/tests/e2e/library.spec.ts`
 
-Four new Playwright tests lock the F2.0 SPA contract:
+Five new Playwright tests lock the F2.0 SPA contract:
 
 1. Reload `/media/<id>` returns the SPA shell + matched route.
 2. Reload `/foo-not-a-route` returns the SPA shell + NotFound.
 3. Reload `/api/v1/healthz` returns API JSON, NOT the SPA shell.
 4. SPA nav `/library → /sessions → back` does NOT re-issue the initial `limit=200&offset=0` media-list fetch (because MediaStore is hoisted and survives nav). Pagination sentinels are permitted to fire and don't count.
+5. The MediaDetail back link SPA-routes to `/library` without a document fetch — proves the Task 4 wiring isn't a no-op and protects the Task 6 hoist from regressing if someone reverts the MediaDetail anchor.
 
 - [ ] **Step 1: Append the four tests.**
 
@@ -2083,6 +2192,30 @@ test("SPA nav library→sessions→back does not re-issue the initial media fetc
   // hop; pagination sentinels (offset>0) are filtered out above.
   expect(initialPageCalls.length).toBe(baseline);
 });
+
+test("MediaDetail back link SPA-routes to /library without a document fetch", async ({ page }) => {
+  // The back arrow on /media/:id MUST go through handleInternalLinkClick
+  // so the hoisted MediaStore survives. A naked anchor would issue a
+  // top-level document request — track those (resourceType === "document")
+  // since framenavigated fires for pushState too and can't distinguish.
+  const docRequests: string[] = [];
+  page.on("request", (req) => {
+    if (req.resourceType() === "document") docRequests.push(req.url());
+  });
+
+  await page.goto("/media/abc-123");
+  await expect(page.getByRole("link", { name: /back to library/i })).toBeVisible();
+  const beforeBack = docRequests.length;
+  expect(beforeBack).toBeGreaterThanOrEqual(1); // the page.goto itself
+
+  await page.getByRole("link", { name: /back to library/i }).click();
+  await expect(page).toHaveURL(/\/library$/);
+
+  // No new document request should fire from the back-click — only
+  // history.pushState. handleInternalLinkClick must have called
+  // preventDefault().
+  expect(docRequests.length).toBe(beforeBack);
+});
 ```
 
 - [ ] **Step 2: Build the e2e server and run the suite.**
@@ -2091,7 +2224,7 @@ test("SPA nav library→sessions→back does not re-issue the initial media fetc
 cd /Users/wesm/code/fotobank && make test-e2e
 ```
 
-Expected: 7 tests pass (3 prior + 4 new).
+Expected: 8 tests pass (3 prior + 5 new).
 
 - [ ] **Step 3: Commit.**
 

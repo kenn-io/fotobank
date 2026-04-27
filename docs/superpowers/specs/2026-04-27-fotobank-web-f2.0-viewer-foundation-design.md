@@ -178,6 +178,16 @@ logic, no navigation policy.
     onCellClick: (e: MouseEvent) => void;
   } = $props();
   let imgError = $state(false);
+
+  // Reset imgError whenever the row's thumb URL changes — typically
+  // after `thumbs regenerate` bumps thumb_version and the merge path
+  // refetches with a new ?v=N+1 URL. Without this reset, a row that
+  // 404'd at v=N stays on the placeholder forever even after the
+  // worker has produced fresh bytes at v=N+1.
+  $effect(() => {
+    media.thumbUrl;
+    imgError = false;
+  });
 </script>
 
 <a
@@ -212,8 +222,13 @@ logic, no navigation policy.
 
 Caller (VirtualGrid / Sessions) computes `selected={selection.ids.has(id)}` and
 provides `onCellClick={(e) => handleCellClick(e, id)}`. Click policy stays in
-the caller: button !== 0 ignored; shift → `selection.range(id, orderedIds)`;
-ctrl/meta → `selection.toggle(id)`; otherwise `e.preventDefault(); router.navigate(...)`.
+the caller: `button !== 0` ignored; shift → `e.preventDefault();
+selection.range(id, orderedIds)`; ctrl/meta → `e.preventDefault();
+selection.toggle(id)`; otherwise `e.preventDefault(); router.navigate(...)`.
+**`preventDefault()` is required on every handled left-click**, including
+shift/ctrl/meta selection actions — without it, the browser still treats
+shift-click as "open in new window" / ctrl-click as "open in new tab" while
+the selection store also mutates, producing a confusing double effect.
 
 ### 4.5 `frontend/src/lib/media/mediaStore.svelte.ts`
 
