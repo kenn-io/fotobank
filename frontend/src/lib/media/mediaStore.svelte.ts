@@ -62,6 +62,17 @@ export class MediaStore {
   }
 
   private merge(items: Media[]) {
+    // Build-time guard: this distributed-conditional fails to compile
+    // if Media gains a field outside the set checked by `unchanged`
+    // below. Without it, a future field (e.g. caption, tags) could
+    // silently bypass dirty-tracking — `inner.set` is gated on
+    // !unchanged, so the bucket would keep stale values forever.
+    // Update both this list AND the predicate when Media changes.
+    type _IdentityFieldsCovered = Exclude<keyof Media, "id" | "timestamp" | "taken" | "aspect" | "thumbUrl">;
+    type _AssertNoUncoveredFields = _IdentityFieldsCovered extends never ? true : never;
+    const _identityFieldsCovered: _AssertNoUncoveredFields = true;
+    void _identityFieldsCovered;
+
     // Track which month buckets changed so we can rebuild only those
     // entries in the months snapshot. Untouched months reuse their
     // existing object ref → VirtualGrid's keyed each-block skips

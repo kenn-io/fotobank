@@ -190,11 +190,12 @@ describe("MediaStore", () => {
     expect(store.months[0]?.items.map((i) => i.id).sort()).toEqual(["1", "2", "3"]);
   });
 
-  it("dirties the same-month bucket when a row replaces with new thumb_version", async () => {
+  it("dirties only the affected bucket on a row replacement", async () => {
     const page1 = {
       data: {
         items: [
           { id: "x", timestamp: "2026-04-18T12:00:00Z", width: 1, height: 1, thumb_version: 1 },
+          { id: "y", timestamp: "2026-03-18T12:00:00Z", width: 1, height: 1, thumb_version: 1 },
         ],
         next_offset: 200,
       },
@@ -214,17 +215,24 @@ describe("MediaStore", () => {
     };
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
-    const before = store.months[0];
-    expect(before?.items[0]?.thumbUrl).toBe("/api/v1/media/x/thumb?size=grid&v=1");
+    const before04 = store.months.find((m) => m.key === "2026-04");
+    const before03 = store.months.find((m) => m.key === "2026-03");
+    expect(before04?.items[0]?.thumbUrl).toBe("/api/v1/media/x/thumb?size=grid&v=1");
 
     await store.loadMore();
-    const after = store.months[0];
-    // Field updated...
-    expect(after?.items[0]?.thumbUrl).toBe("/api/v1/media/x/thumb?size=grid&v=7");
-    // ...and the month object ref must have changed because its
-    // contents changed. A stale ref would let VirtualGrid skip a
-    // re-render that should have happened.
-    expect(after).not.toBe(before);
+    const after04 = store.months.find((m) => m.key === "2026-04");
+    const after03 = store.months.find((m) => m.key === "2026-03");
+
+    // Affected month: row replaced with v=7, so the month ref must
+    // change AND the field must update.
+    expect(after04?.items[0]?.thumbUrl).toBe("/api/v1/media/x/thumb?size=grid&v=7");
+    expect(after04).not.toBe(before04);
+
+    // Unaffected month: not in page 2 at all. Its object ref MUST be
+    // reused so VirtualGrid's keyed each-block can skip the chunk.
+    // The old (pre-F2.0) merge always rebuilt every month ref — this
+    // assertion is what locks the new dirty-tracking contract.
+    expect(after03).toBe(before03);
   });
 
   it("relocates an item to a new month and prunes the old bucket when it empties", async () => {
