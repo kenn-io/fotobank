@@ -28,7 +28,15 @@
 
   $effect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") selection.clear();
+      if (e.key !== "Escape") return;
+      // No-op when nothing is selected so we don't shadow other Esc
+      // handlers (modals, popovers) that future tasks will introduce.
+      if (selection.ids.size === 0) return;
+      // Don't steal Escape from text inputs — Esc there usually means
+      // "dismiss the dropdown / cancel the edit", not "clear selection".
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      selection.clear();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

@@ -36,14 +36,19 @@
     return items.map((m) => ({ id: m.id, aspect: m.aspect, thumbUrl: m.thumbUrl }));
   }
 
-  function allIds(ms: Month[]): string[] {
-    return ms.flatMap((m) => m.items.map((it) => it.id));
-  }
+  // Memoize the flattened id list so shift-click doesn't re-allocate
+  // O(n) strings + array on every click. Recomputes only when months
+  // (the prop) changes.
+  const orderedIds = $derived(months.flatMap((m) => m.items.map((it) => it.id)));
 
   function handleCellClick(e: MouseEvent, id: string) {
+    // Ignore middle-click (button 1, opens new tab) and right-click
+    // (button 2, context menu). Shift+middle-click would otherwise
+    // hijack the new-tab gesture.
+    if (e.button !== 0) return;
     if (e.shiftKey) {
       e.preventDefault();
-      selection.range(id, allIds(months));
+      selection.range(id, orderedIds);
     } else if (e.metaKey || e.ctrlKey) {
       e.preventDefault();
       selection.toggle(id);
