@@ -21,9 +21,15 @@
 <style>
   .bar {
     position: fixed;
-    top: 8px;
+    /* Sit just below the 44px AppHeader so we don't obscure the
+       search input or account button while a selection is active. */
+    top: 52px;
     left: 50%;
     transform: translateX(-50%);
+    /* Cap the pill at the viewport so it can't overflow on narrow
+       screens; wrap buttons onto a second row when they don't fit. */
+    max-width: calc(100vw - 16px);
+    flex-wrap: wrap;
     z-index: 10;
     display: flex;
     gap: 8px;
