@@ -98,7 +98,8 @@ func TestEventsCatchupRequiredOnGap(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/v1/events", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/v1/events", nil)
+	r.NoError(err)
 	req.Header.Set("Last-Event-ID", "1")
 	resp, err := http.DefaultClient.Do(req)
 	r.NoError(err)

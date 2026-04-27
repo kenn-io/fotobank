@@ -72,7 +72,7 @@ func TestE2EPermanentExit(t *testing.T) {
 
 	err = r.PublishScope(context.Background(), sampleScope())
 	require.ErrorIs(t, err, broker.ErrBrokerPermanent)
-	require.Contains(t, err.Error(), "scope already exists")
+	require.ErrorContains(t, err, "scope already exists")
 }
 
 func TestE2ETimeoutKillsChild(t *testing.T) {
@@ -147,6 +147,6 @@ func TestE2EEnvReachesChild(t *testing.T) {
 
 	err = r.PublishScope(context.Background(), sampleScope())
 	require.ErrorIs(t, err, broker.ErrBrokerPermanent)
-	require.Contains(t, err.Error(), "prod",
+	require.ErrorContains(t, err, "prod",
 		"configured env must be passed to the child process")
 }

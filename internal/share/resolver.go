@@ -173,6 +173,9 @@ func (r *ScopeResolver) validateAndRetain(
 	}
 	distinct := collectDistinctOwners(validated)
 	retained := retainSmallestOwner(validated)
+	if len(retained) == 0 {
+		return nil, owners.Principal{}, nil
+	}
 	if len(distinct) > 1 {
 		r.logMultiOwnerDegradation(caller, retained[0].Owner, distinct)
 	}

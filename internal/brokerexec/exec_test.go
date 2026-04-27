@@ -237,7 +237,7 @@ func TestPublishScopeExitPermanent(t *testing.T) {
 	reg := newTestRegistrar(t, Config{}, fr)
 	err := reg.PublishScope(context.Background(), sampleScope())
 	require.ErrorIs(t, err, broker.ErrBrokerPermanent)
-	require.Contains(t, err.Error(), "scope rejected")
+	require.ErrorContains(t, err, "scope rejected")
 }
 
 func TestPublishScopeExitTransient(t *testing.T) {
@@ -253,7 +253,7 @@ func TestPublishScopeExitUnknown(t *testing.T) {
 	reg := newTestRegistrar(t, Config{}, fr)
 	err := reg.PublishScope(context.Background(), sampleScope())
 	require.ErrorIs(t, err, broker.ErrBrokerTransient)
-	require.Contains(t, err.Error(), "exit=1")
+	require.ErrorContains(t, err, "exit=1")
 }
 
 func TestPublishScopeStderrTruncated(t *testing.T) {
@@ -277,16 +277,18 @@ func TestPublishScopeStderrTruncated(t *testing.T) {
 	// Wrapped error tail folds in only the last 256 bytes worth of X's
 	// (the input is plain ASCII so 256 chars == 256 bytes).
 	xRun := strings.Repeat("X", 256)
-	r.Contains(err.Error(), xRun, "tail should hold 256 X's")
-	r.NotContains(err.Error(), strings.Repeat("X", 257),
-		"tail must be capped at 256 chars")
+	r.ErrorContains(err, xRun, "tail should hold 256 X's")
+	if err != nil {
+		r.NotContains(err.Error(), strings.Repeat("X", 257),
+			"tail must be capped at 256 chars")
+	}
 }
 
 func TestPublishScopeStderrNormalized(t *testing.T) {
 	fr := &fakeResult{exit: 65, stderrBytes: []byte("hello\x00\nworld\x07\t!")}
 	reg := newTestRegistrar(t, Config{}, fr)
 	err := reg.PublishScope(context.Background(), sampleScope())
-	require.Contains(t, err.Error(), "hello world !")
+	require.ErrorContains(t, err, "hello world !")
 }
 
 func TestPublishScopeOmitsExpiresAt(t *testing.T) {
