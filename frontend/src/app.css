@@ -1,0 +1,8 @@
+/* Real theme variables added in Task 12. */
+:root {
+  --bg-primary: #ffffff;
+  --text-primary: #111111;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+body { margin: 0; background: var(--bg-primary); color: var(--text-primary); }
+main { padding: 2rem; }
