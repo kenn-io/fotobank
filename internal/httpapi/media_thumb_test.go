@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -50,8 +51,10 @@ func newThumbAPITest(t *testing.T) (*httptest.Server, *media.Repo, owners.Princi
 }
 
 // seedReadyThumb inserts a media row in "ready" status at the given
-// version and writes bytes for the grid size at the versioned key. The
-// test server can then serve the thumb via /api/v1/media/{id}/thumb.
+// version and writes bytes for every size in thumb.AllSizes() at the
+// versioned key. The payload for each size is "<size> bytes" (e.g.
+// "grid bytes", "preview bytes", "large bytes") so callers can assert
+// on the body to verify the route served the right size.
 func seedReadyThumb(t *testing.T, repo *media.Repo, store storage.Store, p owners.Principal, version int) media.Media {
 	t.Helper()
 	id := uuid.NewString()
@@ -61,10 +64,12 @@ func seedReadyThumb(t *testing.T, repo *media.Repo, store storage.Store, p owner
 		Size: 1, Checksum: id, ThumbStatus: "ready", ThumbVersion: version,
 	}
 	require.NoError(t, repo.Insert(context.Background(), m))
-	_, err := store.Write(context.Background(), p,
-		thumb.ThumbKey(id, version, thumb.SizeGrid),
-		strings.NewReader("grid bytes"))
-	require.NoError(t, err)
+	for _, sz := range thumb.AllSizes() {
+		_, err := store.Write(context.Background(), p,
+			thumb.ThumbKey(id, version, sz),
+			strings.NewReader(string(sz)+" bytes"))
+		require.NoError(t, err)
+	}
 	return m
 }
 
@@ -145,4 +150,52 @@ func TestThumbRouteNotFoundHasNoStoreCacheControl(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	r.Equal(http.StatusNotFound, resp.StatusCode)
 	r.Equal("no-store", resp.Header.Get("Cache-Control"))
+}
+
+func TestThumbRouteLightboxReturns400(t *testing.T) {
+	// SizeLightbox was retired in F2.0; ?size=lightbox must now hit
+	// the same 400 path as any unknown size. This regression-locks
+	// the size vocabulary against accidental re-introduction.
+	r := require.New(t)
+	srv, _, _, _ := newThumbAPITest(t)
+	resp, err := http.Get(srv.URL + "/api/v1/media/anything/thumb?size=lightbox&v=0")
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestThumbRouteLargeHappyPath(t *testing.T) {
+	r := require.New(t)
+	srv, repo, p, store := newThumbAPITest(t)
+	m := seedReadyThumb(t, repo, store, p, 5)
+	url := fmt.Sprintf("%s/api/v1/media/%s/thumb?size=large&v=%d", srv.URL, m.ID, m.ThumbVersion)
+	resp, err := http.Get(url)
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusOK, resp.StatusCode)
+	r.Equal("image/jpeg", resp.Header.Get("Content-Type"))
+}
+
+func TestThumbRouteStaleReadyRowReturns404ForNewSize(t *testing.T) {
+	// F2.0 upgrade contract: rows whose thumb_status='ready' was set
+	// under the F1 vocabulary have grid + preview + lightbox bytes
+	// but no large.jpg. After F2.0 deploy, ?size=large&v=N for those
+	// rows must 404 (not 500, not silently rewrite to a different
+	// size) until an operator runs `thumbs regenerate`. The 404 is
+	// what MediaCell's placeholder fallback keys off of; this locks
+	// the contract so a future "convenience fallback" can't silently
+	// degrade to ?size=preview.
+	r := require.New(t)
+	srv, repo, p, store := newThumbAPITest(t)
+	m := seedReadyThumb(t, repo, store, p, 5)
+	// Simulate an F1-vintage row: row is ready + has grid + preview
+	// bytes, but no large.jpg.
+	r.NoError(store.Delete(context.Background(), p,
+		thumb.ThumbKey(m.ID, m.ThumbVersion, thumb.SizeLarge)))
+	url := fmt.Sprintf("%s/api/v1/media/%s/thumb?size=large&v=%d", srv.URL, m.ID, m.ThumbVersion)
+	resp, err := http.Get(url)
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusNotFound, resp.StatusCode,
+		"stale F1 ready row must 404 for size=large until regenerate runs")
 }
