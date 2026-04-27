@@ -25,6 +25,12 @@ export class MediaStore {
   exhausted = $state(false);
   private nextOffset: number | null = 0;
 
+  // byMonth: monthKey → (id → Media). Long-lived; survives across
+  // merge() calls. byId: id → current monthKey, used to relocate a
+  // row when its timestamp moves across months.
+  private byMonth = new Map<string, Map<string, Media>>();
+  private byId = new Map<string, string>();
+
   constructor(private client: Pick<Client, "GET">) {}
 
   async loadInitial() { await this.loadMore(); }
@@ -56,24 +62,62 @@ export class MediaStore {
   }
 
   private merge(items: Media[]) {
-    const byMonth = new Map<string, Map<string, Media>>();
-    for (const m of this.months) {
-      const inner = new Map<string, Media>();
-      for (const it of m.items) inner.set(it.id, it);
-      byMonth.set(m.key, inner);
-    }
+    // Track which month buckets changed so we can rebuild only those
+    // entries in the months snapshot. Untouched months reuse their
+    // existing object ref → VirtualGrid's keyed each-block skips
+    // re-renders for them. A re-merge of an identical row is a no-op:
+    // we compare identity fields and skip the dirty mark when they
+    // match, which is what lets the SSE-overlap and refetch paths run
+    // without churning every chunk.
+    const dirty = new Set<string>();
     for (const it of items) {
-      const k = monthKey(it.taken);
-      const inner = byMonth.get(k) ?? new Map<string, Media>();
-      inner.set(it.id, it);
-      byMonth.set(k, inner);
+      const newKey = monthKey(it.taken);
+      const oldKey = this.byId.get(it.id);
+      if (oldKey !== undefined && oldKey !== newKey) {
+        // Cross-month relocation: remove from the old bucket and
+        // prune if the bucket emptied.
+        const oldInner = this.byMonth.get(oldKey);
+        if (oldInner) {
+          oldInner.delete(it.id);
+          if (oldInner.size === 0) this.byMonth.delete(oldKey);
+        }
+        dirty.add(oldKey);
+      }
+      let inner = this.byMonth.get(newKey);
+      if (!inner) {
+        inner = new Map<string, Media>();
+        this.byMonth.set(newKey, inner);
+        dirty.add(newKey); // brand-new month, must be in the snapshot
+      }
+      const existing = inner.get(it.id);
+      const unchanged = existing !== undefined
+        && existing.timestamp === it.timestamp
+        && existing.thumbUrl === it.thumbUrl
+        && existing.aspect === it.aspect;
+      if (!unchanged) {
+        inner.set(it.id, it);
+        dirty.add(newKey);
+      }
+      // byId always reflects the latest known location for this id.
+      this.byId.set(it.id, newKey);
     }
-    this.months = Array.from(byMonth.entries())
-      .map(([key, inner]) => ({
-        key,
-        items: Array.from(inner.values()).sort((a, b) => +b.taken - +a.taken),
-      }))
-      .sort((a, b) => (a.key < b.key ? 1 : -1));
+
+    // Rebuild the reactive months snapshot. Clean months reuse the
+    // existing object ref; dirty (or new) months get a fresh object
+    // with re-sorted items.
+    const prev = new Map(this.months.map((m) => [m.key, m]));
+    const sortedKeys = Array.from(this.byMonth.keys()).sort((a, b) =>
+      a < b ? 1 : a > b ? -1 : 0,
+    );
+    this.months = sortedKeys.map((k) => {
+      if (!dirty.has(k)) {
+        const reuse = prev.get(k);
+        if (reuse) return reuse;
+      }
+      const inner = this.byMonth.get(k)!;
+      const sorted = Array.from(inner.values()).sort((a, b) => +b.taken - +a.taken);
+      return { key: k, items: sorted };
+    });
   }
 }
 

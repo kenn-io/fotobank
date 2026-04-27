@@ -189,4 +189,99 @@ describe("MediaStore", () => {
     expect(store.months.length).toBe(1);
     expect(store.months[0]?.items.map((i) => i.id).sort()).toEqual(["1", "2", "3"]);
   });
+
+  it("dirties the same-month bucket when a row replaces with new thumb_version", async () => {
+    const page1 = {
+      data: {
+        items: [
+          { id: "x", timestamp: "2026-04-18T12:00:00Z", width: 1, height: 1, thumb_version: 1 },
+        ],
+        next_offset: 200,
+      },
+      error: undefined,
+    };
+    const page2 = {
+      data: {
+        items: [
+          { id: "x", timestamp: "2026-04-18T12:00:00Z", width: 1, height: 1, thumb_version: 7 },
+        ],
+        next_offset: null,
+      },
+      error: undefined,
+    };
+    const fakeClient = {
+      GET: vi.fn().mockResolvedValueOnce(page1).mockResolvedValueOnce(page2),
+    };
+    const store = new MediaStore(fakeClient as never);
+    await store.loadMore();
+    const before = store.months[0];
+    expect(before?.items[0]?.thumbUrl).toBe("/api/v1/media/x/thumb?size=grid&v=1");
+
+    await store.loadMore();
+    const after = store.months[0];
+    // Field updated...
+    expect(after?.items[0]?.thumbUrl).toBe("/api/v1/media/x/thumb?size=grid&v=7");
+    // ...and the month object ref must have changed because its
+    // contents changed. A stale ref would let VirtualGrid skip a
+    // re-render that should have happened.
+    expect(after).not.toBe(before);
+  });
+
+  it("relocates an item to a new month and prunes the old bucket when it empties", async () => {
+    const page1 = {
+      data: {
+        items: [
+          { id: "a", timestamp: "2026-04-18T12:00:00Z", width: 1, height: 1 },
+        ],
+        next_offset: 200,
+      },
+      error: undefined,
+    };
+    const page2 = {
+      data: {
+        items: [
+          { id: "a", timestamp: "2025-12-01T12:00:00Z", width: 1, height: 1 },
+        ],
+        next_offset: null,
+      },
+      error: undefined,
+    };
+    const fakeClient = {
+      GET: vi.fn().mockResolvedValueOnce(page1).mockResolvedValueOnce(page2),
+    };
+    const store = new MediaStore(fakeClient as never);
+    await store.loadMore();
+    expect(store.months.map((m) => m.key)).toEqual(["2026-04"]);
+
+    await store.loadMore();
+    // The 2026-04 bucket lost its only row; the relocation must have
+    // pruned the empty bucket.
+    expect(store.months.map((m) => m.key)).toEqual(["2025-12"]);
+    expect(store.months[0]?.items[0]?.id).toBe("a");
+  });
+
+  it("leaves every month object ref stable when re-merging identical input", async () => {
+    const items = [
+      { id: "1", timestamp: "2026-04-18T12:00:00Z", width: 1, height: 1, thumb_version: 1 },
+      { id: "2", timestamp: "2026-03-18T12:00:00Z", width: 1, height: 1, thumb_version: 1 },
+      { id: "3", timestamp: "2026-02-18T12:00:00Z", width: 1, height: 1, thumb_version: 1 },
+    ];
+    const fakeClient = {
+      GET: vi.fn()
+        .mockResolvedValueOnce({ data: { items, next_offset: 200 }, error: undefined })
+        .mockResolvedValueOnce({ data: { items, next_offset: null }, error: undefined }),
+    };
+    const store = new MediaStore(fakeClient as never);
+    await store.loadMore();
+    const refs = new Map(store.months.map((m) => [m.key, m]));
+
+    await store.loadMore(); // re-merge identical input
+
+    // Every month object ref must be unchanged: identical inputs mean
+    // every row's identity fields (timestamp, aspect, thumbUrl) match
+    // what's already in the bucket, so nothing should be marked dirty.
+    for (const m of store.months) {
+      expect(m).toBe(refs.get(m.key));
+    }
+  });
 });
