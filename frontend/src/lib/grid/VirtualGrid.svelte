@@ -44,7 +44,7 @@
       options={{ containerWidth, targetRowHeight, gap: 4 }}
     >
       {#snippet renderCell(m)}
-        <a href={`/media/${m.id}`}>
+        <a href={`/media/${m.id}`} aria-label={`Photo ${m.id}`}>
           <img src={m.thumbUrl} alt="" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover" />
         </a>
       {/snippet}
