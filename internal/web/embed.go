@@ -25,6 +25,15 @@ func Handler() http.Handler {
 	if err != nil {
 		panic("web: failed to scope embed.FS to dist: " + err.Error())
 	}
+	return HandlerFor(sub)
+}
+
+// HandlerFor returns the SPA handler scoped to the given filesystem.
+// Exposed for tests so they can pass an in-memory fs.FS that includes
+// index.html; the production embed only ever holds stub.html in the
+// committed tree (the built SPA is gitignored). Production code uses
+// Handler().
+func HandlerFor(sub fs.FS) http.Handler {
 	fsHandler := http.FileServer(http.FS(sub))
 	shell := pickShell(sub) // "index.html" or "stub.html"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -39,16 +48,19 @@ func Handler() http.Handler {
 		// Static assets must 404 cleanly so build issues surface. Vite
 		// emits all hashed bundle output under /assets/ (see
 		// frontend/vite.config.ts); expand this list if the build tool
-		// changes.
+		// changes. FileServer is the right tool here because we want
+		// 404s for missing assets, not redirects.
 		if strings.HasPrefix(path, "assets/") {
 			fsHandler.ServeHTTP(w, r)
 			return
 		}
-		// Root or unknown SPA route: rewrite to the shell so the
-		// FileServer serves it directly (not a directory listing) and
-		// client-side routing handles the URL.
+		// Root or unknown SPA route: serve the shell directly via
+		// ServeFileFS. Going through FileServer with a rewritten path
+		// would trigger its /index.html → / canonicalization redirect
+		// (HTTP 301) instead of returning the file bytes.
 		if path == "" || !exists(sub, path) {
-			r.URL.Path = "/" + shell
+			http.ServeFileFS(w, r, sub, shell)
+			return
 		}
 		fsHandler.ServeHTTP(w, r)
 	})
