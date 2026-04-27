@@ -4,6 +4,7 @@
   import ThreeColumnLayout from "./lib/components/ThreeColumnLayout.svelte";
   import AppHeader from "./lib/components/AppHeader.svelte";
   import Sidebar from "./lib/components/Sidebar.svelte";
+  import Library from "./routes/Library.svelte";
   import { ThemeStore } from "./lib/theme/themeStore.svelte";
   import { EventsStore } from "./lib/events/eventsStore.svelte";
   import { api } from "./lib/api/client";
@@ -42,7 +43,7 @@
     {:else if route.startsWith("/sessions")}
       <div style="padding:20px">Sessions route — Task 27</div>
     {:else}
-      <div style="padding:20px">Library route — Task 23</div>
+      <Library />
     {/if}
   {/snippet}
 </ThreeColumnLayout>
