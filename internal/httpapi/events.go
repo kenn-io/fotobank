@@ -50,7 +50,16 @@ const eventBusBufLen = 256
 // NewEventBus constructs an empty EventBus with the default 256-event
 // per-principal ring buffer.
 func NewEventBus() *EventBus {
-	return &EventBus{bufs: map[owners.Principal]*ring{}, bufLen: eventBusBufLen}
+	return NewEventBusWithSize(eventBusBufLen)
+}
+
+// NewEventBusWithSize constructs an empty EventBus with a per-principal
+// ring buffer of the given length. Production callers should use
+// NewEventBus; this constructor is exported so tests can shrink the ring
+// to exercise wraparound cheaply, and so a future caller can tune the
+// buffer size without forking the constructor.
+func NewEventBusWithSize(bufLen int) *EventBus {
+	return &EventBus{bufs: map[owners.Principal]*ring{}, bufLen: bufLen}
 }
 
 // Publish appends ev to the per-principal ring buffer and pushes it to
@@ -112,8 +121,14 @@ func (b *EventBus) subscribe(p owners.Principal) (chan Event, func()) {
 }
 
 // replayAfter returns every buffered event for p whose ID is strictly
-// greater than lastID. The returned slice is a fresh copy so callers
-// may iterate without holding b.mu.
+// greater than lastID, in monotonic ID order. The returned slice is a
+// fresh copy so callers may iterate without holding b.mu.
+//
+// Once the ring has wrapped, the underlying slice is logically rotated
+// — the oldest entry sits at index r.next, not index 0 — so iteration
+// must start there to preserve chronological order. Pre-wraparound,
+// r.next is still 0 and the loop walks the slice in the natural
+// append order.
 func (b *EventBus) replayAfter(p owners.Principal, lastID int64) []Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -121,8 +136,14 @@ func (b *EventBus) replayAfter(p owners.Principal, lastID int64) []Event {
 	if r == nil {
 		return nil
 	}
-	out := make([]Event, 0, len(r.events))
-	for _, ev := range r.events {
+	n := len(r.events)
+	out := make([]Event, 0, n)
+	start := 0
+	if n == b.bufLen {
+		start = r.next
+	}
+	for i := range n {
+		ev := r.events[(start+i)%n]
 		if ev.ID > lastID {
 			out = append(out, ev)
 		}
@@ -140,10 +161,16 @@ func (b *EventBus) replayAfter(p owners.Principal, lastID int64) []Event {
 // JSON data carries {"principal": "<userID>"}. If the client supplied
 // a Last-Event-ID header, the handler either replays the buffered
 // events newer than that ID or, if none are available, emits a
-// "catchup-required" event so the client knows to refetch state via
-// REST. After the bootstrap phase the handler subscribes to the
-// per-principal channel and forwards each Event as a standard SSE
+// "catchup-required" event (also id=0) so the client knows to refetch
+// state via REST. After the bootstrap phase the handler subscribes to
+// the per-principal channel and forwards each Event as a standard SSE
 // frame until the request context is cancelled.
+//
+// id=0 is reserved for control events (hello, catchup-required).
+// Clients MUST NOT record control event IDs as their Last-Event-ID
+// high-water mark; doing so would cause the server to either re-replay
+// the same events or, in the catchup-required case, loop forever
+// reissuing the control event on every reconnect.
 func eventsHandler(bus *EventBus) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := IdentityFromContext(r.Context())
@@ -179,7 +206,8 @@ func eventsHandler(bus *EventBus) http.HandlerFunc {
 		if lastID > 0 {
 			missed := bus.replayAfter(caller, lastID)
 			if len(missed) == 0 {
-				writeSSE(w, Event{ID: lastID, Type: "catchup-required", Data: json.RawMessage(`{}`)})
+				// id=0 marks this as a control event; see eventsHandler doc.
+				writeSSE(w, Event{ID: 0, Type: "catchup-required", Data: json.RawMessage(`{}`)})
 			} else {
 				for _, ev := range missed {
 					writeSSE(w, ev)
