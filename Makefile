@@ -12,15 +12,16 @@ BINARY  := $(BIN_DIR)/fotobank
 
 .PHONY: build build-release install dev test test-short vet lint nilaway \
         testify-helper-check migration-history-check tidy api-generate \
-        install-hooks clean help
+        install-hooks clean help \
+        ensure-embed-dir frontend frontend-dev frontend-check air-install
 
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)
 
-build: | $(BIN_DIR) ## Build debug binary with version ldflags
+build: frontend | $(BIN_DIR) ## Build debug binary with version ldflags
 	go build -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/fotobank
 
-build-release: | $(BIN_DIR) ## Build release binary (trimpath + stripped)
+build-release: frontend | $(BIN_DIR) ## Build release binary (trimpath + stripped)
 	go build -ldflags="$(LDFLAGS_RELEASE)" -trimpath -o $(BINARY) ./cmd/fotobank
 
 install: build-release ## Install to ~/.local/bin or $GOBIN
@@ -35,13 +36,47 @@ install: build-release ## Install to ~/.local/bin or $GOBIN
 		cp $(BINARY) "$$INSTALL_DIR/fotobank"; \
 	fi
 
-dev: ## Live-reload via air
-	air
+# Ensure go:embed has at least one file (no-op if frontend is built).
+ensure-embed-dir: ## Ensure internal/web/dist has at least a stub
+	@mkdir -p internal/web/dist
+	@test -n "$$(ls internal/web/dist/ 2>/dev/null)" \
+		|| echo ok > internal/web/dist/stub.html
 
-test: ## Run full test suite
+# Build the frontend SPA into internal/web/dist for embedding.
+# Preserves tracked placeholders (.gitignore, .gitkeep, stub.html) so a
+# fresh checkout still has them after a build.
+frontend: ## Build the SPA into internal/web/dist
+	cd frontend && bun install && bun run build
+	mkdir -p internal/web/dist
+	find internal/web/dist -mindepth 1 \
+		! -name .gitignore ! -name .gitkeep ! -name stub.html \
+		-exec rm -rf {} +
+	cp -r frontend/dist/. internal/web/dist/
+
+# Run vite with /api proxy. Use alongside `make dev`.
+frontend-dev: ## Run vite dev server (use with `make dev`)
+	./scripts/frontend-dev.sh $(ARGS)
+
+# Lint + typecheck + unit-test the frontend.
+# TODO: re-enable lint once eslint config lands (Task 5 deferred it).
+# --passWithNoTests until first vitest spec lands (Task 5 shipped only setup.ts).
+frontend-check: ## Lint + typecheck + unit-test the frontend
+	cd frontend && bun install && bun run typecheck && bun run test --passWithNoTests
+
+# Install air for backend live reload.
+air-install: ## go install github.com/air-verse/air@latest
+	go install github.com/air-verse/air@latest
+
+dev: ensure-embed-dir ## Live-reload backend via air
+	@if ! command -v air >/dev/null 2>&1; then \
+		echo "air not found. Install with: make air-install" >&2; exit 1; \
+	fi
+	air -c .air.toml -- $(ARGS)
+
+test: ensure-embed-dir ## Run full test suite
 	go test ./... -shuffle=on
 
-test-short: ## Run short tests only
+test-short: ensure-embed-dir ## Run short tests only
 	go test ./... -short -shuffle=on
 
 vet: ## Run go vet
