@@ -8,9 +8,11 @@
   import Library from "./routes/Library.svelte";
   import Sessions from "./routes/Sessions.svelte";
   import MediaDetail from "./routes/MediaDetail.svelte";
+  import NotFound from "./routes/NotFound.svelte";
   import { ThemeStore } from "./lib/theme/themeStore.svelte";
   import { EventsStore } from "./lib/events/eventsStore.svelte";
   import { selection } from "./lib/selection/selectionStore.svelte";
+  import { router } from "./lib/router/router.svelte";
   import { isEditableTarget } from "./lib/dom/editable";
   import { api } from "./lib/api/client";
 
@@ -22,17 +24,8 @@
   // EventSource accumulates duplicate connections each reload.
   onDestroy(() => events.disconnect());
 
-  let route = $state(window.location.pathname || "/library");
-
-  function mediaIdFromRoute(p: string): string | null {
-    const m = p.match(/^\/media\/([^/]+)$/);
-    return m?.[1] ?? null;
-  }
-
-  const mediaId = $derived(mediaIdFromRoute(route));
-
   $effect(() => {
-    const onPop = () => (route = window.location.pathname || "/library");
+    const onPop = () => router.syncFromLocation();
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   });
@@ -52,9 +45,9 @@
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  function activeId(path: string): string {
-    if (path.startsWith("/sessions")) return "sessions";
-    if (path.startsWith("/settings")) return "settings";
+  function activeId(route: typeof router.current): string {
+    if (route.route === "sessions") return "sessions";
+    if (route.route === "settings") return "settings";
     return "library";
   }
 </script>
@@ -63,17 +56,19 @@
 <ActionBar {selection} />
 <ThreeColumnLayout>
   {#snippet sidebar()}
-    <Sidebar active={activeId(route)} />
+    <Sidebar active={activeId(router.current)} />
   {/snippet}
   {#snippet main()}
-    {#if route.startsWith("/settings")}
-      <div style="padding:20px">Settings (placeholder; theme = {themeStore.theme})</div>
-    {:else if route.startsWith("/sessions")}
-      <Sessions />
-    {:else if mediaId}
-      <MediaDetail id={mediaId} />
-    {:else}
+    {#if router.current.route === "library"}
       <Library />
+    {:else if router.current.route === "sessions"}
+      <Sessions />
+    {:else if router.current.route === "media"}
+      <MediaDetail id={router.current.id} />
+    {:else if router.current.route === "settings"}
+      <div style="padding:20px">Settings (placeholder; theme = {themeStore.theme})</div>
+    {:else}
+      <NotFound />
     {/if}
   {/snippet}
 </ThreeColumnLayout>
