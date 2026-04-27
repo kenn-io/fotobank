@@ -34,15 +34,37 @@
     return () => io.disconnect();
   });
 
+  // Find the nearest scrolling ancestor so IntersectionObserver
+  // measures intersection against THAT box rather than the layout
+  // viewport. With the default root the rootMargin sliver lands on
+  // the viewport top, but our scroll container is .main in
+  // ThreeColumnLayout (overflow: auto). The sticky bar pins to .main,
+  // so the observer must agree on the same reference.
+  function findScrollParent(el: Element): Element | null {
+    let node: Element | null = el.parentElement;
+    while (node) {
+      const overflowY = getComputedStyle(node).overflowY;
+      if (overflowY === "auto" || overflowY === "scroll") return node;
+      node = node.parentElement;
+    }
+    return null;
+  }
+
   // Track which month is pinned to the top of the scroll viewport so the
   // sticky bar always reflects the chunk currently under the bar. The
   // rootMargin slices a 1px sliver at the very top: only the chunk whose
-  // wrapper is currently crossing that line counts as "active". Re-runs
-  // when the months array changes so newly mounted chunks are observed
-  // and removed ones are unobserved.
+  // wrapper is currently crossing that line counts as "active".
+  // Re-runs when the months array changes (length/keys read forces a
+  // tracked dep) so newly mounted chunks are observed and removed ones
+  // are unobserved. When no chunk is in the sliver (fast scroll, gap
+  // between chunks) activeMonth retains its last value so the bar
+  // doesn't blank.
   $effect(() => {
     if (!containerEl) return;
-    void months;
+    // Read months so Svelte tracks it as a dep — the body uses
+    // querySelectorAll, not the array, so we need the explicit read.
+    months.length;
+    const root = findScrollParent(containerEl);
     const io = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         if (entry.isIntersecting) {
@@ -50,7 +72,7 @@
           if (key) activeMonth = key;
         }
       }
-    }, { rootMargin: "-1px 0px -100% 0px" });
+    }, { root, rootMargin: "-1px 0px -100% 0px" });
     containerEl.querySelectorAll<HTMLElement>("[data-month]").forEach((el) => io.observe(el));
     return () => io.disconnect();
   });
