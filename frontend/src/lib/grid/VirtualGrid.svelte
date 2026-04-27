@@ -1,6 +1,7 @@
 <script lang="ts">
   import MonthChunk, { type MediaLite } from "./MonthChunk.svelte";
   import StickyMonthBar from "../components/StickyMonthBar.svelte";
+  import YearScrubber from "../components/YearScrubber.svelte";
   import type { Month, Media } from "../media/mediaStore.svelte";
   import { selection } from "../selection/selectionStore.svelte";
 
@@ -86,6 +87,12 @@
   // (the prop) changes.
   const orderedIds = $derived(months.flatMap((m) => m.items.map((it) => it.id)));
 
+  function jumpTo(key: string) {
+    if (!containerEl) return;
+    const target = containerEl.querySelector(`[data-month="${CSS.escape(key)}"]`);
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   function handleCellClick(e: MouseEvent, id: string) {
     // Ignore middle-click (button 1, opens new tab) and right-click
     // (button 2, context menu). Shift+middle-click would otherwise
@@ -104,6 +111,7 @@
 
 <div bind:this={containerEl} class="grid">
   <StickyMonthBar label={activeMonth} />
+  <YearScrubber {months} onJump={jumpTo} />
   {#each months as month (month.key)}
     <div data-month={month.key}>
       <MonthChunk
