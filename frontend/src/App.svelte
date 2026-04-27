@@ -12,7 +12,7 @@
   import { ThemeStore } from "./lib/theme/themeStore.svelte";
   import { EventsStore } from "./lib/events/eventsStore.svelte";
   import { selection } from "./lib/selection/selectionStore.svelte";
-  import { router } from "./lib/router/router.svelte";
+  import { router, type RouteMatch } from "./lib/router/router.svelte";
   import { isEditableTarget } from "./lib/dom/editable";
   import { api } from "./lib/api/client";
 
@@ -45,7 +45,7 @@
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  function activeId(route: typeof router.current): string {
+  function activeId(route: RouteMatch): string {
     if (route.route === "sessions") return "sessions";
     if (route.route === "settings") return "settings";
     return "library";
