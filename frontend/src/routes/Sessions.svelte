@@ -20,6 +20,11 @@
     sessions.flatMap((s) => s.items.map((it) => it.id)),
   );
 
+  // Click policy mirrors VirtualGrid.handleCellClick so /library and
+  // /sessions feel identical: button-0 only, modifier branches each
+  // preventDefault before mutating selection, plain click SPA-routes.
+  // If you change one site, change the other (or extract a shared
+  // helper once a third site lands in F2.4).
   function handleCellClick(e: MouseEvent, id: string) {
     if (e.button !== 0) return;
     if (e.shiftKey) {
