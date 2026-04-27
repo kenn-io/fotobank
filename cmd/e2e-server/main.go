@@ -13,9 +13,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 
 	"github.com/wesm/fotobank/internal/cli"
 )
@@ -65,15 +63,10 @@ admin_listen = "127.0.0.1:0"
 		return fmt.Errorf("writing config: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		cancel()
-	}()
-
+	// SIGINT/SIGTERM forwarding lives inside cli.RunContext's server
+	// subcommand (signal.NotifyContext on the inbound ctx). Wiring a
+	// second handler here would be a no-op race against the inner one.
+	ctx := context.Background()
 	if code := cli.RunContext(ctx, []string{"server", "--config", cfgPath}, os.Stdout, os.Stderr); code != 0 {
 		return fmt.Errorf("server exited with code %d", code)
 	}
