@@ -82,6 +82,17 @@ CREATE TABLE album_media (
     PRIMARY KEY (album_id, media_id)
 );
 
+-- Per-user, non-secret UI preferences.
+-- Keys are dotted strings (e.g. "theme", "density.library"); values are JSON.
+CREATE TABLE user_settings (
+    principal_hub        TEXT NOT NULL,
+    principal_user_id    TEXT NOT NULL,
+    key                  TEXT NOT NULL,
+    value                TEXT NOT NULL,
+    updated_at           TIMESTAMP NOT NULL,
+    PRIMARY KEY (principal_hub, principal_user_id, key)
+);
+
 -- Owner-consistency trigger on album_media inserts / updates.
 CREATE TRIGGER album_media_owner_consistency_insert
 BEFORE INSERT ON album_media

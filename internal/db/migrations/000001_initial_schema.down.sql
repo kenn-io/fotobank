@@ -4,6 +4,7 @@ DROP TRIGGER IF EXISTS scope_media_owner_consistency_update;
 DROP TRIGGER IF EXISTS scope_media_owner_consistency_insert;
 DROP TABLE IF EXISTS scope_media;
 DROP TABLE IF EXISTS scopes;
+DROP TABLE IF EXISTS user_settings;
 DROP TRIGGER IF EXISTS album_media_owner_consistency_update;
 DROP TRIGGER IF EXISTS album_media_owner_consistency_insert;
 DROP TABLE IF EXISTS album_media;
