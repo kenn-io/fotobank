@@ -12,6 +12,10 @@ env/
 build/
 develop-eggs/
 dist/
+# Re-enable our embedded SPA dist; its own .gitignore carves out the
+# placeholder files (.gitkeep, .gitignore, stub.html) and ignores the
+# rest of the build output produced by `make frontend`.
+!internal/web/dist/
 downloads/
 eggs/
 .eggs/

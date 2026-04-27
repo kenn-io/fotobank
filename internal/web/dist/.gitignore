@@ -1,0 +1,6 @@
+# Built SPA goes here via `make frontend`; ignore the build output but
+# keep the placeholder files needed for the embed to work.
+*
+!.gitignore
+!.gitkeep
+!stub.html
