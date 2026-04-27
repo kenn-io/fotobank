@@ -87,7 +87,7 @@ Three-column shell modeled on agentsview.
 ### 5.2 Sessions — time-clustered view
 
 - Photos cluster when consecutive shots have a time gap < `session_gap` (default 4 h, configurable).
-- **Computed at query time, not persisted.** No DB rows for sessions. The view groups results from `media` ordered by `taken_at` and chunks at gap boundaries.
+- **Computed at query time, not persisted.** No DB rows for sessions. The view groups results from `media` ordered by `media.timestamp` and chunks at gap boundaries.
 - Title format mirrors Library day headers: `Sat Apr 18 · 23 photos · Hayes Valley`.
 - Same grid mechanics, same selection / lightbox semantics as Library.
 - Hidden excluded by default (same rule).
@@ -426,7 +426,7 @@ Read-only in v1 (no UI toggle).
 
 ### 11.4 Optional expiry
 
-- `scopes.expires_at` column required; verification listed in §17.
+- `scopes.expires_at` column already present (`internal/share/repo.go`).
 - v1 expiry **stops serving** (existing E2 read enforcement); scopes remain visible as `Expired`; owner manually revokes.
 - **Auto-revoke sweep is a v2 candidate, not v1.**
 
@@ -454,7 +454,7 @@ Promote to top-level only if it grows enough to deserve nav.
 - List of scopes with status badge mirroring `BrokerStatus`: `Pending · Publishing · Live · Revoking · Revoked · Expired · Failed`. Color + icon + tooltip per a11y rule.
 - Per-row actions: `Open` (jump to target), `Revoke`, `Retry` (when `Failed` and `attempts < max`).
 - Filter by status (default hides `Revoked`).
-- Endpoint: `GET /api/v1/shares?status=...&cursor=...` (verify it exists; add if missing).
+- Endpoint: `GET /api/v1/shares?status=...&limit=...&offset=...` (existing route; pagination matches current backend shape).
 
 ### 11.9 Share badges (v1 surfaces)
 
@@ -472,27 +472,51 @@ Promote to top-level only if it grows enough to deserve nav.
 
 ### 12.2 Schema deltas (folded into 000001)
 
-```sql
--- media additions
-ALTER TABLE media
-  ADD COLUMN hidden_at        TIMESTAMP NULL,
-  ADD COLUMN latitude         REAL NULL,
-  ADD COLUMN longitude        REAL NULL,
-  ADD COLUMN gps_at           TIMESTAMP NULL,
-  ADD COLUMN location_label   TEXT NULL;
+Per §12.1, all changes are merged into `000001_initial_schema.up.sql` directly. There are no `ALTER TABLE` statements; the existing CREATE TABLE blocks are edited in place. Standalone fragments (new tables, indexes, triggers, virtual tables) are appended to the file.
 
-CREATE INDEX media_visible_owner_taken_idx
-  ON media(owner_hub, owner_user_id, taken_at)
+**Columns to add to the existing `media` CREATE TABLE** (insert in the appropriate position alongside existing columns):
+
+```sql
+hidden_at         TIMESTAMP,
+latitude          REAL,
+longitude         REAL,
+gps_at            TIMESTAMP,
+location_label    TEXT,
+```
+
+**Columns to add to the existing `albums` CREATE TABLE:**
+
+```sql
+description       TEXT,
+cover_media_id    UUID REFERENCES media(id) ON DELETE SET NULL,
+```
+
+**New indexes appended to `000001_initial_schema.up.sql`:**
+
+```sql
+CREATE INDEX media_visible_owner_timestamp_idx
+  ON media(owner_hub, owner_user_id, timestamp DESC)
   WHERE hidden_at IS NULL;
 
 CREATE INDEX media_visible_geo_idx
   ON media(owner_hub, owner_user_id, latitude, longitude)
   WHERE hidden_at IS NULL AND latitude IS NOT NULL;
+```
 
--- albums additions
-ALTER TABLE albums
-  ADD COLUMN description       TEXT NULL,
-  ADD COLUMN cover_media_id    UUID NULL REFERENCES media(id) ON DELETE SET NULL;
+**New triggers — mirror the existing `album_media_owner_consistency_*` pattern with BOTH insert AND update guards** (cover may be set on insert via `INSERT INTO albums (..., cover_media_id) VALUES (..., ?)`, so an insert trigger is required):
+
+```sql
+CREATE TRIGGER albums_cover_owner_consistency_insert
+BEFORE INSERT ON albums
+FOR EACH ROW
+WHEN NEW.cover_media_id IS NOT NULL
+BEGIN
+  SELECT CASE
+    WHEN (SELECT owner_hub FROM media WHERE id = NEW.cover_media_id) != NEW.owner_hub
+      OR (SELECT owner_user_id FROM media WHERE id = NEW.cover_media_id) != NEW.owner_user_id
+    THEN RAISE(ABORT, 'cover_media_id owner mismatch')
+  END;
+END;
 
 CREATE TRIGGER albums_cover_owner_consistency_update
 BEFORE UPDATE OF cover_media_id ON albums
@@ -505,7 +529,11 @@ BEGIN
     THEN RAISE(ABORT, 'cover_media_id owner mismatch')
   END;
 END;
+```
 
+**New tables appended to `000001_initial_schema.up.sql`:**
+
+```sql
 -- per-user album prefs
 CREATE TABLE user_album_prefs (
     principal_hub        TEXT NOT NULL,
@@ -638,7 +666,7 @@ CREATE TABLE user_settings (
 );
 ```
 
-The matching `000001_initial_schema.down.sql` mirrors all of the above as `DROP TABLE`, `ALTER TABLE … DROP COLUMN`, `DROP INDEX`, and `DROP TRIGGER` in reverse order.
+**Down file shape (`000001_initial_schema.down.sql`):** Since the up file edits existing CREATE TABLE statements in place, the down file is the *prior* schema state — the `media` CREATE TABLE without the five new columns, the `albums` CREATE TABLE without the two new columns, and none of the new tables / triggers / indexes / virtual tables. There are no `ALTER TABLE … DROP COLUMN` statements; the down file is a complete pre-change schema snapshot.
 
 ### 12.3 New packages
 
@@ -662,7 +690,22 @@ The matching `000001_initial_schema.down.sql` mirrors all of the above as `DROP 
 - `GET|PUT /api/v1/settings/user/{key}` (non-secret prefs only)
 - `GET /api/v1/settings/{ai|map|geocoder}/status` (config status, no secrets)
 - `GET /api/v1/ai/health` (shell-strip dot source)
-- Existing `GET /api/v1/shares` (verify; add if missing)
+- `GET /api/v1/events` — **SSE stream** (see §12.4.1)
+- Existing `GET /api/v1/shares` reused with its current `limit`/`offset` pagination shape (per `internal/httpapi/shares.go`); spec does not change pagination.
+
+#### 12.4.1 Server-Sent Events contract
+
+- **Endpoint:** `GET /api/v1/events` returning `Content-Type: text/event-stream`.
+- **Auth:** standard identity middleware applies; the stream is scoped to the caller's principal — events are filtered server-side so a caller never sees another principal's progress.
+- **Format:** standard SSE — `event: <name>` plus `data: <json>` plus blank line. Each event carries an `id:` so the browser's `EventSource` auto-resumes via `Last-Event-ID` on reconnect. Server keeps a small in-memory ring buffer (default 256 events) per principal to honor short reconnect windows.
+- **Event types (v1):**
+  - `hello` — emitted on connect with `{ ai_health, import_active, hidden_unlocked }` snapshot so the SPA doesn't need a separate fetch on load.
+  - `import.progress` — `{ run_id, processed, total, last_path? }` from the importer.
+  - `ai.tag.completed` / `ai.caption.completed` / `ai.embed.completed` — `{ media_id, model_id, status }` per photo from each AI worker.
+  - `share.status.changed` — `{ scope_id, status, attempts, last_error? }` from the share broker.
+  - `ai.health.changed` — `{ embed: ..., vision: ..., backlog: ... }` whenever the AI indicator state flips.
+- **Reconnect semantics:** browsers reconnect automatically. The server replays buffered events whose `id` is greater than the supplied `Last-Event-ID`. Events older than the buffer are dropped — the SPA falls back to refetching state from REST endpoints when it observes a buffer miss (server signals `event: catchup-required`).
+- **Backpressure:** if a client is slow, the server drops events from its per-principal buffer (oldest first); the next reconnect with `Last-Event-ID` triggers `catchup-required`.
 
 ### 12.5 Settings persistence
 
@@ -685,7 +728,7 @@ The matching `000001_initial_schema.down.sql` mirrors all of the above as `DROP 
 
 ### 12.8 New sentinel errors (`internal/errs/`)
 
-- `ErrHiddenLocked` → 401 (or 403 generic per the privacy rule)
+- `ErrHiddenLocked` → **403 generic** (matches §9.2: explicit `include_hidden=true` without an unlock cookie returns 403 with no body content distinguishing "hidden photos exist" from "no hidden photos exist")
 - `ErrTileSourceUnconfigured` → 503
 - `ErrInferenceUnavailable` → 503
 - `ErrGeocoderUnconfigured` → 503
@@ -794,8 +837,9 @@ The master vision describes Phase 2.5+ "viewer-only accounts" managed by an exte
 
 The implementation plan should verify these before assuming:
 
-- `/api/v1/originals/...` Range header support — present per `internal/httpapi/originals.go`; verify end-to-end via Playwright video tests.
-- `GET /api/v1/shares` exists; if not, add per Section 11.8.
-- `scopes.expires_at` column exists; if not, add per Section 11.4.
+- `/api/v1/media/{id}/original` Range header support — present per `internal/httpapi/media_original.go`; verify end-to-end via Playwright video tests.
 - Existing thumb pipeline can produce 2560 px and 4096 px tiers (vipsthumbnail-equivalent in pure Go).
 - Reconciler / backfill task can re-extract EXIF for existing media (GPS retrofitting).
+- SSE event delivery survives reverse-proxy buffering (NGINX/Caddy default config) — verify with Playwright e2e.
+
+Confirmed-present at brainstorm time (no verification needed): `GET /api/v1/shares` (`internal/httpapi/shares.go`), `scopes.expires_at` column (`internal/share/repo.go`).
