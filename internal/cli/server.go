@@ -35,6 +35,7 @@ import (
 	"github.com/wesm/fotobank/internal/storage"
 	"github.com/wesm/fotobank/internal/thumb"
 	"github.com/wesm/fotobank/internal/version"
+	"github.com/wesm/fotobank/internal/web"
 )
 
 // shutdownTimeout bounds how long graceful shutdown waits for in-flight
@@ -232,7 +233,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	usersettingsSvc := usersettings.NewService(usersettings.NewRepo(d.WriteDB(), d.ReadDB()))
 	eventBus := httpapi.NewEventBus()
 
-	handler, err := httpapi.New(httpapi.Deps{
+	apiHandler, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: idp,
 		OwnerService:     ownerSvc,
 		MediaService:     mediaSvc,
@@ -255,6 +256,19 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	if err != nil {
 		return err
 	}
+
+	// Outer mux: /api/* goes through the full httpapi handler (huma
+	// routes, raw-mux byte streams, identity + metrics + request-id
+	// middleware). Every other path falls through to the embedded SPA
+	// handler so a single binary serves both the API and the frontend
+	// shell. ServeMux uses longest-prefix match, so "/api/" wins over
+	// "/" when both are registered. web.Handler() is constructed once
+	// at startup; the embed.FS scoping inside it is cached for the
+	// lifetime of the returned handler.
+	rootMux := http.NewServeMux()
+	rootMux.Handle("/api/", apiHandler)
+	rootMux.Handle("/", web.Handler())
+	handler := http.Handler(rootMux)
 
 	ln, err := bindListener(cfg.HTTP.ListenAddress)
 	if err != nil {
