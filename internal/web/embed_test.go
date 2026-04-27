@@ -41,3 +41,17 @@ func TestHandlerStaticAssetMissingReturns404(t *testing.T) {
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/assets/missing.js", nil))
 	r.Equal(http.StatusNotFound, rr.Code)
 }
+
+func TestHandlerRejectsTraversalPath(t *testing.T) {
+	// `..` segments would otherwise be cleaned by net/http and silently
+	// fall through to the SPA shell, returning 200 with HTML for a path
+	// the caller never expected to resolve. fs.ValidPath rejects them
+	// up front so they 404.
+	r := require.New(t)
+	h := web.Handler()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.URL.Path = "/../etc/passwd"
+	h.ServeHTTP(rr, req)
+	r.Equal(http.StatusNotFound, rr.Code)
+}

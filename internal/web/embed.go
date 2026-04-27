@@ -16,7 +16,8 @@ import (
 //go:embed all:dist
 var distFS embed.FS
 
-// Handler returns an http.Handler that serves the embedded SPA. It must
+// Handler returns an http.Handler that serves the embedded SPA. Construct
+// once at startup; the returned handler caches the shell choice. It must
 // be mounted AFTER /api/v1/* routes; the SPA fallback is path-agnostic
 // and would otherwise swallow API requests.
 func Handler() http.Handler {
@@ -28,7 +29,17 @@ func Handler() http.Handler {
 	shell := pickShell(sub) // "index.html" or "stub.html"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
-		// Static assets must 404 cleanly so build issues surface.
+		// Reject malformed paths (`..` segments, absolute paths) up
+		// front so they 404 cleanly instead of getting cleaned to "/"
+		// and silently rewritten to the SPA shell.
+		if path != "" && !fs.ValidPath(path) {
+			http.NotFound(w, r)
+			return
+		}
+		// Static assets must 404 cleanly so build issues surface. Vite
+		// emits all hashed bundle output under /assets/ (see
+		// frontend/vite.config.ts); expand this list if the build tool
+		// changes.
 		if strings.HasPrefix(path, "assets/") {
 			fsHandler.ServeHTTP(w, r)
 			return
