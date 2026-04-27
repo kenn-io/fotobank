@@ -84,6 +84,12 @@ Design docs live in `docs/superpowers/specs/`, plans in `docs/superpowers/plans/
 ## Instructions for agents
 
 - Commit directly to master. No feature branches, no worktrees.
+- **Commit every turn** — always commit your work at the end of each turn, no exceptions. Don't ask first.
+- Use conventional commit messages (`fix:`, `feat:`, `refactor:`, `docs:`, `test:`, `chore:`, optionally scoped like `fix(httpapi):`). Imperative mood, ≤72 char subject.
+- One logical change per commit. Split unrelated changes into separate commits.
+- Never amend commits — always create a new commit for fixes.
+- Never bypass pre-commit hooks (no `--no-verify`). If a hook fails, fix the underlying issue and create a new commit.
+- Never push or pull unless explicitly asked.
 - When adding a migration, always add the down pair.
 - When touching HTTP routes, run `make api-generate` (the prek hook does this automatically on commit).
 - Prefer `require.ErrorIs` for sentinel checks; raw `==` comparison misses wrapped errors.
