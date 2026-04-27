@@ -399,3 +399,63 @@ func TestMediaGetByIDsEmptyInputReturnsNil(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, got)
 }
+
+func TestRepoInsertGetByIDPreservesGPS(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	lat, lon := 48.8566, 2.3522
+	gps := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	id := uuid.NewString()
+	r.NoError(repo.Insert(context.Background(), media.Media{
+		ID: id, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
+		Latitude: &lat, Longitude: &lon, GPSAt: &gps,
+		LocationLabel: "Paris, Île-de-France, France",
+		ThumbStatus:   "pending",
+	}))
+
+	got, err := repo.GetByID(context.Background(), id)
+	r.NoError(err)
+	r.NotNil(got.Latitude)
+	r.NotNil(got.Longitude)
+	r.NotNil(got.GPSAt)
+	r.InDelta(48.8566, *got.Latitude, 1e-9)
+	r.InDelta(2.3522, *got.Longitude, 1e-9)
+	r.True(got.GPSAt.Equal(gps), "got %v", got.GPSAt)
+	r.Equal("Paris, Île-de-France, France", got.LocationLabel)
+}
+
+func TestRepoInsertGetByIDPreservesAbsentGPS(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	id := uuid.NewString()
+	r.NoError(repo.Insert(context.Background(), media.Media{
+		ID: id, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
+		ThumbStatus: "pending",
+		// no GPS fields
+	}))
+
+	got, err := repo.GetByID(context.Background(), id)
+	r.NoError(err)
+	r.Nil(got.Latitude)
+	r.Nil(got.Longitude)
+	r.Nil(got.GPSAt)
+	r.Empty(got.LocationLabel)
+}

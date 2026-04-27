@@ -40,6 +40,7 @@ const mediaSelect = `SELECT
 	imported_at, timestamp, size, checksum,
 	make, model, focal_length, shutter, width, height, iso, aperture,
 	duration_ms,
+	latitude, longitude, gps_at, location_label,
 	thumb_status, thumb_version, thumb_updated_at
 FROM media`
 
@@ -53,6 +54,7 @@ const mediaColumnsQualified = `
     m.imported_at, m.timestamp, m.size, m.checksum,
     m.make, m.model, m.focal_length, m.shutter, m.width, m.height, m.iso, m.aperture,
     m.duration_ms,
+    m.latitude, m.longitude, m.gps_at, m.location_label,
     m.thumb_status, m.thumb_version, m.thumb_updated_at`
 
 const mediaInsert = `INSERT INTO media (
@@ -60,8 +62,9 @@ const mediaInsert = `INSERT INTO media (
 	imported_at, timestamp, size, checksum,
 	make, model, focal_length, shutter, width, height, iso, aperture,
 	duration_ms,
+	latitude, longitude, gps_at, location_label,
 	thumb_status, thumb_version, thumb_updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // Insert stores a new media row. Returns errs.ErrAlreadyExists (wrapped)
 // if a row already exists with the same (owner, checksum) or (owner, path).
@@ -87,6 +90,10 @@ func (r *Repo) Insert(ctx context.Context, m Media) error {
 		nullInt(m.ISO),
 		nullFloat(m.Aperture),
 		nullInt64(m.DurationMs),
+		nullFloat(m.Latitude),
+		nullFloat(m.Longitude),
+		nullTime(m.GPSAt),
+		nullStr(m.LocationLabel),
 		m.ThumbStatus,
 		m.ThumbVersion,
 		nullTime(m.ThumbUpdatedAt),
@@ -307,6 +314,10 @@ func scanMedia(s rowScanner) (Media, error) {
 		iso              sql.NullInt64
 		aperture         sql.NullFloat64
 		durationMs       sql.NullInt64
+		latitude         sql.NullFloat64
+		longitude        sql.NullFloat64
+		gpsAt            sql.NullTime
+		locationLabel    sql.NullString
 		thumbUpdatedAt   sql.NullTime
 	)
 	if err := s.Scan(
@@ -330,6 +341,10 @@ func scanMedia(s rowScanner) (Media, error) {
 		&iso,
 		&aperture,
 		&durationMs,
+		&latitude,
+		&longitude,
+		&gpsAt,
+		&locationLabel,
 		&m.ThumbStatus,
 		&m.ThumbVersion,
 		&thumbUpdatedAt,
@@ -367,6 +382,19 @@ func scanMedia(s rowScanner) (Media, error) {
 		v := durationMs.Int64
 		m.DurationMs = &v
 	}
+	if latitude.Valid {
+		v := latitude.Float64
+		m.Latitude = &v
+	}
+	if longitude.Valid {
+		v := longitude.Float64
+		m.Longitude = &v
+	}
+	if gpsAt.Valid {
+		t := gpsAt.Time
+		m.GPSAt = &t
+	}
+	m.LocationLabel = locationLabel.String
 	if thumbUpdatedAt.Valid {
 		t := thumbUpdatedAt.Time
 		m.ThumbUpdatedAt = &t

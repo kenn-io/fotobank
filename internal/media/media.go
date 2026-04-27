@@ -40,6 +40,15 @@ type Media struct {
 	Aperture    *float64
 	DurationMs  *int64
 
+	// GPS metadata. Latitude and Longitude are atomic — emitted
+	// together or not at all. GPSAt is independent. LocationLabel is
+	// the offline-resolved country/region/city string from internal/geo;
+	// empty when no resolver match.
+	Latitude      *float64
+	Longitude     *float64
+	GPSAt         *time.Time
+	LocationLabel string
+
 	ThumbStatus    string
 	ThumbVersion   int
 	ThumbUpdatedAt *time.Time

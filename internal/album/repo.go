@@ -380,13 +380,15 @@ func (r *Repo) RemoveMedia(ctx context.Context, albumID, mediaID string) error {
 }
 
 // albumMediaMediaSelect projects media columns joined via album_media.
-// Kept in sync with media.mediaSelect and media.mediaColumnsQualified
-// (same three-way sync applies on any schema column add/remove).
+// Kept in sync with media.mediaSelect, media.mediaColumnsQualified, and
+// media.mediaInsert (four-way sync applies on any schema column
+// add/remove).
 const albumMediaMediaSelect = `SELECT
     m.id, m.owner_hub, m.owner_user_id, m.media_type, m.mime_type, m.path, m.original_filename,
     m.imported_at, m.timestamp, m.size, m.checksum,
     m.make, m.model, m.focal_length, m.shutter, m.width, m.height, m.iso, m.aperture,
     m.duration_ms,
+    m.latitude, m.longitude, m.gps_at, m.location_label,
     m.thumb_status, m.thumb_version, m.thumb_updated_at
 FROM album_media am JOIN media m ON m.id = am.media_id`
 
