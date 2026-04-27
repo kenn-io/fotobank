@@ -41,7 +41,7 @@ type userSettingPutInput struct {
 // an empty Deps and still emit the schema.
 func registerUserSettings(api huma.API, svc *usersettings.Service) {
 	huma.Register(api, huma.Operation{
-		OperationID: "getUserSetting",
+		OperationID: "get-user-setting",
 		Method:      http.MethodGet,
 		Path:        "/api/v1/settings/user/{key}",
 		Summary:     "Get a per-user UI preference",
@@ -66,7 +66,7 @@ func registerUserSettings(api huma.API, svc *usersettings.Service) {
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID:   "putUserSetting",
+		OperationID:   "put-user-setting",
 		Method:        http.MethodPut,
 		Path:          "/api/v1/settings/user/{key}",
 		Summary:       "Set a per-user UI preference",
@@ -86,7 +86,7 @@ func registerUserSettings(api huma.API, svc *usersettings.Service) {
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID:   "deleteUserSetting",
+		OperationID:   "delete-user-setting",
 		Method:        http.MethodDelete,
 		Path:          "/api/v1/settings/user/{key}",
 		Summary:       "Delete a per-user UI preference",
