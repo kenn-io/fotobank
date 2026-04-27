@@ -125,3 +125,6 @@ coverage.out
 # IDE swap/temp
 *~
 .DS_Store
+
+# brainstorm visual companion
+.superpowers/
