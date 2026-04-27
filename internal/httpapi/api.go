@@ -14,6 +14,7 @@ import (
 	"github.com/wesm/fotobank/internal/identity"
 	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/service"
+	"github.com/wesm/fotobank/internal/service/usersettings"
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/version"
 )
@@ -50,6 +51,10 @@ type Deps struct {
 	// Nil means those handlers answer 503 Service Unavailable so the
 	// OpenAPI dumper can still emit the schema.
 	SharedRead *service.SharedReadService
+	// UserSettings backs /api/v1/settings/user/{key} get/put/delete. Nil
+	// means those handlers answer 503 Service Unavailable so the OpenAPI
+	// dumper can still emit the schema.
+	UserSettings *usersettings.Service
 	// PrincipalDisplay is the write side of the display-handle cache
 	// (populated by WithPrincipalDisplayCache). Nil disables the
 	// middleware — handles won't be refreshed from live traffic but the
@@ -119,6 +124,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerShares(api, deps.ShareService, deps.PrincipalDisplay)
 	registerShared(api, deps.SharedRead)
 	registerSharedBytes(mux, deps.SharedRead)
+	registerUserSettings(api, deps.UserSettings)
 	return mux, api
 }
 
