@@ -124,7 +124,7 @@ func runImport(ctx context.Context, opts importOpts) error {
 		workers = cfg.Imports.ConcurrentWorkers
 	}
 
-	imp := ingest.NewImporter(storeLayer, repo)
+	imp := ingest.NewImporter(storeLayer, repo, nil)
 	res, err := imp.ImportDirectory(ctx, opts.source, ingest.Options{
 		Owner:             owner,
 		ConcurrentWorkers: workers,

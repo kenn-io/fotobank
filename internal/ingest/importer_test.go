@@ -84,7 +84,7 @@ func TestImportHappyPath(t *testing.T) {
 	f := newImporterFixture(t)
 	src := seedSource(t, "photo-with-timestamp.jpg", "photo-no-exif.jpg", "video.mp4")
 
-	imp := ingest.NewImporter(f.store, f.repo)
+	imp := ingest.NewImporter(f.store, f.repo, nil)
 	res, err := imp.ImportDirectory(context.Background(), src, ingest.Options{Owner: f.owner, ConcurrentWorkers: 2})
 	r.NoError(err)
 	r.Equal(3, res.Imported)
@@ -154,7 +154,7 @@ func TestImportPhotoSequenceCollision(t *testing.T) {
 	r.NoError(os.MkdirAll(colliderDir, 0o700))
 	r.NoError(os.WriteFile(filepath.Join(colliderDir, "20240615_143022_0.jpg"), []byte("other"), 0o600))
 
-	imp := ingest.NewImporter(f.store, f.repo)
+	imp := ingest.NewImporter(f.store, f.repo, nil)
 	res, err := imp.ImportDirectory(context.Background(), src, ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
 	r.NoError(err)
 	r.Equal(1, res.Imported)
@@ -177,7 +177,7 @@ func TestImportSkipsUnsupportedFiles(t *testing.T) {
 	src := seedSource(t, "photo-with-timestamp.jpg")
 	r.NoError(os.WriteFile(filepath.Join(src, "note.txt"), []byte("hello"), 0o600))
 
-	imp := ingest.NewImporter(f.store, f.repo)
+	imp := ingest.NewImporter(f.store, f.repo, nil)
 	res, err := imp.ImportDirectory(context.Background(), src, ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
 	r.NoError(err)
 	r.Equal(1, res.Imported)
@@ -225,7 +225,7 @@ func TestImportPhantomPhotoPathBumpsSeq(t *testing.T) {
 	}
 	r.NoError(f.repo.Insert(ctx, phantom))
 
-	imp := ingest.NewImporter(f.store, f.repo)
+	imp := ingest.NewImporter(f.store, f.repo, nil)
 	res, err := imp.ImportDirectory(ctx, src, ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
 	r.NoError(err)
 	r.Equal(1, res.Imported)
@@ -285,7 +285,7 @@ func TestImportSkipsMatchRowWhenNASBytesAbsent(t *testing.T) {
 	}
 	r.NoError(f.repo.Insert(ctx, match))
 
-	imp := ingest.NewImporter(f.store, f.repo)
+	imp := ingest.NewImporter(f.store, f.repo, nil)
 	res, err := imp.ImportDirectory(ctx, src, ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
 	r.NoError(err)
 	r.Equal(0, res.Imported)
@@ -318,7 +318,7 @@ func TestImportAdoptsVideoOrphan(t *testing.T) {
 	r.NoError(err)
 	r.NoError(os.WriteFile(orphanPath, in, 0o600))
 
-	imp := ingest.NewImporter(f.store, f.repo)
+	imp := ingest.NewImporter(f.store, f.repo, nil)
 	res, err := imp.ImportDirectory(ctx, src, ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
 	r.NoError(err)
 	r.Equal(1, res.Imported)
@@ -351,7 +351,7 @@ func TestImportVideoCollisionWithDifferentBytesReportsPathCollision(t *testing.T
 	squatterPath := filepath.Join(moviesDir, sum+".mp4")
 	r.NoError(os.WriteFile(squatterPath, []byte("unrelated content"), 0o600))
 
-	imp := ingest.NewImporter(f.store, f.repo)
+	imp := ingest.NewImporter(f.store, f.repo, nil)
 	res, err := imp.ImportDirectory(ctx, src, ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
 	r.NoError(err)
 	r.Equal(0, res.Imported)
@@ -377,7 +377,7 @@ func TestImportReturnsCtxErrOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	imp := ingest.NewImporter(f.store, f.repo)
+	imp := ingest.NewImporter(f.store, f.repo, nil)
 	res, err := imp.ImportDirectory(ctx, src, ingest.Options{Owner: f.owner, ConcurrentWorkers: 2})
 	r.NoError(err)
 	r.NotEmpty(res.Failures)
@@ -385,4 +385,51 @@ func TestImportReturnsCtxErrOnCancellation(t *testing.T) {
 		r.ErrorIs(fe, context.Canceled)
 	}
 	r.Equal(0, res.Imported)
+}
+
+type stubResolver struct{ label string }
+
+func (s stubResolver) Resolve(lat, lon float64) (string, bool) {
+	return s.label, s.label != ""
+}
+
+func TestImporterPopulatesGPSWhenResolverReturnsLabel(t *testing.T) {
+	r := require.New(t)
+	f := newImporterFixture(t)
+	imp := ingest.NewImporter(f.store, f.repo, stubResolver{label: "Test City, Test Region, Test Country"})
+
+	src := seedSource(t, "photo-with-gps.jpg")
+
+	res, err := imp.ImportDirectory(context.Background(), src,
+		ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
+	r.NoError(err)
+	r.Equal(1, res.Imported)
+	r.Empty(res.Failures)
+
+	all, err := f.repo.ListAll(context.Background(), f.owner)
+	r.NoError(err)
+	r.Len(all, 1)
+	row := all[0]
+	r.NotNil(row.Latitude)
+	r.NotNil(row.Longitude)
+	r.InDelta(48.8566, *row.Latitude, 1e-3)
+	r.InDelta(2.3522, *row.Longitude, 1e-3)
+	r.Equal("Test City, Test Region, Test Country", row.LocationLabel)
+}
+
+func TestImporterLeavesLocationLabelEmptyWhenResolverNil(t *testing.T) {
+	r := require.New(t)
+	f := newImporterFixture(t)
+	imp := ingest.NewImporter(f.store, f.repo, nil)
+
+	src := seedSource(t, "photo-with-gps.jpg")
+	_, err := imp.ImportDirectory(context.Background(), src,
+		ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
+	r.NoError(err)
+
+	all, err := f.repo.ListAll(context.Background(), f.owner)
+	r.NoError(err)
+	r.Len(all, 1)
+	r.NotNil(all[0].Latitude)
+	r.Empty(all[0].LocationLabel)
 }

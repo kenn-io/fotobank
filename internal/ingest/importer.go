@@ -28,6 +28,14 @@ import (
 // practice this limit is never reached under correct usage.
 const maxPhotoSeqAttempts = 16
 
+// PlaceResolver returns a coarse human-readable label for a coordinate.
+// Production callers pass a *geo.NaturalEarth; tests pass a stub or
+// nil. When nil, the importer still extracts and stores
+// latitude/longitude/gps_at from EXIF and leaves LocationLabel empty.
+type PlaceResolver interface {
+	Resolve(lat, lon float64) (label string, ok bool)
+}
+
 // Options controls an import run.
 type Options struct {
 	Owner             owners.Principal
@@ -44,14 +52,24 @@ type Result struct {
 
 // Importer wires discovery to extraction, storage, and the media repo.
 type Importer struct {
-	store storage.Store
-	repo  *media.Repo
-	now   func() time.Time
+	store  storage.Store
+	repo   *media.Repo
+	places PlaceResolver
+	now    func() time.Time
 }
 
 // NewImporter constructs an Importer with the default UTC wall clock.
-func NewImporter(store storage.Store, repo *media.Repo) *Importer {
-	return &Importer{store: store, repo: repo, now: func() time.Time { return time.Now().UTC() }}
+// places may be nil — when nil, ingest still extracts and stores
+// latitude/longitude/gps_at from EXIF and leaves LocationLabel empty.
+// Production callers (the `fotobank import` and `fotobank gps backfill`
+// CLIs) MUST pass a real *geo.NaturalEarth.
+func NewImporter(store storage.Store, repo *media.Repo, places PlaceResolver) *Importer {
+	return &Importer{
+		store:  store,
+		repo:   repo,
+		places: places,
+		now:    func() time.Time { return time.Now().UTC() },
+	}
 }
 
 // candidateOutcome is what a worker reports per candidate.
@@ -157,7 +175,7 @@ func (imp *Importer) processPhoto(ctx context.Context, c Candidate, owner owners
 			return candidateOutcome{err: fmt.Errorf("write %s: %w", c.Path, err)}
 		}
 
-		m := buildMediaRow(c, owner, landed, checksum, size, meta, imp.now())
+		m := buildMediaRow(c, owner, landed, checksum, size, meta, imp.now(), imp.places)
 		switch err := imp.repo.Insert(ctx, m); {
 		case err == nil:
 			return candidateOutcome{imported: true}
@@ -202,7 +220,7 @@ func (imp *Importer) processVideo(ctx context.Context, c Candidate, owner owners
 		return candidateOutcome{err: fmt.Errorf("write %s: %w", c.Path, writeErr)}
 	}
 
-	m := buildMediaRow(c, owner, landed, checksum, size, meta, imp.now())
+	m := buildMediaRow(c, owner, landed, checksum, size, meta, imp.now(), imp.places)
 	switch err := imp.repo.Insert(ctx, m); {
 	case err == nil:
 		return candidateOutcome{imported: true}
@@ -276,7 +294,7 @@ func (imp *Importer) streamToStore(ctx context.Context, owner owners.Principal, 
 
 // buildMediaRow assembles the media row. Nullable metadata fields are
 // only populated when we actually have a value.
-func buildMediaRow(c Candidate, owner owners.Principal, key, checksum string, size int64, meta exifread.Metadata, importedAt time.Time) media.Media {
+func buildMediaRow(c Candidate, owner owners.Principal, key, checksum string, size int64, meta exifread.Metadata, importedAt time.Time, places PlaceResolver) media.Media {
 	m := media.Media{
 		ID:               uuid.NewString(),
 		Owner:            owner,
@@ -313,6 +331,16 @@ func buildMediaRow(c Candidate, owner owners.Principal, key, checksum string, si
 	if meta.DurationMs > 0 {
 		d := meta.DurationMs
 		m.DurationMs = &d
+	}
+	if meta.Latitude != nil && meta.Longitude != nil {
+		m.Latitude = meta.Latitude
+		m.Longitude = meta.Longitude
+		m.GPSAt = meta.GPSAt
+		if places != nil {
+			if label, ok := places.Resolve(*meta.Latitude, *meta.Longitude); ok {
+				m.LocationLabel = label
+			}
+		}
 	}
 	return m
 }
