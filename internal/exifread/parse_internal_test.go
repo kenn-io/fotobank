@@ -201,3 +201,22 @@ func TestParseExifGPSCleanTimestampInUTC(t *testing.T) {
 	r.Equal(30, got.Minute())
 	r.Equal(22, got.Second())
 }
+
+// TestParseExifGPSTimestampPreservesFractionalSeconds locks in the
+// fractional-second preservation: a GPSTimeStamp seconds rational of
+// 45/2 must yield 22 whole seconds and 500_000_000 nanoseconds. A
+// regression that truncated back to whole seconds (zero ns) would
+// slip through TestParseExifGPSTimestampValidation, which only
+// asserts ok.
+func TestParseExifGPSTimestampPreservesFractionalSeconds(t *testing.T) {
+	r := require.New(t)
+	by := map[string]exif.ExifTag{
+		"GPSDateStamp": strTag("2024:06:15"),
+		// 14:30:22.5 — second numerator/denominator = 45/2.
+		"GPSTimeStamp": dms3Denom(14, 1, 30, 1, 45, 2),
+	}
+	got, ok := parseExifGPSTimestamp(by)
+	r.True(ok)
+	r.Equal(22, got.Second(), "whole seconds")
+	r.Equal(500_000_000, got.Nanosecond(), "fractional seconds preserved as ns")
+}
