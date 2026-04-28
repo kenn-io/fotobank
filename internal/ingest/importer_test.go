@@ -433,3 +433,29 @@ func TestImporterLeavesLocationLabelEmptyWhenResolverNil(t *testing.T) {
 	r.NotNil(all[0].Latitude)
 	r.Empty(all[0].LocationLabel)
 }
+
+// TestImporterLeavesLocationLabelEmptyWhenResolverReturnsNotOk locks
+// the in-ocean / antarctic / no-match production case: the resolver
+// said "I don't know", so we still store the raw coords but leave the
+// label empty. Without this test the `ok=false` branch in
+// buildMediaRow is structurally unexercised — the nil-resolver path
+// short-circuits before places.Resolve is called.
+func TestImporterLeavesLocationLabelEmptyWhenResolverReturnsNotOk(t *testing.T) {
+	r := require.New(t)
+	f := newImporterFixture(t)
+	// stubResolver returns ok=false when label=="" — see its
+	// definition above.
+	imp := ingest.NewImporter(f.store, f.repo, stubResolver{label: ""})
+
+	src := seedSource(t, "photo-with-gps.jpg")
+	_, err := imp.ImportDirectory(context.Background(), src,
+		ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
+	r.NoError(err)
+
+	all, err := f.repo.ListAll(context.Background(), f.owner)
+	r.NoError(err)
+	r.Len(all, 1)
+	r.NotNil(all[0].Latitude)
+	r.NotNil(all[0].Longitude)
+	r.Empty(all[0].LocationLabel)
+}

@@ -252,10 +252,8 @@ func haversineKm(a, b orb.Point) float64 {
 
 func deg2rad(d float64) float64 { return d * math.Pi / 180 }
 
-// Compile-time guard: NaturalEarth must satisfy the unexported
-// PlaceResolver interface from internal/ingest. We re-declare the
-// interface here to avoid an import cycle (geo must not depend on
-// ingest). If ingest's interface changes, this guard breaks.
-var _ interface {
-	Resolve(lat, lon float64) (string, bool)
-} = (*NaturalEarth)(nil)
+// The compile-time guard that *NaturalEarth implements
+// ingest.PlaceResolver lives in geo_ingest_test.go — geo's production
+// code must not import ingest, but a test-package file can, which lets
+// the guard pin against the real interface rather than a re-declared
+// shape.
