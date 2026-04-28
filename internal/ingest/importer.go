@@ -170,18 +170,13 @@ func (imp *Importer) runPairingPass(
 	if len(importedIDs) == 0 {
 		return nil
 	}
-	imported := make([]media.Media, 0, len(importedIDs))
-	for _, id := range importedIDs {
-		m, err := imp.repo.GetByID(ctx, id)
-		if err != nil {
-			return fmt.Errorf("get imported row %s: %w", id, err)
-		}
-		imported = append(imported, m)
+	imported, err := imp.repo.GetByIDs(ctx, importedIDs)
+	if err != nil {
+		return fmt.Errorf("get imported rows: %w", err)
 	}
-	// Directory keys are NFC-normalized on both sides so a JPEG with
-	// NFC path text pairs with an existing RAW stored as NFD (and
-	// vice versa). ListByOwnerDirectories does not normalize the row
-	// side; we compare by the normalized form during collation.
+	// Directory keys are NFC-normalized so a JPEG with NFC path text
+	// pairs with an existing RAW stored as NFD. ListByOwnerDirectories
+	// applies the same normalization on the row side (see repo.go).
 	dirSet := make(map[string]struct{})
 	for _, m := range imported {
 		if m.ImportSourcePath == "" {
@@ -224,10 +219,16 @@ func (imp *Importer) runPairingPass(
 		add(m)
 	}
 	updates := Compute(candidates)
+	// Compute is idempotent and commutative, so apply every update we
+	// can and aggregate failures rather than aborting on the first one.
+	var pairErrs []error
 	for _, u := range updates {
 		if err := imp.repo.UpdatePairedWithID(ctx, u.ID, u.PairedWithID); err != nil {
-			return fmt.Errorf("apply pair update for %s: %w", u.ID, err)
+			pairErrs = append(pairErrs, fmt.Errorf("apply pair update for %s: %w", u.ID, err))
 		}
+	}
+	if len(pairErrs) > 0 {
+		return errors.Join(pairErrs...)
 	}
 	return nil
 }
