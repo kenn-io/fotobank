@@ -360,6 +360,29 @@ func TestAlbumServiceAddMediaCrossOwnerAlbumNotFound(t *testing.T) {
 	r.ErrorIs(err, errs.ErrNotFound)
 }
 
+func TestAlbumServiceAddMediaRejectsSidecar(t *testing.T) {
+	r := require.New(t)
+	fx := newAlbumSvcFixture(t)
+	ctx := context.Background()
+
+	primaryID := uuid.NewString()
+	sidecarID := uuid.NewString()
+	seedMediaSvc(t, fx.rw, fx.caller, primaryID, "cs-pri")
+	seedMediaSvc(t, fx.rw, fx.caller, sidecarID, "cs-sid")
+	r.NoError(fx.media.UpdatePairedWithID(ctx, sidecarID, &primaryID))
+
+	a, err := fx.svc.Create(ctx, fx.caller, "Trip")
+	r.NoError(err)
+
+	// Primary alone is fine.
+	_, _, err = fx.svc.AddMedia(ctx, a.ID, []string{primaryID}, fx.caller)
+	r.NoError(err)
+
+	// Sidecar must be rejected with ErrInvalidArgument (HTTP 400).
+	_, _, err = fx.svc.AddMedia(ctx, a.ID, []string{sidecarID}, fx.caller)
+	r.ErrorIs(err, errs.ErrInvalidArgument)
+}
+
 func TestAlbumServiceRemoveMediaHappyPath(t *testing.T) {
 	r := require.New(t)
 	fx := newAlbumSvcFixture(t)
