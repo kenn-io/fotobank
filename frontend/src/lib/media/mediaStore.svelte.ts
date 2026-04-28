@@ -150,7 +150,8 @@ export class MediaStore {
         && existing.size === it.size
         && (existing.paired_with_id ?? null) === (it.paired_with_id ?? null)
         && (existing.paired_with?.id ?? null) === (it.paired_with?.id ?? null)
-        && sidecarIdsEqual(existing.sidecars, it.sidecars);
+        && (existing.paired_with?.original_filename ?? null) === (it.paired_with?.original_filename ?? null)
+        && sidecarsShallowEqual(existing.sidecars, it.sidecars);
       if (!unchanged) {
         inner.set(it.id, it);
         dirty.add(newKey);
@@ -179,16 +180,24 @@ export class MediaStore {
   }
 }
 
-// sidecarIdsEqual compares two sidecar lists as ordered sequences.
-// Backend returns sidecars sorted by (original_filename, id) — see
-// media.Repo.GetSidecars; reordering across two responses for the
-// same primary would falsely dirty the bucket on every poll.
-function sidecarIdsEqual(a?: Media[], b?: Media[]): boolean {
+// sidecarsShallowEqual compares two sidecar lists as ordered sequences,
+// matching on the fields the UI actually consumes (id and
+// original_filename today). Backend returns sidecars sorted by
+// (original_filename, id) — see media.Repo.GetSidecars; reordering
+// across two responses for the same primary would falsely dirty the
+// bucket on every poll. If a future UI change starts rendering more
+// sidecar fields (thumb_status, thumb_version, …), extend this
+// comparison so renames/version-bumps still propagate.
+function sidecarsShallowEqual(a?: Media[], b?: Media[]): boolean {
   if (!a && !b) return true;
   if (!a || !b) return false;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i]?.id !== b[i]?.id) return false;
+    const x = a[i];
+    const y = b[i];
+    if (!x || !y) return false;
+    if (x.id !== y.id) return false;
+    if ((x.original_filename ?? null) !== (y.original_filename ?? null)) return false;
   }
   return true;
 }
@@ -246,7 +255,7 @@ export function toMedia(raw: Record<string, unknown>): Media | null {
         // Strip nested sidecars: backend contract guarantees a
         // sidecar's own Sidecars is empty; stripping defensively
         // ensures toMedia is self-correcting against a future leak
-        // since sidecarIdsEqual only inspects the top-level array.
+        // since sidecarsShallowEqual only inspects the top-level array.
         const { sidecars: _ignoredNestedSidecars, ...rest } = r;
         return toMedia(rest);
       })
