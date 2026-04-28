@@ -1,9 +1,14 @@
 package ingest_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/binary"
 	"encoding/hex"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"io"
 	"os"
 	"path/filepath"
@@ -461,4 +466,117 @@ func TestImporterLeavesLocationLabelEmptyWhenResolverReturnsNotOk(t *testing.T) 
 	r.NotNil(all[0].Latitude)
 	r.NotNil(all[0].Longitude)
 	r.Empty(all[0].LocationLabel)
+}
+
+// fixtureDNGBytes returns a minimal TIFF byte slice masquerading as a
+// DNG. The importer doesn't decode RAW pixels, so the bytes only need
+// to be classifiable by extension and survive checksumming. We embed a
+// JPEG preview the same way a real DNG would so the fixture is
+// recognisable.
+func fixtureDNGBytes(t *testing.T) []byte {
+	t.Helper()
+	r := require.New(t)
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	for y := range 8 {
+		for x := range 8 {
+			img.Set(x, y, color.RGBA{R: uint8(x * 32), G: uint8(y * 32), B: 128, A: 255})
+		}
+	}
+	var jbuf bytes.Buffer
+	r.NoError(jpeg.Encode(&jbuf, img, &jpeg.Options{Quality: 60}))
+	jpegBytes := jbuf.Bytes()
+
+	var buf bytes.Buffer
+	buf.WriteString("II")
+	r.NoError(binary.Write(&buf, binary.LittleEndian, uint16(42)))
+	r.NoError(binary.Write(&buf, binary.LittleEndian, uint32(8)))
+	r.NoError(binary.Write(&buf, binary.LittleEndian, uint16(2)))
+	ifdSize := uint32(2 + 2*12 + 4)
+	jpegOffset := uint32(8) + ifdSize
+	r.NoError(binary.Write(&buf, binary.LittleEndian, uint16(513)))
+	r.NoError(binary.Write(&buf, binary.LittleEndian, uint16(4)))
+	r.NoError(binary.Write(&buf, binary.LittleEndian, uint32(1)))
+	r.NoError(binary.Write(&buf, binary.LittleEndian, jpegOffset))
+	r.NoError(binary.Write(&buf, binary.LittleEndian, uint16(514)))
+	r.NoError(binary.Write(&buf, binary.LittleEndian, uint16(4)))
+	r.NoError(binary.Write(&buf, binary.LittleEndian, uint32(1)))
+	r.NoError(binary.Write(&buf, binary.LittleEndian, uint32(len(jpegBytes))))
+	r.NoError(binary.Write(&buf, binary.LittleEndian, uint32(0)))
+	buf.Write(jpegBytes)
+	return buf.Bytes()
+}
+
+// fixtureJPEGBytes reads the existing photo-with-timestamp.jpg fixture
+// so the test has a real JPEG (with EXIF, decodable) without
+// constructing one from scratch.
+func fixtureJPEGBytes(t *testing.T) []byte {
+	t.Helper()
+	r := require.New(t)
+	b, err := os.ReadFile(filepath.Join(fixtureDir(t), "photo-with-timestamp.jpg"))
+	r.NoError(err)
+	return b
+}
+
+// TestImporterPairsJPEGWithExistingRAW locks the F2.2 bidirectional
+// pairing contract: a JPEG imported in batch N must pair with a RAW
+// already imported in batch N-1 (and vice versa). Without the
+// post-barrier pass that fetches existing rows in the touched
+// directories, the JPEG would land but its sibling RAW would stay
+// orphaned at paired_with_id = NULL.
+func TestImporterPairsJPEGWithExistingRAW(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	fx := newImporterFixture(t)
+	imp := ingest.NewImporter(fx.store, fx.repo, nil)
+
+	// Stage 1: import only the RAW.
+	srcRoot, err := filepath.Abs(t.TempDir())
+	r.NoError(err)
+	rawDir := filepath.Join(srcRoot, "trip-paris")
+	r.NoError(os.MkdirAll(rawDir, 0o755))
+	rawPath := filepath.Join(rawDir, "IMG_1234.DNG")
+	r.NoError(os.WriteFile(rawPath, fixtureDNGBytes(t), 0o644))
+
+	res, err := imp.ImportDirectory(ctx, srcRoot,
+		ingest.Options{Owner: fx.owner, ConcurrentWorkers: 2})
+	r.NoError(err)
+	r.Equal(1, res.Imported)
+	r.Empty(res.Failures)
+
+	// Stage 2: drop the JPEG into the same directory and import again.
+	jpegPath := filepath.Join(rawDir, "IMG_1234.JPG")
+	r.NoError(os.WriteFile(jpegPath, fixtureJPEGBytes(t), 0o644))
+	res, err = imp.ImportDirectory(ctx, srcRoot,
+		ingest.Options{Owner: fx.owner, ConcurrentWorkers: 2})
+	r.NoError(err)
+	r.Equal(1, res.Imported) // The DNG is now a duplicate-by-checksum, ignored.
+	r.Equal(1, res.Duplicates)
+	r.Empty(res.Failures)
+
+	// Both rows must exist; the DNG (imported in stage 1) should now
+	// have paired_with_id pointing at the JPEG.
+	rows, err := fx.repo.List(ctx,
+		media.ListFilter{Owner: fx.owner, IncludeSidecars: true})
+	r.NoError(err)
+	r.Len(rows, 2)
+	var jpegRow, dngRow media.Media
+	for _, m := range rows {
+		switch m.OriginalFilename {
+		case "IMG_1234.JPG":
+			jpegRow = m
+		case "IMG_1234.DNG":
+			dngRow = m
+		}
+	}
+	r.NotEmpty(jpegRow.ID, "JPEG row missing")
+	r.NotEmpty(dngRow.ID, "DNG row missing")
+	r.Nil(jpegRow.PairedWithID, "JPEG primary should not have paired_with_id")
+	r.NotNil(dngRow.PairedWithID, "DNG sidecar should be paired")
+	r.Equal(jpegRow.ID, *dngRow.PairedWithID)
+
+	// Both rows should carry root-relative source paths captured at
+	// import time so the backfill CLI can recompute pairs without
+	// touching the source filesystem.
+	r.Equal("trip-paris/IMG_1234.JPG", jpegRow.ImportSourcePath)
+	r.Equal("trip-paris/IMG_1234.DNG", dngRow.ImportSourcePath)
 }
