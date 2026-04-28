@@ -6,6 +6,11 @@ export type Media = {
   aspect: number;
   thumbUrl: string;
   taken: Date;
+  thumbVersion: number;
+  latitude?: number;
+  longitude?: number;
+  gps_at?: string;
+  location_label?: string;
 };
 
 export type Month = {
@@ -30,8 +35,13 @@ export class MediaStore {
   // row when its timestamp moves across months.
   private byMonth = new Map<string, Map<string, Media>>();
   private byId = new Map<string, string>();
+  private byMediaId = new Map<string, Media>();
 
   constructor(private client: Pick<Client, "GET">) {}
+
+  get(id: string): Media | undefined {
+    return this.byMediaId.get(id);
+  }
 
   async loadInitial() { await this.loadMore(); }
 
@@ -68,7 +78,11 @@ export class MediaStore {
     // silently bypass dirty-tracking — `inner.set` is gated on
     // !unchanged, so the bucket would keep stale values forever.
     // Update both this list AND the predicate when Media changes.
-    type _IdentityFieldsCovered = Exclude<keyof Media, "id" | "timestamp" | "taken" | "aspect" | "thumbUrl">;
+    type _IdentityFieldsCovered = Exclude<
+      keyof Media,
+      | "id" | "timestamp" | "taken" | "aspect" | "thumbUrl"
+      | "thumbVersion" | "latitude" | "longitude" | "gps_at" | "location_label"
+    >;
     type _AssertNoUncoveredFields = _IdentityFieldsCovered extends never ? true : never;
     const _identityFieldsCovered: _AssertNoUncoveredFields = true;
     void _identityFieldsCovered;
@@ -104,13 +118,19 @@ export class MediaStore {
       const unchanged = existing !== undefined
         && existing.timestamp === it.timestamp
         && existing.thumbUrl === it.thumbUrl
-        && existing.aspect === it.aspect;
+        && existing.aspect === it.aspect
+        && existing.thumbVersion === it.thumbVersion
+        && existing.latitude === it.latitude
+        && existing.longitude === it.longitude
+        && existing.gps_at === it.gps_at
+        && existing.location_label === it.location_label;
       if (!unchanged) {
         inner.set(it.id, it);
         dirty.add(newKey);
       }
       // byId always reflects the latest known location for this id.
       this.byId.set(it.id, newKey);
+      this.byMediaId.set(it.id, it);
     }
 
     // Rebuild the reactive months snapshot. Clean months reuse the
@@ -149,11 +169,21 @@ function toMedia(raw: Record<string, unknown>): Media | null {
   // gap instead of silently rendering nothing on a "good" URL.
   const tv = raw["thumb_version"];
   const thumbVersion = typeof tv === "number" && Number.isFinite(tv) && tv >= 0 ? tv : 0;
-  return {
+  // tsconfig has exactOptionalPropertyTypes:true, so the four GPS fields
+  // (declared as `?: T`) reject explicit `undefined`. Build the literal
+  // and only assign each optional when its raw value passes a typeof
+  // check; missing/wrong-type input ⇒ property simply absent.
+  const m: Media = {
     id,
     timestamp: ts,
     taken,
     aspect: wn / hn,
     thumbUrl: `/api/v1/media/${id}/thumb?size=grid&v=${thumbVersion}`,
+    thumbVersion,
   };
+  if (typeof raw["latitude"] === "number") m.latitude = raw["latitude"];
+  if (typeof raw["longitude"] === "number") m.longitude = raw["longitude"];
+  if (typeof raw["gps_at"] === "string") m.gps_at = raw["gps_at"];
+  if (typeof raw["location_label"] === "string") m.location_label = raw["location_label"];
+  return m;
 }

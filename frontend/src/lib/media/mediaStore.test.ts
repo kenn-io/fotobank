@@ -292,4 +292,91 @@ describe("MediaStore", () => {
       expect(m).toBe(refs.get(m.key));
     }
   });
+
+  it("get(id) returns merged row with GPS fields populated", async () => {
+    const fakeClient = {
+      GET: vi.fn().mockResolvedValue({
+        data: {
+          items: [
+            {
+              id: "a",
+              timestamp: "2024-06-15T14:30:00Z",
+              width: 4,
+              height: 3,
+              thumb_version: 2,
+              latitude: 40.7128,
+              longitude: -74.006,
+              gps_at: "2024-06-15T14:30:00Z",
+              location_label: "New York, USA",
+            },
+            {
+              id: "b",
+              timestamp: "2024-06-15T15:00:00Z",
+              width: 1,
+              height: 1,
+              thumb_version: 0,
+            },
+          ],
+          next_offset: null,
+        },
+        error: undefined,
+      }),
+    };
+    const store = new MediaStore(fakeClient as never);
+    await store.loadInitial();
+
+    const a = store.get("a");
+    expect(a?.id).toBe("a");
+    expect(a?.thumbVersion).toBe(2);
+    expect(a?.latitude).toBe(40.7128);
+    expect(a?.longitude).toBe(-74.006);
+    expect(a?.gps_at).toBe("2024-06-15T14:30:00Z");
+    expect(a?.location_label).toBe("New York, USA");
+
+    // Row without GPS fields: all four optional fields must be undefined.
+    const b = store.get("b");
+    expect(b?.id).toBe("b");
+    expect(b?.thumbVersion).toBe(0);
+    expect(b?.latitude).toBeUndefined();
+    expect(b?.longitude).toBeUndefined();
+    expect(b?.gps_at).toBeUndefined();
+    expect(b?.location_label).toBeUndefined();
+  });
+
+  it("get(id) returns undefined for an unknown id", () => {
+    const fakeClient = { GET: vi.fn() };
+    const store = new MediaStore(fakeClient as never);
+    expect(store.get("missing")).toBeUndefined();
+  });
+
+  it("merge updates byMediaId on subsequent merges", async () => {
+    const page1 = {
+      data: {
+        items: [
+          { id: "a", timestamp: "2026-04-18T12:00:00Z", width: 1, height: 1, thumb_version: 1 },
+        ],
+        next_offset: 200,
+      },
+      error: undefined,
+    };
+    const page2 = {
+      data: {
+        items: [
+          { id: "a", timestamp: "2026-04-18T12:00:00Z", width: 1, height: 1, thumb_version: 2 },
+        ],
+        next_offset: null,
+      },
+      error: undefined,
+    };
+    const fakeClient = {
+      GET: vi.fn().mockResolvedValueOnce(page1).mockResolvedValueOnce(page2),
+    };
+    const store = new MediaStore(fakeClient as never);
+    await store.loadMore();
+    expect(store.get("a")?.thumbVersion).toBe(1);
+
+    await store.loadMore();
+    expect(store.get("a")?.thumbVersion).toBe(2);
+    expect(store.get("a")?.thumbUrl).toBe("/api/v1/media/a/thumb?size=grid&v=2");
+  });
 });
