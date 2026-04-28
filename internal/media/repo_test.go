@@ -379,17 +379,38 @@ func TestMediaGetByIDsPreservesInputOrder(t *testing.T) {
 	r.Equal(b, got[2].ID)
 }
 
-func TestMediaGetByIDsSkipsMissing(t *testing.T) {
+func TestMediaGetByIDsReturnsNotFoundOnMissing(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	p := testOwner()
 	seedOwner(t, d.WriteDB(), p, "sk")
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	a := seedOneMedia(t, repo, p)
-	got, err := repo.GetByIDs(context.Background(), []string{a, "00000000-0000-0000-0000-000000000000"})
+	missingID := "00000000-0000-0000-0000-000000000000"
+	got, err := repo.GetByIDs(context.Background(), []string{a, missingID})
+	r.ErrorIs(err, errs.ErrNotFound)
+	r.Contains(err.Error(), missingID)
+	r.Nil(got)
+}
+
+func TestMediaGetByIDsChunksLargeInput(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk")
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	// Seed enough rows to span multiple chunks (chunk size = 250).
+	const n = 600
+	ids := make([]string, 0, n)
+	for range n {
+		ids = append(ids, seedOneMedia(t, repo, p))
+	}
+	got, err := repo.GetByIDs(context.Background(), ids)
 	r.NoError(err)
-	r.Len(got, 1)
-	r.Equal(a, got[0].ID)
+	r.Len(got, n)
+	for i, m := range got {
+		r.Equal(ids[i], m.ID, "id at position %d", i)
+	}
 }
 
 func TestMediaGetByIDsEmptyInputReturnsNil(t *testing.T) {

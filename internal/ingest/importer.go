@@ -88,6 +88,14 @@ type candidateOutcome struct {
 // returns a summary. Callers must hold the import file lock before
 // invoking this.
 func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Options) (Result, error) {
+	// Reject empty root explicitly: filepath.Abs("") silently
+	// substitutes the process CWD, which would let a buggy caller
+	// import the working directory. Pre-Task 8, Discover rejected
+	// "" outright; the filepath.Abs hop introduced here would lose
+	// that contract without this guard.
+	if root == "" {
+		return Result{}, fmt.Errorf("import root is empty")
+	}
 	// Resolve root once so buildMediaRow can derive a stable
 	// root-relative ImportSourcePath from candidate paths (which
 	// Discover already resolved against the same absolute root).

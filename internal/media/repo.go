@@ -171,8 +171,15 @@ func (r *Repo) GetByOwnerPath(ctx context.Context, p owners.Principal, path stri
 	return m, nil
 }
 
-// GetByIDs returns media rows in the same order as ids. Missing ids are
-// silently dropped. Empty input returns (nil, nil) without querying.
+// GetByIDs returns media rows in the same order as ids. Returns
+// errs.ErrNotFound (wrapped) listing the missing ids if any id can't
+// be resolved. Empty input returns (nil, nil) without querying.
+//
+// Internally chunks ids in fixed-size batches (250 ids → 500 bind
+// vars) to stay well under SQLite's default 999-variable limit so a
+// large batch (e.g. the post-import pair pass loading every just-
+// imported row) doesn't trip the limit.
+//
 // Order preservation uses a VALUES-CTE carrying the caller-supplied
 // position; the CTE's `id` column collides with media.id so the SELECT
 // uses the m-prefixed projection.
@@ -180,34 +187,55 @@ func (r *Repo) GetByIDs(ctx context.Context, ids []string) ([]Media, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	valRows := make([]string, 0, len(ids))
-	args := make([]any, 0, len(ids)*2)
-	for i, id := range ids {
-		valRows = append(valRows, "(?, ?)")
-		args = append(args, id, i)
-	}
-	q := `
+	const chunkSize = 250
+	out := make([]Media, 0, len(ids))
+	for start := 0; start < len(ids); start += chunkSize {
+		end := min(start+chunkSize, len(ids))
+		chunk := ids[start:end]
+		valRows := make([]string, 0, len(chunk))
+		args := make([]any, 0, len(chunk)*2)
+		for i, id := range chunk {
+			valRows = append(valRows, "(?, ?)")
+			args = append(args, id, i)
+		}
+		q := `
 WITH ord(id, pos) AS (VALUES ` + strings.Join(valRows, ",") + `)
 SELECT ` + mediaColumnsQualified + `
   FROM media m
   JOIN ord ON ord.id = m.id
  ORDER BY ord.pos
 `
-	rows, err := r.ro.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("get media by ids: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	out := make([]Media, 0, len(ids))
-	for rows.Next() {
-		m, err := scanMedia(rows)
+		rows, err := r.ro.QueryContext(ctx, q, args...)
 		if err != nil {
-			return nil, fmt.Errorf("scan media by id: %w", err)
+			return nil, fmt.Errorf("get media by ids: %w", err)
 		}
-		out = append(out, m)
+		for rows.Next() {
+			m, err := scanMedia(rows)
+			if err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan media by id: %w", err)
+			}
+			out = append(out, m)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("iter media by ids: %w", err)
+		}
+		_ = rows.Close()
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iter media by ids: %w", err)
+	if len(out) != len(ids) {
+		found := make(map[string]struct{}, len(out))
+		for _, m := range out {
+			found[m.ID] = struct{}{}
+		}
+		var missing []string
+		for _, id := range ids {
+			if _, ok := found[id]; !ok {
+				missing = append(missing, id)
+			}
+		}
+		return nil, fmt.Errorf("get media by ids: missing %d row(s): %v: %w",
+			len(missing), missing, errs.ErrNotFound)
 	}
 	return out, nil
 }
