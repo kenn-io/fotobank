@@ -349,6 +349,14 @@ describe("MediaStore", () => {
     expect(store.get("missing")).toBeUndefined();
   });
 
+  it("mergeRaw populates byMediaId from a raw API row", () => {
+    const store = new MediaStore({ GET: vi.fn() } as never);
+    store.mergeRaw([
+      { id: "x", timestamp: "2024-06-15T14:30:00Z", width: 1, height: 1, thumb_version: 5 },
+    ]);
+    expect(store.get("x")?.thumbVersion).toBe(5);
+  });
+
   it("merge updates byMediaId on subsequent merges", async () => {
     const page1 = {
       data: {

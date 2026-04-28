@@ -71,6 +71,18 @@ export class MediaStore {
     }
   }
 
+  // Public adapter for the on-miss fetch path (e.g. MediaDetail loads
+  // /api/v1/media/{id} when the row isn't already in the store). Mirrors
+  // the loadMore pipeline: filter to objects, run the toMedia adapter,
+  // drop nulls, then merge.
+  mergeRaw(rawItems: unknown[]): void {
+    const items = rawItems
+      .filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null)
+      .map(toMedia)
+      .filter((m): m is Media => m !== null);
+    this.merge(items);
+  }
+
   private merge(items: Media[]) {
     // Build-time guard: this distributed-conditional fails to compile
     // if Media gains a field outside the set checked by `unchanged`

@@ -73,7 +73,7 @@
     {:else if router.current.route === "sessions"}
       <Sessions {mediaStore} />
     {:else if router.current.route === "media"}
-      <MediaDetail id={router.current.id} />
+      <MediaDetail id={router.current.id} {mediaStore} />
     {:else if router.current.route === "settings"}
       <div style="padding:20px">Settings (placeholder; theme = {themeStore.theme})</div>
     {:else}
