@@ -112,6 +112,12 @@ func (s *ShareService) Create(ctx context.Context, req CreateShareRequest, calle
 			if m.Owner != caller {
 				return share.Scope{}, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, mid)
 			}
+			if m.PairedWithID != nil {
+				return share.Scope{}, fmt.Errorf(
+					"%w: media id=%s is a sidecar; shares reference primaries only",
+					errs.ErrInvalidArgument, mid,
+				)
+			}
 		}
 		mediaIDs = deduped
 	}

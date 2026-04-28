@@ -552,3 +552,29 @@ func TestPreviewScopeUnknownScopeReturnsNotFound(t *testing.T) {
 	_, err := fx.svc.PreviewScope(context.Background(), uuid.NewString(), fx.owner)
 	require.ErrorIs(t, err, errs.ErrNotFound)
 }
+
+func TestShareServiceCreateRejectsSidecarInMediaSet(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	ctx := context.Background()
+
+	primary := insertTestMedia(t, fx.media, fx.owner, "2024/p.jpg", "cs-pri")
+	sidecar := insertTestMedia(t, fx.media, fx.owner, "2024/p.dng", "cs-sid")
+	r.NoError(fx.media.UpdatePairedWithID(ctx, sidecar.ID, &primary.ID))
+
+	// Primary alone — fine.
+	_, err := fx.svc.Create(ctx, service.CreateShareRequest{
+		Grantee:    owners.Principal{Hub: "h", UserID: "g"},
+		TargetType: share.TargetMediaSet,
+		MediaIDs:   []string{primary.ID},
+	}, fx.owner)
+	r.NoError(err)
+
+	// Sidecar — rejected.
+	_, err = fx.svc.Create(ctx, service.CreateShareRequest{
+		Grantee:    owners.Principal{Hub: "h", UserID: "g"},
+		TargetType: share.TargetMediaSet,
+		MediaIDs:   []string{sidecar.ID},
+	}, fx.owner)
+	r.ErrorIs(err, errs.ErrInvalidArgument)
+}
