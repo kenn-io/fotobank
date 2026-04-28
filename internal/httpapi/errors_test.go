@@ -66,3 +66,15 @@ func TestTranslateHidesWrappedSentinelContext(t *testing.T) {
 	r.NotContains(got.Error(), leaky)
 	r.Contains(got.Error(), errs.ErrNotFound.Error())
 }
+
+// TestTranslateErrPairedSidecarsExist locks in the F2.2 §8.7
+// future-contract mapping. No service path throws this sentinel today
+// — delete is deferred — but the translator must already map it to
+// 409 so a future delete handler inherits the right HTTP shape
+// without a translator change.
+func TestTranslateErrPairedSidecarsExist(t *testing.T) {
+	r := require.New(t)
+	se := httpapi.Translate(fmt.Errorf("delete: %w", errs.ErrPairedSidecarsExist))
+	r.NotNil(se)
+	r.Equal(409, se.GetStatus())
+}
