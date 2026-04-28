@@ -150,6 +150,19 @@ func TestImportHappyPath(t *testing.T) {
 	r.Empty(res2.Failures)
 }
 
+// TestImportDirectoryRejectsEmptyRoot pins the empty-root guard. Without
+// it, filepath.Abs("") would silently substitute the process CWD as the
+// import root — letting a buggy caller import the working directory.
+func TestImportDirectoryRejectsEmptyRoot(t *testing.T) {
+	r := require.New(t)
+	f := newImporterFixture(t)
+	imp := ingest.NewImporter(f.store, f.repo, nil)
+	res, err := imp.ImportDirectory(context.Background(), "",
+		ingest.Options{Owner: f.owner, ConcurrentWorkers: 1})
+	r.Error(err)
+	r.Equal(0, res.Imported)
+}
+
 func TestImportPhotoSequenceCollision(t *testing.T) {
 	r := require.New(t)
 	f := newImporterFixture(t)
