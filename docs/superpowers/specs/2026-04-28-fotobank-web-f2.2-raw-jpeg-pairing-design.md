@@ -50,7 +50,7 @@ Three subsystems cooperate:
 
 3. **HTTP and frontend.** `MediaService.List` defaults to filtering out sidecars at the SQL layer; `GET /api/v1/media/{id}` for a JPEG primary embeds the sidecar list; `GET /api/v1/media/{id}` for a sidecar returns the row with a `paired_with` summary populated. Frontend `MediaDetail` renders a `Files` row on primaries and a banner-plus-download layout on direct sidecar visits.
 
-The schema change is small: one new column for the pair FK, one new column for pairing input, one column-semantics flip, one provenance index. No new tables. No migration file — the schema change is squashed into `000001_initial_schema.up.sql` (pre-deploy, same approach as F2.1 Task 2).
+The schema change is small: one new column for the pair FK, one new column for pairing input, one self-reference CHECK, two owner-consistency triggers, one column-semantics flip, one provenance index. No new tables. No migration file — the schema change is squashed into `000001_initial_schema.up.sql` (pre-deploy, same approach as F2.1 Task 2).
 
 Sharing (Plan E) needs one targeted update so a recipient who has scope access to a JPEG can also fetch the RAW. The change is internal to `share.Repo.CoverMediaByScopes`; the entry point `share.ScopeResolver.CheckMediaAccess` keeps its signature.
 
@@ -74,7 +74,51 @@ import_source_path TEXT NOT NULL DEFAULT '',
 paired_with_id UUID NULL REFERENCES media(id) ON DELETE SET NULL,
 ```
 
+Plus a table-level CHECK to forbid self-reference:
+
+```sql
+CHECK (paired_with_id IS NULL OR paired_with_id <> id),
+```
+
 `paired_with_id` is declared `UUID` to match `media.id` at `internal/db/migrations/000001_initial_schema.up.sql:24`. SQLite stores both with TEXT affinity, but the explicit declaration matches the project convention.
+
+### §4.1a Owner-consistency triggers on `paired_with_id`
+
+The FK plus the CHECK guarantees referential integrity and no-self-reference, but does not by itself ensure that a sidecar's `paired_with_id` points at a primary owned by the same `(owner_hub, owner_user_id)`. Two SQLite triggers, mirroring the existing `album_media_owner_consistency_*` pair at `000001_initial_schema.up.sql:105-129`, enforce this at the DB level:
+
+```sql
+CREATE TRIGGER media_paired_with_owner_consistency_insert
+BEFORE INSERT ON media
+FOR EACH ROW
+WHEN NEW.paired_with_id IS NOT NULL
+BEGIN
+    SELECT CASE
+        WHEN (SELECT owner_hub FROM media WHERE id = NEW.paired_with_id)
+                 != NEW.owner_hub
+          OR (SELECT owner_user_id FROM media WHERE id = NEW.paired_with_id)
+                 != NEW.owner_user_id
+        THEN RAISE(ABORT, 'sidecar and primary must share owner')
+    END;
+END;
+
+CREATE TRIGGER media_paired_with_owner_consistency_update
+BEFORE UPDATE OF paired_with_id, owner_hub, owner_user_id ON media
+FOR EACH ROW
+WHEN NEW.paired_with_id IS NOT NULL
+BEGIN
+    SELECT CASE
+        WHEN (SELECT owner_hub FROM media WHERE id = NEW.paired_with_id)
+                 != NEW.owner_hub
+          OR (SELECT owner_user_id FROM media WHERE id = NEW.paired_with_id)
+                 != NEW.owner_user_id
+        THEN RAISE(ABORT, 'sidecar and primary must share owner')
+    END;
+END;
+```
+
+The `WHEN NEW.paired_with_id IS NOT NULL` guard skips the lookup on primaries and standalones. The update trigger is keyed on the pair-FK column AND the owner columns so a hypothetical future owner-rename path can't slip a cross-owner pair through. The down file's existing `DROP TABLE IF EXISTS media` (`000001_initial_schema.down.sql:12`) drops these table-attached triggers automatically — no down-file edit needed.
+
+The service-layer pairing pass already restricts candidates to one owner per `(owner, directory)` group, so these triggers will never RAISE in normal operation. They're a defence-in-depth floor, mirroring how `album_media_owner_consistency_*` exists even though `AlbumService.AddMedia` already does the owner check.
 
 ### §4.2 `original_filename` semantics flip
 
@@ -379,6 +423,8 @@ The implementation hangs off three named functions:
 
 The scope's `allow_download` flag continues to gate whether the recipient can fetch any bytes (JPEG or RAW). F2.2 does not introduce a per-format download flag.
 
+`ShareService.Create` (`internal/service/share_service.go:54`) MUST reject sidecar IDs in the `media_set` per-ID pre-flight ownership loop at `internal/service/share_service.go:107-115`. The check sits immediately after the existing `m.Owner != caller` check at line 112-114: if `m.PairedWithID != nil`, return `errs.ErrInvalidArgument` with the same `"shares reference primaries only"` directive used by the album rule (§8.1). Without this rejection, a sidecar-only media-set scope could exist whose every member is hidden by `ListSharedMediaIDs`, leaving the recipient with an empty grid and a working `/original` URL — a confusing surface. Rejecting at create time keeps the recipient experience coherent.
+
 ### §8.3 GPS backfill (F2.1)
 
 `fotobank gps backfill` continues to operate on **all photo rows including sidecars**. RAW EXIF is often a better source of capture metadata than JPEG; the sidecar detail page surfaces it via the info dl. F2.2 makes no change to `media.Repo.ListGPSBackfillCandidates`.
@@ -395,7 +441,9 @@ No special handling. Each row is verified against disk independently. If a JPEG 
 
 ### §8.6 Thumb pipeline
 
-No change. Sidecars continue to get queued for thumbs via the existing `thumb_status='pending'` flow. Cost is small; preserves the "every photo row has a thumb" invariant; future-proofs any UI that wants a sidecar thumb.
+Sidecars continue to get queued for thumbs via the existing `thumb_status='pending'` flow. Cost is small; preserves the "every photo row has a thumb" invariant; future-proofs any UI that wants a sidecar thumb.
+
+One required alignment: `internal/thumb/worker.go::isRAWMime` (lines 348-357) currently knows ARW, RAF, DNG, and CR2 but not NEF. `internal/ingest/discover.go:71` already classifies NEF as `image/x-nikon-nef` and TypePhoto, so without an `isRAWMime` update a NEF sidecar would be enqueued, then fail at the worker because the worker would try to decode it as a regular image rather than via `thumb.ExtractPreview`. F2.2 adds `"image/x-nikon-nef"` to the `isRAWMime` switch and adds a happy-path test in `internal/thumb/raw_test.go` that exercises a NEF fixture (or a synthetic NEF-MIME row pointed at an embedded-JPEG TIFF, mirroring the existing ARW pattern). Without that alignment, §1's claim that all five RAW formats preserve the invariant would be false.
 
 ### §8.7 Delete (future contract)
 
@@ -434,8 +482,7 @@ F2.2 ships the sentinel and the HTTP mapping. F2.2 does NOT ship a delete UI or 
 ## §10 Dependencies
 
 - **F1 / F2.0 / F2.1 shipped** — Plan A through F2.1 are on master.
-- **No new third-party packages.** Pure Go for pairing logic; no new frontend npm deps.
-- **`unicode/norm` (golang.org/x/text/unicode/norm)** for NFC normalization in §9.5. Project already pulls in `golang.org/x/text` indirectly; if not direct, the implementation plan adds it.
+- **One new direct Go dependency: `golang.org/x/text`** for `unicode/norm` (NFC normalization in §9.5). `go.mod` does not currently require `x/text` directly; the implementation plan adds it via `go get golang.org/x/text` and a `go mod tidy` step. This is the only new dependency F2.2 adds. No new frontend npm deps.
 - **F2.4 (Hidden Privacy)** is downstream of F2.2 for the cascade behavior described in §8.4.
 - **F2.3 (Albums + Sharing)** is independent; can ship in parallel.
 
@@ -451,9 +498,15 @@ groupings. Idempotent — running twice on an unchanged DB is a no-op.
 
 Flags:
       --config string         Path to config file (default: DefaultConfigPath)
-      --since duration        Only process rows imported within this duration
-                              (e.g. 24h, 168h, 30m). Parsed before the DB opens
-                              so a malformed value fails fast (exit 2).
+      --since duration        Filter scope to rows imported within this duration
+                              (e.g. 24h, 168h, 30m). The recent rows determine the
+                              set of (owner, directory) keys touched; pair state
+                              is then recomputed against ALL rows in those
+                              directories with non-empty import_source_path,
+                              including older ones, so an older JPEG paired with
+                              a recent RAW (or vice-versa) is discovered. Parsed
+                              before the DB opens so a malformed value fails fast
+                              (exit 2).
       --mode string           Pair backfill mode (default "full"; only "full"
                               in v1)
       --owner string          Admin: backfill for hub:user (bypasses stub-mode
@@ -482,11 +535,11 @@ Rows with empty `import_source_path` (pre-F2.2 dev/test rows or test-only inject
 | Section | Implementing scope |
 |---|---|
 | §3 Architecture | Single ingest barrier-pass + new CLI + small HTTP/frontend surface. |
-| §4 Data model | One migration edit (in place), one column flip, one index. |
+| §4 Data model | One migration edit (in place): two columns, one CHECK, two owner-consistency triggers, one index, one column-semantics flip. |
 | §5 Pairing rule + detection | One pure-Go function + tests for idempotency and ambiguity. |
 | §6 HTTP / DTO | Three DTO field additions, two extra queries on the detail handler. |
 | §7 Frontend UX | One `Files` row, one sidecar layout branch, three new fields on the `Media` type. |
-| §8 Operations cascade | One Plan E SQL extension; everything else is no-change. |
+| §8 Operations cascade | Albums + Shares sidecar-rejection contracts, Plan E SQL extension, NEF added to thumb.isRAWMime; everything else is no-change. |
 | §9 Risks | Captured for the implementation plan. |
-| §10 Dependencies | None new beyond `unicode/norm` (likely already indirect). |
+| §10 Dependencies | One new direct Go dep: `golang.org/x/text` (for `unicode/norm`). |
 | §11 CLI | One subcommand mirroring the F2.1 `gps backfill` shape. |
