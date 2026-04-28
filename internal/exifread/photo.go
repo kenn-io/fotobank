@@ -135,14 +135,8 @@ func parseExifGPSCoords(by map[string]exif.ExifTag) (float64, float64, bool) {
 	if !ok {
 		return 0, 0, false
 	}
-	lat, ok := dmsToDecimal(latDMS, latRef)
-	if !ok {
-		return 0, 0, false
-	}
-	lon, ok := dmsToDecimal(lonDMS, lonRef)
-	if !ok {
-		return 0, 0, false
-	}
+	lat := dmsToDecimal(latDMS, latRef)
+	lon := dmsToDecimal(lonDMS, lonRef)
 	if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
 		return 0, 0, false
 	}
@@ -186,7 +180,7 @@ func strictRef(t exif.ExifTag, a, b string) (string, bool) {
 // dmsToDecimal converts a DMS rational triple + cardinal ref into a
 // signed decimal degree. Caller has already validated denominators
 // are non-zero (see dmsRationals).
-func dmsToDecimal(dms [3]exifcommon.Rational, ref string) (float64, bool) {
+func dmsToDecimal(dms [3]exifcommon.Rational, ref string) float64 {
 	deg := float64(dms[0].Numerator) / float64(dms[0].Denominator)
 	min := float64(dms[1].Numerator) / float64(dms[1].Denominator)
 	sec := float64(dms[2].Numerator) / float64(dms[2].Denominator)
@@ -194,7 +188,7 @@ func dmsToDecimal(dms [3]exifcommon.Rational, ref string) (float64, bool) {
 	if ref == "S" || ref == "W" {
 		v = -v
 	}
-	return v, true
+	return v
 }
 
 // parseExifGPSTimestamp combines GPSDateStamp ("YYYY:MM:DD") and

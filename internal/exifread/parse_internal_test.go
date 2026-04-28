@@ -75,6 +75,21 @@ func TestParseExifGPSCoordsValidation(t *testing.T) {
 			"GPSLatitude": dms3(0, 0, 0), "GPSLatitudeRef": strTag("N"),
 			"GPSLongitude": dms3(0, 0, 0), "GPSLongitudeRef": strTag("E"),
 		}, false, 0, 0},
+		// S/W hemisphere refs must produce negative decimals — locks
+		// the sign-flip in dmsToDecimal against an accidental drop.
+		{"south west fix", map[string]exif.ExifTag{
+			"GPSLatitude": dms3(33, 52, 8), "GPSLatitudeRef": strTag("S"),
+			"GPSLongitude": dms3(151, 12, 34), "GPSLongitudeRef": strTag("W"),
+		}, true, -33.868_889, -151.209_444},
+		// Real cameras commonly emit non-1 denominators (e.g. seconds
+		// as 240/10). Verify the math handles them on the happy path,
+		// not just the failure (zero-denominator) path.
+		{"clean fix non-unit denoms", map[string]exif.ExifTag{
+			"GPSLatitude":     dms3Denom(48, 1, 51, 1, 240, 10),
+			"GPSLatitudeRef":  strTag("N"),
+			"GPSLongitude":    dms3Denom(2, 1, 21, 1, 80, 10),
+			"GPSLongitudeRef": strTag("E"),
+		}, true, 48.856_667, 2.352_222},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -119,6 +134,12 @@ func TestParseExifGPSTimestampValidation(t *testing.T) {
 			"GPSDateStamp": strTag("2024:06:15"),
 			"GPSTimeStamp": dms3Denom(14, 0, 30, 1, 22, 1),
 		}, false},
+		// Non-1 denominators on the happy path (e.g. 220/10 for the
+		// seconds field) — the same math path as the coords matrix.
+		{"clean non-unit denoms", map[string]exif.ExifTag{
+			"GPSDateStamp": strTag("2024:06:15"),
+			"GPSTimeStamp": dms3Denom(14, 1, 30, 1, 220, 10),
+		}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

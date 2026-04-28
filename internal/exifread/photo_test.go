@@ -68,6 +68,8 @@ func TestExtractPhotoFromReaderMatchesPathVariant(t *testing.T) {
 	md2, err := exifread.ExtractPhotoFromReader(f)
 	r.NoError(err)
 
-	r.InDelta(*md1.Latitude, *md2.Latitude, 1e-9)
-	r.InDelta(*md1.Longitude, *md2.Longitude, 1e-9)
+	// Both call paths funnel through the same exif decoder; the values
+	// must be bit-identical, not merely close — hence delta=0.
+	r.InDelta(*md1.Latitude, *md2.Latitude, 0)
+	r.InDelta(*md1.Longitude, *md2.Longitude, 0)
 }
