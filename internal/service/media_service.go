@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/media"
@@ -48,6 +49,25 @@ func (s *MediaService) Get(ctx context.Context, id string, caller owners.Princip
 func (s *MediaService) List(ctx context.Context, f media.ListFilter, caller owners.Principal) ([]media.Media, error) {
 	f.Owner = caller
 	return s.repo.List(ctx, f)
+}
+
+// UpdateGPS persists the four GPS columns on a row owned by caller.
+// The owner check goes through Get, which returns errs.ErrNotFound on
+// caller mismatch — preserving the anti-probing convention. The CLI
+// orchestrates "open NAS bytes, run exifread, resolve label" itself;
+// the service layer stays simple and auth-scoped.
+func (s *MediaService) UpdateGPS(
+	ctx context.Context,
+	caller owners.Principal,
+	id string,
+	lat, lon *float64,
+	gpsAt *time.Time,
+	label string,
+) error {
+	if _, err := s.Get(ctx, id, caller); err != nil {
+		return err
+	}
+	return s.repo.UpdateGPS(ctx, id, lat, lon, gpsAt, label)
 }
 
 // OpenOriginal resolves the media row, enforces the owner check, and

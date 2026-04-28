@@ -167,3 +167,54 @@ func TestMediaServiceOpenOriginalRejectsNonOwner(t *testing.T) {
 	r.ErrorIs(err, errs.ErrNotFound)
 	r.Nil(rc)
 }
+
+func TestMediaServiceUpdateGPSRoundTrips(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	m := insertTestMedia(t, fx.repo, fx.owner, "2024/g.jpg", "cs-g")
+
+	lat, lon := 1.0, 2.0
+	r.NoError(fx.svc.UpdateGPS(ctx, fx.owner, m.ID, &lat, &lon, nil, "Foo, Bar"))
+
+	got, err := fx.repo.GetByID(ctx, m.ID)
+	r.NoError(err)
+	r.NotNil(got.Latitude)
+	r.NotNil(got.Longitude)
+	r.InDelta(1.0, *got.Latitude, 1e-9)
+	r.InDelta(2.0, *got.Longitude, 1e-9)
+	r.Equal("Foo, Bar", got.LocationLabel)
+}
+
+func TestMediaServiceUpdateGPSCallerMismatchReturnsNotFound(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	m := insertTestMedia(t, fx.repo, fx.owner, "2024/m.jpg", "cs-m")
+
+	// Intruder need not exist in the owners table — the service rejects
+	// on the in-memory Owner equality check inside Get before any
+	// foreign-key path runs.
+	intruder := owners.Principal{Hub: "h", UserID: "intruder"}
+	lat, lon := 1.0, 2.0
+	err := fx.svc.UpdateGPS(ctx, intruder, m.ID, &lat, &lon, nil, "Foo")
+	r.ErrorIs(err, errs.ErrNotFound)
+
+	// And the row must be untouched.
+	got, err := fx.repo.GetByID(ctx, m.ID)
+	r.NoError(err)
+	r.Nil(got.Latitude)
+	r.Nil(got.Longitude)
+	r.Empty(got.LocationLabel)
+}
+
+func TestMediaServiceUpdateGPSMissingRowReturnsNotFound(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	err := fx.svc.UpdateGPS(ctx, fx.owner, "no-such-id", nil, nil, nil, "")
+	r.ErrorIs(err, errs.ErrNotFound)
+}
