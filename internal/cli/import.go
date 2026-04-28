@@ -14,6 +14,7 @@ import (
 	"github.com/wesm/fotobank/internal/config"
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/errs"
+	"github.com/wesm/fotobank/internal/geo"
 	"github.com/wesm/fotobank/internal/ingest"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
@@ -124,7 +125,11 @@ func runImport(ctx context.Context, opts importOpts) error {
 		workers = cfg.Imports.ConcurrentWorkers
 	}
 
-	imp := ingest.NewImporter(storeLayer, repo, nil)
+	places, err := geo.NewNaturalEarth()
+	if err != nil {
+		return fmt.Errorf("load geo gazetteer: %w", err)
+	}
+	imp := ingest.NewImporter(storeLayer, repo, places)
 	res, err := imp.ImportDirectory(ctx, opts.source, ingest.Options{
 		Owner:             owner,
 		ConcurrentWorkers: workers,
