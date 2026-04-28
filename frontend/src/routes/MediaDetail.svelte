@@ -73,6 +73,11 @@
     if (Number.isNaN(d.getTime())) return iso;
     return d.toISOString().replace("T", " ").replace(/:\d{2}\.\d{3}Z$/, " UTC");
   }
+
+  function formatBytes(size: number | undefined): string {
+    if (size === undefined || !Number.isFinite(size)) return "";
+    return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  }
 </script>
 
 <div class="media-detail">
@@ -88,6 +93,44 @@
     <p class="error">Could not load media: {loadError}</p>
   {:else if !media}
     <p>Loading…</p>
+  {:else if media.paired_with_id}
+    <h1 class="sidecar-heading">
+      RAW sidecar for
+      {#if media.paired_with}
+        <a
+          href="/media/{media.paired_with.id}"
+          onclick={(e) => handleInternalLinkClick(e, `/media/${media.paired_with?.id ?? ""}`)}
+        >
+          {media.paired_with.original_filename}
+        </a>
+      {/if}
+    </h1>
+    <dl class="info">
+      {#if media.original_filename}
+        <dt>File</dt>
+        <dd>{media.original_filename}</dd>
+      {/if}
+      {#if media.size !== undefined}
+        <dt>Size</dt>
+        <dd>{formatBytes(media.size)}</dd>
+      {/if}
+      {#if media.timestamp}
+        <dt>Captured</dt>
+        <dd>{formatTimestamp(media.timestamp)}</dd>
+      {/if}
+      {#if media.location_label || (media.latitude != null && media.longitude != null)}
+        <dt>Location</dt>
+        <dd>
+          {#if media.location_label}{media.location_label}{/if}
+          {#if media.latitude != null && media.longitude != null}
+            <small class="coord">{formatCoord(media.latitude, media.longitude)}</small>
+          {/if}
+        </dd>
+      {/if}
+    </dl>
+    <a class="download" href="/api/v1/media/{media.id}/original" download>
+      Download {media.original_filename ?? "file"}
+    </a>
   {:else}
     <div class="photo">
       {#if !imgError}
@@ -115,6 +158,20 @@
           {/if}
         </dd>
       {/if}
+      {#if media.sidecars && media.sidecars.length > 0}
+        <dt>Files</dt>
+        <dd class="files">
+          <a href="/api/v1/media/{media.id}/original" download>
+            {media.original_filename ?? media.id}
+          </a>
+          {#each media.sidecars as sidecar (sidecar.id)}
+            <br />
+            <a href="/api/v1/media/{sidecar.id}/original" download>
+              {sidecar.original_filename ?? sidecar.id}
+            </a>
+          {/each}
+        </dd>
+      {/if}
     </dl>
   {/if}
 </div>
@@ -129,4 +186,6 @@
   .info { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin-top: 1rem; }
   .info dt { font-weight: 600; }
   .info .coord { display: block; opacity: 0.7; font-size: 0.85em; }
+  .sidecar-heading { font-size: 1.25rem; margin: 0.5rem 0 0.5rem; }
+  .download { display: inline-block; margin-top: 1rem; }
 </style>
