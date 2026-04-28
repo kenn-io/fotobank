@@ -111,6 +111,7 @@ func TestImportHappyPath(t *testing.T) {
 	r.Equal("pending", tsPhoto.ThumbStatus)
 	r.NotEmpty(tsPhoto.Checksum)
 	r.NotEmpty(tsPhoto.Make)
+	r.Equal("photo-with-timestamp.jpg", tsPhoto.OriginalFilename)
 
 	// Bytes landed on the NAS.
 	r.FileExists(filepath.Join(f.nas, testStorageKey, "2024", "20240615_143022_0.jpg"))
@@ -119,6 +120,7 @@ func TestImportHappyPath(t *testing.T) {
 	nePhoto, ok := byPath["unknown_date/photo-no-exif_0.jpg"]
 	r.True(ok, "no-exif photo missing; got %v", byPath)
 	r.Nil(nePhoto.Timestamp)
+	r.Equal("photo-no-exif.jpg", nePhoto.OriginalFilename)
 	r.FileExists(filepath.Join(f.nas, testStorageKey, "unknown_date", "photo-no-exif_0.jpg"))
 
 	// video.mp4 -> movies/{md5}.mp4.
@@ -131,6 +133,7 @@ func TestImportHappyPath(t *testing.T) {
 	}
 	r.NotEmpty(videoRow.ID)
 	r.Equal("movies/"+videoRow.Checksum+".mp4", videoRow.Path)
+	r.Equal("video.mp4", videoRow.OriginalFilename)
 	r.FileExists(filepath.Join(f.nas, testStorageKey, "movies", videoRow.Checksum+".mp4"))
 
 	// Second import of the same dir: all three checksums are known.
