@@ -3,6 +3,7 @@ package exifread
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -21,8 +22,14 @@ func ExtractPhoto(path string) (Metadata, error) {
 		return Metadata{}, err
 	}
 	defer f.Close()
+	return ExtractPhotoFromReader(f)
+}
 
-	raw, err := exif.SearchAndExtractExifWithReader(f)
+// ExtractPhotoFromReader is identical to ExtractPhoto but reads from r
+// instead of a file path. Used by the gps backfill CLI to stream EXIF
+// from storage.Store.ReadRange without an intermediate temp file.
+func ExtractPhotoFromReader(r io.Reader) (Metadata, error) {
+	raw, err := exif.SearchAndExtractExifWithReader(r)
 	if err != nil {
 		if errors.Is(err, exif.ErrNoExif) {
 			return Metadata{}, nil
@@ -76,6 +83,13 @@ func parseExif(raw []byte) (Metadata, error) {
 	} else if _, ok := by["ThumbnailImageStart"]; ok {
 		m.HasEmbeddedPreview = true
 	}
+	if lat, lon, ok := parseExifGPSCoords(by); ok {
+		m.Latitude = &lat
+		m.Longitude = &lon
+	}
+	if t, ok := parseExifGPSTimestamp(by); ok {
+		m.GPSAt = &t
+	}
 	return m, nil
 }
 
@@ -90,6 +104,138 @@ func parseExifTimestamp(by map[string]exif.ExifTag) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+// parseExifGPSCoords enforces the validation matrix from F2.1 spec §5.3.
+// Returns (lat, lon, true) only when every condition holds: rationals
+// present and non-zero-denominator, refs are exactly N|S and E|W,
+// resulting decimals are in -90..90 / -180..180, and (lat, lon) is not
+// the literal null-island origin.
+func parseExifGPSCoords(by map[string]exif.ExifTag) (float64, float64, bool) {
+	latRaw, ok1 := by["GPSLatitude"]
+	lonRaw, ok2 := by["GPSLongitude"]
+	latRefRaw, ok3 := by["GPSLatitudeRef"]
+	lonRefRaw, ok4 := by["GPSLongitudeRef"]
+	if !ok1 || !ok2 || !ok3 || !ok4 {
+		return 0, 0, false
+	}
+	latDMS, ok := dmsRationals(latRaw)
+	if !ok {
+		return 0, 0, false
+	}
+	lonDMS, ok := dmsRationals(lonRaw)
+	if !ok {
+		return 0, 0, false
+	}
+	latRef, ok := strictRef(latRefRaw, "N", "S")
+	if !ok {
+		return 0, 0, false
+	}
+	lonRef, ok := strictRef(lonRefRaw, "E", "W")
+	if !ok {
+		return 0, 0, false
+	}
+	lat, ok := dmsToDecimal(latDMS, latRef)
+	if !ok {
+		return 0, 0, false
+	}
+	lon, ok := dmsToDecimal(lonDMS, lonRef)
+	if !ok {
+		return 0, 0, false
+	}
+	if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
+		return 0, 0, false
+	}
+	if lat == 0 && lon == 0 {
+		// Null-island anti-pattern: cameras often emit literal 0,0
+		// before GPS has acquired a fix. We prefer to lose any real
+		// 0,0 photo over ingesting noise on every broken-fix camera.
+		return 0, 0, false
+	}
+	return lat, lon, true
+}
+
+// dmsRationals extracts a degrees/minutes/seconds triple. Returns ok=false
+// if the value is not three rationals or if any denominator is zero.
+func dmsRationals(t exif.ExifTag) ([3]exifcommon.Rational, bool) {
+	rs, ok := t.Value.([]exifcommon.Rational)
+	if !ok || len(rs) < 3 {
+		return [3]exifcommon.Rational{}, false
+	}
+	for i := range 3 {
+		if rs[i].Denominator == 0 {
+			return [3]exifcommon.Rational{}, false
+		}
+	}
+	return [3]exifcommon.Rational{rs[0], rs[1], rs[2]}, true
+}
+
+// strictRef returns the value if it is exactly one of the two allowed
+// strings (length-1, case-sensitive); otherwise ok=false.
+func strictRef(t exif.ExifTag, a, b string) (string, bool) {
+	s, ok := t.Value.(string)
+	if !ok {
+		return "", false
+	}
+	if s == a || s == b {
+		return s, true
+	}
+	return "", false
+}
+
+// dmsToDecimal converts a DMS rational triple + cardinal ref into a
+// signed decimal degree. Caller has already validated denominators
+// are non-zero (see dmsRationals).
+func dmsToDecimal(dms [3]exifcommon.Rational, ref string) (float64, bool) {
+	deg := float64(dms[0].Numerator) / float64(dms[0].Denominator)
+	min := float64(dms[1].Numerator) / float64(dms[1].Denominator)
+	sec := float64(dms[2].Numerator) / float64(dms[2].Denominator)
+	v := deg + min/60.0 + sec/3600.0
+	if ref == "S" || ref == "W" {
+		v = -v
+	}
+	return v, true
+}
+
+// parseExifGPSTimestamp combines GPSDateStamp ("YYYY:MM:DD") and
+// GPSTimeStamp (rational triple, UTC) into a single time.Time. Returns
+// (zero, false) on any validation failure: missing tags, zero
+// denominators, or out-of-range hour/minute/second.
+func parseExifGPSTimestamp(by map[string]exif.ExifTag) (time.Time, bool) {
+	dateRaw, ok := by["GPSDateStamp"]
+	if !ok {
+		return time.Time{}, false
+	}
+	dateStr, ok := dateRaw.Value.(string)
+	if !ok {
+		return time.Time{}, false
+	}
+	d, err := time.ParseInLocation("2006:01:02", dateStr, time.UTC)
+	if err != nil {
+		return time.Time{}, false
+	}
+	timeRaw, ok := by["GPSTimeStamp"]
+	if !ok {
+		return time.Time{}, false
+	}
+	hms, ok := dmsRationals(timeRaw)
+	if !ok {
+		return time.Time{}, false
+	}
+	hour := float64(hms[0].Numerator) / float64(hms[0].Denominator)
+	minute := float64(hms[1].Numerator) / float64(hms[1].Denominator)
+	second := float64(hms[2].Numerator) / float64(hms[2].Denominator)
+	if hour < 0 || hour >= 24 {
+		return time.Time{}, false
+	}
+	if minute < 0 || minute >= 60 {
+		return time.Time{}, false
+	}
+	if second < 0 || second >= 60 {
+		return time.Time{}, false
+	}
+	return time.Date(d.Year(), d.Month(), d.Day(),
+		int(hour), int(minute), int(second), 0, time.UTC), true
 }
 
 func stringTag(by map[string]exif.ExifTag, name string) string {

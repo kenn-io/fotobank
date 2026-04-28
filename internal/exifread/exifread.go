@@ -29,4 +29,11 @@ type Metadata struct {
 
 	// Videos.
 	DurationMs int64
+
+	// GPS — populated when the EXIF GPS IFD parses cleanly. Latitude
+	// and Longitude are atomic: emitted together or not at all. GPSAt
+	// is independent and may be nil even when coords are set.
+	Latitude  *float64
+	Longitude *float64
+	GPSAt     *time.Time
 }

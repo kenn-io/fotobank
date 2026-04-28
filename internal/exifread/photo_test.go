@@ -1,6 +1,7 @@
 package exifread_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -32,4 +33,41 @@ func TestExtractPhotoMissingFileReturnsError(t *testing.T) {
 	r := require.New(t)
 	_, err := exifread.ExtractPhoto("/no/such/file.jpg")
 	r.Error(err)
+}
+
+func TestExtractPhotoParsesGPS(t *testing.T) {
+	r := require.New(t)
+	md, err := exifread.ExtractPhoto(filepath.Join("..", "..", "testdata", "exif", "photo-with-gps.jpg"))
+	r.NoError(err)
+	r.NotNil(md.Latitude)
+	r.NotNil(md.Longitude)
+	r.InDelta(48.8566, *md.Latitude, 1e-3)
+	r.InDelta(2.3522, *md.Longitude, 1e-3)
+	r.NotNil(md.GPSAt)
+	expected := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	r.True(md.GPSAt.Equal(expected), "got %v", md.GPSAt)
+}
+
+func TestExtractPhotoDropsNullIslandGPS(t *testing.T) {
+	r := require.New(t)
+	md, err := exifread.ExtractPhoto(filepath.Join("..", "..", "testdata", "exif", "photo-null-island-gps.jpg"))
+	r.NoError(err)
+	r.Nil(md.Latitude)
+	r.Nil(md.Longitude)
+}
+
+func TestExtractPhotoFromReaderMatchesPathVariant(t *testing.T) {
+	r := require.New(t)
+	path := filepath.Join("..", "..", "testdata", "exif", "photo-with-gps.jpg")
+	md1, err := exifread.ExtractPhoto(path)
+	r.NoError(err)
+
+	f, err := os.Open(path)
+	r.NoError(err)
+	defer f.Close()
+	md2, err := exifread.ExtractPhotoFromReader(f)
+	r.NoError(err)
+
+	r.InDelta(*md1.Latitude, *md2.Latitude, 1e-9)
+	r.InDelta(*md1.Longitude, *md2.Longitude, 1e-9)
 }
