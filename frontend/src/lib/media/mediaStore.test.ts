@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { MediaStore, monthKey } from "./mediaStore.svelte";
+import { MediaStore, monthKey, toMedia } from "./mediaStore.svelte";
 
 describe("monthKey", () => {
   it("buckets a date into YYYY-MM", () => {
@@ -386,5 +386,44 @@ describe("MediaStore", () => {
     await store.loadMore();
     expect(store.get("a")?.thumbVersion).toBe(2);
     expect(store.get("a")?.thumbUrl).toBe("/api/v1/media/a/thumb?size=grid&v=2");
+  });
+});
+
+describe("toMedia for paired rows", () => {
+  it("populates paired_with_id, paired_with, and sidecars", () => {
+    const raw = {
+      id: "p",
+      owner_hub: "h",
+      owner_user_id: "u",
+      type: "photo",
+      mime_type: "image/jpeg",
+      original_filename: "IMG_1.JPG",
+      timestamp: null,
+      imported_at: "2024-06-15T14:30:00Z",
+      thumb_status: "ready",
+      thumb_version: 1,
+      sidecars: [
+        {
+          id: "s",
+          owner_hub: "h",
+          owner_user_id: "u",
+          type: "photo",
+          mime_type: "image/x-adobe-dng",
+          original_filename: "IMG_1.DNG",
+          timestamp: null,
+          imported_at: "2024-06-15T14:30:00Z",
+          thumb_status: "ready",
+          thumb_version: 1,
+          paired_with_id: "p",
+          paired_with: { id: "p", original_filename: "IMG_1.JPG" },
+        },
+      ],
+    };
+    const m = toMedia(raw);
+    expect(m).not.toBeNull();
+    expect(m?.sidecars).toBeDefined();
+    expect(m?.sidecars).toHaveLength(1);
+    expect(m?.sidecars?.[0]?.paired_with_id).toBe("p");
+    expect(m?.sidecars?.[0]?.paired_with?.id).toBe("p");
   });
 });

@@ -11,6 +11,10 @@ export type Media = {
   longitude?: number;
   gps_at?: string;
   location_label?: string;
+  // F2.2 RAW + JPEG pairing.
+  paired_with_id?: string;
+  paired_with?: { id: string; original_filename: string };
+  sidecars?: Media[];
 };
 
 export type Month = {
@@ -94,6 +98,7 @@ export class MediaStore {
       keyof Media,
       | "id" | "timestamp" | "taken" | "aspect" | "thumbUrl"
       | "thumbVersion" | "latitude" | "longitude" | "gps_at" | "location_label"
+      | "paired_with_id" | "paired_with" | "sidecars"
     >;
     type _AssertNoUncoveredFields = _IdentityFieldsCovered extends never ? true : never;
     const _identityFieldsCovered: _AssertNoUncoveredFields = true;
@@ -135,7 +140,10 @@ export class MediaStore {
         && existing.latitude === it.latitude
         && existing.longitude === it.longitude
         && existing.gps_at === it.gps_at
-        && existing.location_label === it.location_label;
+        && existing.location_label === it.location_label
+        && (existing.paired_with_id ?? null) === (it.paired_with_id ?? null)
+        && (existing.paired_with?.id ?? null) === (it.paired_with?.id ?? null)
+        && sidecarIdsEqual(existing.sidecars, it.sidecars);
       if (!unchanged) {
         inner.set(it.id, it);
         dirty.add(newKey);
@@ -164,7 +172,17 @@ export class MediaStore {
   }
 }
 
-function toMedia(raw: Record<string, unknown>): Media | null {
+function sidecarIdsEqual(a?: Media[], b?: Media[]): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i]?.id !== b[i]?.id) return false;
+  }
+  return true;
+}
+
+export function toMedia(raw: Record<string, unknown>): Media | null {
   const id = raw["id"];
   const ts = typeof raw["timestamp"] === "string" ? raw["timestamp"] : raw["imported_at"];
   const w = raw["width"];
@@ -181,7 +199,7 @@ function toMedia(raw: Record<string, unknown>): Media | null {
   // gap instead of silently rendering nothing on a "good" URL.
   const tv = raw["thumb_version"];
   const thumbVersion = typeof tv === "number" && Number.isFinite(tv) && tv >= 0 ? tv : 0;
-  // tsconfig has exactOptionalPropertyTypes:true, so the four GPS fields
+  // tsconfig has exactOptionalPropertyTypes:true, so the optional fields
   // (declared as `?: T`) reject explicit `undefined`. Build the literal
   // and only assign each optional when its raw value passes a typeof
   // check; missing/wrong-type input ⇒ property simply absent.
@@ -197,5 +215,23 @@ function toMedia(raw: Record<string, unknown>): Media | null {
   if (typeof raw["longitude"] === "number") m.longitude = raw["longitude"];
   if (typeof raw["gps_at"] === "string") m.gps_at = raw["gps_at"];
   if (typeof raw["location_label"] === "string") m.location_label = raw["location_label"];
+  if (typeof raw["paired_with_id"] === "string") m.paired_with_id = raw["paired_with_id"];
+  const pw = raw["paired_with"];
+  if (pw !== null && typeof pw === "object") {
+    const pwObj = pw as Record<string, unknown>;
+    const pwId = pwObj["id"];
+    const pwName = pwObj["original_filename"];
+    if (typeof pwId === "string" && typeof pwName === "string") {
+      m.paired_with = { id: pwId, original_filename: pwName };
+    }
+  }
+  const sc = raw["sidecars"];
+  if (Array.isArray(sc) && sc.length > 0) {
+    const mapped = sc
+      .filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null)
+      .map(toMedia)
+      .filter((x): x is Media => x !== null);
+    if (mapped.length > 0) m.sidecars = mapped;
+  }
   return m;
 }
