@@ -3,11 +3,16 @@
 > Sub-plan in the F2.x sequence: F2.0 Viewer Foundation → F2.1 GPS Metadata
 > → F2.2 RAW + JPEG Pairing → **F2.3 Albums + Owner-side Sharing** →
 > F2.4 Hidden Privacy → F2.5 Lightbox Viewer.
-> F2.3 is independent of F2.2 and F2.4 and may run in parallel with them.
-> F2.5's lightbox depends on F2.3 for the action cluster (Add to album,
-> Share). Grantee-side viewing (`/shared/*` routes, header-mode identity
-> entry) is **out of scope** here and deferred to a later sub-plan once a
-> real cross-hub sharing target exists.
+> F2.3 **requires F2.2** for the sidecar contract: `MediaActions`
+> branches on `media.paired_with_id` (sidecar direct page does not
+> mount the cluster), and the AddToAlbum / Share modals expect the
+> `AlbumService.AddMedia` and `ShareService.Create` sidecar
+> rejections that F2.2 added. F2.3 is independent of F2.4 and may run
+> in parallel with it. F2.5's lightbox depends on F2.3 for the action
+> cluster (Add to album, Share). Grantee-side viewing (`/shared/*`
+> routes, header-mode identity entry) is **out of scope** here and
+> deferred to a later sub-plan once a real cross-hub sharing target
+> exists.
 
 ## §1 Goal
 
@@ -295,6 +300,11 @@ When `timelineChrome={false}`:
 
 - `StickyMonthBar` is not rendered.
 - `YearScrubber` is not rendered.
+- VirtualGrid forwards `label={undefined}` to `MonthChunk` (suppressing
+  the `.day-header` — current `MonthChunk` markup is
+  `{#if label}<header class="day-header">{label}</header>{/if}`,
+  so dropping the label drops the header). Album views must not
+  render a header that says `album:<id>`.
 - The `each` over `months` still runs; it just degenerates to a single
   `MonthChunk` for album views (the album feeds a single synthetic
   `Month` with `key="album:<id>"`).
@@ -305,10 +315,11 @@ unchanged.
 
 ### §7.2 `MonthChunk` `headerAction` slot
 
-`MonthChunk` grows one optional prop:
+`MonthChunk` grows one optional prop. Existing prop name is `options`
+(of type `LayoutOptions`), not `layout`:
 
 ```ts
-{ label, items, layout, renderCell, headerAction?: Snippet }
+{ label, items, options, renderCell, headerAction?: Snippet }
 ```
 
 When `headerAction` is supplied, the `.day-header` renders the snippet
@@ -373,10 +384,12 @@ Triggered from header button OR empty-state button. Modal contents:
 
 On submit: `POST /api/v1/albums` with `{name}`. On success, modal
 closes, AlbumsStore refetches page 1, the new album appears in the
-grid wherever the backend placed it. On 409 (`ErrAlbumNameTaken` if
-that exists, else `ErrAlreadyExists`): inline error "An album with
-that name already exists." On 400 (`ErrInvalidName`): inline error.
-On 5xx: toast "Failed to create album" + leave modal open.
+grid wherever the backend placed it. On 400 (`ErrInvalidName`): inline
+error. On 5xx: toast "Failed to create album" + leave modal open.
+
+(Album names are not unique in the current schema/service, so there
+is no 409 case here. Two albums with the same name are legal; their
+UUIDs and `updated_at` timestamps disambiguate.)
 
 ### §8.4 Pagination
 
@@ -411,9 +424,11 @@ months = [{ key: `album:${id}`, items: orderedMedia }]
 
 Each item is the same `Media` shape stored in `MediaStore` (rows
 merged via `mergeRaw` on each page load). VirtualGrid renders a
-single `MonthChunk` with no header (no `headerAction` snippet
-supplied; the album header lives in the route's own header strip
-above the grid).
+single `MonthChunk` with no header: in `timelineChrome={false}` mode
+VirtualGrid forwards `label={undefined}` (per §7.1) so MonthChunk's
+`{#if label}` guard skips rendering `.day-header`. No `headerAction`
+snippet is supplied either; the album header lives in the route's
+own header strip above the grid.
 
 ActionBar mounts on this route with action set
 `[AddToAlbum, Share, RemoveFromThisAlbum]`. The latter is rendered
@@ -513,11 +528,11 @@ Opened from `MediaActions` Add button:
 - MediaDetail single: `mediaIds = [media.id]`.
 - ActionBar bulk on Library / Sessions: `mediaIds = Array.from(selection.ids)`.
 - ActionBar bulk on Album detail:
-  `mediaIds = Array.from(selection.ids).filter(id => !currentAlbum.hasInAlbum(id))`
-  — i.e., exclude items already in this album from the input. (Same-
-  album-as-target adds are still legal; the backend's
-  `already_present` counter handles them. This filter is a UX nicety,
-  not a correctness requirement.)
+  `mediaIds = selectedInAlbum` (the route-scoped intersection
+  `Array.from(selection.ids).filter(id => albumDetailStore.hasInAlbum(id))`,
+  same rule the album route applies to Remove and Share — see §9.7,
+  §11/§12). Same-album-as-target adds are legal; the backend's
+  `already_present` counter handles them.
 
 The modal is constructed with `{mediaIds: string[]}` only; it has no
 view of the global selection.
@@ -864,12 +879,21 @@ session "April 23, 2024"). It's used only for the aria-label.
 
 ### §13.3 Wiring through MonthChunk
 
-`VirtualGrid` is the only place that constructs `MonthChunk`s, so it
-grows a forwarding `headerAction?: Snippet<[chunk: Month]>` prop and
-relays it to each `MonthChunk` it renders. Library and Sessions pass
-the snippet on the VirtualGrid; album detail (which uses
-`timelineChrome={false}` and a single synthetic `Month` with no
-visible header) does not.
+Library uses `VirtualGrid` to render its month chunks; Sessions
+constructs `MonthChunk` directly in its own `{#each sessions}` loop
+(see `frontend/src/routes/Sessions.svelte`). Both routes need to wire
+`headerAction`:
+
+- **Library**: `VirtualGrid` grows a forwarding
+  `headerAction?: Snippet<[chunk: Month]>` prop and relays it
+  verbatim to every `MonthChunk` it constructs. Library passes the
+  snippet on `<VirtualGrid headerAction={...} />`.
+- **Sessions**: passes the snippet directly on `<MonthChunk
+  headerAction={...} />` inside its existing `{#each sessions}` loop.
+
+Album detail (which uses `timelineChrome={false}` on `VirtualGrid`)
+does not pass a `headerAction`; the album route's own header strip
+serves that role.
 
 ```svelte
 <!-- Library.svelte -->
@@ -883,9 +907,26 @@ visible header) does not.
 </VirtualGrid>
 ```
 
-`MonthChunk`'s prop signature (per §7.2) accepts `headerAction?: Snippet`
-directly, so the forwarding is a one-liner inside VirtualGrid's
-`{#each}` over months.
+```svelte
+<!-- Sessions.svelte -->
+{#each sessions as s (s.id)}
+  <MonthChunk
+    items={...}
+    label={`${first.taken.toUTCString().slice(0, 16)} · ${s.items.length} photos`}
+    options={...}
+  >
+    {#snippet headerAction()}
+      <GroupSelectButton
+        ids={s.items.map(i => i.id)}
+        label={`${first.taken.toUTCString().slice(0, 16)} session`}
+      />
+    {/snippet}
+    {#snippet renderCell(m)}
+      <MediaCell ... />
+    {/snippet}
+  </MonthChunk>
+{/each}
+```
 
 ### §13.4 SelectionStore semantics
 
