@@ -2508,7 +2508,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -2689,16 +2688,15 @@ func selectPrincipals(ctx context.Context, d *db.DB, cfg *config.Config, opts *g
 const backfillBatch = 500
 
 type backfillTally struct {
-	processed     int
-	updated       int
-	unchanged     int
-	skippedNoExif int
-	failed        int
+	processed int
+	updated   int
+	unchanged int
+	failed    int
 }
 
 func (t backfillTally) summary() string {
-	return fmt.Sprintf("gps backfill: processed=%d updated=%d unchanged=%d skipped_no_exif=%d failed=%d",
-		t.processed, t.updated, t.unchanged, t.skippedNoExif, t.failed)
+	return fmt.Sprintf("gps backfill: processed=%d updated=%d unchanged=%d failed=%d",
+		t.processed, t.updated, t.unchanged, t.failed)
 }
 
 func backfillForPrincipal(
@@ -2712,9 +2710,14 @@ func backfillForPrincipal(
 	stderr io.Writer,
 	tally *backfillTally,
 ) error {
-	offset := 0
+	// Keyset cursor over id. afterID="" picks up the first page; the
+	// last row's ID is passed to the next call. Repo.List...Candidates
+	// requires keyset (not offset) because Full and Relabel mutate rows
+	// that stay in the candidate set, and offset would skip-or-loop
+	// depending on mode.
+	afterID := ""
 	for {
-		page, err := repo.ListGPSBackfillCandidates(ctx, owner, opts.parsedMode, opts.sinceTime, backfillBatch, offset)
+		page, err := repo.ListGPSBackfillCandidates(ctx, owner, opts.parsedMode, opts.sinceTime, afterID, backfillBatch)
 		if err != nil {
 			return fmt.Errorf("list gps candidates: %w", err)
 		}
@@ -2732,14 +2735,15 @@ func backfillForPrincipal(
 				fmt.Fprintln(stderr, tally.summary())
 			}
 		}
-		// Pagination correctness on UPDATE-in-place: relabel keeps rows
-		// in the result set; fill-missing removes them. To avoid
-		// skipping rows under fill-missing, advance offset only for
-		// modes that don't change the predicate.
+		// FillMissing: every updated row leaves the candidate set, so
+		// restart the cursor (the next un-updated row is now the
+		// minimum id with both NULL). Full/Relabel: rows stay in the
+		// candidate set — must advance the cursor past the last seen
+		// id or we'd loop forever.
 		if opts.parsedMode == media.GPSBackfillModeFillMissing {
-			offset = 0
+			afterID = ""
 		} else {
-			offset += len(page)
+			afterID = page[len(page)-1].ID
 		}
 		if len(page) < backfillBatch {
 			return nil
@@ -2786,9 +2790,11 @@ func backfillOne(
 		defer func() { _ = rc.Close() }()
 		meta, err := exifread.ExtractPhotoFromReader(rc)
 		if err != nil {
-			tally.skippedNoExif++
-			return nil
+			return fmt.Errorf("extract exif: %w", err)
 		}
+		// ExtractPhotoFromReader returns Metadata{} (no error) when the
+		// file simply has no EXIF segment. Such rows naturally fall
+		// through hasGPS=false below — no separate "skipped" counter.
 
 		hasGPS := meta.Latitude != nil && meta.Longitude != nil
 		if !hasGPS {
@@ -2823,18 +2829,9 @@ func backfillOne(
 	}
 }
 
-// buildStorageFromConfig is the same NAS+flash glue used by the import
-// command; if a shared helper already exists, call it. Otherwise inline
-// the same construction. This stub assumes one already exists.
-func buildStorageFromConfig(cfg *config.Config) (storage.Store, error) {
-	// Existing CLI helpers in internal/cli already build storage from
-	// config; reuse whichever one (e.g. import.go's setup helper). If
-	// there's no shared helper, factor one out as part of this task.
-	return nil, errors.New("buildStorageFromConfig: implement using existing CLI storage helpers")
-}
 ```
 
-> **NOTE for the implementer:** `buildStorageFromConfig` is a stub. The existing `internal/cli/import.go` already constructs the same storage layer; before completing this step, factor that construction into a shared helper (`internal/cli/storage.go::buildStorage(cfg) (storage.Store, error)` or similar) and call it from both `import.go` and the new `gps.go`. The helper signature is whatever today's import.go already uses; just lift it out and share it. If the existing code uses a different name, match that.
+> **NOTE for the implementer:** `gps.go` calls a shared storage helper. Before completing this step, factor `internal/cli/import.go`'s storage construction into `internal/cli/storage.go::buildStorage(cfg) (storage.Store, error)` (or whatever name matches the existing helper if present) and call it from both `import.go` and the new `gps.go`. Don't include a placeholder stub in the final implementation — and drop the `errors` import from `gps.go`'s import block if no other use survives.
 
 - [ ] **Step 5: Register the gps command at the cobra root.**
 
@@ -2976,12 +2973,16 @@ Expected: PASS. If `OpenTestDBAt` is missing, add it:
 
 ```go
 // In internal/testutil/db.go (or wherever OpenTestDB lives):
+//
+// OpenTestDBAt opens (and migrates) a sqlite DB at the given path —
+// unlike OpenTestDB, it does NOT register a t.Cleanup closer because
+// CLI tests routinely close + reopen across the subprocess boundary;
+// the caller manages the lifetime explicitly.
 func OpenTestDBAt(t *testing.T, path string) *db.DB {
 	t.Helper()
 	d, err := db.Open(path)
 	require.NoError(t, err)
 	require.NoError(t, migrate.RunUp(d))
-	t.Cleanup(func() { _ = d.Close() })
 	return d
 }
 ```
