@@ -301,7 +301,7 @@ func buildMediaRow(c Candidate, owner owners.Principal, key, checksum string, si
 		Type:             c.Type,
 		MimeType:         c.MimeType,
 		Path:             key,
-		OriginalFilename: c.Path,
+		OriginalFilename: filepath.Base(c.Path),
 		ImportedAt:       importedAt,
 		Timestamp:        meta.Timestamp,
 		Size:             size,
