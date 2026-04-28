@@ -84,7 +84,7 @@ CHECK (paired_with_id IS NULL OR paired_with_id <> id),
 
 ### §4.1a Owner-consistency triggers on `paired_with_id`
 
-The FK plus the CHECK guarantees referential integrity and no-self-reference, but does not by itself ensure that a sidecar's `paired_with_id` points at a primary owned by the same `(owner_hub, owner_user_id)`. Two SQLite triggers, mirroring the existing `album_media_owner_consistency_*` pair at `000001_initial_schema.up.sql:105-129`, enforce this at the DB level:
+The FK plus the CHECK guarantees referential integrity and no-self-reference, but does not by itself ensure that a sidecar's `paired_with_id` points at a primary owned by the same `(owner_hub, owner_user_id)`. Three SQLite triggers — two mirroring the existing `album_media_owner_consistency_*` pair at `000001_initial_schema.up.sql:105-129`, plus an inverse trigger on the primary side — enforce this at the DB level:
 
 ```sql
 CREATE TRIGGER media_paired_with_owner_consistency_insert
@@ -114,9 +114,18 @@ BEGIN
         THEN RAISE(ABORT, 'sidecar and primary must share owner')
     END;
 END;
+
+CREATE TRIGGER media_paired_with_owner_consistency_primary_update
+BEFORE UPDATE OF owner_hub, owner_user_id ON media
+FOR EACH ROW
+WHEN (NEW.owner_hub != OLD.owner_hub OR NEW.owner_user_id != OLD.owner_user_id)
+     AND EXISTS (SELECT 1 FROM media WHERE paired_with_id = NEW.id)
+BEGIN
+    SELECT RAISE(ABORT, 'cannot change primary owner while sidecars reference it');
+END;
 ```
 
-The `WHEN NEW.paired_with_id IS NOT NULL` guard skips the lookup on primaries and standalones. The update trigger is keyed on the pair-FK column AND the owner columns so a hypothetical future owner-rename path can't slip a cross-owner pair through. The down file's existing `DROP TABLE IF EXISTS media` (`000001_initial_schema.down.sql:12`) drops these table-attached triggers automatically — no down-file edit needed.
+The `WHEN NEW.paired_with_id IS NOT NULL` guard on the first two triggers skips the lookup on primaries and standalones. The update trigger is keyed on the pair-FK column AND the owner columns so a hypothetical future owner-rename path can't slip a cross-owner pair through. The third trigger closes a corner case the first two miss: updating `owner_hub`/`owner_user_id` on a *primary* row that has sidecars referencing it would otherwise leave the sidecars pointing at a primary with a different owner. It rejects any such update outright; fotobank has no current code path that re-owns a primary, so the strict reject is acceptable. The down file's existing `DROP TABLE IF EXISTS media` (`000001_initial_schema.down.sql:12`) drops these table-attached triggers automatically — no down-file edit needed.
 
 The service-layer pairing pass already restricts candidates to one owner per `(owner, directory)` group, so these triggers will never RAISE in normal operation. They're a defence-in-depth floor, mirroring how `album_media_owner_consistency_*` exists even though `AlbumService.AddMedia` already does the owner check.
 
@@ -136,14 +145,18 @@ Audited callers — none rely on the absolute-path semantics:
 - `frontend/src/lib/media/mediaStore.svelte.ts::toMedia` already expects a basename for display.
 - Tests in `internal/media/repo_test.go` and `internal/cli/import_test.go` need fixture updates — captured as a step in the implementation plan.
 
-### §4.3 Index
+### §4.3 Indexes
 
 ```sql
 CREATE INDEX media_owner_import_source_path_idx
     ON media(owner_hub, owner_user_id, import_source_path);
+CREATE INDEX media_paired_with_id_idx
+    ON media(paired_with_id) WHERE paired_with_id IS NOT NULL;
 ```
 
-Used by the post-import pairing pass (§5.3) to fetch existing rows for the `(owner, directory)` groups touched by the just-imported batch — that's how a JPEG imported today pairs with a RAW imported last week without scanning the entire `media` table. Also a useful debug / provenance lookup. The CLI backfill (§5.4) uses an owner-scoped scan but benefits from the same index on large libraries.
+`media_owner_import_source_path_idx` is used by the post-import pairing pass (§5.3) to fetch existing rows for the `(owner, directory)` groups touched by the just-imported batch — that's how a JPEG imported today pairs with a RAW imported last week without scanning the entire `media` table. Also a useful debug / provenance lookup. The CLI backfill (§5.4) uses an owner-scoped scan but benefits from the same index on large libraries.
+
+`media_paired_with_id_idx` is the partial index that backs `Repo.GetSidecars` (called from the primary detail DTO embed path, §6.4). Without it, every primary detail fetch would full-scan `media` to find sidecars referencing the row.
 
 ### §4.4 Down file
 

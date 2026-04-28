@@ -81,11 +81,23 @@ CREATE INDEX media_owner_geo_idx
     WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
 CREATE INDEX media_owner_import_source_path_idx
     ON media(owner_hub, owner_user_id, import_source_path);
+-- Sidecar lookup index: GetSidecars / DTO embed path scans by FK.
+CREATE INDEX media_paired_with_id_idx
+    ON media(paired_with_id) WHERE paired_with_id IS NOT NULL;
 
 -- Owner-consistency triggers on paired_with_id. Mirrors the
 -- album_media_owner_consistency_* pair below; defence in depth even
 -- though the service-layer pairing pass restricts candidates to one
 -- owner per (owner, directory) group.
+--
+-- Three triggers cover the matrix:
+--   * insert  — sidecar row points at primary owned by another principal.
+--   * update  — sidecar row's owner or paired_with_id is changed and
+--               diverges from the referenced primary's owner.
+--   * primary-update — primary's owner_hub/owner_user_id is changed
+--               while sidecars still reference it. The two earlier
+--               triggers gate the sidecar side; this one closes the
+--               loop on the primary side.
 CREATE TRIGGER media_paired_with_owner_consistency_insert
 BEFORE INSERT ON media
 FOR EACH ROW
@@ -112,6 +124,15 @@ BEGIN
                  != NEW.owner_user_id
         THEN RAISE(ABORT, 'sidecar and primary must share owner')
     END;
+END;
+
+CREATE TRIGGER media_paired_with_owner_consistency_primary_update
+BEFORE UPDATE OF owner_hub, owner_user_id ON media
+FOR EACH ROW
+WHEN (NEW.owner_hub != OLD.owner_hub OR NEW.owner_user_id != OLD.owner_user_id)
+     AND EXISTS (SELECT 1 FROM media WHERE paired_with_id = NEW.id)
+BEGIN
+    SELECT RAISE(ABORT, 'cannot change primary owner while sidecars reference it');
 END;
 
 -- Albums.
