@@ -176,7 +176,8 @@ func TestMediaServiceUpdateGPSRoundTrips(t *testing.T) {
 	m := insertTestMedia(t, fx.repo, fx.owner, "2024/g.jpg", "cs-g")
 
 	lat, lon := 1.0, 2.0
-	r.NoError(fx.svc.UpdateGPS(ctx, fx.owner, m.ID, &lat, &lon, nil, "Foo, Bar"))
+	gpsAt := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	r.NoError(fx.svc.UpdateGPS(ctx, fx.owner, m.ID, &lat, &lon, &gpsAt, "Foo, Bar"))
 
 	got, err := fx.repo.GetByID(ctx, m.ID)
 	r.NoError(err)
@@ -184,6 +185,8 @@ func TestMediaServiceUpdateGPSRoundTrips(t *testing.T) {
 	r.NotNil(got.Longitude)
 	r.InDelta(1.0, *got.Latitude, 1e-9)
 	r.InDelta(2.0, *got.Longitude, 1e-9)
+	r.NotNil(got.GPSAt, "service must not drop the gpsAt arg")
+	r.True(got.GPSAt.Equal(gpsAt), "got %v", got.GPSAt)
 	r.Equal("Foo, Bar", got.LocationLabel)
 }
 

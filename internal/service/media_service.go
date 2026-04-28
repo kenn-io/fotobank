@@ -55,7 +55,9 @@ func (s *MediaService) List(ctx context.Context, f media.ListFilter, caller owne
 // The owner check goes through Get, which returns errs.ErrNotFound on
 // caller mismatch — preserving the anti-probing convention. The CLI
 // orchestrates "open NAS bytes, run exifread, resolve label" itself;
-// the service layer stays simple and auth-scoped.
+// the service layer stays simple and auth-scoped. Returns
+// errs.ErrInvalidArgument (from the repo) if exactly one of lat/lon is
+// set — the GPS coordinate pair is atomic.
 func (s *MediaService) UpdateGPS(
 	ctx context.Context,
 	caller owners.Principal,
