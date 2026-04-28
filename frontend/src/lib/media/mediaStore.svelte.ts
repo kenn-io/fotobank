@@ -172,6 +172,10 @@ export class MediaStore {
   }
 }
 
+// sidecarIdsEqual compares two sidecar lists as ordered sequences.
+// Backend returns sidecars sorted by (original_filename, id) — see
+// media.Repo.GetSidecars; reordering across two responses for the
+// same primary would falsely dirty the bucket on every poll.
 function sidecarIdsEqual(a?: Media[], b?: Media[]): boolean {
   if (!a && !b) return true;
   if (!a || !b) return false;
@@ -229,7 +233,14 @@ export function toMedia(raw: Record<string, unknown>): Media | null {
   if (Array.isArray(sc) && sc.length > 0) {
     const mapped = sc
       .filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null)
-      .map(toMedia)
+      .map((r) => {
+        // Strip nested sidecars: backend contract guarantees a
+        // sidecar's own Sidecars is empty; stripping defensively
+        // ensures toMedia is self-correcting against a future leak
+        // since sidecarIdsEqual only inspects the top-level array.
+        const { sidecars: _ignoredNestedSidecars, ...rest } = r;
+        return toMedia(rest);
+      })
       .filter((x): x is Media => x !== null);
     if (mapped.length > 0) m.sidecars = mapped;
   }

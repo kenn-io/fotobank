@@ -426,4 +426,80 @@ describe("toMedia for paired rows", () => {
     expect(m?.sidecars?.[0]?.paired_with_id).toBe("p");
     expect(m?.sidecars?.[0]?.paired_with?.id).toBe("p");
   });
+
+  it("strips nested sidecars on the recursive call so a future backend leak can't hide deltas", () => {
+    // The backend contract is sidecars are exactly one level deep:
+    // a primary embeds sidecars, but each sidecar's own Sidecars is
+    // nil. sidecarIdsEqual only inspects the top-level array, so a
+    // nested array on a sidecar would silently bypass dirty-tracking.
+    // The recursive toMedia call must drop the inner field so the
+    // mapped sidecar.sidecars is undefined regardless of input.
+    const raw = {
+      id: "p",
+      timestamp: "2024-06-15T14:30:00Z",
+      width: 1,
+      height: 1,
+      sidecars: [
+        {
+          id: "s",
+          timestamp: "2024-06-15T14:30:00Z",
+          width: 1,
+          height: 1,
+          paired_with_id: "p",
+          // Should never appear in real responses, but if a future
+          // backend bug leaks it the strip in toMedia keeps the
+          // merge guard's id-list comparison honest.
+          sidecars: [
+            { id: "leaked", timestamp: "2024-06-15T14:30:00Z", width: 1, height: 1 },
+          ],
+        },
+      ],
+    };
+    const m = toMedia(raw);
+    expect(m?.sidecars).toHaveLength(1);
+    expect(m?.sidecars?.[0]?.id).toBe("s");
+    expect(m?.sidecars?.[0]?.paired_with_id).toBe("p");
+    expect(m?.sidecars?.[0]?.sidecars).toBeUndefined();
+  });
+});
+
+describe("MediaStore merge with sidecars", () => {
+  it("does not dirty the bucket when merging identical primary+sidecar input twice", async () => {
+    // The merge contract observable: month object refs are stable
+    // across an identical re-merge. If sidecarIdsEqual returns true
+    // for the same input, the bucket isn't marked dirty and the same
+    // Month object is reused. This is the same hook the existing
+    // "leaves every month object ref stable" test uses for primaries.
+    const item = {
+      id: "p",
+      timestamp: "2024-06-15T14:30:00Z",
+      width: 1,
+      height: 1,
+      thumb_version: 1,
+      sidecars: [
+        {
+          id: "s",
+          timestamp: "2024-06-15T14:30:00Z",
+          width: 1,
+          height: 1,
+          thumb_version: 1,
+          paired_with_id: "p",
+          paired_with: { id: "p", original_filename: "IMG_1.JPG" },
+        },
+      ],
+    };
+    const fakeClient = {
+      GET: vi.fn()
+        .mockResolvedValueOnce({ data: { items: [item], next_offset: 200 }, error: undefined })
+        .mockResolvedValueOnce({ data: { items: [item], next_offset: null }, error: undefined }),
+    };
+    const store = new MediaStore(fakeClient as never);
+    await store.loadMore();
+    const before = store.months.find((m) => m.key === "2024-06");
+    expect(before?.items[0]?.sidecars).toHaveLength(1);
+
+    await store.loadMore();
+    const after = store.months.find((m) => m.key === "2024-06");
+    expect(after).toBe(before);
+  });
 });
