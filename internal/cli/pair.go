@@ -232,9 +232,9 @@ func pairBackfillFor(
 	opts *pairBackfillOpts,
 	tally *pairTally,
 ) error {
-	rows, err := listAllForOwner(ctx, repo, owner)
+	rows, err := repo.ListAll(ctx, owner)
 	if err != nil {
-		return err
+		return fmt.Errorf("list media for %s:%s: %w", owner.Hub, owner.UserID, err)
 	}
 
 	candidates, processed := buildPairCandidates(rows, opts.sinceTime)
@@ -253,38 +253,6 @@ func pairBackfillFor(
 	}
 	tally.unchanged += processed - len(updates)
 	return nil
-}
-
-// listAllForOwner pages through every row for owner via repo.List.
-// media.Repo.ListAll exists but is internal-shaped (defaultListLimit
-// constant); we replicate its loop here so this command does not depend
-// on a private constant. IncludeSidecars=true is required: the F2.2
-// pairing pass must see sidecars to recompute their paired_with_id.
-func listAllForOwner(
-	ctx context.Context,
-	repo *media.Repo,
-	owner owners.Principal,
-) ([]media.Media, error) {
-	const pageSize = 1000
-	var out []media.Media
-	offset := 0
-	for {
-		page, err := repo.List(ctx, media.ListFilter{
-			Owner:           owner,
-			Limit:           pageSize,
-			Offset:          offset,
-			IncludeSidecars: true,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("list media for %s:%s: %w",
-				owner.Hub, owner.UserID, err)
-		}
-		out = append(out, page...)
-		if len(page) < pageSize {
-			return out, nil
-		}
-		offset += pageSize
-	}
 }
 
 // buildPairCandidates narrows rows to the candidate set Compute should
