@@ -661,3 +661,50 @@ func TestRepoListMediaImportedSort(t *testing.T) {
 	r.Equal(late, got[0].ID, "imported-desc → latest first")
 	r.Equal(early, got[1].ID)
 }
+
+// TestRepoListMediaPreservesGPS exercises albumMediaMediaSelect's GPS
+// columns. The four-way projection sync (mediaSelect, mediaColumnsQualified,
+// mediaInsert, albumMediaMediaSelect) means a column-order drift here
+// would corrupt /api/v1/albums/.../media DTOs without breaking the
+// other three projections.
+func TestRepoListMediaPreservesGPS(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+	a := seedAlbum(t, repo, p, "Trip")
+
+	id := uuid.NewString()
+	lat, lon := 48.8566, 2.3522
+	gps := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	_, err := d.WriteDB().ExecContext(context.Background(), `
+INSERT INTO media (
+    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
+    imported_at, timestamp, size, checksum,
+    make, model, focal_length, shutter, width, height, iso, aperture,
+    duration_ms,
+    latitude, longitude, gps_at, location_label,
+    thumb_status, thumb_version, thumb_updated_at
+) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+          ?, ?, ?, ?,
+          'ready', 1, NULL)`,
+		id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), "cs-"+id,
+		lat, lon, gps, "Paris, Île-de-France, France",
+	)
+	r.NoError(err)
+	seedAlbumMedia(t, d.WriteDB(), a.ID, id, time.Now().UTC())
+
+	got, err := repo.ListMedia(context.Background(), a.ID,
+		album.AlbumMediaFilter{SortBy: "added"})
+	r.NoError(err)
+	r.Len(got, 1)
+	r.NotNil(got[0].Latitude)
+	r.NotNil(got[0].Longitude)
+	r.InDelta(48.8566, *got[0].Latitude, 1e-9)
+	r.InDelta(2.3522, *got[0].Longitude, 1e-9)
+	r.NotNil(got[0].GPSAt)
+	r.True(got[0].GPSAt.Equal(gps), "got %v", got[0].GPSAt)
+	r.Equal("Paris, Île-de-France, France", got[0].LocationLabel)
+}

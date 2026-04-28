@@ -431,6 +431,20 @@ func TestRepoInsertGetByIDPreservesGPS(t *testing.T) {
 	r.InDelta(2.3522, *got.Longitude, 1e-9)
 	r.True(got.GPSAt.Equal(gps), "got %v", got.GPSAt)
 	r.Equal("Paris, Île-de-France, France", got.LocationLabel)
+
+	// Also exercise the mediaColumnsQualified projection used by
+	// GetByIDs — this is a separate column list and a column-order
+	// drift here would silently corrupt /api/v1/media DTOs.
+	multi, err := repo.GetByIDs(context.Background(), []string{id})
+	r.NoError(err)
+	r.Len(multi, 1)
+	r.NotNil(multi[0].Latitude)
+	r.NotNil(multi[0].Longitude)
+	r.InDelta(48.8566, *multi[0].Latitude, 1e-9)
+	r.InDelta(2.3522, *multi[0].Longitude, 1e-9)
+	r.NotNil(multi[0].GPSAt)
+	r.True(multi[0].GPSAt.Equal(gps), "got %v", multi[0].GPSAt)
+	r.Equal("Paris, Île-de-France, France", multi[0].LocationLabel)
 }
 
 func TestRepoInsertGetByIDPreservesAbsentGPS(t *testing.T) {
@@ -552,9 +566,24 @@ func TestListGPSBackfillCandidatesByMode(t *testing.T) {
 	mk("photo-no-gps", media.TypePhoto, nil, nil)
 	mk("photo-with-gps", media.TypePhoto, &one, &one)
 	mk("video-with-gps", media.TypeVideo, &one, &one) // must be excluded
-	// Partial-coord row (one coord set, one nil). fill-missing should
-	// still skip it because it requires BOTH null.
-	mk("photo-partial-coord", media.TypePhoto, &one, nil)
+	// Partial-coord row (one coord set, one nil). Repo.Insert now
+	// rejects this shape (atomic-pair invariant), so we bypass it with
+	// direct SQL to simulate a row that arrived via a different path
+	// (legacy migration, manual fix-up, etc). The point is to lock the
+	// FillMissing/Relabel predicates against partial state that could
+	// exist in the DB regardless of how it got there.
+	_, err = d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO media (
+			id, owner_hub, owner_user_id, media_type, mime_type, path,
+			imported_at, size, checksum,
+			latitude, longitude,
+			thumb_status, thumb_version
+		) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, ?, 1, ?, ?, NULL, 'pending', 0)`,
+		"photo-partial-coord", owner.Hub, owner.UserID,
+		"photo-partial-coord.jpg", time.Now().UTC(),
+		"c-photo-partial-coord", one,
+	)
+	r.NoError(err)
 
 	ids := func(ms []media.Media) []string {
 		out := make([]string, 0, len(ms))
@@ -564,15 +593,15 @@ func TestListGPSBackfillCandidatesByMode(t *testing.T) {
 		return out
 	}
 
-	full, err := repo.ListGPSBackfillCandidates(context.Background(), owner, media.GPSBackfillModeFull, nil, 100, 0)
+	full, err := repo.ListGPSBackfillCandidates(context.Background(), owner, media.GPSBackfillModeFull, nil, "", 100)
 	r.NoError(err)
 	r.ElementsMatch([]string{"photo-no-gps", "photo-with-gps", "photo-partial-coord"}, ids(full))
 
-	missing, err := repo.ListGPSBackfillCandidates(context.Background(), owner, media.GPSBackfillModeFillMissing, nil, 100, 0)
+	missing, err := repo.ListGPSBackfillCandidates(context.Background(), owner, media.GPSBackfillModeFillMissing, nil, "", 100)
 	r.NoError(err)
 	r.ElementsMatch([]string{"photo-no-gps"}, ids(missing))
 
-	relabel, err := repo.ListGPSBackfillCandidates(context.Background(), owner, media.GPSBackfillModeRelabel, nil, 100, 0)
+	relabel, err := repo.ListGPSBackfillCandidates(context.Background(), owner, media.GPSBackfillModeRelabel, nil, "", 100)
 	r.NoError(err)
 	r.ElementsMatch([]string{"photo-with-gps"}, ids(relabel))
 }
@@ -602,8 +631,119 @@ func TestListGPSBackfillCandidatesSinceFilter(t *testing.T) {
 	}))
 
 	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	got, err := repo.ListGPSBackfillCandidates(context.Background(), owner, media.GPSBackfillModeFull, &cutoff, 100, 0)
+	got, err := repo.ListGPSBackfillCandidates(context.Background(), owner, media.GPSBackfillModeFull, &cutoff, "", 100)
 	r.NoError(err)
 	r.Len(got, 1)
 	r.Equal("new-id", got[0].ID)
+}
+
+// TestInsertRejectsPartialGPSPair locks the atomic-pair invariant: a
+// row with exactly one of latitude / longitude set leaves the DB in a
+// state that BOTH the FillMissing and Relabel candidate predicates
+// exclude — un-fixable via the backfill CLI.
+func TestInsertRejectsPartialGPSPair(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	one := 1.0
+	base := func(id string) media.Media {
+		return media.Media{
+			ID: id, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+			Path: id + ".jpg", ImportedAt: time.Now().UTC(),
+			Size: 1, Checksum: "c-" + id, ThumbStatus: "pending",
+		}
+	}
+
+	m := base("only-lat")
+	m.Latitude = &one
+	r.ErrorIs(repo.Insert(context.Background(), m), errs.ErrInvalidArgument)
+
+	m = base("only-lon")
+	m.Longitude = &one
+	r.ErrorIs(repo.Insert(context.Background(), m), errs.ErrInvalidArgument)
+}
+
+// TestUpdateGPSRejectsPartialPair mirrors TestInsertRejectsPartialGPSPair
+// for the UpdateGPS path. The CLI backfill loop must never persist a
+// half-coord row.
+func TestUpdateGPSRejectsPartialPair(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	id := uuid.NewString()
+	r.NoError(repo.Insert(context.Background(), media.Media{
+		ID: id, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "x.jpg", ImportedAt: time.Now().UTC(),
+		Size: 1, Checksum: "c-" + id, ThumbStatus: "pending",
+	}))
+
+	one := 1.0
+	r.ErrorIs(repo.UpdateGPS(context.Background(), id, &one, nil, nil, ""), errs.ErrInvalidArgument)
+	r.ErrorIs(repo.UpdateGPS(context.Background(), id, nil, &one, nil, ""), errs.ErrInvalidArgument)
+}
+
+// TestListGPSBackfillCandidatesKeysetPagination drives the keyset
+// cursor across multiple pages and asserts that (a) afterID="" returns
+// the first lexicographic page and (b) passing the last seen ID
+// returns only rows strictly greater. This is the contract the backfill
+// CLI relies on to make progress under FillMissing (rows leave the
+// candidate set as they're updated, so offset would skip rows on
+// page 2; keyset is monotone in id).
+func TestListGPSBackfillCandidatesKeysetPagination(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	for _, id := range []string{"a", "b", "c", "d", "e"} {
+		r.NoError(repo.Insert(context.Background(), media.Media{
+			ID: id, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+			Path: id + ".jpg", ImportedAt: time.Now().UTC(),
+			Size: 1, Checksum: "c-" + id, ThumbStatus: "pending",
+		}))
+	}
+
+	page1, err := repo.ListGPSBackfillCandidates(context.Background(), owner,
+		media.GPSBackfillModeFillMissing, nil, "", 2)
+	r.NoError(err)
+	r.Len(page1, 2)
+	r.Equal("a", page1[0].ID)
+	r.Equal("b", page1[1].ID)
+
+	page2, err := repo.ListGPSBackfillCandidates(context.Background(), owner,
+		media.GPSBackfillModeFillMissing, nil, page1[len(page1)-1].ID, 2)
+	r.NoError(err)
+	r.Len(page2, 2)
+	r.Equal("c", page2[0].ID)
+	r.Equal("d", page2[1].ID)
+
+	page3, err := repo.ListGPSBackfillCandidates(context.Background(), owner,
+		media.GPSBackfillModeFillMissing, nil, page2[len(page2)-1].ID, 2)
+	r.NoError(err)
+	r.Len(page3, 1)
+	r.Equal("e", page3[0].ID)
+
+	page4, err := repo.ListGPSBackfillCandidates(context.Background(), owner,
+		media.GPSBackfillModeFillMissing, nil, page3[len(page3)-1].ID, 2)
+	r.NoError(err)
+	r.Empty(page4)
 }

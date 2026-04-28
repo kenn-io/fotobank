@@ -69,7 +69,13 @@ const mediaInsert = `INSERT INTO media (
 
 // Insert stores a new media row. Returns errs.ErrAlreadyExists (wrapped)
 // if a row already exists with the same (owner, checksum) or (owner, path).
+// Returns errs.ErrInvalidArgument if Latitude and Longitude are not both
+// set or both nil — the GPS coordinate pair is documented as atomic on
+// the Media struct.
 func (r *Repo) Insert(ctx context.Context, m Media) error {
+	if err := validateGPSPair(m.Latitude, m.Longitude); err != nil {
+		return fmt.Errorf("insert media: %w", err)
+	}
 	_, err := r.rw.ExecContext(ctx, mediaInsert,
 		m.ID,
 		m.Owner.Hub,
@@ -295,6 +301,20 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// validateGPSPair enforces the atomic-pair invariant on the GPS
+// coordinates: either both lat and lon are set, or both are nil. Partial
+// state would leak through Repo.Insert / UpdateGPS into rows that the
+// FillMissing and Relabel candidate predicates both exclude (each
+// requires BOTH NULL or BOTH NOT NULL), making them un-fixable via the
+// backfill CLI. Returns errs.ErrInvalidArgument on violation.
+func validateGPSPair(lat, lon *float64) error {
+	if (lat == nil) != (lon == nil) {
+		return fmt.Errorf("%w: latitude and longitude must both be set or both be nil",
+			errs.ErrInvalidArgument)
+	}
+	return nil
+}
+
 // GPSBackfillMode discriminates what `gps backfill` considers a target.
 // See spec §4.7 / §7.4.
 type GPSBackfillMode int
@@ -315,7 +335,8 @@ const (
 
 // UpdateGPS sets the four GPS columns on an existing row. Used by the
 // backfill CLI; the importer uses Insert. Returns errs.ErrNotFound if
-// the row is gone.
+// the row is gone, or errs.ErrInvalidArgument if exactly one of lat/lon
+// is set (the pair is atomic — both set or both nil).
 func (r *Repo) UpdateGPS(
 	ctx context.Context,
 	id string,
@@ -323,6 +344,9 @@ func (r *Repo) UpdateGPS(
 	gpsAt *time.Time,
 	label string,
 ) error {
+	if err := validateGPSPair(lat, lon); err != nil {
+		return fmt.Errorf("update media gps: %w", err)
+	}
 	res, err := r.rw.ExecContext(ctx,
 		`UPDATE media
 		    SET latitude = ?, longitude = ?, gps_at = ?, location_label = ?
@@ -348,7 +372,12 @@ func (r *Repo) UpdateGPS(
 
 // ListGPSBackfillCandidates enumerates rows for `gps backfill`. Always
 // excludes media_type='video' (video GPS is out of scope per spec §5.5).
-// Pages via LIMIT/OFFSET; rows are ordered by id for stable paging.
+// Rows are ordered by id and paginated via a keyset cursor: pass
+// afterID="" for the first page, then the last returned row's ID for
+// subsequent pages. Keyset (rather than offset) is required because the
+// backfill loop mutates rows that may or may not stay in the candidate
+// set after update — offset would either skip rows (FillMissing) or
+// loop forever (Full/Relabel).
 //
 // `since` filters by imported_at >= *since; pass nil to disable.
 func (r *Repo) ListGPSBackfillCandidates(
@@ -356,7 +385,8 @@ func (r *Repo) ListGPSBackfillCandidates(
 	owner owners.Principal,
 	mode GPSBackfillMode,
 	since *time.Time,
-	limit, offset int,
+	afterID string,
+	limit int,
 ) ([]Media, error) {
 	conds := []string{
 		"owner_hub = ?",
@@ -379,16 +409,19 @@ func (r *Repo) ListGPSBackfillCandidates(
 		conds = append(conds, "imported_at >= ?")
 		args = append(args, *since)
 	}
+	if afterID != "" {
+		conds = append(conds, "id > ?")
+		args = append(args, afterID)
+	}
 
 	if limit <= 0 {
 		limit = defaultListLimit
 	}
-	offset = max(offset, 0)
 
 	query := mediaSelect +
 		" WHERE " + strings.Join(conds, " AND ") +
-		" ORDER BY id LIMIT ? OFFSET ?"
-	args = append(args, limit, offset)
+		" ORDER BY id LIMIT ?"
+	args = append(args, limit)
 
 	rows, err := r.ro.QueryContext(ctx, query, args...)
 	if err != nil {
