@@ -97,12 +97,15 @@
     <h1 class="sidecar-heading">
       RAW sidecar for
       {#if media.paired_with}
+        {@const primary = media.paired_with}
         <a
-          href="/media/{media.paired_with.id}"
-          onclick={(e) => handleInternalLinkClick(e, `/media/${media.paired_with?.id ?? ""}`)}
+          href="/media/{primary.id}"
+          onclick={(e) => handleInternalLinkClick(e, `/media/${primary.id}`)}
         >
-          {media.paired_with.original_filename}
+          {primary.original_filename}
         </a>
+      {:else}
+        <span style:opacity={0.7}>primary</span>
       {/if}
     </h1>
     <dl class="info">
@@ -110,7 +113,7 @@
         <dt>File</dt>
         <dd>{media.original_filename}</dd>
       {/if}
-      {#if media.size !== undefined}
+      {#if media.size}
         <dt>Size</dt>
         <dd>{formatBytes(media.size)}</dd>
       {/if}
@@ -128,7 +131,7 @@
         </dd>
       {/if}
     </dl>
-    <a class="download" href="/api/v1/media/{media.id}/original" download>
+    <a class="download" href="/api/v1/media/{media.id}/original" download={media.original_filename ?? media.id}>
       Download {media.original_filename ?? "file"}
     </a>
   {:else}
@@ -161,12 +164,12 @@
       {#if media.sidecars && media.sidecars.length > 0}
         <dt>Files</dt>
         <dd class="files">
-          <a href="/api/v1/media/{media.id}/original" download>
+          <a href="/api/v1/media/{media.id}/original" download={media.original_filename ?? media.id}>
             {media.original_filename ?? media.id}
           </a>
           {#each media.sidecars as sidecar (sidecar.id)}
             <br />
-            <a href="/api/v1/media/{sidecar.id}/original" download>
+            <a href="/api/v1/media/{sidecar.id}/original" download={sidecar.original_filename ?? sidecar.id}>
               {sidecar.original_filename ?? sidecar.id}
             </a>
           {/each}
