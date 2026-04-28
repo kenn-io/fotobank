@@ -1,10 +1,10 @@
 # F2.1 GPS Metadata — Design
 
-> Sub-plan of the F2 viewer-suite milestone. F2 ships in five sub-plans:
-> F2.0 Viewer Foundation → **F2.1 GPS Metadata** (this doc) → F2.2 Albums + Sharing →
-> F2.3 Hidden Privacy → F2.4 Lightbox Viewer. F2.1 is independent of F2.2 and
-> F2.3 and may run in parallel with them. F2.4's lightbox info panel consumes
-> the `location_label` produced here.
+> Sub-plan of the F2 viewer-suite milestone. F2 ships in six sub-plans:
+> F2.0 Viewer Foundation → **F2.1 GPS Metadata** (this doc) → F2.2 RAW + JPEG Pairing →
+> F2.3 Albums + Sharing → F2.4 Hidden Privacy → F2.5 Lightbox Viewer. F2.1 is
+> independent of F2.2, F2.3, and F2.4 and may run in parallel with them.
+> F2.5's lightbox info panel consumes the `location_label` produced here.
 
 ## 1. Goal
 
@@ -33,9 +33,9 @@ Explicitly **out of scope**, deferred to later work:
 - Street- or neighborhood-granularity labels (e.g. "Hayes Valley"). A
   configured external geocoder (Photon, self-hosted Nominatim) can refine
   later by re-resolving against existing `latitude`/`longitude`.
-- Map UI of any kind. F2.0 explicitly flagged "MapLibre or another heavy
-  view (F2.1 GPS map, possibly)" — that "possibly" resolves to *no* in
-  F2.1; if a map view is desired, it will be its own sub-plan (F2.5+).
+- Map UI of any kind. F2.0 deferred MapLibre / heavy view loading to a
+  future GPS map sub-plan. F2.1 confirms that deferral: no map view ships
+  here. If a map view is desired, it will be its own sub-plan (F2.6+).
 - Spatial-search queries ("photos near here", bbox filters). The partial
   index added in this slice keeps such queries cheap when they land later,
   but no API surfaces them in F2.1.
@@ -803,9 +803,9 @@ the stub).
 ```
 
 The image source uses `size=preview` (max edge 2560), **not** `size=large`.
-`large` (max edge 4096) is reserved for F2.4's lightbox 1:1 view; this
+`large` (max edge 4096) is reserved for F2.5's lightbox 1:1 view; this
 interim detail page is fit-to-viewport, where `preview` is the right
-balance. F2.4 will switch to `large` for its zoom mode. The URL is
+balance. F2.5 will switch to `large` for its zoom mode. The URL is
 built directly from `media.id` + `media.thumbVersion`:
 
 ```ts
@@ -903,7 +903,7 @@ formats as N and `lon == 0` formats as E. Documented and tested.
 - Street/neighborhood-granularity labels. Natural Earth gives "San
   Francisco, California, United States of America" — not "Hayes Valley".
   A configured external geocoder is the path; out of F2.1.
-- Map UI (MapLibre or otherwise). Possibly a future F2.5 sub-plan.
+- Map UI (MapLibre or otherwise). Possibly a future F2.6 sub-plan.
 - Spatial-search APIs ("photos near here", bbox filters). The partial
   index keeps them cheap when added; F2.1 surfaces no such API.
 - Audit history of label changes. Re-running `gps backfill --mode=relabel`
@@ -940,7 +940,7 @@ formats as N and `lon == 0` formats as E. Documented and tested.
 - **Depends on F2.0** for: hoisted `MediaStore`, route to `/media/:id`,
   the `MediaDetail.svelte` stub that this spec replaces, the thumb
   endpoint serving `size=preview`. No F2.0 changes required.
-- **Independent of F2.2 / F2.3.** Can run in parallel.
-- **F2.4 depends on F2.1** for `location_label` in the lightbox info
-  panel. F2.4 can swap `size=preview` → `size=large` in the (by then
+- **Independent of F2.2 / F2.3 / F2.4.** Can run in parallel.
+- **F2.5 depends on F2.1** for `location_label` in the lightbox info
+  panel. F2.5 can swap `size=preview` → `size=large` in the (by then
   rewritten) `MediaDetail.svelte`.

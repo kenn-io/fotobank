@@ -1,8 +1,8 @@
 # F2.0 — Viewer Foundation Design
 
-> Sub-plan of the F2 viewer-suite milestone. F2 ships in five sub-plans:
-> **F2.0 Viewer Foundation** (this doc) → F2.1 GPS Metadata → F2.2 Albums + Sharing →
-> F2.3 Hidden Privacy → F2.4 Lightbox Viewer. Each sub-plan has its own spec and
+> Sub-plan of the F2 viewer-suite milestone. F2 ships in six sub-plans:
+> **F2.0 Viewer Foundation** (this doc) → F2.1 GPS Metadata → F2.2 RAW + JPEG Pairing →
+> F2.3 Albums + Sharing → F2.4 Hidden Privacy → F2.5 Lightbox Viewer. Each sub-plan has its own spec and
 > implementation plan. F2.0 is the prerequisite infrastructure layer; it ships
 > reload-safe SPA routing, an incremental MediaStore, a shared MediaCell, and the
 > backend thumb tiers (`preview=2560`, `large=4096`) the lightbox needs to render
@@ -11,7 +11,7 @@
 ## 1. Goal
 
 Land the viewer-foundation infrastructure so subsequent F2 sub-plans (and especially
-F2.4 lightbox) can target a coherent shell:
+F2.5 lightbox) can target a coherent shell:
 
 - **Reload-safe SPA navigation.** Pasted links (`/media/:id`, future `/albums/:id`,
   `/hidden`, `/search`) survive a hard reload because the embed handler already
@@ -24,7 +24,7 @@ F2.4 lightbox) can target a coherent shell:
 - **One MediaStore, not three.** Today Library and Sessions each instantiate
   their own store. F2.0 hoists a single shared instance to App.svelte; SPA nav
   preserves it.
-- **Shared MediaCell.** Library, Sessions, and (in F2.4) the lightbox-strip all
+- **Shared MediaCell.** Library, Sessions, and (in F2.5) the lightbox-strip all
   render the same anchor + img + selection-aware cell. F2.0 extracts it as a
   presentational component.
 - **Thumb tiers the lightbox needs.** The current pipeline ships
@@ -47,7 +47,7 @@ F2.4 lightbox) can target a coherent shell:
   this with an explicit Playwright reload test).
 - `frontend/src/routes/NotFound.svelte` — fallback view for unknown paths.
 - `frontend/src/routes/MediaDetail.svelte` — stub that shows the matched id;
-  F2.4 replaces it with the lightbox.
+  F2.5 replaces it with the lightbox.
 - `frontend/src/lib/grid/MediaCell.svelte` — presentational shared cell.
 - `MediaStore` `merge()` rewritten with `byMonth` + `byId` indices, in-place
   mutation, dirty-only re-sort, ref-stable month reuse.
@@ -62,13 +62,14 @@ F2.4 lightbox) can target a coherent shell:
 **Not in scope (later F2.x)**
 
 - Lightbox UI, zoom/pan, info panel, source ladder, video element, action
-  cluster wiring → F2.4.
+  cluster wiring → F2.5.
 - GPS columns, EXIF GPS extraction, reverse geocoder → F2.1.
-- Albums and sharing → F2.2.
-- Hidden privacy gate → F2.3.
+- RAW + JPEG pairing → F2.2.
+- Albums and sharing → F2.3.
+- Hidden privacy gate → F2.4.
 - AI panel content (tags/captions) → separate AI backend slice; not gated by
   any F2 sub-plan.
-- Mobile bottom-sheet info panel → F2.4 mobile pass.
+- Mobile bottom-sheet info panel → F2.5 mobile pass.
 
 ## 3. Architecture
 
@@ -88,7 +89,7 @@ App.svelte
         switch on router.current.route {
           case "library":  <Library {mediaStore} />
           case "sessions": <Sessions {mediaStore} />
-          case "media":    <MediaDetail id={router.current.id} />  // F2.4 replaces with Lightbox
+          case "media":    <MediaDetail id={router.current.id} />  // F2.5 replaces with Lightbox
           case "settings": <Settings />
           default:         <NotFound />
         }
@@ -161,7 +162,7 @@ link (which itself goes through `router.navigate`). No props. ~15 lines.
 F2.0 stub that exists only so `/media/:id` is reload-safe and the
 client-side router has a real component to mount on the matching route.
 Accepts `{ id }: { id: string }` and renders a placeholder "Media {id}"
-heading plus a back link to `/library`. ~15 lines. F2.4 replaces this file
+heading plus a back link to `/library`. ~15 lines. F2.5 replaces this file
 with the lightbox shell.
 
 ### 4.4 `frontend/src/lib/grid/MediaCell.svelte`
@@ -335,7 +336,7 @@ func AllSizes() []Size { return []Size{SizeGrid, SizePreview, SizeLarge} }
 ```
 
 `SizeLightbox` is removed entirely. `?size=lightbox` HTTP requests now return
-400. F1 frontend never used `lightbox`; the F2.4 lightbox uses `preview` (fit)
+400. F1 frontend never used `lightbox`; the F2.5 lightbox uses `preview` (fit)
 and `large` (1:1).
 
 ### 4.8 `internal/thumb/worker.go` and `raw.go`
@@ -593,19 +594,20 @@ is documented as a runbook caveat in §8.
 ## 9. Dependencies on later sub-plans
 
 - **F2.1 GPS Metadata** is independent; can run in parallel.
-- **F2.2 Albums + Sharing** is independent; can run in parallel.
-- **F2.3 Hidden Privacy** is independent; can run in parallel.
-- **F2.4 Lightbox Viewer** depends on F2.0 (router for sub-route, MediaStore
+- **F2.2 RAW + JPEG Pairing** is independent; can run in parallel.
+- **F2.3 Albums + Sharing** is independent; can run in parallel.
+- **F2.4 Hidden Privacy** is independent; can run in parallel.
+- **F2.5 Lightbox Viewer** depends on F2.0 (router for sub-route, MediaStore
   for prev/next perf, MediaCell for the lightbox-strip), F2.1 (info panel
-  location), F2.2 (action cluster Add/Share), F2.3 (action cluster Hide), and
+  location), F2.3 (action cluster Add/Share), F2.4 (action cluster Hide), and
   optionally an AI backend slice (info panel AI sections).
 
 ## 10. Out-of-scope reminders
 
 - Lazy/code-split route imports — defer to when MapLibre or another heavy
-  view lands (F2.1 GPS map, possibly).
+  view lands (a GPS map view, possibly a future F2.6+ sub-plan).
 - Auto-detect-on-boot regenerate — explicitly rejected; `regenerate` is an
   operator action.
 - AI panel content / embeddings / search index — separate AI backend slice;
   not gated by any F2 sub-plan.
-- Mobile bottom-sheet info panel — F2.4.
+- Mobile bottom-sheet info panel — F2.5.
