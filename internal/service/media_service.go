@@ -75,6 +75,22 @@ func (s *MediaService) UpdateGPS(
 	return s.repo.UpdateGPS(ctx, id, lat, lon, gpsAt, label)
 }
 
+// GetSidecars returns the sidecars of the primary identified by
+// primaryID. The owner check goes through Get, which returns
+// errs.ErrNotFound on caller mismatch — so a caller that does not own
+// the primary cannot enumerate its sidecars. Returns an empty slice
+// (not an error) when the primary has no sidecars.
+func (s *MediaService) GetSidecars(
+	ctx context.Context,
+	primaryID string,
+	caller owners.Principal,
+) ([]media.Media, error) {
+	if _, err := s.Get(ctx, primaryID, caller); err != nil {
+		return nil, err
+	}
+	return s.repo.GetSidecars(ctx, primaryID)
+}
+
 // OpenOriginal resolves the media row, enforces the owner check, and
 // returns the backing-store reader sliced by offset / length. offset and
 // length follow the storage.Store.ReadRange convention: length < 0 means

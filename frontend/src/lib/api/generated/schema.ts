@@ -569,8 +569,11 @@ export interface components {
             mime_type: string;
             model?: string;
             original_filename?: string;
+            paired_with?: components["schemas"]["PairSummaryDTO"];
+            paired_with_id?: string;
             path: string;
             shutter?: string;
+            sidecars?: components["schemas"]["MediaDTO"][] | null;
             /** Format: int64 */
             size: number;
             thumb_status: string;
@@ -581,6 +584,10 @@ export interface components {
             type: string;
             /** Format: int64 */
             width?: number;
+        };
+        PairSummaryDTO: {
+            id: string;
+            original_filename: string;
         };
         PatchAlbumInputBody: {
             /**

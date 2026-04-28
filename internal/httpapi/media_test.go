@@ -75,6 +75,39 @@ func seedMedia(t *testing.T, repo *media.Repo, p owners.Principal, path, checksu
 	return m
 }
 
+// seedPairedMedia inserts a media row whose original_filename and
+// mime_type are caller-supplied, then sets paired_with_id when
+// pairedWithID is non-nil. Used by RAW+JPEG pairing tests where the
+// filename and MIME need to look like a real sidecar (e.g. a.dng with
+// image/x-adobe-dng) and the row must FK to its primary.
+func seedPairedMedia(
+	t *testing.T,
+	repo *media.Repo,
+	p owners.Principal,
+	path, checksum, mimeType, originalFilename string,
+	pairedWithID *string,
+) media.Media {
+	t.Helper()
+	m := media.Media{
+		ID:               uuid.NewString(),
+		Owner:            p,
+		Type:             media.TypePhoto,
+		MimeType:         mimeType,
+		Path:             path,
+		OriginalFilename: originalFilename,
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Size:             100,
+		Checksum:         checksum,
+		ThumbStatus:      "pending",
+	}
+	require.NoError(t, repo.Insert(context.Background(), m))
+	if pairedWithID != nil {
+		require.NoError(t, repo.UpdatePairedWithID(context.Background(), m.ID, pairedWithID))
+		m.PairedWithID = pairedWithID
+	}
+	return m
+}
+
 type listMediaResponse struct {
 	Items []struct {
 		ID           string `json:"id"`
@@ -329,4 +362,96 @@ func TestGetMediaDTOOmitsGPSWhenAbsent(t *testing.T) {
 	body := string(bs)
 	r.NotContains(body, "latitude")
 	r.NotContains(body, "location_label")
+}
+
+func TestMediaListHidesSidecars(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaAPITest(t)
+
+	primary := seedPairedMedia(t, fx.repo, fx.owner,
+		"2024/primary.jpg", "cs-pri", "image/jpeg", "primary.jpg", nil)
+	pid := primary.ID
+	_ = seedPairedMedia(t, fx.repo, fx.owner,
+		"2024/primary.dng", "cs-sid", "image/x-adobe-dng", "primary.dng", &pid)
+
+	resp, err := http.Get(fx.srv.URL + "/api/v1/media")
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusOK, resp.StatusCode)
+
+	var body struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
+	ids := make([]string, 0, len(body.Items))
+	for _, it := range body.Items {
+		ids = append(ids, it.ID)
+	}
+	r.Equal([]string{primary.ID}, ids)
+}
+
+func TestMediaDetailPrimaryEmbedsSidecars(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaAPITest(t)
+
+	primary := seedPairedMedia(t, fx.repo, fx.owner,
+		"2024/a.jpg", "cs-pri", "image/jpeg", "a.jpg", nil)
+	pid := primary.ID
+	dng := seedPairedMedia(t, fx.repo, fx.owner,
+		"2024/a.dng", "cs-sid", "image/x-adobe-dng", "a.dng", &pid)
+
+	resp, err := http.Get(fx.srv.URL + "/api/v1/media/" + primary.ID)
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusOK, resp.StatusCode)
+
+	var body struct {
+		ID       string `json:"id"`
+		Sidecars []struct {
+			ID           string `json:"id"`
+			PairedWithID string `json:"paired_with_id"`
+		} `json:"sidecars"`
+		PairedWithID *string `json:"paired_with_id,omitempty"`
+	}
+	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
+	r.Equal(primary.ID, body.ID)
+	r.Nil(body.PairedWithID)
+	r.Len(body.Sidecars, 1)
+	r.Equal(dng.ID, body.Sidecars[0].ID)
+	r.Equal(primary.ID, body.Sidecars[0].PairedWithID)
+}
+
+func TestMediaDetailSidecarReturnsPairedWithSummary(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaAPITest(t)
+
+	primary := seedPairedMedia(t, fx.repo, fx.owner,
+		"2024/a.jpg", "cs-pri", "image/jpeg", "a.jpg", nil)
+	pid := primary.ID
+	dng := seedPairedMedia(t, fx.repo, fx.owner,
+		"2024/a.dng", "cs-sid", "image/x-adobe-dng", "a.dng", &pid)
+
+	resp, err := http.Get(fx.srv.URL + "/api/v1/media/" + dng.ID)
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusOK, resp.StatusCode)
+
+	var body struct {
+		ID           string `json:"id"`
+		PairedWithID string `json:"paired_with_id"`
+		PairedWith   *struct {
+			ID               string `json:"id"`
+			OriginalFilename string `json:"original_filename"`
+		} `json:"paired_with"`
+		Sidecars []any `json:"sidecars,omitempty"`
+	}
+	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
+	r.Equal(dng.ID, body.ID)
+	r.Equal(primary.ID, body.PairedWithID)
+	r.NotNil(body.PairedWith)
+	r.Equal(primary.ID, body.PairedWith.ID)
+	r.Equal("a.jpg", body.PairedWith.OriginalFilename)
+	r.Empty(body.Sidecars, "sidecar's own DTO should not list further sidecars")
 }

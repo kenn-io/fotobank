@@ -42,10 +42,28 @@ type mediaDTO struct {
 	Longitude        *float64   `json:"longitude,omitempty"`
 	GPSAt            *time.Time `json:"gps_at,omitempty"`
 	LocationLabel    string     `json:"location_label,omitempty"`
+
+	// F2.2 RAW + JPEG pairing. PairedWithID is set on every response
+	// where the row is a sidecar. PairedWith is populated only by the
+	// detail handler when the row is a sidecar; Sidecars is populated
+	// only by the detail handler when the row is a primary. None of
+	// the three are populated by the list endpoint or by toMediaDTO
+	// directly — see the get-media handler.
+	PairedWithID *string         `json:"paired_with_id,omitempty"`
+	PairedWith   *pairSummaryDTO `json:"paired_with,omitempty"`
+	Sidecars     []mediaDTO      `json:"sidecars,omitempty"`
+}
+
+// pairSummaryDTO is the slim primary-side projection embedded under a
+// sidecar's `paired_with` field. Carries just enough for the frontend
+// to render a "View JPEG" link without round-tripping again.
+type pairSummaryDTO struct {
+	ID               string `json:"id"`
+	OriginalFilename string `json:"original_filename"`
 }
 
 func toMediaDTO(m media.Media) mediaDTO {
-	return mediaDTO{
+	dto := mediaDTO{
 		ID:               m.ID,
 		Type:             string(m.Type),
 		MimeType:         m.MimeType,
@@ -71,6 +89,11 @@ func toMediaDTO(m media.Media) mediaDTO {
 		GPSAt:            m.GPSAt,
 		LocationLabel:    m.LocationLabel,
 	}
+	if m.PairedWithID != nil {
+		id := *m.PairedWithID
+		dto.PairedWithID = &id
+	}
+	return dto
 }
 
 type listMediaInput struct {
@@ -172,13 +195,54 @@ func registerMedia(api huma.API, svc *service.MediaService) {
 		if !ok {
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
 		}
-		m, err := svc.Get(ctx, in.ID, id.Principal.OwnersPrincipal())
+		caller := id.Principal.OwnersPrincipal()
+		m, err := svc.Get(ctx, in.ID, caller)
 		if err != nil {
 			if errors.Is(err, errs.ErrNotFound) {
 				return nil, huma.Error404NotFound("media not found")
 			}
 			return nil, err
 		}
-		return &getMediaOutput{Body: toMediaDTO(m)}, nil
+		dto := toMediaDTO(m)
+		if dto.PairedWithID == nil {
+			// Primary path: embed any sidecars on the response so the
+			// frontend can render a "Files" row without an extra trip.
+			sidecars, err := svc.GetSidecars(ctx, m.ID, caller)
+			if err != nil {
+				return nil, err
+			}
+			// Leave Sidecars nil when the primary has none so omitempty
+			// drops the field from the wire instead of emitting "[]".
+			if len(sidecars) > 0 {
+				dto.Sidecars = make([]mediaDTO, 0, len(sidecars))
+				for _, s := range sidecars {
+					child := toMediaDTO(s)
+					child.PairedWith = &pairSummaryDTO{
+						ID:               m.ID,
+						OriginalFilename: m.OriginalFilename,
+					}
+					// Sidecar DTOs embedded under a primary never
+					// recurse — a sidecar of a sidecar isn't a thing in
+					// the schema, and the field would be redundant
+					// noise on the wire.
+					child.Sidecars = nil
+					dto.Sidecars = append(dto.Sidecars, child)
+				}
+			}
+		} else {
+			// Sidecar path: surface a primary summary so the frontend
+			// can offer a "View JPEG" affordance. If the primary lookup
+			// fails (e.g. an ON DELETE SET NULL race or a permission
+			// edge after a transfer) we still 200 with PairedWith nil
+			// rather than fail the whole detail response.
+			primary, err := svc.Get(ctx, *m.PairedWithID, caller)
+			if err == nil {
+				dto.PairedWith = &pairSummaryDTO{
+					ID:               primary.ID,
+					OriginalFilename: primary.OriginalFilename,
+				}
+			}
+		}
+		return &getMediaOutput{Body: dto}, nil
 	})
 }
