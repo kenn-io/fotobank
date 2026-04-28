@@ -50,4 +50,47 @@ describe("MediaDetail", () => {
     });
     expect(queryByText("Location")).toBeNull();
   });
+
+  it("re-fetches when id prop changes", async () => {
+    // App.svelte mounts MediaDetail without a {#key} wrapper, so
+    // navigating from one /media/:id to another reuses this component
+    // instance. The id-keyed $effect must re-fetch the new (uncached)
+    // row; the previous onMount-only path would have left the second
+    // navigation stuck on Loading… Build the response body from the
+    // requested URL so each id caches under its own key — otherwise
+    // the second render would hit the store and short-circuit the
+    // effect, masking the regression we're guarding against.
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input) => {
+        const url = typeof input === "string" ? input : (input as Request).url;
+        const id = url.split("/").pop() ?? "unknown";
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id,
+              timestamp: "2024-06-15T14:30:22Z",
+              width: 1,
+              height: 1,
+              thumb_version: 1,
+            }),
+            { status: 200 },
+          ),
+        );
+      });
+    const store = new MediaStore({ GET: vi.fn() } as never);
+    // First nav: id=first, no cached row → triggers fetch.
+    const first = render(MediaDetail, {
+      props: { id: "first", mediaStore: store },
+    });
+    // Wait for the first fetch to settle.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/media/first");
+    fetchMock.mockClear();
+    // Second nav: id=second, also uncached → must trigger another fetch.
+    await first.rerender({ id: "second", mediaStore: store });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/media/second");
+    fetchMock.mockRestore();
+  });
 });

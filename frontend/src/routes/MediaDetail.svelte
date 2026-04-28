@@ -3,7 +3,6 @@
   import type { MediaStore } from "../lib/media/mediaStore.svelte";
   import { handleInternalLinkClick } from "../lib/router/router.svelte";
   import { formatCoord } from "../lib/format/coords";
-  import { onMount } from "svelte";
 
   let { id, mediaStore }: { id: string; mediaStore: MediaStore } = $props();
 
@@ -18,22 +17,41 @@
   });
   let loadError = $state<string | undefined>(undefined);
 
-  onMount(async () => {
-    if (media) return;
-    try {
-      const resp = await fetch(`/api/v1/media/${id}`);
-      if (!resp.ok) {
-        loadError = `${resp.status}`;
-        return;
+  // Re-run the on-miss fetch every time `id` changes — App.svelte mounts
+  // MediaDetail without a {#key} wrapper, so navigating from one
+  // /media/:id to another reuses this component instance and onMount
+  // would fire only on the first mount. Capture id into the closure and
+  // use a cancellation flag so a stale response can't clobber a newer
+  // one if the user navigates again before the first fetch resolves.
+  $effect(() => {
+    const currentId = id;
+    loadError = undefined;
+    if (mediaStore.get(currentId)) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(`/api/v1/media/${currentId}`);
+        if (cancelled) return;
+        if (!resp.ok) {
+          loadError = `${resp.status}`;
+          return;
+        }
+        const raw = await resp.json();
+        if (cancelled) return;
+        // Reuse the store's own JSON-adapter pathway: merge a single-item
+        // array so byMediaId is also populated. The store knows how to
+        // build thumbUrl from the raw row.
+        mediaStore.mergeRaw([raw]);
+      } catch (e) {
+        if (cancelled) return;
+        loadError = e instanceof Error ? e.message : "fetch failed";
       }
-      const raw = await resp.json();
-      // Reuse the store's own JSON-adapter pathway: merge a single-item
-      // array so byMediaId is also populated. The store knows how to
-      // build thumbUrl from the raw row.
-      mediaStore.mergeRaw([raw]);
-    } catch (e) {
-      loadError = e instanceof Error ? e.message : "fetch failed";
-    }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   });
 
   let previewUrl = $derived(

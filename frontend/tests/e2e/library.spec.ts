@@ -128,12 +128,20 @@ test("MediaDetail shows location label when row has GPS", async ({ page }) => {
 
 test("MediaDetail hides location row when row has no GPS", async ({ page }) => {
   // no-gps-fixture-1 is seeded by cmd/e2e-server without lat/lon/label,
-  // so the Location dl row should not render at all.
+  // so the Location dl row should not render at all. The back link
+  // renders unconditionally — even during the loading state — so wait
+  // for the actual /api/v1/media/<id> response AND the disappearance of
+  // the "Loading…" copy before checking that Location is absent.
+  // Without this guard the negative assertion can pass mid-load.
+  const detailResponse = page.waitForResponse(
+    (resp) =>
+      resp.url().endsWith("/api/v1/media/no-gps-fixture-1") &&
+      resp.status() === 200,
+    { timeout: 5_000 },
+  );
   await page.goto("/media/no-gps-fixture-1");
   await expect(page.getByText("fotobank")).toBeVisible();
-  // Wait for the back link so we know MediaDetail has mounted and the
-  // /api/v1/media/<id> fetch has completed (otherwise "Location" being
-  // absent could just mean we're still in the loading state).
-  await expect(page.getByRole("link", { name: /back to library/i })).toBeVisible();
+  await (await detailResponse).finished();
+  await expect(page.getByText(/loading…/i)).toHaveCount(0);
   await expect(page.getByText("Location")).not.toBeVisible();
 });
