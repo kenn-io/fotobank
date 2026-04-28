@@ -30,18 +30,15 @@ const (
 // NaturalEarth is a parsed in-memory copy of the embedded gazetteer.
 // Construct via NewNaturalEarth; safe for concurrent Resolve calls.
 type NaturalEarth struct {
-	countries []countryFeature
-	regions   []regionFeature
+	countries []boundedFeature
+	regions   []boundedFeature
 	cities    []cityFeature
 }
 
-type countryFeature struct {
-	name string
-	bbox orb.Bound
-	geom orb.Geometry
-}
-
-type regionFeature struct {
+// boundedFeature is the polygon-shaped feature shared by countries and
+// regions. The pre-computed bbox lets pointInPolygonName cheaply skip
+// features whose bounding box doesn't contain the query point.
+type boundedFeature struct {
 	name string
 	bbox orb.Bound
 	geom orb.Geometry
@@ -91,7 +88,7 @@ func loadCountries(g *NaturalEarth) error {
 		if name == "" {
 			continue
 		}
-		g.countries = append(g.countries, countryFeature{
+		g.countries = append(g.countries, boundedFeature{
 			name: name,
 			bbox: f.Geometry.Bound(),
 			geom: f.Geometry,
@@ -120,7 +117,7 @@ func loadRegions(g *NaturalEarth) error {
 		if name == "" {
 			continue
 		}
-		g.regions = append(g.regions, regionFeature{
+		g.regions = append(g.regions, boundedFeature{
 			name: name,
 			bbox: f.Geometry.Bound(),
 			geom: f.Geometry,
@@ -178,12 +175,12 @@ func (n *NaturalEarth) Resolve(lat, lon float64) (string, bool) {
 	}
 	pt := orb.Point{lon, lat} // §6.4 — NOT {lat, lon}
 
-	country := pointInPolygonName(pt, n.countriesAsBoundedFeatures())
+	country := pointInPolygonName(pt, n.countries)
 	if country == "" {
 		return "", false
 	}
 
-	region := pointInPolygonName(pt, n.regionsAsBoundedFeatures())
+	region := pointInPolygonName(pt, n.regions)
 
 	city := nearestCity(pt, n.cities, country, region)
 
@@ -196,29 +193,6 @@ func (n *NaturalEarth) Resolve(lat, lon float64) (string, bool) {
 	}
 	parts = append(parts, country)
 	return strings.Join(parts, ", "), true
-}
-
-// boundedFeature is the minimal interface point-in-polygon needs.
-type boundedFeature struct {
-	name string
-	bbox orb.Bound
-	geom orb.Geometry
-}
-
-func (n *NaturalEarth) countriesAsBoundedFeatures() []boundedFeature {
-	out := make([]boundedFeature, len(n.countries))
-	for i, c := range n.countries {
-		out[i] = boundedFeature(c)
-	}
-	return out
-}
-
-func (n *NaturalEarth) regionsAsBoundedFeatures() []boundedFeature {
-	out := make([]boundedFeature, len(n.regions))
-	for i, r := range n.regions {
-		out[i] = boundedFeature(r)
-	}
-	return out
 }
 
 func pointInPolygonName(pt orb.Point, fs []boundedFeature) string {
