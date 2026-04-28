@@ -1,10 +1,9 @@
 import { test, expect } from "@playwright/test";
 
-test("library route renders shell + sidebar + empty-state", async ({ page }) => {
+test("library route renders shell + sidebar", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("fotobank")).toBeVisible();
   await expect(page.getByRole("link", { name: "Library" })).toBeVisible();
-  await expect(page.getByText(/no photos yet/i)).toBeVisible();
 });
 
 test("sessions route renders", async ({ page }) => {
@@ -74,9 +73,11 @@ test("SPA nav library→sessions→back does not re-issue the initial media fetc
   await page.goto("/library");
   const resp = await initialResponse;
   await resp.finished();
-  // Wait for the empty-state copy — only renders after MediaStore has
-  // finished loading and committed the (empty) page into state.
-  await expect(page.getByText(/no photos yet/i)).toBeVisible();
+  // Wait for at least one seeded MediaCell to render — only happens
+  // after MediaStore has finished loading and committed the page into
+  // state. MediaCell sets aria-label="Photo <id>" so the seeded
+  // gps-fixture-1 row is a deterministic sync signal.
+  await expect(page.getByLabel("Photo gps-fixture-1")).toBeVisible();
   const baseline = initialPageCalls.length;
   expect(baseline).toBeGreaterThanOrEqual(1);
 
@@ -112,4 +113,27 @@ test("MediaDetail back link SPA-routes to /library without a document fetch", as
   // history.pushState. handleInternalLinkClick must have called
   // preventDefault().
   expect(docRequests.length).toBe(beforeBack);
+});
+
+test("MediaDetail shows location label when row has GPS", async ({ page }) => {
+  // gps-fixture-1 is seeded by cmd/e2e-server with Paris coords +
+  // a France-shaped label, so the Location dl row + formatted coords
+  // both render.
+  await page.goto("/media/gps-fixture-1");
+  await expect(page.getByText("fotobank")).toBeVisible();
+  await expect(page.getByText("Location")).toBeVisible();
+  await expect(page.getByText(/Paris.*France/)).toBeVisible();
+  await expect(page.getByText("48.8566° N, 2.3522° E")).toBeVisible();
+});
+
+test("MediaDetail hides location row when row has no GPS", async ({ page }) => {
+  // no-gps-fixture-1 is seeded by cmd/e2e-server without lat/lon/label,
+  // so the Location dl row should not render at all.
+  await page.goto("/media/no-gps-fixture-1");
+  await expect(page.getByText("fotobank")).toBeVisible();
+  // Wait for the back link so we know MediaDetail has mounted and the
+  // /api/v1/media/<id> fetch has completed (otherwise "Location" being
+  // absent could just mean we're still in the loading state).
+  await expect(page.getByRole("link", { name: /back to library/i })).toBeVisible();
+  await expect(page.getByText("Location")).not.toBeVisible();
 });
