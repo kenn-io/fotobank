@@ -220,6 +220,9 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Media, error) {
 	)
 	conds = append(conds, "owner_hub = ?", "owner_user_id = ?")
 	args = append(args, f.Owner.Hub, f.Owner.UserID)
+	if !f.IncludeSidecars {
+		conds = append(conds, "paired_with_id IS NULL")
+	}
 	if f.Type != nil {
 		conds = append(conds, "media_type = ?")
 		args = append(args, string(*f.Type))
@@ -273,11 +276,18 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Media, error) {
 // ListAll returns every media row for owner, paging through the database
 // in batches of defaultListLimit. It is intended for bulk operations such
 // as reconcile; user-facing queries should use List with an explicit Limit.
+// IncludeSidecars is set internally so reconcile and other bulk callers
+// see every row regardless of pair status.
 func (r *Repo) ListAll(ctx context.Context, owner owners.Principal) ([]Media, error) {
 	var out []Media
 	offset := 0
 	for {
-		page, err := r.List(ctx, ListFilter{Owner: owner, Limit: defaultListLimit, Offset: offset})
+		page, err := r.List(ctx, ListFilter{
+			Owner:           owner,
+			Limit:           defaultListLimit,
+			Offset:          offset,
+			IncludeSidecars: true, // reconcile + bulk callers see every row
+		})
 		if err != nil {
 			return nil, err
 		}

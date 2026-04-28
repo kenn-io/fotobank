@@ -76,4 +76,10 @@ type ListFilter struct {
 	Offset   int
 	// SortDesc sorts by timestamp desc when true; otherwise timestamp asc.
 	SortDesc bool
+	// F2.2 RAW+JPEG pairing. False at the service layer by default;
+	// service.MediaService.List clamps caller-supplied true values
+	// back to false so no HTTP route can surface sidecars in lists.
+	// Internal callers (pairing pass, backfill, reconcile) may set
+	// true.
+	IncludeSidecars bool
 }

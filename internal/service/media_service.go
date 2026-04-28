@@ -44,10 +44,13 @@ func (s *MediaService) Get(ctx context.Context, id string, caller owners.Princip
 
 // List returns media rows visible to caller. The filter's Owner is
 // clamped to caller before delegating to the repo so a handler cannot
-// request another owner's rows. Plan D will widen this to include
-// shares.
+// request another owner's rows. IncludeSidecars is also clamped to
+// false so no HTTP route can surface sidecars in list responses; the
+// flag is reserved for internal repo-layer callers (pairing pass,
+// backfill CLI, reconcile). Plan D will widen this to include shares.
 func (s *MediaService) List(ctx context.Context, f media.ListFilter, caller owners.Principal) ([]media.Media, error) {
 	f.Owner = caller
+	f.IncludeSidecars = false
 	return s.repo.List(ctx, f)
 }
 
