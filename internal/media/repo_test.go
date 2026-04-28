@@ -780,3 +780,120 @@ func TestListGPSBackfillCandidatesKeysetPagination(t *testing.T) {
 	r.NoError(err)
 	r.Empty(page4)
 }
+
+func TestRepoListByOwnerDirectories(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	other := owners.Principal{Hub: "h", UserID: "u2"}
+	seedOwner(t, d.WriteDB(), p, "sk-a")
+	seedOwner(t, d.WriteDB(), other, "sk-u2")
+
+	mk := func(id, ownerHub, ownerUser, path, importPath, checksum string) media.Media {
+		m := baseMedia(id, owners.Principal{Hub: ownerHub, UserID: ownerUser})
+		m.Path = path
+		m.Checksum = checksum
+		m.ImportSourcePath = importPath
+		return m
+	}
+	a := mk(uuid.NewString(), p.Hub, p.UserID, "2024/a.jpg", "trip-paris/IMG_1.JPG", "cs-a")
+	b := mk(uuid.NewString(), p.Hub, p.UserID, "2024/b.dng", "trip-paris/IMG_1.DNG", "cs-b")
+	c := mk(uuid.NewString(), p.Hub, p.UserID, "2024/c.jpg", "trip-rome/IMG_2.JPG", "cs-c")
+	d2 := mk(uuid.NewString(), other.Hub, other.UserID, "2024/d.jpg", "trip-paris/IMG_3.JPG", "cs-d")
+	for _, m := range []media.Media{a, b, c, d2} {
+		r.NoError(repo.Insert(ctx, m))
+	}
+
+	// Caller asks for owner=p, dirs={"trip-paris"} — must return
+	// a + b only; not c (different dir) and not d2 (different owner).
+	rows, err := repo.ListByOwnerDirectories(ctx, p, []string{"trip-paris"})
+	r.NoError(err)
+	gotIDs := make([]string, 0, len(rows))
+	for _, m := range rows {
+		gotIDs = append(gotIDs, m.ID)
+	}
+	r.ElementsMatch([]string{a.ID, b.ID}, gotIDs)
+
+	// Empty dirs returns nil.
+	rows, err = repo.ListByOwnerDirectories(ctx, p, nil)
+	r.NoError(err)
+	r.Empty(rows)
+}
+
+func TestRepoUpdatePairedWithIDRoundTrips(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-a")
+
+	primary := baseMedia(uuid.NewString(), p)
+	primary.Path = "2024/a.jpg"
+	primary.Checksum = "cs-pri"
+	r.NoError(repo.Insert(ctx, primary))
+	sidecar := baseMedia(uuid.NewString(), p)
+	sidecar.Path = "2024/a.dng"
+	sidecar.Checksum = "cs-sid"
+	r.NoError(repo.Insert(ctx, sidecar))
+
+	// Pair.
+	r.NoError(repo.UpdatePairedWithID(ctx, sidecar.ID, &primary.ID))
+	got, err := repo.GetByID(ctx, sidecar.ID)
+	r.NoError(err)
+	r.NotNil(got.PairedWithID)
+	r.Equal(primary.ID, *got.PairedWithID)
+
+	// Unpair (write nil).
+	r.NoError(repo.UpdatePairedWithID(ctx, sidecar.ID, nil))
+	got, err = repo.GetByID(ctx, sidecar.ID)
+	r.NoError(err)
+	r.Nil(got.PairedWithID)
+
+	// Missing row returns ErrNotFound.
+	err = repo.UpdatePairedWithID(ctx, "no-such-id", nil)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestRepoGetSidecarsReturnsSortedByOriginalFilename(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-a")
+
+	primary := baseMedia(uuid.NewString(), p)
+	primary.Path = "2024/a.jpg"
+	primary.Checksum = "cs-pri"
+	r.NoError(repo.Insert(ctx, primary))
+
+	// Insert two sidecars with original_filenames in deliberately
+	// reversed order to confirm the helper sorts ASC.
+	for _, filename := range []string{"Z.dng", "A.dng"} {
+		s := baseMedia(uuid.NewString(), p)
+		s.Path = "2024/" + filename
+		s.OriginalFilename = filename
+		s.Checksum = "cs-" + filename
+		s.PairedWithID = &primary.ID
+		r.NoError(repo.Insert(ctx, s))
+	}
+
+	sidecars, err := repo.GetSidecars(ctx, primary.ID)
+	r.NoError(err)
+	r.Len(sidecars, 2)
+	r.Equal("A.dng", sidecars[0].OriginalFilename)
+	r.Equal("Z.dng", sidecars[1].OriginalFilename)
+
+	// Empty result for a primary with no sidecars.
+	loneID := uuid.NewString()
+	lone := baseMedia(loneID, p)
+	lone.Path = "2024/lone.jpg"
+	lone.Checksum = "cs-lone"
+	r.NoError(repo.Insert(ctx, lone))
+	sidecars, err = repo.GetSidecars(ctx, loneID)
+	r.NoError(err)
+	r.Empty(sidecars)
+}

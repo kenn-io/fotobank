@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -629,6 +630,110 @@ func pairedWithIDArg(p *string) any {
 		return nil
 	}
 	return *p
+}
+
+// ListByOwnerDirectories returns rows for owner whose
+// dir(import_source_path) is in dirs. Used by the F2.2 pairing pass
+// to fetch existing rows in directories touched by the just-imported
+// batch. Empty dirs returns nil. Rows with empty import_source_path
+// are excluded.
+func (r *Repo) ListByOwnerDirectories(
+	ctx context.Context,
+	owner owners.Principal,
+	dirs []string,
+) ([]Media, error) {
+	if len(dirs) == 0 {
+		return nil, nil
+	}
+	dirSet := make(map[string]struct{}, len(dirs))
+	for _, d := range dirs {
+		dirSet[d] = struct{}{}
+	}
+	q := mediaSelect + `
+WHERE owner_hub = ? AND owner_user_id = ?
+  AND import_source_path != ''`
+	rows, err := r.ro.QueryContext(ctx, q, owner.Hub, owner.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("list by owner directories: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]Media, 0)
+	for rows.Next() {
+		m, err := scanMedia(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan media: %w", err)
+		}
+		if _, ok := dirSet[filepath.Dir(m.ImportSourcePath)]; !ok {
+			continue
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate media: %w", err)
+	}
+	return out, nil
+}
+
+// UpdatePairedWithID writes the paired_with_id column for a single
+// row. nil clears the FK to NULL; non-nil sets it to the primary's
+// id. The owner-consistency triggers in
+// internal/db/migrations/000001_initial_schema.up.sql RAISE if the
+// caller tries to point a sidecar at a primary owned by a different
+// principal — this is defence in depth; the service-layer pairing
+// pass already restricts candidates to one owner per (owner,
+// directory) group. Returns errs.ErrNotFound if no row matches id.
+func (r *Repo) UpdatePairedWithID(
+	ctx context.Context,
+	id string,
+	primaryID *string,
+) error {
+	res, err := r.rw.ExecContext(ctx,
+		`UPDATE media SET paired_with_id = ? WHERE id = ?`,
+		pairedWithIDArg(primaryID), id,
+	)
+	if err != nil {
+		return fmt.Errorf("update paired_with_id: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update paired_with_id rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: media id=%s", errs.ErrNotFound, id)
+	}
+	return nil
+}
+
+// GetSidecars returns rows whose paired_with_id == primaryID, sorted
+// by original_filename ascending with id ASC as a deterministic
+// tiebreaker. Used by the HTTP detail handler to embed sidecars in
+// a primary's DTO. Returns an empty slice when the primary has no
+// sidecars; never returns errs.ErrNotFound for that case (an empty
+// list is the legitimate result, not an error).
+func (r *Repo) GetSidecars(
+	ctx context.Context,
+	primaryID string,
+) ([]Media, error) {
+	q := mediaSelect + `
+WHERE paired_with_id = ?
+ORDER BY COALESCE(original_filename, '') ASC, id ASC`
+	rows, err := r.ro.QueryContext(ctx, q, primaryID)
+	if err != nil {
+		return nil, fmt.Errorf("get sidecars: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]Media, 0)
+	for rows.Next() {
+		m, err := scanMedia(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan media: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate media: %w", err)
+	}
+	return out, nil
 }
 
 // uniqueViolationKind inspects a SQLite error and returns the matching

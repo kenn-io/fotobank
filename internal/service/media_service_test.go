@@ -229,10 +229,7 @@ func TestMediaServiceListHidesSidecarsByDefault(t *testing.T) {
 
 	primary := insertTestMedia(t, fx.repo, fx.owner, "2024/a.jpg", "cs-pri")
 	sidecar := insertTestMedia(t, fx.repo, fx.owner, "2024/a.dng", "cs-sid")
-	// Manually set paired_with_id (Task 5 lands the helper; in the
-	// meantime, write the FK directly via the test DB).
-	_, err := fx.rw.ExecContext(ctx, `UPDATE media SET paired_with_id = ? WHERE id = ?`, primary.ID, sidecar.ID)
-	r.NoError(err)
+	r.NoError(fx.repo.UpdatePairedWithID(ctx, sidecar.ID, &primary.ID))
 
 	rows, err := fx.svc.List(ctx, media.ListFilter{}, fx.owner)
 	r.NoError(err)
@@ -247,8 +244,7 @@ func TestMediaServiceListClampsIncludeSidecars(t *testing.T) {
 
 	primary := insertTestMedia(t, fx.repo, fx.owner, "2024/a.jpg", "cs-pri")
 	sidecar := insertTestMedia(t, fx.repo, fx.owner, "2024/a.dng", "cs-sid")
-	_, err := fx.rw.ExecContext(ctx, `UPDATE media SET paired_with_id = ? WHERE id = ?`, primary.ID, sidecar.ID)
-	r.NoError(err)
+	r.NoError(fx.repo.UpdatePairedWithID(ctx, sidecar.ID, &primary.ID))
 
 	// Caller asks for true; service must clamp it back to false.
 	rows, err := fx.svc.List(ctx, media.ListFilter{IncludeSidecars: true}, fx.owner)
