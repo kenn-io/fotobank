@@ -696,6 +696,39 @@ func TestUpdateGPSRejectsPartialPair(t *testing.T) {
 	r.ErrorIs(repo.UpdateGPS(context.Background(), id, nil, &one, nil, ""), errs.ErrInvalidArgument)
 }
 
+func TestRepoInsertGetByIDPreservesPairingFields(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := testOwner()
+	seedOwner(t, d.WriteDB(), owner, "sk-pair")
+
+	primary := baseMedia(uuid.NewString(), owner)
+	primary.Path = "2024/a.jpg"
+	primary.Checksum = "cs-pri"
+	primary.ImportSourcePath = "2024-Paris/IMG_1234.JPG"
+	r.NoError(repo.Insert(context.Background(), primary))
+
+	sidecarID := uuid.NewString()
+	sidecar := baseMedia(sidecarID, owner)
+	sidecar.Path = "2024/a.dng"
+	sidecar.Checksum = "cs-sid"
+	sidecar.ImportSourcePath = "2024-Paris/IMG_1234.DNG"
+	sidecar.PairedWithID = &primary.ID
+	r.NoError(repo.Insert(context.Background(), sidecar))
+
+	gotPrimary, err := repo.GetByID(context.Background(), primary.ID)
+	r.NoError(err)
+	r.Equal("2024-Paris/IMG_1234.JPG", gotPrimary.ImportSourcePath)
+	r.Nil(gotPrimary.PairedWithID)
+
+	gotSidecar, err := repo.GetByID(context.Background(), sidecarID)
+	r.NoError(err)
+	r.Equal("2024-Paris/IMG_1234.DNG", gotSidecar.ImportSourcePath)
+	r.NotNil(gotSidecar.PairedWithID)
+	r.Equal(primary.ID, *gotSidecar.PairedWithID)
+}
+
 // TestListGPSBackfillCandidatesKeysetPagination drives the keyset
 // cursor across multiple pages and asserts that (a) afterID="" returns
 // the first lexicographic page and (b) passing the last seen ID

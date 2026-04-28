@@ -389,7 +389,8 @@ const albumMediaMediaSelect = `SELECT
     m.make, m.model, m.focal_length, m.shutter, m.width, m.height, m.iso, m.aperture,
     m.duration_ms,
     m.latitude, m.longitude, m.gps_at, m.location_label,
-    m.thumb_status, m.thumb_version, m.thumb_updated_at
+    m.thumb_status, m.thumb_version, m.thumb_updated_at,
+    m.import_source_path, m.paired_with_id
 FROM album_media am JOIN media m ON m.id = am.media_id`
 
 // ListMedia returns paginated media rows that belong to albumID. The

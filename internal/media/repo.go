@@ -41,7 +41,8 @@ const mediaSelect = `SELECT
 	make, model, focal_length, shutter, width, height, iso, aperture,
 	duration_ms,
 	latitude, longitude, gps_at, location_label,
-	thumb_status, thumb_version, thumb_updated_at
+	thumb_status, thumb_version, thumb_updated_at,
+	import_source_path, paired_with_id
 FROM media`
 
 // mediaColumnsQualified is the m-prefixed projection used when the
@@ -56,7 +57,8 @@ const mediaColumnsQualified = `
     m.make, m.model, m.focal_length, m.shutter, m.width, m.height, m.iso, m.aperture,
     m.duration_ms,
     m.latitude, m.longitude, m.gps_at, m.location_label,
-    m.thumb_status, m.thumb_version, m.thumb_updated_at`
+    m.thumb_status, m.thumb_version, m.thumb_updated_at,
+    m.import_source_path, m.paired_with_id`
 
 const mediaInsert = `INSERT INTO media (
 	id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
@@ -64,8 +66,9 @@ const mediaInsert = `INSERT INTO media (
 	make, model, focal_length, shutter, width, height, iso, aperture,
 	duration_ms,
 	latitude, longitude, gps_at, location_label,
-	thumb_status, thumb_version, thumb_updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	thumb_status, thumb_version, thumb_updated_at,
+	import_source_path, paired_with_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // Insert stores a new media row. Returns errs.ErrAlreadyExists (wrapped)
 // if a row already exists with the same (owner, checksum) or (owner, path).
@@ -104,6 +107,8 @@ func (r *Repo) Insert(ctx context.Context, m Media) error {
 		m.ThumbStatus,
 		m.ThumbVersion,
 		nullTime(m.ThumbUpdatedAt),
+		m.ImportSourcePath,
+		pairedWithIDArg(m.PairedWithID),
 	)
 	if err != nil {
 		if kind := uniqueViolationKind(err); kind != nil {
@@ -468,6 +473,8 @@ func scanMedia(s rowScanner) (Media, error) {
 		gpsAt            sql.NullTime
 		locationLabel    sql.NullString
 		thumbUpdatedAt   sql.NullTime
+		importSourcePath sql.NullString
+		pairedWithID     sql.NullString
 	)
 	if err := s.Scan(
 		&m.ID,
@@ -497,6 +504,8 @@ func scanMedia(s rowScanner) (Media, error) {
 		&m.ThumbStatus,
 		&m.ThumbVersion,
 		&thumbUpdatedAt,
+		&importSourcePath,
+		&pairedWithID,
 	); err != nil {
 		return Media{}, err
 	}
@@ -548,6 +557,11 @@ func scanMedia(s rowScanner) (Media, error) {
 		t := thumbUpdatedAt.Time
 		m.ThumbUpdatedAt = &t
 	}
+	m.ImportSourcePath = importSourcePath.String
+	if pairedWithID.Valid {
+		v := pairedWithID.String
+		m.PairedWithID = &v
+	}
 	return m, nil
 }
 
@@ -593,6 +607,18 @@ func nullTime(p *time.Time) sql.NullTime {
 		return sql.NullTime{}
 	}
 	return sql.NullTime{Time: *p, Valid: true}
+}
+
+// pairedWithIDArg yields a driver-friendly NULL for a nil pointer and
+// the dereferenced string otherwise. paired_with_id is a nullable FK
+// to media.id; the empty-string-as-NULL coercion that nullStr applies
+// is wrong here because "" is not a valid id but is a meaningful empty
+// value for other text columns.
+func pairedWithIDArg(p *string) any {
+	if p == nil {
+		return nil
+	}
+	return *p
 }
 
 // uniqueViolationKind inspects a SQLite error and returns the matching

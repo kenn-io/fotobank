@@ -49,6 +49,18 @@ type Media struct {
 	GPSAt         *time.Time
 	LocationLabel string
 
+	// F2.2 RAW+JPEG pairing.
+	// Root-relative original path captured at import time. Substrate
+	// for pair detection. Empty for pre-F2.2 dev rows.
+	ImportSourcePath string
+	// FK to the JPEG primary when this row is a sidecar. NULL on
+	// primaries and standalones.
+	PairedWithID *string
+	// Sidecars is in-memory only — never persisted. Populated by
+	// MediaService.GetSidecars when the handler builds a primary's
+	// detail DTO.
+	Sidecars []Media
+
 	ThumbStatus    string
 	ThumbVersion   int
 	ThumbUpdatedAt *time.Time
