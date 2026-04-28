@@ -551,6 +551,8 @@ export interface components {
             /** Format: int64 */
             duration_ms?: number;
             focal_length?: string;
+            /** Format: date-time */
+            gps_at?: string;
             /** Format: int64 */
             height?: number;
             id: string;
@@ -558,6 +560,11 @@ export interface components {
             imported_at: string;
             /** Format: int64 */
             iso?: number;
+            /** Format: double */
+            latitude?: number;
+            location_label?: string;
+            /** Format: double */
+            longitude?: number;
             make?: string;
             mime_type: string;
             model?: string;

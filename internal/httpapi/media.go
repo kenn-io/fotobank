@@ -38,6 +38,10 @@ type mediaDTO struct {
 	ISO              *int       `json:"iso,omitempty"`
 	Aperture         *float64   `json:"aperture,omitempty"`
 	DurationMs       *int64     `json:"duration_ms,omitempty"`
+	Latitude         *float64   `json:"latitude,omitempty"`
+	Longitude        *float64   `json:"longitude,omitempty"`
+	GPSAt            *time.Time `json:"gps_at,omitempty"`
+	LocationLabel    string     `json:"location_label,omitempty"`
 }
 
 func toMediaDTO(m media.Media) mediaDTO {
@@ -62,6 +66,10 @@ func toMediaDTO(m media.Media) mediaDTO {
 		ISO:              m.ISO,
 		Aperture:         m.Aperture,
 		DurationMs:       m.DurationMs,
+		Latitude:         m.Latitude,
+		Longitude:        m.Longitude,
+		GPSAt:            m.GPSAt,
+		LocationLabel:    m.LocationLabel,
 	}
 }
 

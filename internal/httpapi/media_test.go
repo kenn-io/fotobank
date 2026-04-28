@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -232,4 +233,100 @@ func TestListMediaIncludesNextOffsetOnFullPage(t *testing.T) {
 	page2 := decodeList(t, resp2)
 	r.Len(page2.Items, 1)
 	r.Nil(page2.NextOffset)
+}
+
+func TestListMediaDTOIncludesGPSWhenPresent(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaAPITest(t)
+
+	id := uuid.NewString()
+	lat, lon := 48.8566, 2.3522
+	gps := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	r.NoError(fx.repo.Insert(context.Background(), media.Media{
+		ID: id, Owner: fx.owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
+		Latitude: &lat, Longitude: &lon, GPSAt: &gps,
+		LocationLabel: "Paris, Île-de-France, France",
+		ThumbStatus:   "pending",
+	}))
+
+	resp, err := http.Get(fx.srv.URL + "/api/v1/media")
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusOK, resp.StatusCode)
+	bs, err := io.ReadAll(resp.Body)
+	r.NoError(err)
+	body := string(bs)
+	r.Contains(body, `"latitude":48.8566`)
+	r.Contains(body, `"longitude":2.3522`)
+	r.Contains(body, `"gps_at":"2024-06-15T14:30:22Z"`)
+	r.Contains(body, `"location_label":"Paris, Île-de-France, France"`)
+}
+
+func TestListMediaDTOOmitsGPSWhenAbsent(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaAPITest(t)
+
+	id := uuid.NewString()
+	r.NoError(fx.repo.Insert(context.Background(), media.Media{
+		ID: id, Owner: fx.owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
+		ThumbStatus: "pending",
+	}))
+
+	resp, err := http.Get(fx.srv.URL + "/api/v1/media")
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	bs, err := io.ReadAll(resp.Body)
+	r.NoError(err)
+	body := string(bs)
+	r.NotContains(body, "latitude")
+	r.NotContains(body, "longitude")
+	r.NotContains(body, "gps_at")
+	r.NotContains(body, "location_label")
+}
+
+func TestGetMediaDTOIncludesGPSWhenPresent(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaAPITest(t)
+
+	id := uuid.NewString()
+	lat, lon := 48.8566, 2.3522
+	r.NoError(fx.repo.Insert(context.Background(), media.Media{
+		ID: id, Owner: fx.owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
+		Latitude: &lat, Longitude: &lon, LocationLabel: "Paris, France",
+		ThumbStatus: "pending",
+	}))
+
+	resp, err := http.Get(fx.srv.URL + "/api/v1/media/" + id)
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusOK, resp.StatusCode)
+	bs, err := io.ReadAll(resp.Body)
+	r.NoError(err)
+	body := string(bs)
+	r.Contains(body, `"latitude":48.8566`)
+	r.Contains(body, `"location_label":"Paris, France"`)
+}
+
+func TestGetMediaDTOOmitsGPSWhenAbsent(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaAPITest(t)
+
+	id := uuid.NewString()
+	r.NoError(fx.repo.Insert(context.Background(), media.Media{
+		ID: id, Owner: fx.owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
+		ThumbStatus: "pending",
+	}))
+
+	resp, err := http.Get(fx.srv.URL + "/api/v1/media/" + id)
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	bs, err := io.ReadAll(resp.Body)
+	r.NoError(err)
+	body := string(bs)
+	r.NotContains(body, "latitude")
+	r.NotContains(body, "location_label")
 }
