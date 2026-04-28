@@ -89,10 +89,7 @@ func toMediaDTO(m media.Media) mediaDTO {
 		GPSAt:            m.GPSAt,
 		LocationLabel:    m.LocationLabel,
 	}
-	if m.PairedWithID != nil {
-		id := *m.PairedWithID
-		dto.PairedWithID = &id
-	}
+	dto.PairedWithID = m.PairedWithID
 	return dto
 }
 
@@ -221,26 +218,30 @@ func registerMedia(api huma.API, svc *service.MediaService) {
 						ID:               m.ID,
 						OriginalFilename: m.OriginalFilename,
 					}
-					// Sidecar DTOs embedded under a primary never
-					// recurse — a sidecar of a sidecar isn't a thing in
-					// the schema, and the field would be redundant
-					// noise on the wire.
-					child.Sidecars = nil
 					dto.Sidecars = append(dto.Sidecars, child)
 				}
 			}
 		} else {
 			// Sidecar path: surface a primary summary so the frontend
-			// can offer a "View JPEG" affordance. If the primary lookup
-			// fails (e.g. an ON DELETE SET NULL race or a permission
-			// edge after a transfer) we still 200 with PairedWith nil
-			// rather than fail the whole detail response.
+			// can offer a "View JPEG" affordance. The schema's
+			// media_paired_with_owner_consistency_* triggers guarantee
+			// the primary stays visible to the caller; the only
+			// legitimate miss is an ON DELETE SET NULL race where the
+			// primary was deleted between the sidecar fetch and this
+			// follow-up. Treat that as PairedWith nil; surface every
+			// other error.
 			primary, err := svc.Get(ctx, *m.PairedWithID, caller)
-			if err == nil {
+			switch {
+			case err == nil:
 				dto.PairedWith = &pairSummaryDTO{
 					ID:               primary.ID,
 					OriginalFilename: primary.OriginalFilename,
 				}
+			case errors.Is(err, errs.ErrNotFound):
+				// Stale FK after ON DELETE SET NULL race — leave
+				// PairedWith nil.
+			default:
+				return nil, err
 			}
 		}
 		return &getMediaOutput{Body: dto}, nil

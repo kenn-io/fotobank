@@ -56,10 +56,6 @@ type Media struct {
 	// FK to the JPEG primary when this row is a sidecar. NULL on
 	// primaries and standalones.
 	PairedWithID *string
-	// Sidecars is in-memory only — never persisted. Populated by
-	// MediaService.GetSidecars when the handler builds a primary's
-	// detail DTO.
-	Sidecars []Media
 
 	ThumbStatus    string
 	ThumbVersion   int
