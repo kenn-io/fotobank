@@ -59,12 +59,11 @@ test("SPA nav library→sessions→back does not re-issue the initial media fetc
     initialPageCalls.push(req.url());
   });
 
-  // Wait for the actual /api/v1/media?offset=0 response — NOT just the
-  // header text. If we proceed while the initial request is still in
-  // flight, MediaStore.loading would suppress duplicate loads and the
-  // test could pass even if a second offset=0 fetch fired post-settle.
-  // Waiting for the response first guarantees the store is settled
-  // before we measure the baseline.
+  // Wait for the actual /api/v1/media?offset=0 response AND its body —
+  // page.waitForResponse only resolves on headers, so the frontend
+  // could still be parsing the JSON when we measure the baseline.
+  // Combined with a UI signal that the empty-state has rendered, we
+  // know MediaStore.loading has cleared before we count fetches.
   const initialResponse = page.waitForResponse(
     (resp) => {
       const url = new URL(resp.url());
@@ -73,8 +72,11 @@ test("SPA nav library→sessions→back does not re-issue the initial media fetc
     { timeout: 5_000 },
   );
   await page.goto("/library");
-  await initialResponse;
-  await expect(page.getByText("fotobank")).toBeVisible();
+  const resp = await initialResponse;
+  await resp.finished();
+  // Wait for the empty-state copy — only renders after MediaStore has
+  // finished loading and committed the (empty) page into state.
+  await expect(page.getByText(/no photos yet/i)).toBeVisible();
   const baseline = initialPageCalls.length;
   expect(baseline).toBeGreaterThanOrEqual(1);
 
