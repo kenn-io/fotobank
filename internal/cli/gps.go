@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -103,6 +102,11 @@ func validateGPSBackfillOpts(opts *gpsBackfillOpts) error {
 	if opts.owner != "" && opts.allOwners {
 		return newUsageError("--owner and --all-owners are mutually exclusive")
 	}
+	if opts.owner != "" {
+		if _, err := parseOwner(opts.owner); err != nil {
+			return err
+		}
+	}
 	if opts.since != "" {
 		d, err := time.ParseDuration(opts.since)
 		if err != nil {
@@ -178,7 +182,10 @@ func loadGPSConfig(cfgPath string, requireStub bool) (*config.Config, error) {
 
 // selectPrincipals resolves the principals to back fill: an explicit
 // --owner, every owner in the DB for --all-owners, or the stub
-// principal from the config when neither is set.
+// principal from the config when neither is set. --owner has already
+// been parse-validated in validateGPSBackfillOpts; the parseOwner call
+// here cannot fail in practice but we propagate the error to keep the
+// call site honest.
 func selectPrincipals(
 	ctx context.Context,
 	d *db.DB,
@@ -187,11 +194,11 @@ func selectPrincipals(
 ) ([]owners.Principal, error) {
 	switch {
 	case opts.owner != "":
-		hub, user, ok := strings.Cut(opts.owner, ":")
-		if !ok || hub == "" || user == "" {
-			return nil, newUsageError("--owner must be <hub>:<user> (got %q)", opts.owner)
+		p, err := parseOwner(opts.owner)
+		if err != nil {
+			return nil, err
 		}
-		return []owners.Principal{{Hub: hub, UserID: user}}, nil
+		return []owners.Principal{p}, nil
 	case opts.allOwners:
 		ownersRepo := owners.NewRepo(d.WriteDB(), d.ReadDB())
 		list, err := ownersRepo.List(ctx)
@@ -210,7 +217,17 @@ func selectPrincipals(
 	}
 }
 
-const backfillBatch = 500
+var backfillBatch = 500
+
+// SetBackfillBatchForTest swaps backfillBatch for the duration of a
+// test and returns the previous value. Tests must restore it via the
+// returned value in a t.Cleanup. Used only by tests; not part of the
+// public CLI surface.
+func SetBackfillBatchForTest(n int) int {
+	prev := backfillBatch
+	backfillBatch = n
+	return prev
+}
 
 type backfillTally struct {
 	processed int
@@ -275,10 +292,11 @@ func newBackfiller(
 }
 
 // runFor pages through the candidate set for owner using keyset
-// pagination. FillMissing rows leave the candidate set after being
-// updated, so the cursor restarts at "" each iteration; Full and
-// Relabel rows stay in the set, so the cursor must advance past the
-// last seen ID to make progress.
+// pagination. Always advance the cursor past the last seen ID. For
+// Full and Relabel this is required because rows stay in the candidate
+// set after being processed; for FillMissing it's required because
+// rows that fail to gain GPS (no EXIF segment, IO error) also stay
+// candidates and would otherwise loop the fetched page indefinitely.
 func (b *backfiller) runFor(ctx context.Context, owner owners.Principal) error {
 	afterID := ""
 	for {
@@ -301,11 +319,7 @@ func (b *backfiller) runFor(ctx context.Context, owner owners.Principal) error {
 				fmt.Fprintln(b.stderr, b.tally.summary())
 			}
 		}
-		if b.mode == media.GPSBackfillModeFillMissing {
-			afterID = ""
-		} else {
-			afterID = page[len(page)-1].ID
-		}
+		afterID = page[len(page)-1].ID
 		if len(page) < backfillBatch {
 			return nil
 		}

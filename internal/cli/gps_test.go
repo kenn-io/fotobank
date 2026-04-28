@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -266,4 +267,67 @@ func TestGPSBackfillFullClearsCoordsWhenEXIFLacksGPS(t *testing.T) {
 	r.Nil(got.Longitude, "Full mode must clear Longitude when EXIF has no GPS")
 	r.Nil(got.GPSAt, "Full mode must clear GPSAt when EXIF has no GPS")
 	r.Empty(got.LocationLabel, "Full mode must clear LocationLabel when EXIF has no GPS")
+}
+
+// TestGPSBackfillFillMissingTerminatesOnUnchangedBatch is a regression
+// test for the cursor-reset infinite loop: in fill-missing mode, rows
+// whose backing files have no EXIF GPS stay in the candidate set after
+// being processed (they remain both-NULL). With a stale "" cursor, the
+// next page would re-fetch the same rows forever. Shrinking
+// backfillBatch lets us prove termination with only a few seeded rows.
+func TestGPSBackfillFillMissingTerminatesOnUnchangedBatch(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	prev := cli.SetBackfillBatchForTest(2)
+	t.Cleanup(func() { cli.SetBackfillBatchForTest(prev) })
+
+	dbCtx := context.Background()
+	d := testutil.OpenTestDBAt(t, dbPath)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(dbCtx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "u", time.Now().UTC(),
+	)
+	r.NoError(err)
+	// Seed 5 photo rows with both coords NULL and matching NAS files
+	// that have no EXIF segment. fill-missing must visit every row,
+	// mark them unchanged, and terminate.
+	for i := range 5 {
+		id := uuid.NewString()
+		path := fmt.Sprintf("file-%d.jpg", i)
+		r.NoError(repo.Insert(dbCtx, media.Media{
+			ID: id, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+			Path: path, ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
+			ThumbStatus: "pending",
+		}))
+		nasFile := filepath.Join(tmp, "nas", "u", path)
+		r.NoError(os.MkdirAll(filepath.Dir(nasFile), 0o700))
+		r.NoError(os.WriteFile(nasFile, []byte("no-exif"), 0o600))
+	}
+	r.NoError(d.Close())
+
+	code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--mode", "fill-missing")
+	r.Equal(0, code, "stderr=%s", stderr)
+	r.Contains(stdout, "processed=5")
+	r.Contains(stdout, "unchanged=5")
+}
+
+// TestGPSBackfillMalformedOwnerErrorsBeforeOpeningDB locks in that
+// --owner is parse-validated before the DB is opened — a malformed
+// value must not create a SQLite file or load the gazetteer.
+func TestGPSBackfillMalformedOwnerErrorsBeforeOpeningDB(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeNonStubConfig(t, tmp) // bypass stub-mode requirement
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	code, _, stderr := runGPS(t, "backfill", "--config", cfgPath, "--owner", "no-colon")
+	r.Equal(2, code, "got %s", stderr)
+	r.NoFileExists(dbPath, "DB must not be created on bad --owner")
 }
