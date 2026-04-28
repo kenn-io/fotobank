@@ -350,7 +350,8 @@ func isRAWMime(mime string) bool {
 	case "image/x-sony-arw",
 		"image/x-fuji-raf",
 		"image/x-adobe-dng",
-		"image/x-canon-cr2":
+		"image/x-canon-cr2",
+		"image/x-nikon-nef":
 		return true
 	}
 	return false

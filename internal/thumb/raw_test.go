@@ -2,14 +2,19 @@ package thumb_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"image"
 	"image/color"
 	"image/jpeg"
+	"io"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/thumb"
 )
 
@@ -226,4 +231,57 @@ func TestExtractPreviewOrientation1Identity(t *testing.T) {
 	r.NoError(err)
 	r.Equal(100, img.Bounds().Dx())
 	r.Equal(200, img.Bounds().Dy())
+}
+
+// TestExtractPreviewHandlesNEF is the regression guard for F2.2: ingest
+// classifies .nef as image/x-nikon-nef (see discover.go), so the worker
+// must dispatch NEF rows through ExtractPreview rather than falling
+// into Decode's "unsupported mime" path. Reaching "ready" proves
+// isRAWMime recognises NEF and the embedded-JPEG extractor works on
+// the same TIFF/SubIFD shape used by ARW/CR2/DNG.
+func TestExtractPreviewHandlesNEF(t *testing.T) {
+	r := require.New(t)
+	fx := newWorkerFixture(t)
+	raw := buildSyntheticTIFFWithPreview(t)
+	path := "2024/n-" + uuid.NewString() + ".nef"
+	id := uuid.NewString()
+	m := media.Media{
+		ID:               id,
+		Owner:            fx.owner,
+		Type:             media.TypePhoto,
+		MimeType:         "image/x-nikon-nef",
+		Path:             path,
+		OriginalFilename: "x.nef",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Size:             int64(len(raw)),
+		Checksum:         uuid.NewString(),
+		ThumbStatus:      "pending",
+	}
+	r.NoError(fx.repo.Insert(context.Background(), m))
+	_, err := fx.store.Write(context.Background(), fx.owner, path, bytes.NewReader(raw))
+	r.NoError(err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+		WorkerConcurrency: 1,
+		PollInterval:      20 * time.Millisecond,
+		LeaseTimeout:      5 * time.Minute,
+	})
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	waitForStatus(t, fx.rw, id, "ready")
+
+	version := readThumbVersionFor(t, fx.rw, id)
+	key := thumb.ThumbKey(id, version, thumb.SizeGrid)
+	rc, err := fx.store.ReadRange(context.Background(), fx.owner, key, 0, -1)
+	r.NoError(err)
+	defer func() { _ = rc.Close() }()
+	bs, err := io.ReadAll(rc)
+	r.NoError(err)
+	r.Greater(len(bs), 100, "grid thumb empty for NEF source")
+
+	cancel()
+	<-done
 }
