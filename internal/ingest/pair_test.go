@@ -8,7 +8,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/wesm/fotobank/internal/ingest"
+	"github.com/wesm/fotobank/internal/owners"
 )
+
+// pairTestOwner is the fixed principal used by cand() helpers in this
+// file. Tests that don't exercise cross-owner behaviour share it.
+func pairTestOwner() owners.Principal {
+	return owners.Principal{Hub: "h", UserID: "u"}
+}
 
 func TestPairClassFromMime(t *testing.T) {
 	r := require.New(t)
@@ -31,6 +38,7 @@ func (a byID) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func cand(id, dir, base, mime string, current *string) ingest.PairCandidate {
 	return ingest.PairCandidate{
 		ID:                id,
+		Owner:             pairTestOwner(),
 		ImportSourcePath:  filepath.Join(dir, base),
 		Class:             ingest.PairClassFromMime(mime),
 		MimeType:          mime,
@@ -220,5 +228,36 @@ func TestPairComputeMissingPrimaryClearsExistingPair(t *testing.T) {
 	updates := ingest.Compute(rows)
 	r.Len(updates, 1)
 	r.Equal("s", updates[0].ID)
+	r.Nil(updates[0].PairedWithID)
+}
+
+func TestPairComputeDoesNotCrossOwners(t *testing.T) {
+	r := require.New(t)
+	ownerA := owners.Principal{Hub: "h", UserID: "uA"}
+	ownerB := owners.Principal{Hub: "h", UserID: "uB"}
+	rows := []ingest.PairCandidate{
+		{ID: "pA", Owner: ownerA, ImportSourcePath: "trip/IMG_1.JPG", Class: ingest.PairClassJPEG, MimeType: "image/jpeg"},
+		{ID: "sB", Owner: ownerB, ImportSourcePath: "trip/IMG_1.DNG", Class: ingest.PairClassRAW, MimeType: "image/x-adobe-dng"},
+	}
+	updates := ingest.Compute(rows)
+	// Different owners: sB must NOT pair to pA. Both stay nil → no
+	// updates emitted (Compute suppresses no-op nil → nil).
+	r.Empty(updates)
+}
+
+func TestPairComputeClearsStaleJPEGPairedWithID(t *testing.T) {
+	r := require.New(t)
+	other := "p-other"
+	rows := []ingest.PairCandidate{
+		// JPEG with a non-NULL paired_with_id — schema doesn't
+		// forbid it, but a JPEG is always a primary so it must
+		// desire NULL after a full recompute.
+		{ID: "p", Owner: pairTestOwner(), ImportSourcePath: "trip/IMG_1.JPG",
+			Class: ingest.PairClassJPEG, MimeType: "image/jpeg",
+			CurrentPairedWith: &other},
+	}
+	updates := ingest.Compute(rows)
+	r.Len(updates, 1)
+	r.Equal("p", updates[0].ID)
 	r.Nil(updates[0].PairedWithID)
 }

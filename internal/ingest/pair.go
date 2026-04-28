@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/wesm/fotobank/internal/owners"
 )
 
 // PairClass enumerates the pairing role of a row's mime type.
@@ -42,8 +44,14 @@ func PairClassFromMime(mime string) PairClass {
 // PairCandidate is the input row for Compute. The pairing pass
 // projects media rows down to this minimal shape so the pure
 // function has no dependency on internal/media.
+//
+// Owner is part of the bucket key so a buggy caller passing rows
+// for multiple principals can never emit cross-owner pair updates;
+// production callers (importer, CLI backfill) already invoke Compute
+// per-principal but the function defends against future misuse.
 type PairCandidate struct {
 	ID               string
+	Owner            owners.Principal
 	ImportSourcePath string
 	Class            PairClass
 	MimeType         string
@@ -71,8 +79,10 @@ type PairUpdate struct {
 // observe a stable order regardless of iteration nondeterminism.
 func Compute(rows []PairCandidate) []PairUpdate {
 	type bucketKey struct {
-		dir  string
-		stem string
+		ownerHub    string
+		ownerUserID string
+		dir         string
+		stem        string
 	}
 	type bucket struct {
 		jpegs []PairCandidate
@@ -92,7 +102,12 @@ func Compute(rows []PairCandidate) []PairUpdate {
 			filepath.Ext(row.ImportSourcePath),
 		))
 		stem = norm.NFC.String(stem)
-		k := bucketKey{dir: dir, stem: stem}
+		k := bucketKey{
+			ownerHub:    row.Owner.Hub,
+			ownerUserID: row.Owner.UserID,
+			dir:         dir,
+			stem:        stem,
+		}
 		b := buckets[k]
 		if b == nil {
 			b = &bucket{}
@@ -106,24 +121,28 @@ func Compute(rows []PairCandidate) []PairUpdate {
 		}
 	}
 
+	// Initialize: every covered (non-empty path, JPEG or RAW) row
+	// desires nil. JPEGs are always primaries so they keep that nil;
+	// RAWs only override below when their bucket has exactly one JPEG.
+	// Initializing JPEGs ensures a stale paired_with_id on a JPEG (a
+	// row that should always be a primary) is cleared on a full
+	// recompute.
 	desired := make(map[string]*string, len(rows))
+	for _, row := range rows {
+		if row.ImportSourcePath == "" {
+			continue
+		}
+		if row.Class != PairClassJPEG && row.Class != PairClassRAW {
+			continue
+		}
+		desired[row.ID] = nil
+	}
 	for _, b := range buckets {
-		switch len(b.jpegs) {
-		case 0:
-			// No JPEG primary in the bucket — RAWs stay unpaired.
-			for _, raw := range b.raws {
-				desired[raw.ID] = nil
-			}
-		case 1:
+		if len(b.jpegs) == 1 {
 			primaryID := b.jpegs[0].ID
 			for _, raw := range b.raws {
 				p := primaryID
 				desired[raw.ID] = &p
-			}
-		default:
-			// Ambiguous: multiple JPEGs share a stem. RAWs forced to NULL.
-			for _, raw := range b.raws {
-				desired[raw.ID] = nil
 			}
 		}
 	}

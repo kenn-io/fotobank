@@ -280,6 +280,7 @@ func buildPairCandidates(rows []media.Media, sinceTime *time.Time) ([]ingest.Pai
 		processed++
 		candidates = append(candidates, ingest.PairCandidate{
 			ID:                m.ID,
+			Owner:             m.Owner,
 			ImportSourcePath:  m.ImportSourcePath,
 			Class:             ingest.PairClassFromMime(m.MimeType),
 			MimeType:          m.MimeType,

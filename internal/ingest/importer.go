@@ -206,6 +206,7 @@ func (imp *Importer) runPairingPass(
 		seen[m.ID] = struct{}{}
 		candidates = append(candidates, PairCandidate{
 			ID:                m.ID,
+			Owner:             m.Owner,
 			ImportSourcePath:  m.ImportSourcePath,
 			Class:             PairClassFromMime(m.MimeType),
 			MimeType:          m.MimeType,
