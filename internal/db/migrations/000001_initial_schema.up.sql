@@ -49,6 +49,16 @@ CREATE TABLE media (
     gps_at            TIMESTAMP,
     location_label    TEXT,
 
+    -- F2.2 RAW + JPEG pairing.
+    -- Root-relative original path captured at import time; substrate
+    -- for pair detection.
+    import_source_path TEXT NOT NULL DEFAULT '',
+    -- FK to JPEG primary; NULL on primaries and standalones.
+    -- ON DELETE SET NULL is the referential-integrity floor; the
+    -- service layer (§8.7) blocks user-facing deletes when sidecars
+    -- exist.
+    paired_with_id     UUID REFERENCES media(id) ON DELETE SET NULL,
+
     thumb_status      TEXT NOT NULL CHECK (
         thumb_status IN ('pending', 'working', 'ready', 'no_preview', 'failed')
     ),
@@ -58,7 +68,8 @@ CREATE TABLE media (
 
     FOREIGN KEY (owner_hub, owner_user_id) REFERENCES owners(hub, user_id),
     UNIQUE (owner_hub, owner_user_id, checksum),
-    UNIQUE (owner_hub, owner_user_id, path)
+    UNIQUE (owner_hub, owner_user_id, path),
+    CHECK (paired_with_id IS NULL OR paired_with_id <> id)
 );
 
 CREATE INDEX media_owner_timestamp_idx ON media(owner_hub, owner_user_id, timestamp DESC);
@@ -68,6 +79,40 @@ CREATE INDEX media_thumb_pending_idx   ON media(thumb_status, thumb_claimed_at)
 CREATE INDEX media_owner_geo_idx
     ON media(owner_hub, owner_user_id, latitude, longitude)
     WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
+CREATE INDEX media_owner_import_source_path_idx
+    ON media(owner_hub, owner_user_id, import_source_path);
+
+-- Owner-consistency triggers on paired_with_id. Mirrors the
+-- album_media_owner_consistency_* pair below; defence in depth even
+-- though the service-layer pairing pass restricts candidates to one
+-- owner per (owner, directory) group.
+CREATE TRIGGER media_paired_with_owner_consistency_insert
+BEFORE INSERT ON media
+FOR EACH ROW
+WHEN NEW.paired_with_id IS NOT NULL
+BEGIN
+    SELECT CASE
+        WHEN (SELECT owner_hub FROM media WHERE id = NEW.paired_with_id)
+                 != NEW.owner_hub
+          OR (SELECT owner_user_id FROM media WHERE id = NEW.paired_with_id)
+                 != NEW.owner_user_id
+        THEN RAISE(ABORT, 'sidecar and primary must share owner')
+    END;
+END;
+
+CREATE TRIGGER media_paired_with_owner_consistency_update
+BEFORE UPDATE OF paired_with_id, owner_hub, owner_user_id ON media
+FOR EACH ROW
+WHEN NEW.paired_with_id IS NOT NULL
+BEGIN
+    SELECT CASE
+        WHEN (SELECT owner_hub FROM media WHERE id = NEW.paired_with_id)
+                 != NEW.owner_hub
+          OR (SELECT owner_user_id FROM media WHERE id = NEW.paired_with_id)
+                 != NEW.owner_user_id
+        THEN RAISE(ABORT, 'sidecar and primary must share owner')
+    END;
+END;
 
 -- Albums.
 CREATE TABLE albums (
