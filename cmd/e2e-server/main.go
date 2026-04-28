@@ -86,9 +86,9 @@ admin_listen = "127.0.0.1:0"
 	return nil
 }
 
-// seedFixtures inserts an owner row and two media rows with deterministic
+// seedFixtures inserts an owner row and four media rows with deterministic
 // IDs. The IDs are referenced verbatim by the Playwright MediaDetail GPS
-// tests in frontend/tests/e2e/library.spec.ts.
+// tests and the F2.2 sidecar tests in frontend/tests/e2e/library.spec.ts.
 func seedFixtures(dbPath string) error {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		return fmt.Errorf("create db dir: %w", err)

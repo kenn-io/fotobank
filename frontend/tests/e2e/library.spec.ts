@@ -151,8 +151,19 @@ test("MediaDetail primary shows Files row when sidecars exist", async ({ page })
   // cmd/e2e-server. The detail handler embeds the sidecar row under
   // the primary's `sidecars` field, which MediaDetail.svelte renders
   // as a Files dl row with one anchor per file (primary + each sidecar).
+  // The list endpoint does NOT embed sidecars, so if MediaStore.loadInitial()
+  // wins the race against MediaDetail's $effect, the primary lands in the
+  // store with sidecars=undefined and the detail fetch is skipped, leaving
+  // no Files row. Wait for the /api/v1/media/<id> response before asserting.
+  const detailResponse = page.waitForResponse(
+    (resp) =>
+      resp.url().endsWith("/api/v1/media/pair-fixture-primary") &&
+      resp.status() === 200,
+    { timeout: 5_000 },
+  );
   await page.goto("/media/pair-fixture-primary");
   await expect(page.getByText("fotobank")).toBeVisible();
+  await (await detailResponse).finished();
   await expect(page.getByText("Files")).toBeVisible();
   await expect(page.getByRole("link", { name: "IMG_1.JPG" })).toBeVisible();
   await expect(page.getByRole("link", { name: "IMG_1.DNG" })).toBeVisible();
