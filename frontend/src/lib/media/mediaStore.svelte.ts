@@ -11,7 +11,11 @@ export type Media = {
   longitude?: number;
   gps_at?: string;
   location_label?: string;
-  // F2.2 RAW + JPEG pairing.
+  // F2.2 RAW + JPEG pairing. original_filename and size are surfaced
+  // in MediaDetail's primary Files row and sidecar direct page; both
+  // are populated by the backend MediaDTO on every response.
+  original_filename?: string;
+  size?: number;
   paired_with_id?: string;
   paired_with?: { id: string; original_filename: string };
   sidecars?: Media[];
@@ -98,6 +102,7 @@ export class MediaStore {
       keyof Media,
       | "id" | "timestamp" | "taken" | "aspect" | "thumbUrl"
       | "thumbVersion" | "latitude" | "longitude" | "gps_at" | "location_label"
+      | "original_filename" | "size"
       | "paired_with_id" | "paired_with" | "sidecars"
     >;
     type _AssertNoUncoveredFields = _IdentityFieldsCovered extends never ? true : never;
@@ -141,6 +146,8 @@ export class MediaStore {
         && existing.longitude === it.longitude
         && existing.gps_at === it.gps_at
         && existing.location_label === it.location_label
+        && existing.original_filename === it.original_filename
+        && existing.size === it.size
         && (existing.paired_with_id ?? null) === (it.paired_with_id ?? null)
         && (existing.paired_with?.id ?? null) === (it.paired_with?.id ?? null)
         && sidecarIdsEqual(existing.sidecars, it.sidecars);
@@ -219,6 +226,8 @@ export function toMedia(raw: Record<string, unknown>): Media | null {
   if (typeof raw["longitude"] === "number") m.longitude = raw["longitude"];
   if (typeof raw["gps_at"] === "string") m.gps_at = raw["gps_at"];
   if (typeof raw["location_label"] === "string") m.location_label = raw["location_label"];
+  if (typeof raw["original_filename"] === "string") m.original_filename = raw["original_filename"];
+  if (typeof raw["size"] === "number" && Number.isFinite(raw["size"])) m.size = raw["size"];
   if (typeof raw["paired_with_id"] === "string") m.paired_with_id = raw["paired_with_id"];
   const pw = raw["paired_with"];
   if (pw !== null && typeof pw === "object") {
