@@ -171,3 +171,54 @@ func TestPairComputeNFCNormalizesDirectory(t *testing.T) {
 	r.NotNil(updates[0].PairedWithID)
 	r.Equal("p", *updates[0].PairedWithID)
 }
+
+func TestPairComputeMultipleStemsInSameDir(t *testing.T) {
+	r := require.New(t)
+	rows := []ingest.PairCandidate{
+		cand("p1", "trip", "IMG_1.JPG", "image/jpeg", nil),
+		cand("s1", "trip", "IMG_1.DNG", "image/x-adobe-dng", nil),
+		cand("p2", "trip", "IMG_2.JPG", "image/jpeg", nil),
+		cand("s2", "trip", "IMG_2.DNG", "image/x-adobe-dng", nil),
+	}
+	updates := ingest.Compute(rows)
+	sort.Sort(byID(updates))
+	r.Len(updates, 2)
+	r.Equal("s1", updates[0].ID)
+	r.NotNil(updates[0].PairedWithID)
+	r.Equal("p1", *updates[0].PairedWithID)
+	r.Equal("s2", updates[1].ID)
+	r.NotNil(updates[1].PairedWithID)
+	r.Equal("p2", *updates[1].PairedWithID)
+}
+
+func TestPairComputeSameStemDifferentDirsDoNotCrossPair(t *testing.T) {
+	r := require.New(t)
+	rows := []ingest.PairCandidate{
+		cand("pA", "tripA", "IMG_1.JPG", "image/jpeg", nil),
+		cand("sA", "tripA", "IMG_1.DNG", "image/x-adobe-dng", nil),
+		cand("pB", "tripB", "IMG_1.JPG", "image/jpeg", nil),
+		cand("sB", "tripB", "IMG_1.DNG", "image/x-adobe-dng", nil),
+	}
+	updates := ingest.Compute(rows)
+	sort.Sort(byID(updates))
+	r.Len(updates, 2)
+	r.Equal("sA", updates[0].ID)
+	r.Equal("pA", *updates[0].PairedWithID)
+	r.Equal("sB", updates[1].ID)
+	r.Equal("pB", *updates[1].PairedWithID)
+}
+
+func TestPairComputeMissingPrimaryClearsExistingPair(t *testing.T) {
+	r := require.New(t)
+	stalePrimary := "p-gone"
+	rows := []ingest.PairCandidate{
+		// Primary "p-gone" is not in the candidate set (e.g., deleted
+		// or out of scope for this slice). The RAW points at it.
+		// Compute must clear that pair since the bucket has 0 JPEGs.
+		cand("s", "trip", "IMG_1.DNG", "image/x-adobe-dng", &stalePrimary),
+	}
+	updates := ingest.Compute(rows)
+	r.Len(updates, 1)
+	r.Equal("s", updates[0].ID)
+	r.Nil(updates[0].PairedWithID)
+}
