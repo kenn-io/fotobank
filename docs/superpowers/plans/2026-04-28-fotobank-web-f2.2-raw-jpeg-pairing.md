@@ -134,22 +134,25 @@ Edit `internal/db/migrations/000001_initial_schema.up.sql` between the existing 
     paired_with_id     UUID REFERENCES media(id) ON DELETE SET NULL,
 ```
 
-Add a self-reference CHECK in the table-level constraint block (after the existing UNIQUE constraints, before the closing `)` of the `CREATE TABLE media` statement):
+Add a self-reference CHECK in the table-level constraint block as the last constraint before the closing `)` of the `CREATE TABLE media` statement (no trailing comma — it's the last item):
 
 ```sql
-    CHECK (paired_with_id IS NULL OR paired_with_id <> id),
+    CHECK (paired_with_id IS NULL OR paired_with_id <> id)
 ```
 
-- [ ] **Step 2: Add the `media_owner_import_source_path_idx` index**
+- [ ] **Step 2: Add the `media_owner_import_source_path_idx` and `media_paired_with_id_idx` indexes**
 
 Append after the existing `media_owner_geo_idx` (currently at line 70):
 
 ```sql
 CREATE INDEX media_owner_import_source_path_idx
     ON media(owner_hub, owner_user_id, import_source_path);
+-- Sidecar lookup index: GetSidecars / DTO embed path scans by FK.
+CREATE INDEX media_paired_with_id_idx
+    ON media(paired_with_id) WHERE paired_with_id IS NOT NULL;
 ```
 
-- [ ] **Step 3: Add the owner-consistency trigger pair**
+- [ ] **Step 3: Add the owner-consistency triggers (insert, update, primary-update)**
 
 Append after the new index, before the next `CREATE TABLE` (`albums`):
 
@@ -184,6 +187,20 @@ BEGIN
                  != NEW.owner_user_id
         THEN RAISE(ABORT, 'sidecar and primary must share owner')
     END;
+END;
+
+-- Inverse trigger: rejects owner changes on a primary that has
+-- sidecars referencing it. Without this, the two earlier triggers
+-- (which gate the sidecar side via WHEN NEW.paired_with_id IS NOT
+-- NULL) would let a primary-side owner update silently break the
+-- pair invariant.
+CREATE TRIGGER media_paired_with_owner_consistency_primary_update
+BEFORE UPDATE OF owner_hub, owner_user_id ON media
+FOR EACH ROW
+WHEN (NEW.owner_hub != OLD.owner_hub OR NEW.owner_user_id != OLD.owner_user_id)
+     AND EXISTS (SELECT 1 FROM media WHERE paired_with_id = NEW.id)
+BEGIN
+    SELECT RAISE(ABORT, 'cannot change primary owner while sidecars reference it');
 END;
 ```
 
@@ -598,12 +615,14 @@ WHERE owner_hub = ? AND owner_user_id = ?
 Then in the loop, before `out = append(out, m)`:
 
 ```go
-if !dirSet[filepath.Dir(m.ImportSourcePath)] {
+if !dirSet[norm.NFC.String(filepath.Dir(m.ImportSourcePath))] {
     continue
 }
 ```
 
-with `dirSet := make(map[string]bool, len(dirs)); for _, d := range dirs { dirSet[d] = true }`. The constant `mediaProjection` is the existing column list used by other read methods (search the file).
+with `dirSet := make(map[string]bool, len(dirs)); for _, d := range dirs { dirSet[norm.NFC.String(d)] = true }`. The constant `mediaProjection` is the existing column list used by other read methods (search the file).
+
+NFC-normalize on both sides of the comparison: the caller may pass NFC-normalized dirs (the importer pass does — see Task 8) but a row written before that normalization existed (or by a non-importer path) might have stored NFD. Without normalization on the row side, a JPEG imported with NFC path text would not match an existing RAW stored with an equivalent NFD directory.
 
 Pick the Go-filter path for portability.
 
@@ -983,11 +1002,11 @@ func TestPairComputeAmbiguousTwoJPEGsLeaveRAWUnpaired(t *testing.T) {
 		cand("s", "trip", "IMG_1.DNG", "image/x-adobe-dng", nil),
 	}
 	updates := ingest.Compute(rows)
-	// JPEGs unchanged (they can't pair to each other). RAW must be
-	// emitted as PairedWithID = nil so any pre-existing pair is cleared.
-	r.Len(updates, 1)
-	r.Equal("s", updates[0].ID)
-	r.Nil(updates[0].PairedWithID)
+	// All three rows are already nil; an ambiguous group with no
+	// existing pairings is a no-op (Compute suppresses nil → nil
+	// updates via pairEqual). The clearing-from-existing-pair case
+	// is covered by TestPairComputeAmbiguityFlipsExistingPairToNull.
+	r.Empty(updates)
 }
 
 func TestPairComputeAmbiguityFlipsExistingPairToNull(t *testing.T) {
@@ -1272,12 +1291,15 @@ func (imp *Importer) runPairingPass(
 		}
 		imported = append(imported, m)
 	}
+	// Directory keys are NFC-normalized on both sides so a JPEG with
+	// NFC path text pairs with an existing RAW stored as NFD (and
+	// vice versa). ListByOwnerDirectories normalizes the row side.
 	dirSet := make(map[string]bool)
 	for _, m := range imported {
 		if m.ImportSourcePath == "" {
 			continue
 		}
-		dirSet[filepath.Dir(m.ImportSourcePath)] = true
+		dirSet[norm.NFC.String(filepath.Dir(m.ImportSourcePath))] = true
 	}
 	dirs := make([]string, 0, len(dirSet))
 	for d := range dirSet {
@@ -2655,11 +2677,11 @@ WHERE m.id IN (SELECT media_id FROM resolved_set)
 Change to:
 
 ```sql
-WHERE m.id IN (SELECT media_id FROM resolved_set)
-   OR m.paired_with_id IN (SELECT media_id FROM resolved_set)
+WHERE (m.id IN (SELECT media_id FROM resolved_set)
+       OR m.paired_with_id IN (SELECT media_id FROM resolved_set))
 ```
 
-The `resolved_set` is whatever CTE or subquery the function builds; preserve its identity, just OR the new condition.
+The `resolved_set` is whatever CTE or subquery the function builds; preserve its identity, just OR the new condition. The outer parentheses are required: the existing WHERE may have other AND-joined predicates (grantee filter, requested-id filter, owner scope) and SQL precedence makes `AND` bind tighter than `OR`. Without the wrap, the sidecar branch would short-circuit those filters and let cross-grantee or out-of-scope rows leak through.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
