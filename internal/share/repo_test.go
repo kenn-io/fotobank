@@ -1677,3 +1677,188 @@ func TestExpandScopeAlbumLiveTieBreakMediaIDDesc(t *testing.T) {
 	r.NoError(err)
 	r.Equal([]string{high, low}, exp.MediaIDs, "media_id DESC tie-break matches album.Repo.ListMedia default")
 }
+
+// seedMediaWithPath inserts a media row owned by p at the given path
+// and extension, returning its ID. The path's extension governs the
+// MIME type (".jpg" → image/jpeg, ".dng" → image/x-adobe-dng) so the
+// row mirrors what the importer would create for sidecar tests.
+func seedMediaWithPath(t *testing.T, rw *sql.DB, p owners.Principal, path, mime, checksum string) string {
+	t.Helper()
+	repo := media.NewRepo(rw, rw)
+	m := media.Media{
+		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
+		MimeType:         mime,
+		Path:             path,
+		OriginalFilename: "x",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Size:             100,
+		Checksum:         checksum,
+		ThumbStatus:      "pending",
+	}
+	require.NoError(t, repo.Insert(context.Background(), m))
+	return m.ID
+}
+
+// pairSidecar links sidecarID's paired_with_id to primaryID via the
+// media repo's UpdatePairedWithID, the same path the importer's
+// post-barrier pairing pass uses.
+func pairSidecar(t *testing.T, rw *sql.DB, sidecarID, primaryID string) {
+	t.Helper()
+	repo := media.NewRepo(rw, rw)
+	require.NoError(t, repo.UpdatePairedWithID(context.Background(), sidecarID, &primaryID))
+}
+
+// TestCoverMediaByScopesIncludesSidecars verifies that a recipient
+// holding scope on a JPEG primary is also authorised against the
+// paired DNG sidecar, even though the scope's scope_media row only
+// names the primary. Without the OR-paired_with_id branch, the
+// recipient would see "this is a sidecar" and be denied.
+func TestCoverMediaByScopesIncludesSidecars(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	primary := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.jpg", "image/jpeg", "cs-pri")
+	sidecar := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.dng", "image/x-adobe-dng", "cs-sid")
+	pairSidecar(t, d.WriteDB(), sidecar, primary)
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, primary)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+	r.NotEmpty(resolved.Validated)
+
+	// Direct primary ID — covered by the existing scope_media row.
+	dec, err := repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, primary)
+	r.NoError(err)
+	r.True(dec.Authorized, "primary must be covered by a media_set scope on it")
+	r.Len(dec.Paths, 1)
+	r.Equal(s.UUID, dec.Paths[0].ScopeUUID)
+
+	// Sidecar ID — covered transitively because its primary is in scope.
+	dec, err = repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, sidecar)
+	r.NoError(err)
+	r.True(dec.Authorized, "sidecar must be covered when its primary is in scope")
+	r.Len(dec.Paths, 1)
+	r.Equal(s.UUID, dec.Paths[0].ScopeUUID)
+}
+
+// TestCoverMediaByScopesAlbumLiveCoversSidecars verifies the same
+// transitive-coverage rule for album_live scopes: a JPEG that is a
+// member of a shared album implies the recipient can also fetch the
+// paired DNG, even though album_media references primaries only.
+func TestCoverMediaByScopesAlbumLiveCoversSidecars(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	albumID := seedAlbum(t, d.WriteDB(), alice)
+	primary := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.jpg", "image/jpeg", "al-pri")
+	sidecar := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.dng", "image/x-adobe-dng", "al-sid")
+	pairSidecar(t, d.WriteDB(), sidecar, primary)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO album_media(album_id, media_id, added_at) VALUES(?,?,?)`,
+		albumID, primary, time.Now().UTC())
+	r.NoError(err)
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	// Direct primary ID — covered by the album_media row.
+	dec, err := repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, primary)
+	r.NoError(err)
+	r.True(dec.Authorized)
+
+	// Sidecar ID — covered transitively because its primary is an
+	// album_media row.
+	dec, err = repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, sidecar)
+	r.NoError(err)
+	r.True(dec.Authorized, "sidecar must be covered when its primary is in the shared album")
+}
+
+// TestCoverMediaByScopesPrimaryOnlyScopeStillExcludesNonScoped guards
+// against the OR-clause leaking access to primaries that are not in
+// any covering scope. Adding the sidecar branch must not alter the
+// primary-only path's behavior.
+func TestCoverMediaByScopesPrimaryOnlyScopeStillExcludesNonScoped(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	a := seedMediaWithPath(t, d.WriteDB(), alice, "2024/a.jpg", "image/jpeg", "cs-a")
+	b := seedMediaWithPath(t, d.WriteDB(), alice, "2024/b.jpg", "image/jpeg", "cs-b")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, a)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	// Recipient asks for b — not in scope and not a sidecar of any
+	// covered primary — must NOT be covered.
+	dec, err := repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, b)
+	r.NoError(err)
+	r.False(dec.Authorized, "primary outside the scope must remain uncovered")
+	r.Empty(dec.Paths)
+}
+
+// TestListSharedMediaIDsExcludesSidecars locks in the spec's
+// shared-grid invariant: ListSharedMediaIDs returns primaries only.
+// The sidecar-coverage rule lives in CoverMediaByScopes (per-id auth),
+// not in the listing query — sidecars are downloadable attachments,
+// not grid rows.
+func TestListSharedMediaIDsExcludesSidecars(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	primary := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.jpg", "image/jpeg", "ls-pri")
+	sidecar := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.dng", "image/x-adobe-dng", "ls-sid")
+	pairSidecar(t, d.WriteDB(), sidecar, primary)
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, primary)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	rows, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rows, 1, "shared-grid lists primaries only")
+	r.Equal(primary, rows[0].MediaID)
+}

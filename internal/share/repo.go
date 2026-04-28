@@ -578,6 +578,14 @@ func (r *Repo) ValidateHeaderScopes(
 // covering scope. The retained-owner predicate on scopes.owner_hub /
 // owner_user_id is a belt-and-braces guard so a bug in the Go-side
 // degradation cannot leak a dropped-owner scope through the DB layer.
+//
+// Sidecar transitive coverage (F2.2 §8.2): a request for a sidecar's
+// id is also authorised when the sidecar's paired primary is itself
+// covered. The query expresses this by matching scope_media.media_id /
+// album_media.media_id against either the requested mediaID directly
+// or its primary (looked up via media.paired_with_id). Listing-side
+// queries (ListSharedMediaIDs) deliberately keep their primary-only
+// behavior — sidecars are downloadable attachments, not grid rows.
 func (r *Repo) CoverMediaByScopes(
 	ctx context.Context,
 	validated []Scope,
@@ -588,7 +596,7 @@ func (r *Repo) CoverMediaByScopes(
 		return AccessDecision{}, nil
 	}
 	valRows := make([]string, 0, len(validated))
-	args := make([]any, 0, len(validated)*4+4)
+	args := make([]any, 0, len(validated)*4+6)
 	for _, s := range validated {
 		valRows = append(valRows, "(?, ?, ?, ?)")
 		var albumID any
@@ -597,8 +605,22 @@ func (r *Repo) CoverMediaByScopes(
 		}
 		args = append(args, s.UUID, string(s.TargetType), albumID, boolToInt(s.AllowDownload))
 	}
-	args = append(args, owner.Hub, owner.UserID, mediaID, mediaID)
+	// Six placeholders: owner.Hub, owner.UserID, then mediaID twice in
+	// the media_set EXISTS (once for direct id, once as the lookup key
+	// for paired_with_id), then mediaID twice again in the album_live
+	// EXISTS.
+	args = append(args,
+		owner.Hub, owner.UserID,
+		mediaID, mediaID,
+		mediaID, mediaID,
+	)
 
+	// The OR-paired_with_id branch is wrapped together with the direct
+	// id match inside each EXISTS so the surrounding AND-joined
+	// predicates (owner filter, target_type/target_album_id pinning)
+	// continue to bind. SQL precedence makes AND tighter than OR; the
+	// inner parentheses prevent the sidecar branch from short-circuiting
+	// the outer guards.
 	q := `
 WITH validated(uuid, target_type, target_album_id, allow_download) AS (
     VALUES ` + strings.Join(valRows, ",") + `
@@ -610,11 +632,15 @@ SELECT v.uuid, v.target_album_id, v.allow_download
    AND (
          (v.target_type = 'media_set' AND EXISTS (
              SELECT 1 FROM scope_media sm
-              WHERE sm.scope_uuid = v.uuid AND sm.media_id = ?
+              WHERE sm.scope_uuid = v.uuid
+                AND (sm.media_id = ?
+                     OR sm.media_id = (SELECT paired_with_id FROM media WHERE id = ?))
          ))
       OR (v.target_type = 'album_live' AND EXISTS (
              SELECT 1 FROM album_media am
-              WHERE am.album_id = v.target_album_id AND am.media_id = ?
+              WHERE am.album_id = v.target_album_id
+                AND (am.media_id = ?
+                     OR am.media_id = (SELECT paired_with_id FROM media WHERE id = ?))
          ))
        )
 `
