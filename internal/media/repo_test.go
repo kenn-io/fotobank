@@ -822,6 +822,33 @@ func TestRepoListByOwnerDirectories(t *testing.T) {
 	r.Empty(rows)
 }
 
+func TestRepoListByOwnerDirectoriesMatchesAcrossNFCNFD(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-a")
+
+	// Construct NFC vs NFD at byte level so the literal isn't
+	// re-normalized by an editor or the source file's encoding pass.
+	dirNFC := "caf" + "é"  // é precomposed (4 codepoints)
+	dirNFD := "cafe" + "́" // e + combining acute (5 codepoints)
+	r.NotEqual(dirNFC, dirNFD, "test fixture must encode NFC vs NFD as distinct bytes")
+
+	// Stored row uses NFD; caller passes NFC.
+	row := baseMedia(uuid.NewString(), p)
+	row.Path = "2024/a.jpg"
+	row.Checksum = "cs-nfd"
+	row.ImportSourcePath = dirNFD + "/IMG_1.JPG"
+	r.NoError(repo.Insert(ctx, row))
+
+	rows, err := repo.ListByOwnerDirectories(ctx, p, []string{dirNFC})
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.Equal(row.ID, rows[0].ID)
+}
+
 func TestRepoUpdatePairedWithIDRoundTrips(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/owners"
 )
@@ -637,6 +639,10 @@ func pairedWithIDArg(p *string) any {
 // to fetch existing rows in directories touched by the just-imported
 // batch. Empty dirs returns nil. Rows with empty import_source_path
 // are excluded.
+//
+// Directory keys are NFC-normalized on both sides of the comparison
+// so a caller passing NFC dirs matches rows stored as NFD (e.g. macOS
+// filesystem-sourced paths) and vice versa.
 func (r *Repo) ListByOwnerDirectories(
 	ctx context.Context,
 	owner owners.Principal,
@@ -647,7 +653,7 @@ func (r *Repo) ListByOwnerDirectories(
 	}
 	dirSet := make(map[string]struct{}, len(dirs))
 	for _, d := range dirs {
-		dirSet[d] = struct{}{}
+		dirSet[norm.NFC.String(d)] = struct{}{}
 	}
 	q := mediaSelect + `
 WHERE owner_hub = ? AND owner_user_id = ?
@@ -663,7 +669,7 @@ WHERE owner_hub = ? AND owner_user_id = ?
 		if err != nil {
 			return nil, fmt.Errorf("scan media: %w", err)
 		}
-		if _, ok := dirSet[filepath.Dir(m.ImportSourcePath)]; !ok {
+		if _, ok := dirSet[norm.NFC.String(filepath.Dir(m.ImportSourcePath))]; !ok {
 			continue
 		}
 		out = append(out, m)
