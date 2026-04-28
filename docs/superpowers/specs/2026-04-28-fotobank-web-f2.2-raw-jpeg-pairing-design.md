@@ -19,7 +19,7 @@ Photographers commonly import directories containing both `IMG_1234.JPG` and a s
 - The JPEG's detail page lists the sidecar(s) and offers per-file downloads via `/api/v1/media/{id}/original`.
 - A direct visit to `/media/<raw-id>` renders a dedicated file-detail / download page with a banner-link back to the primary.
 
-New imports compute pairs at the end of each `ImportDirectory` run. Existing collections backfill via a new `fotobank pair backfill` CLI.
+New imports compute pairs at the end of each `ImportDirectory` run by examining both the just-imported batch and any existing rows that share the same `(owner, directory)` keys, so a JPEG imported today pairs with a RAW imported last week (and vice-versa). A `fotobank pair backfill` CLI runs the same pairing function across the whole library for verification or to recompute pairs after a future logic change. Pre-F2.2 dev rows have empty `import_source_path` and are not pairable; the expected operator action is to wipe the dev DB and re-import.
 
 The scope is deliberately narrow: hide-with-affordance, no stack abstraction, no manual pair / unpair, no library badging. The data model leaves room for richer features later.
 
@@ -44,7 +44,7 @@ The scope is deliberately narrow: hide-with-affordance, no stack abstraction, no
 
 Three subsystems cooperate:
 
-1. **Import pipeline** (`internal/ingest`). Workers continue to insert media rows with `thumb_status='pending'` per the existing flow. After the worker `WaitGroup` barrier in `ImportDirectory`, a single-threaded **pairing pass** scans the rows that landed during this run, computes pair relationships from `import_source_path`, and writes `paired_with_id` updates. The pass returns before `ImportDirectory` does.
+1. **Import pipeline** (`internal/ingest`). Workers continue to insert media rows with `thumb_status='pending'` per the existing flow. After the worker `WaitGroup` barrier in `ImportDirectory`, a single-threaded **pairing pass** computes the set of `(owner, directory)` keys touched by the just-imported batch, queries existing media rows in those directories (so a JPEG imported today pairs with a RAW imported last week, and vice-versa), computes pair relationships from `import_source_path`, and writes `paired_with_id` updates. The pass returns before `ImportDirectory` does.
 
 2. **Pair backfill CLI** (`internal/cli/pair.go`). `fotobank pair backfill` runs the same idempotent pairing function across the entire library (or a `--since` / `--owner` slice). Mirrors the F2.1 `gps backfill` command structure exactly.
 
@@ -99,15 +99,17 @@ CREATE INDEX media_owner_import_source_path_idx
     ON media(owner_hub, owner_user_id, import_source_path);
 ```
 
-Provenance / debug lookup. The pairing computation does NOT use this index — pair detection runs over an in-memory slice of just-imported rows (or per-owner slices during backfill), not via per-row SQL lookups. Adding the index pre-emptively wastes write cycles; revisit if backfill profiling shows it bottlenecked here.
+Used by the post-import pairing pass (§5.3) to fetch existing rows for the `(owner, directory)` groups touched by the just-imported batch — that's how a JPEG imported today pairs with a RAW imported last week without scanning the entire `media` table. Also a useful debug / provenance lookup. The CLI backfill (§5.4) uses an owner-scoped scan but benefits from the same index on large libraries.
 
 ### §4.4 Down file
 
-`000001_initial_schema.down.sql` adds matching `DROP COLUMN` and `DROP INDEX` statements in reverse order. SQLite ≥ 3.35 supports `ALTER TABLE … DROP COLUMN` (already required by existing F2.0/F2.1 down files).
+`000001_initial_schema.down.sql` is unchanged. It already drops `media`, `albums`, `album_media`, `scopes`, `scope_media`, etc. in reverse-creation order, which subsumes any column-level changes. Editing the up file in place — and leaving the down file as a full prior-state teardown — is the established pattern (F2.0 / F2.1 followed it for their schema additions).
 
 ### §4.5 No data migration
 
 The repo is pre-deploy; no users have rows. The schema change is squashed into the existing `000001_initial_schema` pair, same as F2.0 / F2.1 schema work. The implementation plan begins with the `FOTOBANK_MIGRATION_BASE_REF` env-var pre-flight (mirrors F2.1 Task 2's pattern) so the prek migration-history-check hook permits the in-place edit.
+
+Pre-F2.2 dev or test rows have empty `import_source_path` and are not pairable. The pairing pass and the CLI both skip rows with empty `import_source_path` (also documented in §11). The expected operator action is to wipe the dev DB and re-import the source directories so every row gets a non-empty `import_source_path`.
 
 ---
 
@@ -141,14 +143,18 @@ The library is honest about RAW-only rows: a user whose collection contains DNGs
 
 `internal/ingest/importer.go::ImportDirectory` currently fans out rows through `cfg.ConcurrentWorkers` goroutines. Each worker `Insert`s its row with `thumb_status='pending'`. The thumb worker (server-side) claims pending rows independently — F2.2 changes nothing about that path.
 
-After the worker `sync.WaitGroup` returns, a single goroutine runs the pairing pass over the import batch and writes `paired_with_id` updates before `ImportDirectory` returns. The pass:
+After the worker `sync.WaitGroup` returns, a single goroutine runs the pairing pass and writes `paired_with_id` updates before `ImportDirectory` returns. The pass MUST consider both the new batch and existing rows so a JPEG imported today pairs with a RAW imported last week (and vice-versa):
 
-1. Groups the just-imported rows by `(owner, dir(import_source_path))`.
-2. Within each group, separates JPEG-class from RAW-class rows by extension.
-3. For each JPEG-class row, finds RAW-class rows with the same case-insensitive stem; sets their `paired_with_id` via `UPDATE media SET paired_with_id = ? WHERE id = ?`.
-4. For each RAW-class row not yet paired, checks for ambiguous JPEG-class set and logs a `WARN` if so; otherwise leaves alone.
+1. Compute the distinct set of `(owner, dir(import_source_path))` keys touched by the just-imported batch.
+2. For each key, fetch the existing media rows in that `(owner, directory)` slice via `media_owner_import_source_path_idx`. The candidate set per key is the union of existing rows in that directory plus just-imported rows in the same key.
+3. Within each combined group, separate JPEG-class from RAW-class rows by extension.
+4. For each JPEG-class row, find RAW-class rows with the same case-insensitive stem; set their `paired_with_id` to the JPEG's id via `UPDATE media SET paired_with_id = ? WHERE id = ?`.
+5. For each RAW-class row in an ambiguous group (multiple JPEG-class siblings with the same stem), force `paired_with_id = NULL` and log a `WARN` event with the RAW's id and the candidate JPEG ids. This explicitly covers the case where the RAW was previously paired but a freshly-imported sibling JPEG just made the directory ambiguous.
+6. The pass touches `paired_with_id` only for rows in the candidate set. Rows in directories untouched by this batch are not re-evaluated.
 
 The pass holds no DB lock beyond per-statement transactions. Two parallel `ImportDirectory` invocations are blocked by the import file lock (`internal/ingest::Acquire`); the lock encloses both the worker phase and the pairing phase.
+
+Rows with empty `import_source_path` are skipped — they're either pre-F2.2 dev rows (re-import to recover) or a test-only injection path that bypasses ingest.
 
 ### §5.4 Detection — backfill CLI
 
@@ -164,11 +170,12 @@ The backfill CLI takes the same import file lock to serialize against in-flight 
 
 The pairing function MUST satisfy:
 
-- `pair(rows) == pair(pair(rows))` — running twice yields the same result.
-- `pair(rows ∪ {new_row}) ⊇ pair(rows)` on the unchanged subset — adding a row can only ADD pairings, never remove pre-existing correct ones.
-- Reordering input rows does not change the output.
+- `pair(rows) == pair(pair(rows))` — running twice on the same row set yields the same result. (idempotency)
+- Reordering input rows does not change the output. (commutativity)
 
-Tests in the implementation plan exercise all three properties.
+A monotonicity claim ("adding a row can only ADD pairings") would conflict with §5.2: adding a second JPEG with the same stem to a `(JPEG, RAW)` directory turns the RAW from paired to ambiguous-unpaired. The conservative ambiguity rule wins; a user disambiguates by renaming or pruning the duplicate JPEG.
+
+Tests in the implementation plan exercise both kept properties plus the JPEG-arrival-flips-RAW-from-paired-to-unpaired transition.
 
 ---
 
@@ -346,6 +353,8 @@ The `mediaStore.merge` identity-fields-covered guard adds the three new field na
 
 Albums reference primaries only. `album_media.media_id` is always a primary's id. When the user adds a JPEG to an album, the sidecar does not auto-join. The album view, when it later wants to surface RAW downloads, walks each member's `Sidecars` via the detail endpoint.
 
+`AlbumService.AddMedia` (`internal/service/album_service.go:178`) MUST reject media IDs whose row has a non-NULL `paired_with_id`. The per-ID pre-flight ownership loop at `internal/service/album_service.go:194-206` gains a sidecar check immediately after the existing owner check: if `m.PairedWithID != nil`, return `errs.ErrInvalidArgument` wrapped with a message that names the sidecar id and the directive `"albums reference primaries only"`. The HTTP layer maps `errs.ErrInvalidArgument` to 400 per `internal/httpapi/errors.go::Translate`, which is the right surface for "you sent the wrong kind of id". The Album AddMedia DTO documentation gains one line noting the new rejection class.
+
 ### §8.2 Sharing (Plan E)
 
 A share scope on a primary transitively grants access to its sidecars. A recipient hitting `/api/v1/shared/media/<raw-id>/original` succeeds iff the RAW's primary is in their accessible scope.
@@ -364,7 +373,7 @@ The implementation hangs off three named functions:
 
   Primary-only scopes continue to behave identically; the OR clause adds coverage for sidecars without changing existing semantics.
 
-- **`SharedReadService.GetMedia`, `OpenOriginal`, `OpenThumb`** (`internal/service/shared_read.go`) all funnel through `CheckMediaAccess` and inherit the fix automatically.
+- **`SharedReadService.GetMedia`, `OpenOriginal`, `OpenThumb`** (`internal/service/shared_read_service.go`) all funnel through `CheckMediaAccess` and inherit the fix automatically.
 
 - **`share.Repo.ListSharedMediaIDs`** keeps listing primaries only — sidecars are downloadable attachments, not shared-grid rows. The shared-grid view (recipient-side) shows the same images the owner-side library shows.
 
@@ -406,14 +415,15 @@ F2.2 ships the sentinel and the HTTP mapping. F2.2 does NOT ship a delete UI or 
 
 1. **`original_filename` semantics flip.** `buildMediaRow` currently writes `Candidate.Path` (absolute) here. Flipping to `filepath.Base` is safe per the audited callers, but the implementation plan must include one grep pass at change time to confirm no caller has appeared since this spec was written. Tests in `internal/media/repo_test.go` and `internal/cli/import_test.go` need fixture updates.
 
-2. **Post-import pairing pass adds latency.** The pass is single-threaded and runs after the worker barrier and before `ImportDirectory` returns. For a single import of N rows (all in the same directory), the pass does O(N²) extension/stem comparisons in memory, which is fine for typical batch sizes (hundreds to low thousands) but quadratic in pathological cases. Mitigation: group by directory first (O(N) bucket), then comparisons happen within each bucket only. Implementation must pre-bucket; tests should include a 10k-row synthetic batch to catch a regression.
+2. **Post-import pairing pass adds latency.** The pass is single-threaded and runs after the worker barrier and before `ImportDirectory` returns. Two cost contributors: (a) one indexed query per touched `(owner, directory)` key to fetch existing rows, (b) per-bucket O(N²) extension/stem comparisons in memory. (a) is bounded by the number of distinct directories in the batch and is cheap per query. (b) is fine for typical batch sizes (hundreds to low thousands per directory) but quadratic in pathological cases; the implementation must group by directory first (O(N) bucket) so comparisons happen within each bucket only. Tests should include a 10k-row synthetic batch (one directory) to catch a regression.
 
 3. **Plan E sharing cross-subsystem change.** `share.Repo.CoverMediaByScopes` is owner-side code that recipients depend on. The SQL extension to honor sidecar coverage must NOT regress existing behavior on primary-only scopes. Tests must exercise: (a) recipient with scope on a JPEG can fetch sidecar bytes, (b) recipient with no scope cannot fetch sidecar bytes, (c) `ListSharedMediaIDs` continues to return primaries only.
 
 4. **Idempotency of the pair pass.** The contract in §5.5 must be tested against:
-   - Run pair → run pair → assert no DB writes on the second run.
-   - Insert pre-paired row, run pair → assert pre-existing pair preserved.
-   - Reorder input slice, run pair → assert same output.
+   - Run pair → run pair → assert no DB writes on the second run. (idempotency)
+   - Reorder input slice, run pair → assert same output. (commutativity)
+   - Pre-existing `(JPEG, RAW)` pair → import a second JPEG with the same stem → run pair → assert RAW's `paired_with_id` is now NULL and a `WARN` was logged. (the explicitly non-monotonic transition from §5.5)
+   - Two separate imports landing JPEG and RAW in the same directory in either order → assert the late-arriving file pairs with the existing one. (bidirectional discovery)
 
 5. **Filesystem normalization edge case.** `import_source_path` is bytewise UTF-8 from the OS. Case-fold for stem comparison uses `strings.ToLower`; directory comparison is bytewise-equal. macOS may surface NFD-normalized filenames whereas Linux typically NFC; mixed-source collections could mis-match. Mitigation: the implementation normalizes paths with `unicode/norm.NFC` before comparison. Test fixture covers an NFD-normalized directory entry.
 
@@ -425,7 +435,6 @@ F2.2 ships the sentinel and the HTTP mapping. F2.2 does NOT ship a delete UI or 
 
 - **F1 / F2.0 / F2.1 shipped** — Plan A through F2.1 are on master.
 - **No new third-party packages.** Pure Go for pairing logic; no new frontend npm deps.
-- **modernc.org/sqlite ≥ 3.35** for `ALTER TABLE … DROP COLUMN` in the down file (already pinned).
 - **`unicode/norm` (golang.org/x/text/unicode/norm)** for NFC normalization in §9.5. Project already pulls in `golang.org/x/text` indirectly; if not direct, the implementation plan adds it.
 - **F2.4 (Hidden Privacy)** is downstream of F2.2 for the cascade behavior described in §8.4.
 - **F2.3 (Albums + Sharing)** is independent; can ship in parallel.
@@ -463,6 +472,8 @@ Exit codes:
 ```
 
 `--mode=full` is the only mode in v1. Documented as **idempotent recompute-only**: every covered row's `paired_with_id` is recomputed from scratch; existing values are overwritten with NULL if no pair, or with the discovered primary's id. No destructive arms. The flag is included for symmetry with `fotobank gps backfill --mode=full|fill-missing|relabel` and to leave room for a future `--mode=verify` (read-only check) without re-shaping the surface.
+
+Rows with empty `import_source_path` (pre-F2.2 dev/test rows or test-only injection paths) are skipped. The line counter that prints to stdout reports them as `unchanged`.
 
 ---
 
