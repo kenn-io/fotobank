@@ -143,5 +143,46 @@ func seedFixtures(dbPath string) error {
 	if err := repo.Insert(ctx, noGPSRow); err != nil {
 		return fmt.Errorf("seed no-gps fixture: %w", err)
 	}
+
+	// F2.2 RAW + JPEG pairing fixtures. The primary JPEG and a DNG
+	// sidecar pointing at it via paired_with_id; referenced by the
+	// Playwright tests that exercise the Files row, sidecar direct
+	// page, and library list filtering. Insert the primary first so
+	// the media_paired_with_owner_consistency_insert trigger can
+	// resolve the FK owner.
+	primaryRow := media.Media{
+		ID:               "pair-fixture-primary",
+		Owner:            owner,
+		Type:             media.TypePhoto,
+		MimeType:         "image/jpeg",
+		Path:             "pair-fixture-primary.jpg",
+		OriginalFilename: "IMG_1.JPG",
+		ImportedAt:       now,
+		Size:             1,
+		Checksum:         "checksum-pair-fixture-primary",
+		ImportSourcePath: "fixtures/IMG_1.JPG",
+		ThumbStatus:      "pending",
+	}
+	if err := repo.Insert(ctx, primaryRow); err != nil {
+		return fmt.Errorf("seed pair fixture primary: %w", err)
+	}
+	primaryID := primaryRow.ID
+	sidecarRow := media.Media{
+		ID:               "pair-fixture-sidecar",
+		Owner:            owner,
+		Type:             media.TypePhoto,
+		MimeType:         "image/x-adobe-dng",
+		Path:             "pair-fixture-sidecar.dng",
+		OriginalFilename: "IMG_1.DNG",
+		ImportedAt:       now,
+		Size:             1,
+		Checksum:         "checksum-pair-fixture-sidecar",
+		ImportSourcePath: "fixtures/IMG_1.DNG",
+		PairedWithID:     &primaryID,
+		ThumbStatus:      "pending",
+	}
+	if err := repo.Insert(ctx, sidecarRow); err != nil {
+		return fmt.Errorf("seed pair fixture sidecar: %w", err)
+	}
 	return nil
 }

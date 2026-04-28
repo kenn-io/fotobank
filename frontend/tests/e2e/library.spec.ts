@@ -145,3 +145,45 @@ test("MediaDetail hides location row when row has no GPS", async ({ page }) => {
   await expect(page.getByText(/loading…/i)).toHaveCount(0);
   await expect(page.getByText("Location")).not.toBeVisible();
 });
+
+test("MediaDetail primary shows Files row when sidecars exist", async ({ page }) => {
+  // pair-fixture-primary + pair-fixture-sidecar are seeded by
+  // cmd/e2e-server. The detail handler embeds the sidecar row under
+  // the primary's `sidecars` field, which MediaDetail.svelte renders
+  // as a Files dl row with one anchor per file (primary + each sidecar).
+  await page.goto("/media/pair-fixture-primary");
+  await expect(page.getByText("fotobank")).toBeVisible();
+  await expect(page.getByText("Files")).toBeVisible();
+  await expect(page.getByRole("link", { name: "IMG_1.JPG" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "IMG_1.DNG" })).toBeVisible();
+});
+
+test("MediaDetail sidecar direct page renders banner + download", async ({ page }) => {
+  // Sidecar branch: heading "RAW sidecar for <primary>" with a SPA
+  // link to the primary, plus a Download <filename> anchor at the
+  // bottom. The page intentionally does NOT render an <img> from the
+  // sidecar bytes — DNG isn't a browser-renderable format.
+  await page.goto("/media/pair-fixture-sidecar");
+  await expect(page.getByText("fotobank")).toBeVisible();
+  await expect(page.getByText(/RAW sidecar for/i)).toBeVisible();
+  await expect(page.getByRole("link", { name: "IMG_1.JPG" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /Download IMG_1\.DNG/i }),
+  ).toBeVisible();
+  // Sidecar direct page renders no <img> from the photo bytes;
+  // .media-detail scopes the assertion to the route content (the
+  // app shell has no <img>, but tighten the scope so a future header
+  // logo wouldn't make this assertion silently pass).
+  await expect(page.locator(".media-detail img")).toHaveCount(0);
+});
+
+test("Library list omits sidecars", async ({ page }) => {
+  // The list endpoint clamps include_sidecars=false at the service
+  // layer, so paired sidecars must not appear in the grid even when
+  // the primary does. MediaCell sets aria-label="Photo <id>" which
+  // gives a deterministic synchronous probe for both the positive
+  // and negative assertion.
+  await page.goto("/library");
+  await expect(page.getByLabel("Photo pair-fixture-primary")).toBeVisible();
+  await expect(page.getByLabel("Photo pair-fixture-sidecar")).toHaveCount(0);
+});
