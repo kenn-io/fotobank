@@ -12,6 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/wesm/fotobank/internal/cli"
+	"github.com/wesm/fotobank/internal/db"
+	"github.com/wesm/fotobank/internal/media"
+	"github.com/wesm/fotobank/internal/owners"
 )
 
 // fixtureDir mirrors the ingest_test helper: tests run from the package
@@ -144,4 +147,57 @@ listen_address = "127.0.0.1:8090"
 	code := cli.Run([]string{"import", "--config", cfgPath, src}, &out, &eout)
 	r.Equal(1, code)
 	r.Contains(eout.String(), "identity.mode = stub")
+}
+
+// TestImportWiresGeoResolverPopulatesLocationLabel covers the geo
+// wiring in cli/import.go: importing a GPS-bearing photo must result
+// in a non-empty LocationLabel on the persisted media row. Without
+// this test the wiring (NewImporter passing the gazetteer through)
+// could silently regress.
+func TestImportWiresGeoResolverPopulatesLocationLabel(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	nasRoot := filepath.Join(tmp, "nas")
+	r.NoError(os.MkdirAll(nasRoot, 0o700))
+
+	cfgPath := filepath.Join(tmp, "c.toml")
+	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
+[nas]
+root = %q
+[flash]
+root = %q
+[identity]
+mode = "stub"
+[identity.stub]
+hub = "local"
+user_id = "alice"
+storage_key = "sk"
+[imports]
+file_lock_path = %q
+`, nasRoot, filepath.Join(tmp, "flash"),
+		filepath.Join(tmp, "import.lock")), 0o600))
+
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_CONFIG", cfgPath)
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	src := seedImportSource(t, "photo-with-gps.jpg")
+
+	var out, eout bytes.Buffer
+	code := cli.RunContext(context.Background(),
+		[]string{"import", "--config", cfgPath, src}, &out, &eout)
+	r.Equal(0, code, "stderr=%s stdout=%s", eout.String(), out.String())
+	r.Contains(out.String(), "imported=1")
+
+	d, err := db.Open(dbPath)
+	r.NoError(err)
+	defer func() { _ = d.Close() }()
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	rows, err := repo.List(context.Background(), media.ListFilter{
+		Owner: owners.Principal{Hub: "local", UserID: "alice"},
+	})
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.NotEmpty(rows[0].LocationLabel,
+		"geo resolver wiring missing — LocationLabel was not populated")
 }
