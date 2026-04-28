@@ -90,6 +90,30 @@ func TestParseExifGPSCoordsValidation(t *testing.T) {
 			"GPSLongitude":    dms3Denom(2, 1, 21, 1, 80, 10),
 			"GPSLongitudeRef": strTag("E"),
 		}, true, 48.856_667, 2.352_222},
+		// Minutes >= 60 must be rejected. 88°120'0" would silently
+		// normalise to 90° otherwise; reject as malformed.
+		{"latitude minutes out of range", map[string]exif.ExifTag{
+			"GPSLatitude": dms3(88, 120, 0), "GPSLatitudeRef": strTag("N"),
+			"GPSLongitude": dms3(2, 21, 8), "GPSLongitudeRef": strTag("E"),
+		}, false, 0, 0},
+		// Seconds >= 60 must be rejected for the same reason.
+		{"latitude seconds out of range", map[string]exif.ExifTag{
+			"GPSLatitude": dms3(48, 51, 90), "GPSLatitudeRef": strTag("N"),
+			"GPSLongitude": dms3(2, 21, 8), "GPSLongitudeRef": strTag("E"),
+		}, false, 0, 0},
+		// Exactly-three rationals required: a 4-element value (some
+		// cameras pad with bearing or altitude) must be rejected, not
+		// silently truncated.
+		{"latitude four rationals", map[string]exif.ExifTag{
+			"GPSLatitude": exif.ExifTag{Value: []exifcommon.Rational{
+				{Numerator: 48, Denominator: 1},
+				{Numerator: 51, Denominator: 1},
+				{Numerator: 24, Denominator: 1},
+				{Numerator: 0, Denominator: 1},
+			}},
+			"GPSLatitudeRef": strTag("N"),
+			"GPSLongitude":   dms3(2, 21, 8), "GPSLongitudeRef": strTag("E"),
+		}, false, 0, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -140,6 +164,17 @@ func TestParseExifGPSTimestampValidation(t *testing.T) {
 			"GPSDateStamp": strTag("2024:06:15"),
 			"GPSTimeStamp": dms3Denom(14, 1, 30, 1, 220, 10),
 		}, true},
+		// Fractional hour must be rejected: 14.5 hours would be
+		// truncated to 14:00 silently otherwise.
+		{"fractional hour rejected", map[string]exif.ExifTag{
+			"GPSDateStamp": strTag("2024:06:15"),
+			"GPSTimeStamp": dms3Denom(29, 2, 30, 1, 22, 1),
+		}, false},
+		// Fractional minute must be rejected for the same reason.
+		{"fractional minute rejected", map[string]exif.ExifTag{
+			"GPSDateStamp": strTag("2024:06:15"),
+			"GPSTimeStamp": dms3Denom(14, 1, 61, 2, 22, 1),
+		}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

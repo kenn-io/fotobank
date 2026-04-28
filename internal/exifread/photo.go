@@ -150,16 +150,24 @@ func parseExifGPSCoords(by map[string]exif.ExifTag) (float64, float64, bool) {
 }
 
 // dmsRationals extracts a degrees/minutes/seconds triple. Returns ok=false
-// if the value is not three rationals or if any denominator is zero.
+// if the value is not exactly three rationals, if any denominator is
+// zero, or if minutes or seconds fall outside [0, 60). The min/sec bound
+// catches malformed inputs like 88°120'0" that would otherwise silently
+// normalise to a different valid-looking coordinate.
 func dmsRationals(t exif.ExifTag) ([3]exifcommon.Rational, bool) {
 	rs, ok := t.Value.([]exifcommon.Rational)
-	if !ok || len(rs) < 3 {
+	if !ok || len(rs) != 3 {
 		return [3]exifcommon.Rational{}, false
 	}
 	for i := range 3 {
 		if rs[i].Denominator == 0 {
 			return [3]exifcommon.Rational{}, false
 		}
+	}
+	min := float64(rs[1].Numerator) / float64(rs[1].Denominator)
+	sec := float64(rs[2].Numerator) / float64(rs[2].Denominator)
+	if min < 0 || min >= 60 || sec < 0 || sec >= 60 {
+		return [3]exifcommon.Rational{}, false
 	}
 	return [3]exifcommon.Rational{rs[0], rs[1], rs[2]}, true
 }
@@ -194,7 +202,9 @@ func dmsToDecimal(dms [3]exifcommon.Rational, ref string) float64 {
 // parseExifGPSTimestamp combines GPSDateStamp ("YYYY:MM:DD") and
 // GPSTimeStamp (rational triple, UTC) into a single time.Time. Returns
 // (zero, false) on any validation failure: missing tags, zero
-// denominators, or out-of-range hour/minute/second.
+// denominators, out-of-range hour/minute/second, or fractional
+// hour/minute (only fractional seconds are preserved as nanoseconds —
+// the EXIF spec specifies minutes and hours as whole numbers).
 func parseExifGPSTimestamp(by map[string]exif.ExifTag) (time.Time, bool) {
 	dateRaw, ok := by["GPSDateStamp"]
 	if !ok {
@@ -216,20 +226,28 @@ func parseExifGPSTimestamp(by map[string]exif.ExifTag) (time.Time, bool) {
 	if !ok {
 		return time.Time{}, false
 	}
-	hour := float64(hms[0].Numerator) / float64(hms[0].Denominator)
-	minute := float64(hms[1].Numerator) / float64(hms[1].Denominator)
-	second := float64(hms[2].Numerator) / float64(hms[2].Denominator)
-	if hour < 0 || hour >= 24 {
+	// Hour must be whole and in [0, 24). dmsRationals already bounds
+	// minute/second to [0, 60).
+	if hms[0].Numerator%hms[0].Denominator != 0 {
 		return time.Time{}, false
 	}
-	if minute < 0 || minute >= 60 {
+	hour := hms[0].Numerator / hms[0].Denominator
+	if hour >= 24 {
 		return time.Time{}, false
 	}
-	if second < 0 || second >= 60 {
+	if hms[1].Numerator%hms[1].Denominator != 0 {
 		return time.Time{}, false
 	}
+	minute := hms[1].Numerator / hms[1].Denominator
+	// Seconds may be fractional (modern phones emit sub-second
+	// precision); preserve as nanoseconds.
+	secNum := uint64(hms[2].Numerator)
+	secDen := uint64(hms[2].Denominator)
+	whole := secNum / secDen
+	frac := secNum - whole*secDen
+	nsec := int(frac * 1_000_000_000 / secDen)
 	return time.Date(d.Year(), d.Month(), d.Day(),
-		int(hour), int(minute), int(second), 0, time.UTC), true
+		int(hour), int(minute), int(whole), nsec, time.UTC), true
 }
 
 func stringTag(by map[string]exif.ExifTag, name string) string {
