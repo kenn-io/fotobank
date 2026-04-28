@@ -1,0 +1,212 @@
+package cli_test
+
+import (
+	"bytes"
+	"context"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
+	"github.com/wesm/fotobank/internal/cli"
+	"github.com/wesm/fotobank/internal/media"
+	"github.com/wesm/fotobank/internal/owners"
+	"github.com/wesm/fotobank/internal/testutil"
+)
+
+// runGPS invokes the gps subcommand and returns (exitCode, stdout, stderr).
+// Mirrors the existing thumbs_test pattern.
+func runGPS(t *testing.T, args ...string) (int, string, string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := cli.RunContext(context.Background(),
+		append([]string{"gps"}, args...), &stdout, &stderr)
+	return code, stdout.String(), stderr.String()
+}
+
+func TestGPSBackfillBadSinceErrorsBeforeOpeningDB(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	code, _, stderr := runGPS(t, "backfill", "--config", cfgPath, "--since", "garbage")
+	r.Equal(2, code, "usage error → exit 2; got %s", stderr)
+	r.NoFileExists(dbPath, "DB must not be created on bad --since")
+}
+
+func TestGPSBackfillNegativeSinceErrors(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
+
+	code, _, stderr := runGPS(t, "backfill", "--config", cfgPath, "--since", "-1h")
+	r.Equal(2, code, "got %s", stderr)
+}
+
+func TestGPSBackfillStubModeRequiredByDefault(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeNonStubConfig(t, tmp)
+	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
+
+	code, _, stderr := runGPS(t, "backfill", "--config", cfgPath)
+	r.Equal(2, code, "got %s", stderr)
+	r.Contains(stderr, "stub")
+}
+
+func TestGPSBackfillOwnerScopeBypassesStubModeRequirement(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeNonStubConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	code, _, stderr := runGPS(t, "backfill",
+		"--config", cfgPath,
+		"--owner", "h:u",
+		"--mode", "relabel",
+	)
+	// Owner doesn't exist; this should NOT fail with the stub-mode usage
+	// error (exit 2). The point is that the stub-mode gate did NOT fire.
+	r.NotEqual(2, code, "stderr=%q", stderr)
+}
+
+func TestGPSBackfillAllOwnersBypassesStubModeRequirement(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeNonStubConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	code, _, _ := runGPS(t, "backfill", "--config", cfgPath, "--all-owners", "--mode", "relabel")
+	r.NotEqual(2, code)
+}
+
+func TestGPSBackfillOwnerAndAllOwnersMutuallyExclusive(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
+
+	code, _, stderr := runGPS(t, "backfill",
+		"--config", cfgPath,
+		"--owner", "h:u",
+		"--all-owners",
+	)
+	r.Equal(2, code, "got %s", stderr)
+}
+
+func TestGPSBackfillRelabelOnlyTouchesRowsWithCoords(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	dbCtx := context.Background()
+	d := testutil.OpenTestDBAt(t, dbPath)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(dbCtx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "u", time.Now().UTC(),
+	)
+	r.NoError(err)
+	lat, lon := 48.8566, 2.3522
+	rowWithGPS := uuid.NewString()
+	rowNoGPS := uuid.NewString()
+	r.NoError(repo.Insert(dbCtx, media.Media{
+		ID: rowWithGPS, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + rowWithGPS,
+		Latitude: &lat, Longitude: &lon, ThumbStatus: "pending",
+	}))
+	r.NoError(repo.Insert(dbCtx, media.Media{
+		ID: rowNoGPS, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "y.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + rowNoGPS,
+		ThumbStatus: "pending",
+	}))
+	r.NoError(d.Close())
+
+	code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--mode", "relabel")
+	r.Equal(0, code, "stderr=%s", stderr)
+	r.Contains(stdout, "gps backfill:")
+	r.Contains(stdout, "updated=1")
+
+	d = testutil.OpenTestDBAt(t, dbPath)
+	defer func() { _ = d.Close() }()
+	repo = media.NewRepo(d.WriteDB(), d.ReadDB())
+	got, err := repo.GetByID(dbCtx, rowWithGPS)
+	r.NoError(err)
+	r.Contains(got.LocationLabel, "France",
+		"expected France-shaped label after relabel; got %q", got.LocationLabel)
+	got, err = repo.GetByID(dbCtx, rowNoGPS)
+	r.NoError(err)
+	r.Empty(got.LocationLabel)
+}
+
+func TestGPSBackfillSkipsVideos(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	dbCtx := context.Background()
+	d := testutil.OpenTestDBAt(t, dbPath)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(dbCtx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "u", time.Now().UTC(),
+	)
+	r.NoError(err)
+	lat, lon := 48.8566, 2.3522
+	videoID := uuid.NewString()
+	r.NoError(repo.Insert(dbCtx, media.Media{
+		ID: videoID, Owner: owner, Type: media.TypeVideo, MimeType: "video/mp4",
+		Path: "v.mp4", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + videoID,
+		Latitude: &lat, Longitude: &lon, LocationLabel: "Original Label",
+		ThumbStatus: "pending",
+	}))
+	r.NoError(d.Close())
+
+	code, stdout, _ := runGPS(t, "backfill", "--config", cfgPath, "--mode", "relabel")
+	r.Equal(0, code)
+	r.Contains(stdout, "updated=0")
+
+	d = testutil.OpenTestDBAt(t, dbPath)
+	defer func() { _ = d.Close() }()
+	repo = media.NewRepo(d.WriteDB(), d.ReadDB())
+	got, err := repo.GetByID(dbCtx, videoID)
+	r.NoError(err)
+	r.Equal("Original Label", got.LocationLabel,
+		"video row must be untouched by gps backfill")
+}
+
+func TestGPSBackfillFinalSummaryAlwaysEmitted(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	dbCtx := context.Background()
+	d := testutil.OpenTestDBAt(t, dbPath)
+	_, err := d.WriteDB().ExecContext(dbCtx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		"h", "u", "u", time.Now().UTC(),
+	)
+	r.NoError(err)
+	r.NoError(d.Close())
+
+	code, stdout, _ := runGPS(t, "backfill", "--config", cfgPath, "--mode", "relabel")
+	r.Equal(0, code)
+	r.True(strings.HasPrefix(strings.TrimSpace(stdout), "gps backfill:"),
+		"expected summary line; got %q", stdout)
+}
