@@ -11,6 +11,7 @@ import (
 
 	"github.com/wesm/fotobank/internal/config"
 	"github.com/wesm/fotobank/internal/db"
+	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/exifread"
 	"github.com/wesm/fotobank/internal/geo"
 	"github.com/wesm/fotobank/internal/media"
@@ -78,6 +79,23 @@ func newGPSBackfillCmd() *cobra.Command {
 	return cmd
 }
 
+// parseBackfillMode maps the raw --mode flag string to the typed
+// media.GPSBackfillMode constant. Returns a usage error for any value
+// outside the closed set so a typo fails fast at flag-parse time.
+func parseBackfillMode(s string) (media.GPSBackfillMode, error) {
+	switch s {
+	case "full":
+		return media.GPSBackfillModeFull, nil
+	case "fill-missing":
+		return media.GPSBackfillModeFillMissing, nil
+	case "relabel":
+		return media.GPSBackfillModeRelabel, nil
+	default:
+		return 0, newUsageError(
+			"--mode must be one of full|fill-missing|relabel (got %q)", s)
+	}
+}
+
 // validateGPSBackfillOpts parses --since, validates --mode, and rejects
 // the --owner / --all-owners combination. Runs before the DB is opened
 // so a misuse fails fast without creating a SQLite file.
@@ -96,22 +114,17 @@ func validateGPSBackfillOpts(opts *gpsBackfillOpts) error {
 		t := time.Now().UTC().Add(-d)
 		opts.sinceTime = &t
 	}
-	switch opts.mode {
-	case "full":
-		opts.parsedMode = media.GPSBackfillModeFull
-	case "fill-missing":
-		opts.parsedMode = media.GPSBackfillModeFillMissing
-	case "relabel":
-		opts.parsedMode = media.GPSBackfillModeRelabel
-	default:
-		return newUsageError("--mode must be one of full|fill-missing|relabel (got %q)", opts.mode)
+	mode, err := parseBackfillMode(opts.mode)
+	if err != nil {
+		return err
 	}
+	opts.parsedMode = mode
 	return nil
 }
 
 // runGPSBackfill orchestrates the full backfill: validate flags, load
 // config, open the gazetteer + DB, then iterate the configured
-// principals invoking backfillForPrincipal for each.
+// principals invoking backfiller.runFor for each.
 func runGPSBackfill(ctx context.Context, opts *gpsBackfillOpts, stdout, stderr io.Writer) error {
 	if err := validateGPSBackfillOpts(opts); err != nil {
 		return err
@@ -121,39 +134,26 @@ func runGPSBackfill(ctx context.Context, opts *gpsBackfillOpts, stdout, stderr i
 	if err != nil {
 		return err
 	}
-
-	places, err := geo.NewNaturalEarth()
-	if err != nil {
-		return fmt.Errorf("load gazetteer: %w", err)
-	}
-
 	d, err := openDB(cfg)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = d.Close() }()
 
-	ownerSvc := service.NewOwnerService(owners.NewRepo(d.WriteDB(), d.ReadDB()))
-	keys, err := loadStorageKeys(ctx, ownerSvc)
+	b, err := newBackfiller(ctx, d, cfg, opts, stderr)
 	if err != nil {
 		return err
 	}
-	storeLayer, _ := buildStorageLayer(cfg, keys)
-	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
-	svc := service.NewMediaService(repo, storeLayer)
-
 	principals, err := selectPrincipals(ctx, d, cfg, opts)
 	if err != nil {
 		return err
 	}
-
-	tally := backfillTally{}
 	for _, p := range principals {
-		if err := backfillForPrincipal(ctx, p, opts, repo, svc, storeLayer, places, stderr, &tally); err != nil {
+		if err := b.runFor(ctx, p); err != nil {
 			return err
 		}
 	}
-	fmt.Fprintln(stdout, tally.summary())
+	fmt.Fprintln(stdout, b.tally.summary())
 	return nil
 }
 
@@ -179,7 +179,12 @@ func loadGPSConfig(cfgPath string, requireStub bool) (*config.Config, error) {
 // selectPrincipals resolves the principals to back fill: an explicit
 // --owner, every owner in the DB for --all-owners, or the stub
 // principal from the config when neither is set.
-func selectPrincipals(ctx context.Context, d *db.DB, cfg *config.Config, opts *gpsBackfillOpts) ([]owners.Principal, error) {
+func selectPrincipals(
+	ctx context.Context,
+	d *db.DB,
+	cfg *config.Config,
+	opts *gpsBackfillOpts,
+) ([]owners.Principal, error) {
 	switch {
 	case opts.owner != "":
 		hub, user, ok := strings.Cut(opts.owner, ":")
@@ -219,25 +224,66 @@ func (t backfillTally) summary() string {
 		t.processed, t.updated, t.unchanged, t.failed)
 }
 
-// backfillForPrincipal pages through the candidate set for owner using
-// keyset pagination. FillMissing rows leave the candidate set after
-// being updated, so the cursor restarts at "" each iteration; Full and
+// backfiller bundles the cross-cutting deps a single backfill run uses
+// across all principals. Constructed once in runGPSBackfill from the
+// already-opened DB and reused per principal — keeps mode-specific
+// helpers under the 5-positional-param house limit.
+type backfiller struct {
+	svc    *service.MediaService
+	repo   *media.Repo
+	store  storage.Store
+	places *geo.NaturalEarth
+	mode   media.GPSBackfillMode
+	since  *time.Time
+	tally  *backfillTally
+	stderr io.Writer
+}
+
+// newBackfiller wires the service / repo / store / gazetteer onto a
+// single struct. selectPrincipals stays at the runGPSBackfill layer so
+// this constructor doesn't need the principal list. Loading the
+// gazetteer here keeps runGPSBackfill below the cyclomatic limit.
+func newBackfiller(
+	ctx context.Context,
+	d *db.DB,
+	cfg *config.Config,
+	opts *gpsBackfillOpts,
+	stderr io.Writer,
+) (*backfiller, error) {
+	places, err := geo.NewNaturalEarth()
+	if err != nil {
+		return nil, fmt.Errorf("load gazetteer: %w", err)
+	}
+	ownerSvc := service.NewOwnerService(owners.NewRepo(d.WriteDB(), d.ReadDB()))
+	keys, err := loadStorageKeys(ctx, ownerSvc)
+	if err != nil {
+		return nil, err
+	}
+	storeLayer, _ := buildStorageLayer(cfg, keys)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	svc := service.NewMediaService(repo, storeLayer)
+	return &backfiller{
+		svc:    svc,
+		repo:   repo,
+		store:  storeLayer,
+		places: places,
+		mode:   opts.parsedMode,
+		since:  opts.sinceTime,
+		tally:  &backfillTally{},
+		stderr: stderr,
+	}, nil
+}
+
+// runFor pages through the candidate set for owner using keyset
+// pagination. FillMissing rows leave the candidate set after being
+// updated, so the cursor restarts at "" each iteration; Full and
 // Relabel rows stay in the set, so the cursor must advance past the
 // last seen ID to make progress.
-func backfillForPrincipal(
-	ctx context.Context,
-	owner owners.Principal,
-	opts *gpsBackfillOpts,
-	repo *media.Repo,
-	svc *service.MediaService,
-	store storage.Store,
-	places *geo.NaturalEarth,
-	stderr io.Writer,
-	tally *backfillTally,
-) error {
+func (b *backfiller) runFor(ctx context.Context, owner owners.Principal) error {
 	afterID := ""
 	for {
-		page, err := repo.ListGPSBackfillCandidates(ctx, owner, opts.parsedMode, opts.sinceTime, afterID, backfillBatch)
+		page, err := b.repo.ListGPSBackfillCandidates(
+			ctx, owner, b.mode, b.since, afterID, backfillBatch)
 		if err != nil {
 			return fmt.Errorf("list gps candidates: %w", err)
 		}
@@ -245,17 +291,17 @@ func backfillForPrincipal(
 			return nil
 		}
 		for _, row := range page {
-			if err := backfillOne(ctx, owner, row, opts.parsedMode, svc, store, places, tally); err != nil {
+			if err := backfillOne(ctx, b, owner, row); err != nil {
 				// Per-row failures are tallied but don't abort the run.
-				fmt.Fprintf(stderr, "gps backfill: row %s: %v\n", row.ID, err)
-				tally.failed++
+				fmt.Fprintf(b.stderr, "gps backfill: row %s: %v\n", row.ID, err)
+				b.tally.failed++
 			}
-			tally.processed++
-			if tally.processed%100 == 0 {
-				fmt.Fprintln(stderr, tally.summary())
+			b.tally.processed++
+			if b.tally.processed%100 == 0 {
+				fmt.Fprintln(b.stderr, b.tally.summary())
 			}
 		}
-		if opts.parsedMode == media.GPSBackfillModeFillMissing {
+		if b.mode == media.GPSBackfillModeFillMissing {
 			afterID = ""
 		} else {
 			afterID = page[len(page)-1].ID
@@ -266,84 +312,111 @@ func backfillForPrincipal(
 	}
 }
 
-// backfillOne handles a single row according to mode. Relabel re-runs
-// the gazetteer against existing coords; Full and FillMissing re-read
-// the NAS bytes through exifread. Full is authoritative — when EXIF has
-// no GPS it clears any existing coords; FillMissing leaves rows alone
-// when EXIF has no GPS.
+// backfillOne dispatches to the mode-specific helper. The default arm
+// is unreachable in practice — parseBackfillMode rejects unknown values
+// upstream — but the wrapped sentinel keeps the contract explicit.
 func backfillOne(
 	ctx context.Context,
+	b *backfiller,
 	owner owners.Principal,
 	row media.Media,
-	mode media.GPSBackfillMode,
-	svc *service.MediaService,
-	store storage.Store,
-	places *geo.NaturalEarth,
-	tally *backfillTally,
 ) error {
-	switch mode {
+	switch b.mode {
 	case media.GPSBackfillModeRelabel:
-		if row.Latitude == nil || row.Longitude == nil {
-			tally.unchanged++
-			return nil
-		}
-		label := ""
-		if l, ok := places.Resolve(*row.Latitude, *row.Longitude); ok {
-			label = l
-		}
-		if label == row.LocationLabel {
-			tally.unchanged++
-			return nil
-		}
-		if err := svc.UpdateGPS(ctx, owner, row.ID, row.Latitude, row.Longitude, row.GPSAt, label); err != nil {
-			return err
-		}
-		tally.updated++
-		return nil
-
+		return relabelOne(ctx, b, owner, row)
 	case media.GPSBackfillModeFull, media.GPSBackfillModeFillMissing:
-		rc, err := store.ReadRange(ctx, owner, row.Path, 0, -1)
-		if err != nil {
-			return fmt.Errorf("read NAS bytes: %w", err)
-		}
-		defer func() { _ = rc.Close() }()
-		meta, err := exifread.ExtractPhotoFromReader(rc)
-		if err != nil {
-			return fmt.Errorf("extract exif: %w", err)
-		}
-		// ExtractPhotoFromReader returns Metadata{} (no error) when the
-		// file simply has no EXIF segment. Such rows naturally fall
-		// through hasGPS=false below — no separate "skipped" counter.
-
-		hasGPS := meta.Latitude != nil && meta.Longitude != nil
-		if !hasGPS {
-			if mode == media.GPSBackfillModeFillMissing {
-				tally.unchanged++
-				return nil
-			}
-			// full is authoritative: clear if EXIF has no GPS.
-			if row.Latitude == nil && row.Longitude == nil && row.GPSAt == nil && row.LocationLabel == "" {
-				tally.unchanged++
-				return nil
-			}
-			if err := svc.UpdateGPS(ctx, owner, row.ID, nil, nil, nil, ""); err != nil {
-				return err
-			}
-			tally.updated++
-			return nil
-		}
-
-		label := ""
-		if l, ok := places.Resolve(*meta.Latitude, *meta.Longitude); ok {
-			label = l
-		}
-		if err := svc.UpdateGPS(ctx, owner, row.ID, meta.Latitude, meta.Longitude, meta.GPSAt, label); err != nil {
-			return err
-		}
-		tally.updated++
-		return nil
-
+		return reextractOne(ctx, b, owner, row)
 	default:
-		return fmt.Errorf("unknown mode: %d", mode)
+		return fmt.Errorf("%w: gps backfill mode %d", errs.ErrInvalidArgument, b.mode)
 	}
+}
+
+// relabelOne re-resolves the gazetteer label for a row that already has
+// coords, without touching EXIF. Rows missing either coordinate are
+// counted as unchanged: the relabel candidate query already filters
+// them out, but the guard keeps this helper safe in isolation.
+func relabelOne(ctx context.Context, b *backfiller, owner owners.Principal, row media.Media) error {
+	if row.Latitude == nil || row.Longitude == nil {
+		b.tally.unchanged++
+		return nil
+	}
+	label := ""
+	if l, ok := b.places.Resolve(*row.Latitude, *row.Longitude); ok {
+		label = l
+	}
+	if label == row.LocationLabel {
+		b.tally.unchanged++
+		return nil
+	}
+	if err := b.svc.UpdateGPS(
+		ctx, owner, row.ID, row.Latitude, row.Longitude, row.GPSAt, label,
+	); err != nil {
+		return fmt.Errorf("update gps for row %s: %w", row.ID, err)
+	}
+	b.tally.updated++
+	return nil
+}
+
+// reextractOne handles the Full and FillMissing modes: re-read NAS
+// bytes through exifread and reconcile the result with the row. Full is
+// authoritative — when EXIF has no GPS it clears any existing coords;
+// FillMissing leaves rows alone when EXIF has no GPS.
+func reextractOne(
+	ctx context.Context,
+	b *backfiller,
+	owner owners.Principal,
+	row media.Media,
+) error {
+	rc, err := b.store.ReadRange(ctx, owner, row.Path, 0, -1)
+	if err != nil {
+		return fmt.Errorf("read NAS bytes: %w", err)
+	}
+	defer func() { _ = rc.Close() }()
+	meta, err := exifread.ExtractPhotoFromReader(rc)
+	if err != nil {
+		return fmt.Errorf("extract exif: %w", err)
+	}
+	// ExtractPhotoFromReader returns Metadata{} (no error) when the
+	// file simply has no EXIF segment. Such rows naturally fall
+	// through hasGPS=false below — no separate "skipped" counter.
+	if meta.Latitude == nil || meta.Longitude == nil {
+		return reextractMissing(ctx, b, owner, row)
+	}
+	label := ""
+	if l, ok := b.places.Resolve(*meta.Latitude, *meta.Longitude); ok {
+		label = l
+	}
+	if err := b.svc.UpdateGPS(
+		ctx, owner, row.ID, meta.Latitude, meta.Longitude, meta.GPSAt, label,
+	); err != nil {
+		return fmt.Errorf("update gps for row %s: %w", row.ID, err)
+	}
+	b.tally.updated++
+	return nil
+}
+
+// reextractMissing is the EXIF-has-no-GPS branch of reextractOne. Full
+// clears any existing coords; FillMissing leaves the row alone. Pulled
+// out to keep reextractOne under the cyclomatic limit.
+func reextractMissing(
+	ctx context.Context,
+	b *backfiller,
+	owner owners.Principal,
+	row media.Media,
+) error {
+	if b.mode == media.GPSBackfillModeFillMissing {
+		b.tally.unchanged++
+		return nil
+	}
+	// Full is authoritative: clear if EXIF has no GPS.
+	if row.Latitude == nil && row.Longitude == nil &&
+		row.GPSAt == nil && row.LocationLabel == "" {
+		b.tally.unchanged++
+		return nil
+	}
+	if err := b.svc.UpdateGPS(ctx, owner, row.ID, nil, nil, nil, ""); err != nil {
+		return fmt.Errorf("update gps for row %s: %w", row.ID, err)
+	}
+	b.tally.updated++
+	return nil
 }

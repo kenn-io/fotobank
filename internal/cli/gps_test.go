@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -209,4 +210,60 @@ func TestGPSBackfillFinalSummaryAlwaysEmitted(t *testing.T) {
 	r.Equal(0, code)
 	r.True(strings.HasPrefix(strings.TrimSpace(stdout), "gps backfill:"),
 		"expected summary line; got %q", stdout)
+}
+
+// TestGPSBackfillFullClearsCoordsWhenEXIFLacksGPS exercises the
+// authoritative-clear branch of mode=full: a row with non-NULL coords
+// whose backing file has no EXIF GPS segment must be wiped of all four
+// GPS fields after the backfill. exifread.ExtractPhotoFromReader
+// returns an empty Metadata{} (nil error) when the file lacks an EXIF
+// segment entirely, so a tiny non-JPEG byte string is enough.
+func TestGPSBackfillFullClearsCoordsWhenEXIFLacksGPS(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	dbCtx := context.Background()
+	d := testutil.OpenTestDBAt(t, dbPath)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(dbCtx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "u", time.Now().UTC(),
+	)
+	r.NoError(err)
+	lat, lon := 48.8566, 2.3522
+	gpsAt := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	rowID := uuid.NewString()
+	r.NoError(repo.Insert(dbCtx, media.Media{
+		ID: rowID, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + rowID,
+		Latitude: &lat, Longitude: &lon, GPSAt: &gpsAt,
+		LocationLabel: "Paris, France",
+		ThumbStatus:   "pending",
+	}))
+	r.NoError(d.Close())
+
+	// Stage the NAS file at <nasRoot>/<storage_key>/<path>. Non-EXIF
+	// bytes — exifread treats this as Metadata{} with nil error, which
+	// drives the Full-mode authoritative clear branch.
+	nasFile := filepath.Join(tmp, "nas", "u", "x.jpg")
+	r.NoError(os.MkdirAll(filepath.Dir(nasFile), 0o700))
+	r.NoError(os.WriteFile(nasFile, []byte("not-an-image"), 0o600))
+
+	code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--mode", "full")
+	r.Equal(0, code, "stderr=%s", stderr)
+	r.Contains(stdout, "updated=1")
+
+	d = testutil.OpenTestDBAt(t, dbPath)
+	defer func() { _ = d.Close() }()
+	repo = media.NewRepo(d.WriteDB(), d.ReadDB())
+	got, err := repo.GetByID(dbCtx, rowID)
+	r.NoError(err)
+	r.Nil(got.Latitude, "Full mode must clear Latitude when EXIF has no GPS")
+	r.Nil(got.Longitude, "Full mode must clear Longitude when EXIF has no GPS")
+	r.Nil(got.GPSAt, "Full mode must clear GPSAt when EXIF has no GPS")
+	r.Empty(got.LocationLabel, "Full mode must clear LocationLabel when EXIF has no GPS")
 }

@@ -22,7 +22,10 @@ func OpenTestDB(t *testing.T) *db.DB {
 // OpenTestDBAt opens (and migrates) a sqlite DB at path. Unlike
 // OpenTestDB, it does NOT register a t.Cleanup closer because CLI
 // tests routinely close + reopen across the subprocess boundary;
-// the caller manages the lifetime explicitly.
+// the caller manages the lifetime explicitly. If the test does not
+// Close the returned DB, the SQLite WAL file is left behind in the
+// supplied directory. CLI tests that close + reopen explicitly are
+// the intended caller.
 func OpenTestDBAt(t *testing.T, path string) *db.DB {
 	t.Helper()
 	d, err := db.Open(path)
