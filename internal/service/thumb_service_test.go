@@ -168,6 +168,53 @@ func TestThumbServiceGetReturnsNotFoundForOtherOwner(t *testing.T) {
 	r.ErrorIs(err, errs.ErrNotFound)
 }
 
+func TestThumbServiceGetReturnsNotFoundForHiddenRowWithoutFlag(t *testing.T) {
+	r := require.New(t)
+	fx := newThumbServiceFixture(t)
+	ctx := context.Background()
+
+	m := insertThumbMedia(t, fx.repo, fx.owner, "ready", 3)
+	key := thumb.ThumbKey(m.ID, 3, thumb.SizeGrid)
+	_, err := fx.store.Write(ctx, fx.owner, key, bytes.NewReader([]byte("thumb")))
+	r.NoError(err)
+	// Mark hidden directly.
+	_, err = fx.rw.ExecContext(ctx,
+		`UPDATE media SET hidden_at = ? WHERE id = ?`,
+		time.Now().UTC(), m.ID,
+	)
+	r.NoError(err)
+
+	rc, _, err := fx.svc.Get(ctx, m.ID, thumb.SizeGrid, 3, fx.owner)
+	r.Nil(rc)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestThumbServiceGetSucceedsForHiddenRowWithFlag(t *testing.T) {
+	r := require.New(t)
+	fx := newThumbServiceFixture(t)
+	ctx := context.Background()
+
+	m := insertThumbMedia(t, fx.repo, fx.owner, "ready", 3)
+	key := thumb.ThumbKey(m.ID, 3, thumb.SizeGrid)
+	payload := []byte("thumb bytes hidden")
+	_, err := fx.store.Write(ctx, fx.owner, key, bytes.NewReader(payload))
+	r.NoError(err)
+	// Mark hidden.
+	_, err = fx.rw.ExecContext(ctx,
+		`UPDATE media SET hidden_at = ? WHERE id = ?`,
+		time.Now().UTC(), m.ID,
+	)
+	r.NoError(err)
+
+	rc, got, err := fx.svc.Get(ctx, m.ID, thumb.SizeGrid, 3, fx.owner, true)
+	r.NoError(err)
+	defer func() { _ = rc.Close() }()
+	bs, err := io.ReadAll(rc)
+	r.NoError(err)
+	r.Equal(payload, bs)
+	r.Equal(m.ID, got.ID)
+}
+
 func TestThumbServiceEnqueueScopesToOwner(t *testing.T) {
 	r := require.New(t)
 	fx := newThumbServiceFixture(t)

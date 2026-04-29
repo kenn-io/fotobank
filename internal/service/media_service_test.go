@@ -252,3 +252,232 @@ func TestMediaServiceListClampsIncludeSidecars(t *testing.T) {
 	r.Len(rows, 1)
 	r.Equal(primary.ID, rows[0].ID)
 }
+
+// --- hidden-aware service tests ---
+
+func markHidden(t *testing.T, rw *sql.DB, id string) {
+	t.Helper()
+	_, err := rw.ExecContext(context.Background(),
+		`UPDATE media SET hidden_at = ? WHERE id = ?`,
+		time.Now().UTC(), id,
+	)
+	require.NoError(t, err)
+}
+
+func TestMediaServiceGetExcludesHiddenByDefault(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	m := insertTestMedia(t, fx.repo, fx.owner, "2024/h.jpg", "cs-hid")
+	markHidden(t, fx.rw, m.ID)
+
+	_, err := fx.svc.Get(ctx, m.ID, fx.owner)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestMediaServiceGetIncludesHiddenWhenFlagSet(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	m := insertTestMedia(t, fx.repo, fx.owner, "2024/h.jpg", "cs-hid")
+	markHidden(t, fx.rw, m.ID)
+
+	got, err := fx.svc.Get(ctx, m.ID, fx.owner, true)
+	r.NoError(err)
+	r.Equal(m.ID, got.ID)
+	r.NotNil(got.HiddenAt)
+}
+
+func TestMediaServiceListClampsIncludeHidden(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	visible := insertTestMedia(t, fx.repo, fx.owner, "2024/v.jpg", "cs-v")
+	hidden := insertTestMedia(t, fx.repo, fx.owner, "2024/h.jpg", "cs-h")
+	markHidden(t, fx.rw, hidden.ID)
+
+	// Even if the caller tries to set IncludeHidden=true, List must clamp to false.
+	rows, err := fx.svc.List(ctx, media.ListFilter{IncludeHidden: true}, fx.owner)
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.Equal(visible.ID, rows[0].ID)
+}
+
+func TestMediaServiceOpenOriginalHiddenReturnsNotFoundByDefault(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	payload := []byte("hidden-bytes")
+	_, err := fx.store.Write(ctx, fx.owner, "2024/h.jpg", bytes.NewReader(payload))
+	r.NoError(err)
+	m := insertTestMedia(t, fx.repo, fx.owner, "2024/h.jpg", "cs-hid")
+	markHidden(t, fx.rw, m.ID)
+
+	rc, _, err := fx.svc.OpenOriginal(ctx, m.ID, fx.owner, 0, -1)
+	r.ErrorIs(err, errs.ErrNotFound)
+	r.Nil(rc)
+}
+
+func TestMediaServiceOpenOriginalHiddenSucceedsWithFlag(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	payload := []byte("hidden-bytes")
+	_, err := fx.store.Write(ctx, fx.owner, "2024/h.jpg", bytes.NewReader(payload))
+	r.NoError(err)
+	m := insertTestMedia(t, fx.repo, fx.owner, "2024/h.jpg", "cs-hid")
+	markHidden(t, fx.rw, m.ID)
+
+	rc, got, err := fx.svc.OpenOriginal(ctx, m.ID, fx.owner, 0, -1, true)
+	r.NoError(err)
+	defer rc.Close()
+	r.Equal(m.ID, got.ID)
+	buf, err := io.ReadAll(rc)
+	r.NoError(err)
+	r.Equal(payload, buf)
+}
+
+func TestMediaServiceHideRejectsInputSidecarID(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	primary := insertTestMedia(t, fx.repo, fx.owner, "2024/p.jpg", "cs-pri")
+	sidecar := insertTestMedia(t, fx.repo, fx.owner, "2024/p.dng", "cs-sid")
+	r.NoError(fx.repo.UpdatePairedWithID(ctx, sidecar.ID, &primary.ID))
+
+	result, err := fx.svc.Hide(ctx, fx.owner, []string{sidecar.ID})
+	r.NoError(err, "Hide must return partial result, not an error")
+	r.Empty(result.Succeeded)
+	r.Len(result.Failed, 1)
+	r.Equal(sidecar.ID, result.Failed[0].ID)
+	r.Equal("invalid_sidecar", result.Failed[0].Code)
+}
+
+func TestMediaServiceHideCascadesToSidecars(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	primary := insertTestMedia(t, fx.repo, fx.owner, "2024/p.jpg", "cs-pri2")
+	sidecar := insertTestMedia(t, fx.repo, fx.owner, "2024/p.dng", "cs-sid2")
+	r.NoError(fx.repo.UpdatePairedWithID(ctx, sidecar.ID, &primary.ID))
+
+	result, err := fx.svc.Hide(ctx, fx.owner, []string{primary.ID})
+	r.NoError(err)
+	r.Len(result.Succeeded, 1)
+	r.Equal(primary.ID, result.Succeeded[0])
+	r.Empty(result.Failed)
+
+	// Both primary and sidecar must now be hidden.
+	got, err := fx.repo.GetByID(ctx, primary.ID)
+	r.NoError(err)
+	r.NotNil(got.HiddenAt, "primary must be hidden")
+	gotSidecar, err := fx.repo.GetByID(ctx, sidecar.ID)
+	r.NoError(err)
+	r.NotNil(gotSidecar.HiddenAt, "sidecar must cascade to hidden")
+}
+
+func TestMediaServiceHideReturnsNotFoundForCrossOwnerID(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	ownerB := owners.Principal{Hub: "h", UserID: "b"}
+	_, err := fx.rw.ExecContext(ctx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		ownerB.Hub, ownerB.UserID, "sk-b", time.Now().UTC(),
+	)
+	r.NoError(err)
+	mB := insertTestMedia(t, fx.repo, ownerB, "2024/b.jpg", "cs-cross")
+
+	result, err := fx.svc.Hide(ctx, fx.owner, []string{mB.ID})
+	r.NoError(err)
+	r.Len(result.Failed, 1)
+	r.Equal(mB.ID, result.Failed[0].ID)
+	r.Equal("not_found", result.Failed[0].Code)
+	r.Empty(result.Succeeded)
+}
+
+func TestMediaServiceHideEmptyIDsReturnsEmptyResult(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	result, err := fx.svc.Hide(ctx, fx.owner, []string{})
+	r.NoError(err)
+	r.Empty(result.Succeeded)
+	r.Empty(result.Failed)
+}
+
+func TestMediaServiceUnhideCascadesToSidecars(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	primary := insertTestMedia(t, fx.repo, fx.owner, "2024/u.jpg", "cs-unhide")
+	sidecar := insertTestMedia(t, fx.repo, fx.owner, "2024/u.dng", "cs-unhide-sid")
+	r.NoError(fx.repo.UpdatePairedWithID(ctx, sidecar.ID, &primary.ID))
+
+	// Mark both hidden first.
+	markHidden(t, fx.rw, primary.ID)
+	markHidden(t, fx.rw, sidecar.ID)
+
+	result, err := fx.svc.Unhide(ctx, fx.owner, []string{primary.ID})
+	r.NoError(err)
+	r.Len(result.Succeeded, 1)
+	r.Empty(result.Failed)
+
+	// Both must now be visible.
+	got, err := fx.repo.GetByID(ctx, primary.ID)
+	r.NoError(err)
+	r.Nil(got.HiddenAt, "primary must be visible after Unhide")
+	gotSidecar, err := fx.repo.GetByID(ctx, sidecar.ID)
+	r.NoError(err)
+	r.Nil(gotSidecar.HiddenAt, "sidecar must cascade to visible")
+}
+
+func TestMediaServiceListHiddenReturnsOnlyHiddenPrimaries(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	visible := insertTestMedia(t, fx.repo, fx.owner, "2024/v.jpg", "cs-list-vis")
+	hidden1 := insertTestMedia(t, fx.repo, fx.owner, "2024/h1.jpg", "cs-list-h1")
+	hidden2 := insertTestMedia(t, fx.repo, fx.owner, "2024/h2.jpg", "cs-list-h2")
+	markHidden(t, fx.rw, hidden1.ID)
+	markHidden(t, fx.rw, hidden2.ID)
+	_ = visible
+
+	rows, err := fx.svc.ListHidden(ctx, fx.owner, 10, 0)
+	r.NoError(err)
+	r.Len(rows, 2)
+	ids := []string{rows[0].ID, rows[1].ID}
+	r.Contains(ids, hidden1.ID)
+	r.Contains(ids, hidden2.ID)
+}
+
+func TestMediaServiceClearAllHiddenForOwner(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	m1 := insertTestMedia(t, fx.repo, fx.owner, "2024/c1.jpg", "cs-c1")
+	m2 := insertTestMedia(t, fx.repo, fx.owner, "2024/c2.jpg", "cs-c2")
+	markHidden(t, fx.rw, m1.ID)
+	markHidden(t, fx.rw, m2.ID)
+
+	r.NoError(fx.svc.ClearAllHiddenForOwner(ctx, fx.owner))
+
+	got1, err := fx.repo.GetByID(ctx, m1.ID)
+	r.NoError(err)
+	r.Nil(got1.HiddenAt)
+	got2, err := fx.repo.GetByID(ctx, m2.ID)
+	r.NoError(err)
+	r.Nil(got2.HiddenAt)
+}

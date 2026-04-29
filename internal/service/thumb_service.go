@@ -34,19 +34,27 @@ func NewThumbService(repo *media.Repo, q *thumb.Queue, s storage.Store) *ThumbSe
 // Get returns a reader for the (id, size, version) thumb when caller
 // owns the row, the row is ready, and the stored version matches.
 // Returns errs.ErrNotFound when any of: row missing, caller doesn't own
-// row, status != "ready", or version mismatch. The media row is
-// returned alongside the reader so callers can derive response headers
-// (e.g. ETag from ThumbVersion) without a second DB round-trip.
+// row, status != "ready", version mismatch, or the row is hidden and
+// includeHidden is not true. The variadic includeHidden keeps existing
+// call sites compiling without change; pass true to allow returning
+// hidden rows. The media row is returned alongside the reader so callers
+// can derive response headers (e.g. ETag from ThumbVersion) without a
+// second DB round-trip.
 func (s *ThumbService) Get(
 	ctx context.Context,
 	id string, size thumb.Size, version int,
 	caller owners.Principal,
+	includeHidden ...bool,
 ) (io.ReadCloser, media.Media, error) {
+	wantHidden := len(includeHidden) > 0 && includeHidden[0]
 	m, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, media.Media{}, err
 	}
 	if m.Owner != caller {
+		return nil, media.Media{}, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, id)
+	}
+	if m.HiddenAt != nil && !wantHidden {
 		return nil, media.Media{}, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, id)
 	}
 	if m.ThumbStatus != "ready" {
