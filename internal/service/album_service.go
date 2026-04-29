@@ -160,16 +160,30 @@ func (s *AlbumService) List(
 	return s.albums.ListByOwner(ctx, caller, limit, offset)
 }
 
+// AddMediaOption is a functional option for AlbumService.AddMedia.
+type AddMediaOption func(*addMediaOptions)
+
+type addMediaOptions struct {
+	allowHidden bool
+}
+
+// WithHiddenMediaAllowed allows hidden (hidden_at IS NOT NULL) media rows
+// to pass through the ownership/sidecar pre-flight in AddMedia. Without
+// this option, hidden rows are treated as ErrNotFound (anti-enumeration).
+func WithHiddenMediaAllowed() AddMediaOption {
+	return func(o *addMediaOptions) { o.allowHidden = true }
+}
+
 // AddMedia validates the album is caller-owned, deduplicates input IDs
 // (preserving first-seen order), length-checks the deduped batch, then
-// performs a per-ID pre-flight ownership check via media.Repo.GetByID
+// performs a per-ID pre-flight ownership check via media.Repo.GetByIDVisible
 // before the batched INSERT.
 //
 // Errors:
 //   - errs.ErrNotFound if the album is missing or cross-owner, OR if any
-//     media_id is missing, OR if any media_id belongs to a different
-//     owner. The three are indistinguishable by design — a user who does
-//     not own a media row must not learn whether it exists.
+//     media_id is missing, hidden (without WithHiddenMediaAllowed), or
+//     belongs to a different owner. The cases are indistinguishable by
+//     design — a user must not learn whether a row exists.
 //   - album.ErrInvalidBatch if the deduped batch is empty or > 500.
 //
 // errs.ErrOwnerMismatch is reserved for the defence-in-depth path: it
@@ -180,7 +194,13 @@ func (s *AlbumService) AddMedia(
 	albumID string,
 	mediaIDs []string,
 	caller owners.Principal,
+	opts ...AddMediaOption,
 ) (added, alreadyPresent int, err error) {
+	var options addMediaOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	// Owner check on the album.
 	if _, err := s.Get(ctx, albumID, caller); err != nil {
 		return 0, 0, err
@@ -192,7 +212,7 @@ func (s *AlbumService) AddMedia(
 	}
 
 	for _, mid := range deduped {
-		m, mErr := s.media.GetByID(ctx, mid)
+		m, mErr := s.media.GetByIDVisible(ctx, mid, options.allowHidden)
 		if mErr != nil {
 			if errors.Is(mErr, errs.ErrNotFound) {
 				return 0, 0, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, mid)

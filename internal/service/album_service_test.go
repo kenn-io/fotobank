@@ -563,3 +563,56 @@ func TestAlbumDeletePurgesRevokedRemote(t *testing.T) {
 	_, err = shares.GetByUUID(ctx, s.UUID)
 	r.ErrorIs(err, errs.ErrNotFound)
 }
+
+// seedHiddenMediaSvc inserts a minimal media row with hidden_at set.
+func seedHiddenMediaSvc(t *testing.T, rw *sql.DB, p owners.Principal, id, checksum string) {
+	t.Helper()
+	hiddenAt := time.Now().UTC().Add(-time.Hour)
+	_, err := rw.ExecContext(context.Background(), `
+INSERT INTO media (
+    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
+    imported_at, timestamp, size, checksum,
+    make, model, focal_length, shutter, width, height, iso, aperture,
+    duration_ms,
+    thumb_status, thumb_version, thumb_updated_at, hidden_at
+) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+          'ready', 1, NULL, ?)`,
+		id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), checksum, hiddenAt,
+	)
+	require.NoError(t, err)
+}
+
+// TestAlbumServiceAddMediaHiddenIDNotFoundByDefault verifies that a hidden
+// media row is treated as not-found when no carve-out option is passed.
+func TestAlbumServiceAddMediaHiddenIDNotFoundByDefault(t *testing.T) {
+	r := require.New(t)
+	fx := newAlbumSvcFixture(t)
+	it, err := fx.svc.Create(context.Background(), fx.caller, "Trip")
+	r.NoError(err)
+
+	hiddenID := uuid.NewString()
+	seedHiddenMediaSvc(t, fx.rw, fx.caller, hiddenID, "cs-hidden")
+
+	_, _, err = fx.svc.AddMedia(context.Background(), it.ID,
+		[]string{hiddenID}, fx.caller)
+	r.ErrorIs(err, errs.ErrNotFound, "hidden id must be not-found by default")
+}
+
+// TestAlbumServiceAddMediaHiddenIDAllowedWithOption verifies that a hidden
+// media row passes through when WithHiddenMediaAllowed() is supplied.
+func TestAlbumServiceAddMediaHiddenIDAllowedWithOption(t *testing.T) {
+	r := require.New(t)
+	fx := newAlbumSvcFixture(t)
+	it, err := fx.svc.Create(context.Background(), fx.caller, "Trip")
+	r.NoError(err)
+
+	hiddenID := uuid.NewString()
+	seedHiddenMediaSvc(t, fx.rw, fx.caller, hiddenID, "cs-hidden-opt")
+
+	added, already, err := fx.svc.AddMedia(context.Background(), it.ID,
+		[]string{hiddenID}, fx.caller, service.WithHiddenMediaAllowed())
+	r.NoError(err, "hidden id must succeed with WithHiddenMediaAllowed")
+	r.Equal(1, added)
+	r.Equal(0, already)
+}
