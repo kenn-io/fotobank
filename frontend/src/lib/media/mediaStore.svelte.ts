@@ -19,6 +19,12 @@ export type Media = {
   paired_with_id?: string;
   paired_with?: { id: string; original_filename: string };
   sidecars?: Media[];
+  // F2.4 hidden privacy. Non-null means the row is hidden. Hidden rows
+  // must NOT appear in visible MediaStore — they live only in
+  // HiddenMediaStore (Task 12). This field is present on the type so
+  // toMedia can parse it; once set, the row is routed out of visible
+  // indexes immediately.
+  hidden_at?: string | null;
 };
 
 export type Month = {
@@ -31,6 +37,11 @@ export function monthKey(d: Date): string {
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   return `${y}-${m}`;
 }
+
+type MediaHiddenPayload = { ids: string[]; hiddenAt: string };
+type MediaStoreEventMap = {
+  "media:hidden": MediaHiddenPayload;
+};
 
 export class MediaStore {
   months = $state<Month[]>([]);
@@ -45,10 +56,34 @@ export class MediaStore {
   private byId = new Map<string, string>();
   private byMediaId = new Map<string, Media>();
 
+  // Event listeners for media:hidden. Simple pub/sub — no external
+  // bus dependency. Subscribers (AlbumStore, toasts) call on/off.
+  private hiddenListeners = new Set<(p: MediaHiddenPayload) => void>();
+
   constructor(private client: Pick<Client, "GET">) {}
 
   get(id: string): Media | undefined {
     return this.byMediaId.get(id);
+  }
+
+  /** Subscribe to a store event. Currently only "media:hidden" is emitted. */
+  on<K extends keyof MediaStoreEventMap>(
+    event: K,
+    handler: (payload: MediaStoreEventMap[K]) => void,
+  ): void {
+    if (event === "media:hidden") {
+      this.hiddenListeners.add(handler as (p: MediaHiddenPayload) => void);
+    }
+  }
+
+  /** Unsubscribe a previously registered handler. */
+  off<K extends keyof MediaStoreEventMap>(
+    event: K,
+    handler: (payload: MediaStoreEventMap[K]) => void,
+  ): void {
+    if (event === "media:hidden") {
+      this.hiddenListeners.delete(handler as (p: MediaHiddenPayload) => void);
+    }
   }
 
   async loadInitial() { await this.loadMore(); }
@@ -83,12 +118,65 @@ export class MediaStore {
   // /api/v1/media/{id} when the row isn't already in the store). Mirrors
   // the loadMore pipeline: filter to objects, run the toMedia adapter,
   // drop nulls, then merge.
+  //
+  // Hidden rows (hidden_at != null) are skipped entirely. If a
+  // previously-visible row comes back hidden, it is evicted from all
+  // visible indexes — it must be refetched via HiddenMediaStore (Task 12).
   mergeRaw(rawItems: unknown[]): void {
     const items = rawItems
       .filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null)
       .map(toMedia)
       .filter((m): m is Media => m !== null);
     this.merge(items);
+  }
+
+  /**
+   * Evict ids from all visible indexes and emit a "media:hidden" event.
+   *
+   * Called by the Hide/Unhide action flow (Task 13) after the API
+   * confirms the rows are hidden. hiddenAt defaults to now().
+   */
+  removeMany(ids: string[], hiddenAt: string = new Date().toISOString()): void {
+    for (const id of ids) {
+      this.removeFromVisibleIndexes(id);
+    }
+    const payload: MediaHiddenPayload = { ids, hiddenAt };
+    for (const handler of this.hiddenListeners) {
+      handler(payload);
+    }
+  }
+
+  /**
+   * Remove a single id from all four visible indexes: byMonth, byId,
+   * byMediaId, and the months reactive snapshot. Prunes empty month
+   * buckets and rebuilds the months array.
+   */
+  private removeFromVisibleIndexes(id: string): void {
+    const monthKey = this.byId.get(id);
+    if (monthKey === undefined) return;
+
+    const inner = this.byMonth.get(monthKey);
+    if (inner) {
+      inner.delete(id);
+      if (inner.size === 0) this.byMonth.delete(monthKey);
+    }
+    this.byId.delete(id);
+    this.byMediaId.delete(id);
+
+    // Rebuild the reactive months snapshot.
+    const prev = new Map(this.months.map((m) => [m.key, m]));
+    const sortedKeys = Array.from(this.byMonth.keys()).sort((a, b) =>
+      a < b ? 1 : a > b ? -1 : 0,
+    );
+    this.months = sortedKeys.map((k) => {
+      const prevMonth = prev.get(k);
+      // If this month lost the evicted row its inner map is now
+      // smaller; rebuild it. Other months are untouched.
+      if (prevMonth && k !== monthKey) return prevMonth;
+      const innerMap = this.byMonth.get(k)!;
+      const sorted = Array.from(innerMap.values()).sort((a, b) => +b.taken - +a.taken);
+      return { key: k, items: sorted };
+    });
   }
 
   private merge(items: Media[]) {
@@ -104,6 +192,7 @@ export class MediaStore {
       | "thumbVersion" | "latitude" | "longitude" | "gps_at" | "location_label"
       | "original_filename" | "size"
       | "paired_with_id" | "paired_with" | "sidecars"
+      | "hidden_at"
     >;
     type _AssertNoUncoveredFields = _IdentityFieldsCovered extends never ? true : never;
     const _identityFieldsCovered: _AssertNoUncoveredFields = true;
@@ -118,6 +207,16 @@ export class MediaStore {
     // without churning every chunk.
     const dirty = new Set<string>();
     for (const it of items) {
+      // Visible-only invariant (§3.14): hidden rows must not enter any
+      // visible index. If a previously-cached row comes back hidden,
+      // evict it. After eviction the caller must use HiddenMediaStore.
+      if (it.hidden_at != null) {
+        if (this.byId.has(it.id)) {
+          this.removeFromVisibleIndexes(it.id);
+        }
+        continue;
+      }
+
       const newKey = monthKey(it.taken);
       const oldKey = this.byId.get(it.id);
       if (oldKey !== undefined && oldKey !== newKey) {
@@ -151,7 +250,8 @@ export class MediaStore {
         && (existing.paired_with_id ?? null) === (it.paired_with_id ?? null)
         && (existing.paired_with?.id ?? null) === (it.paired_with?.id ?? null)
         && (existing.paired_with?.original_filename ?? null) === (it.paired_with?.original_filename ?? null)
-        && sidecarsShallowEqual(existing.sidecars, it.sidecars);
+        && sidecarsShallowEqual(existing.sidecars, it.sidecars)
+        && (existing.hidden_at ?? null) === (it.hidden_at ?? null);
       if (!unchanged) {
         inner.set(it.id, it);
         dirty.add(newKey);
@@ -262,5 +362,11 @@ export function toMedia(raw: Record<string, unknown>): Media | null {
       .filter((x): x is Media => x !== null);
     if (mapped.length > 0) m.sidecars = mapped;
   }
+  // F2.4: hidden_at — string (ISO timestamp) or null from the backend.
+  // null means "was hidden but is now visible again" (unhide flow).
+  // undefined means the field wasn't present (treat as visible).
+  const ha = raw["hidden_at"];
+  if (typeof ha === "string") m.hidden_at = ha;
+  else if (ha === null) m.hidden_at = null;
   return m;
 }

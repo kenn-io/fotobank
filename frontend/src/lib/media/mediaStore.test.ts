@@ -463,6 +463,110 @@ describe("toMedia for paired rows", () => {
   });
 });
 
+describe("MediaStore hidden invariant", () => {
+  const visibleRaw = {
+    id: "v",
+    timestamp: "2026-04-18T12:00:00Z",
+    width: 1,
+    height: 1,
+    thumb_version: 1,
+  };
+  const hiddenRaw = {
+    ...visibleRaw,
+    id: "h",
+    hidden_at: "2026-04-20T10:00:00Z",
+  };
+
+  it("hidden_at field is present on Media type", () => {
+    // Runtime check: toMedia must pass hidden_at through.
+    const m = toMedia({ ...visibleRaw, hidden_at: "2026-04-20T10:00:00Z" });
+    expect(m).not.toBeNull();
+    expect(m?.hidden_at).toBe("2026-04-20T10:00:00Z");
+  });
+
+  it("mergeRaw skips raw hidden rows — nothing lands in any index", () => {
+    const store = new MediaStore({ GET: vi.fn() } as never);
+    store.mergeRaw([hiddenRaw]);
+    expect(store.get("h")).toBeUndefined();
+    expect(store.months).toHaveLength(0);
+  });
+
+  it("visible row re-merged as hidden is evicted from all indexes", () => {
+    const store = new MediaStore({ GET: vi.fn() } as never);
+    // First merge: visible
+    store.mergeRaw([visibleRaw]);
+    expect(store.get("v")).toBeDefined();
+    expect(store.months).toHaveLength(1);
+
+    // Second merge: same id but now hidden
+    store.mergeRaw([{ ...visibleRaw, hidden_at: "2026-04-20T10:00:00Z" }]);
+    expect(store.get("v")).toBeUndefined();
+    expect(store.months).toHaveLength(0);
+  });
+
+  it("removeMany evicts from all indexes", () => {
+    const store = new MediaStore({ GET: vi.fn() } as never);
+    store.mergeRaw([
+      visibleRaw,
+      { id: "w", timestamp: "2026-04-19T12:00:00Z", width: 1, height: 1 },
+    ]);
+    expect(store.months[0]?.items).toHaveLength(2);
+
+    store.removeMany(["v"], "2026-04-22T00:00:00Z");
+    expect(store.get("v")).toBeUndefined();
+    // "w" must still be present
+    expect(store.get("w")).toBeDefined();
+    expect(store.months[0]?.items.map((i) => i.id)).toEqual(["w"]);
+  });
+
+  it("removeMany evicts all ids and prunes empty month buckets", () => {
+    const store = new MediaStore({ GET: vi.fn() } as never);
+    store.mergeRaw([visibleRaw]);
+    store.removeMany(["v"], "2026-04-22T00:00:00Z");
+    expect(store.months).toHaveLength(0);
+    expect(store.get("v")).toBeUndefined();
+  });
+
+  it("removeMany emits media:hidden event with ids and hiddenAt", () => {
+    const store = new MediaStore({ GET: vi.fn() } as never);
+    store.mergeRaw([visibleRaw]);
+
+    const received: Array<{ ids: string[]; hiddenAt: string }> = [];
+    store.on("media:hidden", (payload) => received.push(payload));
+
+    const hiddenAt = "2026-04-22T00:00:00Z";
+    store.removeMany(["v"], hiddenAt);
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.ids).toEqual(["v"]);
+    expect(received[0]?.hiddenAt).toBe(hiddenAt);
+  });
+
+  it("removeMany on unknown ids is a no-op and still emits the event", () => {
+    const store = new MediaStore({ GET: vi.fn() } as never);
+    const received: Array<{ ids: string[]; hiddenAt: string }> = [];
+    store.on("media:hidden", (payload) => received.push(payload));
+
+    store.removeMany(["missing"], "2026-04-22T00:00:00Z");
+    expect(store.months).toHaveLength(0);
+    expect(received).toHaveLength(1);
+  });
+
+  it("off() unregisters a media:hidden listener", () => {
+    const store = new MediaStore({ GET: vi.fn() } as never);
+    store.mergeRaw([visibleRaw]);
+
+    const received: Array<{ ids: string[]; hiddenAt: string }> = [];
+    const handler = (payload: { ids: string[]; hiddenAt: string }) =>
+      received.push(payload);
+    store.on("media:hidden", handler);
+    store.off("media:hidden", handler);
+
+    store.removeMany(["v"], "2026-04-22T00:00:00Z");
+    expect(received).toHaveLength(0);
+  });
+});
+
 describe("MediaStore merge with sidecars", () => {
   it("does not dirty the bucket when merging identical primary+sidecar input twice", async () => {
     // The merge contract observable: month object refs are stable
