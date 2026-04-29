@@ -446,8 +446,14 @@ func (s *SharedReadService) ListMedia(
 	return medias, next, nil
 }
 
-// GetMedia returns one media row iff CheckMediaAccess authorises it.
-// CanDownload is OR'd across every scope that covers this media.
+// GetMedia returns one media row iff CheckMediaAccess authorises it
+// and the media is not hidden. CanDownload is OR'd across every scope
+// that covers this media.
+//
+// Defense in depth: hidden_at IS NULL is enforced at the repo layer
+// (CoverMediaByScopes) and again here via GetByIDVisible so that a
+// future repo bypass cannot leak a hidden row to a grantee.
+// Per spec §4.2 there is no IncludeHidden escape hatch at this surface.
 func (s *SharedReadService) GetMedia(
 	ctx context.Context,
 	caller owners.Principal,
@@ -461,7 +467,7 @@ func (s *SharedReadService) GetMedia(
 	if !dec.Authorized {
 		return SharedMedia{}, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, mediaID)
 	}
-	m, err := s.media.GetByID(ctx, mediaID)
+	m, err := s.media.GetByIDVisible(ctx, mediaID, false)
 	if err != nil {
 		return SharedMedia{}, err
 	}
@@ -490,7 +496,9 @@ func (s *SharedReadService) OpenOriginal(
 	if !dec.CanDownload() {
 		return nil, media.Media{}, fmt.Errorf("%w: media id=%s download disabled", errs.ErrPermissionDenied, mediaID)
 	}
-	m, err := s.media.GetByID(ctx, mediaID)
+	// Defense in depth: hidden_at IS NULL enforced at repo (CoverMediaByScopes)
+	// and again here. No IncludeHidden escape hatch per spec §4.2.
+	m, err := s.media.GetByIDVisible(ctx, mediaID, false)
 	if err != nil {
 		return nil, media.Media{}, err
 	}
@@ -519,7 +527,9 @@ func (s *SharedReadService) OpenThumb(
 	if !dec.Authorized {
 		return nil, media.Media{}, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, mediaID)
 	}
-	m, err := s.media.GetByID(ctx, mediaID)
+	// Defense in depth: hidden_at IS NULL enforced at repo (CoverMediaByScopes)
+	// and again here. No IncludeHidden escape hatch per spec §4.2.
+	m, err := s.media.GetByIDVisible(ctx, mediaID, false)
 	if err != nil {
 		return nil, media.Media{}, err
 	}

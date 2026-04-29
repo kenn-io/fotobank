@@ -596,7 +596,7 @@ func (r *Repo) CoverMediaByScopes(
 		return AccessDecision{}, nil
 	}
 	valRows := make([]string, 0, len(validated))
-	args := make([]any, 0, len(validated)*4+6)
+	args := make([]any, 0, len(validated)*4+7)
 	for _, s := range validated {
 		valRows = append(valRows, "(?, ?, ?, ?)")
 		var albumID any
@@ -605,12 +605,13 @@ func (r *Repo) CoverMediaByScopes(
 		}
 		args = append(args, s.UUID, string(s.TargetType), albumID, boolToInt(s.AllowDownload))
 	}
-	// Six placeholders: owner.Hub, owner.UserID, then mediaID twice in
-	// the media_set EXISTS (once for direct id, once as the lookup key
-	// for paired_with_id), then mediaID twice again in the album_live
-	// EXISTS.
+	// Seven placeholders: owner.Hub, owner.UserID, mediaID for the
+	// top-level hidden_at IS NULL guard, then mediaID twice in the
+	// media_set EXISTS (direct id + paired_with_id lookup), then
+	// mediaID twice again in the album_live EXISTS.
 	args = append(args,
 		owner.Hub, owner.UserID,
+		mediaID,
 		mediaID, mediaID,
 		mediaID, mediaID,
 	)
@@ -621,6 +622,13 @@ func (r *Repo) CoverMediaByScopes(
 	// continue to bind. SQL precedence makes AND tighter than OR; the
 	// inner parentheses prevent the sidecar branch from short-circuiting
 	// the outer guards.
+	//
+	// hidden_at IS NULL guard: the EXISTS clauses still hold for
+	// scope_media / album_media membership. The top-level AND on the
+	// media row for the requested id ensures a hidden photo (or a sidecar
+	// whose primary is hidden) cannot pass through to the grantee.
+	// Permanent design constraint per spec §4.2: no IncludeHidden
+	// escape hatch at this surface.
 	q := `
 WITH validated(uuid, target_type, target_album_id, allow_download) AS (
     VALUES ` + strings.Join(valRows, ",") + `
@@ -629,6 +637,7 @@ SELECT v.uuid, v.target_album_id, v.allow_download
   FROM validated v
   JOIN scopes s ON s.uuid = v.uuid
  WHERE s.owner_hub = ? AND s.owner_user_id = ?
+   AND EXISTS (SELECT 1 FROM media WHERE id = ? AND hidden_at IS NULL)
    AND (
          (v.target_type = 'media_set' AND EXISTS (
              SELECT 1 FROM scope_media sm
@@ -829,6 +838,7 @@ SELECT m.id,
        WHERE v.target_type = 'album_live'
   ) covers ON covers.media_id = m.id
  WHERE m.owner_hub = ? AND m.owner_user_id = ?
+   AND m.hidden_at IS NULL
    AND (
          ? = 0
       OR COALESCE(m.timestamp, m.imported_at) < ?
@@ -988,7 +998,9 @@ func (r *Repo) CountSharedMediaByScope(ctx context.Context, scopeUUID string) (i
 		}
 		var n int
 		if err := r.ro.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM album_media WHERE album_id = ?`, albumID.String,
+			`SELECT COUNT(*) FROM album_media am
+			  JOIN media m ON m.id = am.media_id
+			 WHERE am.album_id = ? AND m.hidden_at IS NULL`, albumID.String,
 		).Scan(&n); err != nil {
 			return 0, fmt.Errorf("count album_media: %w", err)
 		}
@@ -1156,9 +1168,10 @@ func (r *Repo) ExpandScope(ctx context.Context, scopeUUID string) (ExpandedScope
 // what the grantee and the owner UI render.
 func (r *Repo) listAlbumMediaIDs(ctx context.Context, albumID string) ([]string, error) {
 	rows, err := r.ro.QueryContext(ctx,
-		`SELECT media_id FROM album_media
-          WHERE album_id = ?
-          ORDER BY added_at DESC, media_id DESC`, albumID)
+		`SELECT am.media_id FROM album_media am
+		   JOIN media m ON m.id = am.media_id
+          WHERE am.album_id = ? AND m.hidden_at IS NULL
+          ORDER BY am.added_at DESC, am.media_id DESC`, albumID)
 	if err != nil {
 		return nil, fmt.Errorf("list album media ids: %w", err)
 	}
@@ -1183,7 +1196,9 @@ func (r *Repo) albumSummary(ctx context.Context, albumID string) (AlbumSummary, 
 	var s AlbumSummary
 	err := r.ro.QueryRowContext(ctx,
 		`SELECT a.id, a.name, a.updated_at,
-                (SELECT COUNT(*) FROM album_media am WHERE am.album_id = a.id)
+                (SELECT COUNT(*) FROM album_media am
+                   JOIN media m ON m.id = am.media_id
+                  WHERE am.album_id = a.id AND m.hidden_at IS NULL)
            FROM albums a WHERE a.id = ?`, albumID,
 	).Scan(&s.ID, &s.Name, &s.UpdatedAt, &s.ItemCount)
 	if errors.Is(err, sql.ErrNoRows) {

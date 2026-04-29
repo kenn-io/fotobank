@@ -656,3 +656,111 @@ func TestSharedReadOpenThumbPendingReturnsNotFound(t *testing.T) {
 		bob, []string{s.UUID}, mID, thumb.SizeGrid, 0)
 	require.ErrorIs(t, err, errs.ErrNotFound)
 }
+
+// sharedHideMedia stamps hidden_at on a media row.
+func sharedHideMedia(t *testing.T, rw *sql.DB, mediaID string) {
+	t.Helper()
+	_, err := rw.ExecContext(context.Background(),
+		`UPDATE media SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), mediaID)
+	require.NoError(t, err)
+}
+
+// TestSharedReadListMediaExcludesHidden verifies that a hidden shared
+// photo is absent from ListMedia even when an active scope covers it.
+func TestSharedReadListMediaExcludesHidden(t *testing.T) {
+	r := require.New(t)
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+
+	visible := sharedSeedMedia(t, fx.db.WriteDB(), alice)
+	hidden := sharedSeedMedia(t, fx.db.WriteDB(), alice)
+	sharedHideMedia(t, fx.db.WriteDB(), hidden)
+
+	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, visible, hidden)
+	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
+
+	page, _, err := fx.svc.ListMedia(context.Background(), bob,
+		[]string{s.UUID}, service.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(page, 1)
+	r.Equal(visible, page[0].ID)
+}
+
+// TestSharedReadListAlbumMediaExcludesHidden verifies that a hidden
+// album member is absent from ListAlbumMedia.
+func TestSharedReadListAlbumMediaExcludesHidden(t *testing.T) {
+	r := require.New(t)
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+
+	albumID, mIDs := sharedSeedAlbumWithMedia(t, fx.db.WriteDB(), alice, 2)
+	sharedHideMedia(t, fx.db.WriteDB(), mIDs[1])
+
+	live := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now, false)
+	sharedBumpActive(t, fx.db.WriteDB(), live.UUID, fx.now)
+
+	page, _, err := fx.svc.ListAlbumMedia(context.Background(), bob,
+		[]string{live.UUID}, albumID, service.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(page, 1, "hidden album member must be excluded from ListAlbumMedia")
+	r.Equal(mIDs[0], page[0].ID)
+}
+
+// TestSharedReadGetMediaHiddenReturnsNotFound verifies that GetMedia
+// returns ErrNotFound for a hidden shared photo.
+func TestSharedReadGetMediaHiddenReturnsNotFound(t *testing.T) {
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	mID := sharedSeedMedia(t, fx.db.WriteDB(), alice)
+	sharedHideMedia(t, fx.db.WriteDB(), mID)
+	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, true, mID)
+	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
+
+	_, err := fx.svc.GetMedia(context.Background(), bob, []string{s.UUID}, mID)
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}
+
+// TestSharedReadOpenOriginalHiddenReturnsNotFound verifies that
+// OpenOriginal returns ErrNotFound for a hidden shared photo.
+func TestSharedReadOpenOriginalHiddenReturnsNotFound(t *testing.T) {
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	mID, _ := sharedSeedStoredMedia(t, fx, alice, "bytes")
+	sharedHideMedia(t, fx.db.WriteDB(), mID)
+	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, true, mID)
+	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
+
+	_, _, err := fx.svc.OpenOriginal(context.Background(),
+		bob, []string{s.UUID}, mID, 0, -1)
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}
+
+// TestSharedReadOpenThumbHiddenReturnsNotFound verifies that OpenThumb
+// returns ErrNotFound for a hidden shared photo.
+func TestSharedReadOpenThumbHiddenReturnsNotFound(t *testing.T) {
+	fx := newSharedReadFixture(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	mID, version := sharedSeedMediaWithReadyThumb(t, fx, alice, "jpegbytes")
+	sharedHideMedia(t, fx.db.WriteDB(), mID)
+	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, mID)
+	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
+
+	_, _, err := fx.svc.OpenThumb(context.Background(),
+		bob, []string{s.UUID}, mID, thumb.SizeGrid, version)
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}

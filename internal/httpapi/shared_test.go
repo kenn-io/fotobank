@@ -653,3 +653,139 @@ func TestSharedHTTPOriginalUnsatisfiableRangeReturns416(t *testing.T) {
 	r.Equal(http.StatusRequestedRangeNotSatisfiable, rec.Code, rec.Body.String())
 	r.Equal("bytes */10", rec.Result().Header.Get("Content-Range"))
 }
+
+// sharedHTTPHideMedia stamps hidden_at on a media row.
+func sharedHTTPHideMedia(t *testing.T, rw *sql.DB, mediaID string) {
+	t.Helper()
+	_, err := rw.ExecContext(context.Background(),
+		`UPDATE media SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), mediaID)
+	require.NoError(t, err)
+}
+
+// TestSharedHTTPListMediaExcludesHidden verifies that hidden shared
+// photos are absent from GET /api/v1/shared/media.
+func TestSharedHTTPListMediaExcludesHidden(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+
+	visible := sharedHTTPSeedMedia(t, in.d.WriteDB(), alice)
+	hidden := sharedHTTPSeedMedia(t, in.d.WriteDB(), alice)
+	sharedHTTPHideMedia(t, in.d.WriteDB(), hidden)
+
+	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, false, visible, hidden)
+	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
+
+	h := buildSharedFx(in, bob, []string{s.UUID})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared/media", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &resp))
+	r.Len(resp.Items, 1)
+	r.Equal(visible, resp.Items[0]["id"])
+}
+
+// TestSharedHTTPListAlbumMediaExcludesHidden verifies that hidden album
+// members are absent from GET /api/v1/shared/albums/{id}/media.
+func TestSharedHTTPListAlbumMediaExcludesHidden(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+
+	albumID, mIDs := sharedHTTPSeedAlbum(t, in.d.WriteDB(), alice, in.now, 2)
+	sharedHTTPHideMedia(t, in.d.WriteDB(), mIDs[1])
+
+	live := sharedHTTPMakeAlbumLiveScope(t, in.shares, alice, bob, albumID, in.now, false)
+	sharedHTTPBumpActive(t, in.d.WriteDB(), live.UUID, in.now)
+
+	h := buildSharedFx(in, bob, []string{live.UUID})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared/albums/"+albumID+"/media", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &resp))
+	r.Len(resp.Items, 1, "hidden album member must be excluded from shared album media")
+	r.Equal(mIDs[0], resp.Items[0]["id"])
+}
+
+// TestSharedHTTPGetMediaHiddenReturns404 verifies that GET
+// /api/v1/shared/media/{id} returns 404 for a hidden shared photo.
+func TestSharedHTTPGetMediaHiddenReturns404(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+
+	mID := sharedHTTPSeedMedia(t, in.d.WriteDB(), alice)
+	sharedHTTPHideMedia(t, in.d.WriteDB(), mID)
+	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, true, mID)
+	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
+
+	h := buildSharedFx(in, bob, []string{s.UUID})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared/media/"+mID, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+// TestSharedHTTPOriginalHiddenReturns404 verifies that GET
+// /api/v1/shared/media/{id}/original returns 404 for a hidden photo.
+func TestSharedHTTPOriginalHiddenReturns404(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+
+	mID := sharedHTTPSeedStoredMedia(t, in, alice, "photobytes")
+	sharedHTTPHideMedia(t, in.d.WriteDB(), mID)
+	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, true, mID)
+	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
+
+	h := buildSharedFx(in, bob, []string{s.UUID})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared/media/"+mID+"/original", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+// TestSharedHTTPThumbHiddenReturns404 verifies that GET
+// /api/v1/shared/media/{id}/thumb returns 404 for a hidden photo.
+func TestSharedHTTPThumbHiddenReturns404(t *testing.T) {
+	r := require.New(t)
+	in := setupSharedFxInputs(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+
+	mID, version := sharedHTTPSeedMediaWithReadyThumb(t, in, alice, "thumbbytes")
+	sharedHTTPHideMedia(t, in.d.WriteDB(), mID)
+	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, false, mID)
+	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
+
+	h := buildSharedFx(in, bob, []string{s.UUID})
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/shared/media/"+mID+"/thumb?size=grid&v="+strconv.Itoa(version), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	r.Equal(http.StatusNotFound, rec.Code, rec.Body.String())
+}

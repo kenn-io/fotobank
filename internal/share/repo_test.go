@@ -1900,3 +1900,174 @@ func TestRepoCountSharedMediaByScopesEmpty(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, counts)
 }
+
+// hideMedia stamps hidden_at on a media row, simulating an owner hide action.
+func hideMedia(t *testing.T, rw *sql.DB, mediaID string) {
+	t.Helper()
+	_, err := rw.ExecContext(context.Background(),
+		`UPDATE media SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), mediaID)
+	require.NoError(t, err)
+}
+
+// TestListSharedMediaIDsExcludesHidden verifies that hidden media rows
+// (hidden_at IS NOT NULL) are omitted from ListSharedMediaIDs for both
+// media_set and album_live scope types.
+func TestListSharedMediaIDsExcludesHidden(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	visible := seedMediaWithTimestamp(t, d, alice, now.Add(-1*time.Hour))
+	hidden := seedMediaWithTimestamp(t, d, alice, now.Add(-2*time.Hour))
+	hideMedia(t, d.WriteDB(), hidden)
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, visible, hidden)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	rows, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "", share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rows, 1, "hidden media must be excluded from shared listing")
+	r.Equal(visible, rows[0].MediaID)
+}
+
+// TestListSharedMediaIDsAlbumLiveExcludesHidden verifies that hidden
+// album members are omitted when listing an album_live scope.
+func TestListSharedMediaIDsAlbumLiveExcludesHidden(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	albumID, mIDs := seedAlbumWithMedia(t, d, alice, 2)
+	hideMedia(t, d.WriteDB(), mIDs[1]) // hide second member
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	rows, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, albumID, share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rows, 1, "hidden album member must be excluded from shared album media listing")
+	r.Equal(mIDs[0], rows[0].MediaID)
+}
+
+// TestCoverMediaByScopesRejectsHidden verifies that CoverMediaByScopes
+// does NOT grant access to a hidden media row, even when the scope
+// covers it via scope_media or album_media.
+func TestCoverMediaByScopesRejectsHidden(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	mID := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	hideMedia(t, d.WriteDB(), mID)
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, mID)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	dec, err := repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, mID)
+	r.NoError(err)
+	r.False(dec.Authorized, "CoverMediaByScopes must not cover hidden media")
+}
+
+// TestCoverMediaByScopesAlbumLiveRejectsHidden verifies that hidden
+// album members are not covered via the album_live path.
+func TestCoverMediaByScopesAlbumLiveRejectsHidden(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	albumID, mIDs := seedAlbumWithMedia(t, d, alice, 1)
+	hideMedia(t, d.WriteDB(), mIDs[0])
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	dec, err := repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, mIDs[0])
+	r.NoError(err)
+	r.False(dec.Authorized, "album_live CoverMediaByScopes must not cover hidden album member")
+}
+
+// TestCountSharedMediaByScopeExcludesHiddenAlbumLive verifies that the
+// item count for an album_live scope does not include hidden album
+// members.
+func TestCountSharedMediaByScopeExcludesHiddenAlbumLive(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	albumID, mIDs := seedAlbumWithMedia(t, d, alice, 3)
+	hideMedia(t, d.WriteDB(), mIDs[2]) // hide one of three
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, s.UUID, now)
+
+	n, err := repo.CountSharedMediaByScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(2, n, "hidden album member must not be counted")
+}
+
+// TestExpandScopeAlbumLiveExcludesHidden verifies that ExpandScope's
+// listAlbumMediaIDs path omits hidden album members from the preview.
+func TestExpandScopeAlbumLiveExcludesHidden(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	albumID, mIDs := seedAlbumWithMedia(t, d, alice, 2)
+	hideMedia(t, d.WriteDB(), mIDs[1]) // hide second
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+
+	exp, err := repo.ExpandScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Len(exp.MediaIDs, 1, "ExpandScope must not include hidden album members")
+	r.Equal(mIDs[0], exp.MediaIDs[0])
+}
