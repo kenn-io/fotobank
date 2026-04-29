@@ -27,10 +27,12 @@ test.describe("F2.3 owner-side sharing", () => {
       .getByRole("dialog")
       .getByRole("button", { name: "Revoke" })
       .click();
-    // After revoke, showRevoked stays false so the row drops out of
-    // the visible list (refetchListPreservingFilter re-fetches with
-    // include_settled=false). The ConfirmModal closes regardless.
+    // The ConfirmModal closes after revoke succeeds. The row stays
+    // visible with broker_status="revoking" until the (noop) broker
+    // confirms, so include_settled=false doesn't drop it. The pill
+    // transitions to "Revoking…" — that's the user-visible signal.
     await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(row.locator(".pill")).toContainText(/Revoking/);
   });
 
   test("seeded active share appears in /shares with state pill", async ({
