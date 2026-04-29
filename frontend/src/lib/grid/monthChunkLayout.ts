@@ -4,12 +4,16 @@ export type MediaLite = { id: string; aspect: number; thumbUrl?: string };
 
 // Reserved height for a rendered .day-header inside MonthChunk. Must
 // stay in sync with the component's .day-header rule (16px top + 8px
-// bottom padding + ~16px line height for the 12px font, rounded up).
+// bottom padding + the taller of the label line-height and the
+// GroupSelectButton in the trailing slot). The button (1px border +
+// 2px padding + 11px font line-box) renders ~18px tall, pushing the
+// header to ~42px in Chromium. Rounded up to a multiple of 4 so the
+// reservation has a small buffer for cross-browser font metrics.
 // Virtualizers and scrollbar scrubbers query intrinsicHeight to
 // position month chunks; if the header isn't accounted for here the
 // chunks below a labeled month will overlap or under-reserve their
 // slot.
-export const DAY_HEADER_HEIGHT = 40;
+export const DAY_HEADER_HEIGHT = 44;
 
 export function computeMonthLayout(
   items: MediaLite[],
