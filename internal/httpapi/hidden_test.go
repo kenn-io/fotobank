@@ -54,6 +54,14 @@ func (f *trackingMediaPrivacy) ClearAllHiddenForOwner(
 
 func newHiddenAPIFixture(t *testing.T) hiddenAPIFixture {
 	t.Helper()
+	return newHiddenAPIFixtureMode(t, true)
+}
+
+// newHiddenAPIFixtureMode builds a hiddenAPIFixture with a configurable
+// devInsecure flag. Pass devInsecure=false to get a TLS server with prod-mode
+// cookies (__Host-fotobank-hidden, Secure=true).
+func newHiddenAPIFixtureMode(t *testing.T, devInsecure bool) hiddenAPIFixture {
+	t.Helper()
 	d := testutil.OpenTestDB(t)
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
@@ -64,16 +72,23 @@ func newHiddenAPIFixture(t *testing.T) hiddenAPIFixture {
 
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	svc := hidden.NewService(repo, &fakeHiddenMediaPrivacy{})
-	// Use dev-insecure cookies so the test httptest.Server (HTTP) works.
-	cookieCfg := hidden.CookieConfigFor(true)
+	cookieCfg := hidden.CookieConfigFor(devInsecure)
 	idp := identity.NewStub(p, "Test User")
 	h, err := httpapi.New(httpapi.Deps{
 		IdentityProvider:         idp,
 		HiddenAuth:               svc,
-		DevInsecureHiddenCookies: true,
+		DevInsecureHiddenCookies: devInsecure,
 	})
 	require.NoError(t, err)
-	srv := httptest.NewServer(h)
+
+	var srv *httptest.Server
+	if devInsecure {
+		// Plain HTTP is fine for dev-insecure cookies.
+		srv = httptest.NewServer(h)
+	} else {
+		// Prod mode requires TLS so the __Host- prefix and Secure flag are valid.
+		srv = httptest.NewTLSServer(h)
+	}
 	t.Cleanup(srv.Close)
 	return hiddenAPIFixture{
 		srv:         srv,
@@ -81,7 +96,7 @@ func newHiddenAPIFixture(t *testing.T) hiddenAPIFixture {
 		repo:        repo,
 		owner:       p,
 		cookieCfg:   cookieCfg,
-		devInsecure: true,
+		devInsecure: devInsecure,
 	}
 }
 
@@ -92,7 +107,22 @@ func postJSON(t *testing.T, url, body string) *http.Response {
 	return resp
 }
 
+func postJSONWithClient(t *testing.T, client *http.Client, url, body string) *http.Response {
+	t.Helper()
+	return postJSONWithClientAndCookie(t, client, url, body, nil)
+}
+
 func postJSONWithCookie(t *testing.T, url, body string, cookie *http.Cookie) *http.Response {
+	t.Helper()
+	return postJSONWithClientAndCookie(t, http.DefaultClient, url, body, cookie)
+}
+
+func postJSONWithClientAndCookie(
+	t *testing.T,
+	client *http.Client,
+	url, body string,
+	cookie *http.Cookie,
+) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
 	require.NoError(t, err)
@@ -100,7 +130,7 @@ func postJSONWithCookie(t *testing.T, url, body string, cookie *http.Cookie) *ht
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	require.NoError(t, err)
 	return resp
 }
@@ -234,6 +264,7 @@ func TestHiddenUnlockCorrectPasscodeReturns204SetsCookie(t *testing.T) {
 	r.NotEmpty(unlockCookie.Value)
 	r.True(unlockCookie.HttpOnly)
 	r.Equal("/", unlockCookie.Path)
+	r.Equal(http.SameSiteStrictMode, unlockCookie.SameSite)
 }
 
 func TestHiddenStateAfterUnlockShowsUnlockedWithExpiry(t *testing.T) {
@@ -421,4 +452,60 @@ func TestHiddenTranslateErrHiddenNotConfigured(t *testing.T) {
 	got := httpapi.Translate(errs.ErrHiddenNotConfigured)
 	r.NotNil(got)
 	r.Equal(409, got.GetStatus())
+}
+
+// TestHiddenLockIdempotentOnRevokedCookie verifies that /lock returns 204 even
+// when the supplied cookie's session was already revoked by a prior /lock call.
+func TestHiddenLockIdempotentOnRevokedCookie(t *testing.T) {
+	r := require.New(t)
+	fx := newHiddenAPIFixture(t)
+	require.NoError(t, fx.svc.Setup(context.Background(), fx.owner, "pass"))
+
+	// Unlock to obtain a valid cookie.
+	unlockResp := postJSON(t, fx.srv.URL+"/api/v1/auth/hidden/unlock", `{"passcode":"pass"}`)
+	defer unlockResp.Body.Close()
+	r.Equal(http.StatusNoContent, unlockResp.StatusCode)
+	var unlockCookie *http.Cookie
+	for _, c := range unlockResp.Cookies() {
+		if c.Name == fx.cookieCfg.Name {
+			unlockCookie = c
+		}
+	}
+	r.NotNil(unlockCookie)
+
+	// First /lock with the cookie — revokes the session.
+	lock1 := postJSONWithCookie(t, fx.srv.URL+"/api/v1/auth/hidden/lock", "", unlockCookie)
+	defer lock1.Body.Close()
+	r.Equal(http.StatusNoContent, lock1.StatusCode)
+
+	// Second /lock with the now-revoked cookie — must still return 204.
+	lock2 := postJSONWithCookie(t, fx.srv.URL+"/api/v1/auth/hidden/lock", "", unlockCookie)
+	defer lock2.Body.Close()
+	r.Equal(http.StatusNoContent, lock2.StatusCode)
+}
+
+// TestHiddenProdCookieNameAndSecureFlag verifies that in production mode the
+// handler sets the __Host-fotobank-hidden cookie with Secure=true.
+func TestHiddenProdCookieNameAndSecureFlag(t *testing.T) {
+	r := require.New(t)
+	fx := newHiddenAPIFixtureMode(t, false) // prod mode: TLS server
+	require.NoError(t, fx.svc.Setup(context.Background(), fx.owner, "prod-pass"))
+
+	// Use the TLS server's own client so the self-signed cert is trusted.
+	tlsClient := fx.srv.Client()
+	resp := postJSONWithClient(t, tlsClient,
+		fx.srv.URL+"/api/v1/auth/hidden/unlock",
+		`{"passcode":"prod-pass"}`)
+	defer resp.Body.Close()
+	r.Equal(http.StatusNoContent, resp.StatusCode)
+
+	var prodCookie *http.Cookie
+	for _, c := range resp.Cookies() {
+		if c.Name == fx.cookieCfg.Name {
+			prodCookie = c
+		}
+	}
+	r.NotNil(prodCookie, "prod unlock cookie must be present in response")
+	r.Equal("__Host-fotobank-hidden", prodCookie.Name)
+	r.True(prodCookie.Secure, "prod cookie must have Secure=true")
 }
