@@ -1,54 +1,39 @@
 <!-- frontend/src/lib/components/ActionBar.svelte -->
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import type { SelectionStore } from "../selection/selectionStore.svelte";
-  let { selection }: { selection: SelectionStore } = $props();
 
-  function unimplemented(label: string) {
-    alert(`${label} arrives in a later sub-plan.`);
-  }
+  // selectedCount overrides selection.ids.size for routes that scope
+  // selection (e.g. AlbumDetail, where only album-member ids count).
+  // Default to selection.ids.size for the global Library/Sessions case.
+  let { selection, actions, selectedCount }: {
+    selection: SelectionStore;
+    actions?: Snippet;
+    selectedCount?: number;
+  } = $props();
+
+  const count = $derived(selectedCount ?? selection.ids.size);
 </script>
 
-{#if selection.ids.size > 0}
-  <div class="bar" role="toolbar" aria-label="Selection actions">
-    <span class="count">{selection.ids.size} selected</span>
-    <button onclick={() => unimplemented("Add to album (F6)")}>Add to album</button>
-    <button onclick={() => unimplemented("Hide (F5)")}>Hide</button>
-    <button onclick={() => unimplemented("Share (F6)")}>Share</button>
-    <button onclick={() => selection.clear()}>Done</button>
+{#if count > 0}
+  <div class="action-bar" role="toolbar" aria-label="Selection actions">
+    <span class="count">{count} selected</span>
+    {#if actions}
+      <span class="actions">{@render actions()}</span>
+    {/if}
+    <button type="button" onclick={() => selection.clear()}>Done</button>
   </div>
 {/if}
 
 <style>
-  .bar {
-    position: fixed;
-    /* Sit just below the 44px AppHeader so we don't obscure the
-       search input or account button while a selection is active. */
-    top: 52px;
-    left: 50%;
-    transform: translateX(-50%);
-    /* Cap the pill at the viewport so it can't overflow on narrow
-       screens; wrap buttons onto a second row when they don't fit. */
-    max-width: calc(100vw - 16px);
-    flex-wrap: wrap;
-    z-index: 10;
+  .action-bar {
     display: flex;
-    gap: 8px;
     align-items: center;
-    padding: 6px 12px;
+    gap: 12px;
+    padding: 8px 12px;
     background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    box-shadow: var(--shadow);
+    border-bottom: 1px solid var(--border);
   }
-  .count { font-size: 12px; color: var(--text-secondary); padding: 0 6px; }
-  button {
-    background: transparent;
-    border: none;
-    color: var(--text-primary);
-    cursor: pointer;
-    font-size: 13px;
-    padding: 4px 10px;
-    border-radius: 12px;
-  }
-  button:hover { background: var(--bg-surface); }
+  .count { font-weight: 600; }
+  .actions { display: flex; gap: 8px; }
 </style>

@@ -3,7 +3,6 @@
   import { onDestroy } from "svelte";
   import ThreeColumnLayout from "./lib/components/ThreeColumnLayout.svelte";
   import AppHeader from "./lib/components/AppHeader.svelte";
-  import ActionBar from "./lib/components/ActionBar.svelte";
   import Sidebar from "./lib/components/Sidebar.svelte";
   import Library from "./routes/Library.svelte";
   import Sessions from "./routes/Sessions.svelte";
@@ -67,16 +66,15 @@
 </script>
 
 <AppHeader />
-<ActionBar {selection} />
 <ThreeColumnLayout>
   {#snippet sidebar()}
     <Sidebar active={activeId(router.current)} />
   {/snippet}
   {#snippet main()}
     {#if router.current.route === "library"}
-      <Library {mediaStore} />
+      <Library {mediaStore} {albumsStore} />
     {:else if router.current.route === "sessions"}
-      <Sessions {mediaStore} />
+      <Sessions {mediaStore} {albumsStore} />
     {:else if router.current.route === "media"}
       <MediaDetail id={router.current.id} {mediaStore} {albumsStore} />
     {:else if router.current.route === "albums"}
