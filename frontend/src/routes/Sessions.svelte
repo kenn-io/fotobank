@@ -15,9 +15,21 @@
   import AddToAlbumModal from "../lib/components/AddToAlbumModal.svelte";
   import ShareModal from "../lib/components/ShareModal.svelte";
   import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
+  import type { HiddenStore } from "../lib/hidden/hiddenStore.svelte";
+  import type { ToastStore } from "../lib/toasts/toastStore.svelte";
   import type { CreateShareBody } from "../lib/share/shareTypes";
 
-  let { mediaStore, albumsStore }: { mediaStore: MediaStore; albumsStore: AlbumsStore } = $props();
+  let {
+    mediaStore,
+    albumsStore,
+    hiddenStore,
+    toastStore,
+  }: {
+    mediaStore: MediaStore;
+    albumsStore: AlbumsStore;
+    hiddenStore: HiddenStore;
+    toastStore: ToastStore;
+  } = $props();
 
   const density = new DensityStore(api, "sessions");
   density.load();
@@ -99,14 +111,43 @@
     // AddToAlbumModal contract; no need to flip shareOpen here.
     selection.clear();
   }
+
+  async function onHide(ids: string[]): Promise<void> {
+    if (!window.confirm(`Hide ${ids.length} photo${ids.length === 1 ? "" : "s"}?`)) return;
+    let result;
+    try {
+      result = await hiddenStore.hide(ids);
+    } catch {
+      toastStore.push({ message: "Hide failed. Try again.", kind: "error" });
+      return;
+    }
+    const succeeded = result.succeeded ?? [];
+    if (succeeded.length > 0) {
+      mediaStore.removeMany(succeeded);
+      selection.removeAll(succeeded);
+      // Mark albums stale so cover and counts refresh on next visit.
+      albumsStore.loadInitial();
+    }
+    const failed = result.failed ?? [];
+    if (failed.length > 0) {
+      toastStore.push({
+        message: `${failed.length} photo${failed.length === 1 ? "" : "s"} could not be hidden.`,
+        details: failed.map((f) => `${f.id}: ${f.code}`),
+        kind: "error",
+      });
+    }
+  }
 </script>
 
 <ActionBar {selection}>
   {#snippet actions()}
     <MediaActions
       mediaIds={Array.from(selection.ids)}
+      context="session"
+      hiddenConfigured={hiddenStore.configured}
       onAdd={openAdd}
       onShare={openShare}
+      {onHide}
     />
   {/snippet}
 </ActionBar>

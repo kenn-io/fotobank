@@ -102,19 +102,19 @@
   {/snippet}
   {#snippet main()}
     {#if router.current.route === "library"}
-      <Library {mediaStore} {albumsStore} />
+      <Library {mediaStore} {albumsStore} {hiddenStore} {toastStore} />
     {:else if router.current.route === "sessions"}
-      <Sessions {mediaStore} {albumsStore} />
+      <Sessions {mediaStore} {albumsStore} {hiddenStore} {toastStore} />
     {:else if router.current.route === "media"}
-      <MediaDetail id={router.current.id} {mediaStore} {albumsStore} />
+      <MediaDetail id={router.current.id} {mediaStore} {albumsStore} {hiddenStore} {toastStore} />
     {:else if router.current.route === "albums"}
       <AlbumsIndex {albumsStore} />
     {:else if router.current.route === "albums.detail"}
-      <AlbumDetail id={router.current.id} {mediaStore} {albumsStore} />
+      <AlbumDetail id={router.current.id} {mediaStore} {albumsStore} {hiddenStore} {toastStore} />
     {:else if router.current.route === "shares"}
       <SharesPage {sharesStore} />
     {:else if router.current.route === "hidden"}
-      <HiddenLibrary {hiddenStore} />
+      <HiddenLibrary {hiddenStore} {albumsStore} {toastStore} />
     {:else if router.current.route === "settings"}
       <div style="padding:20px">Settings (placeholder; theme = {themeStore.theme})</div>
     {:else}

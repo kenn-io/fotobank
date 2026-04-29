@@ -1,19 +1,23 @@
 <!-- frontend/src/routes/MediaDetail.svelte -->
 <script lang="ts">
   import type { MediaStore } from "../lib/media/mediaStore.svelte";
-  import { handleInternalLinkClick } from "../lib/router/router.svelte";
+  import { handleInternalLinkClick, router } from "../lib/router/router.svelte";
   import { formatCoord } from "../lib/format/coords";
   import MediaActions from "../lib/components/MediaActions.svelte";
   import AddToAlbumModal from "../lib/components/AddToAlbumModal.svelte";
   import ShareModal from "../lib/components/ShareModal.svelte";
   import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
+  import type { HiddenStore } from "../lib/hidden/hiddenStore.svelte";
+  import type { ToastStore } from "../lib/toasts/toastStore.svelte";
   import type { CreateShareBody } from "../lib/share/shareTypes";
   import { api } from "../lib/api/client";
 
-  let { id, mediaStore, albumsStore }: {
+  let { id, mediaStore, albumsStore, hiddenStore, toastStore }: {
     id: string;
     mediaStore: MediaStore;
     albumsStore: AlbumsStore;
+    hiddenStore: HiddenStore;
+    toastStore: ToastStore;
   } = $props();
 
   // Derive from the store so mergeRaw (or any later store update) flows
@@ -27,6 +31,12 @@
   });
   let loadError = $state<string | undefined>(undefined);
 
+  // Raw JSON from the on-miss fetch. Preserved even when the media is
+  // hidden (the visible MediaStore skips hidden rows, so `media` stays
+  // undefined for hidden items). Used by the Unhide flow to clone the
+  // raw payload with hidden_at=null before calling mergeRaw.
+  let lastRaw = $state<Record<string, unknown> | undefined>(undefined);
+
   // Re-run the on-miss fetch every time `id` changes — App.svelte mounts
   // MediaDetail without a {#key} wrapper, so navigating from one
   // /media/:id to another reuses this component instance and onMount
@@ -36,6 +46,7 @@
   $effect(() => {
     const currentId = id;
     loadError = undefined;
+    lastRaw = undefined;
     if (mediaStore.get(currentId)) return;
 
     let cancelled = false;
@@ -49,9 +60,12 @@
         }
         const raw = await resp.json();
         if (cancelled) return;
+        lastRaw = raw as Record<string, unknown>;
         // Reuse the store's own JSON-adapter pathway: merge a single-item
         // array so byMediaId is also populated. The store knows how to
         // build thumbUrl from the raw row.
+        // Note: if the row is hidden, mergeRaw skips it (Task 11 invariant)
+        // but lastRaw preserves the data for the Unhide flow.
         mediaStore.mergeRaw([raw]);
       } catch (e) {
         if (cancelled) return;
@@ -64,8 +78,37 @@
     };
   });
 
+  // The effective media row. For visible items, comes from the store.
+  // For hidden items (when the store skips them), we reconstruct from
+  // lastRaw so the template can still render metadata.
+  let effectiveMedia = $derived.by((): (typeof media & { hidden_at?: string | null }) | undefined => {
+    if (media) return media;
+    if (!lastRaw) return undefined;
+    // Minimal reconstruction for hidden items: enough to render details
+    // and the Unhide action. The full toMedia adapter lives in the store;
+    // we just need id, timestamp, hidden_at, and display fields.
+    const raw = lastRaw;
+    const id_ = typeof raw["id"] === "string" ? raw["id"] : undefined;
+    if (!id_) return undefined;
+    const ha = raw["hidden_at"];
+    if (ha === null || typeof ha === "string") {
+      // Return the raw shape cast to Media — it has the fields we need
+      // for the template. The cast is safe because lastRaw came from the
+      // same JSON endpoint as normal media rows.
+      return raw as unknown as typeof media;
+    }
+    return undefined;
+  });
+
+  // Whether the currently-viewed media is hidden.
+  const isHidden = $derived(
+    (effectiveMedia?.hidden_at != null) ||
+    (lastRaw !== undefined && (lastRaw["hidden_at"] === null || typeof lastRaw["hidden_at"] === "string")
+      && lastRaw["hidden_at"] !== undefined),
+  );
+
   let previewUrl = $derived(
-    media ? `/api/v1/media/${media.id}/thumb?size=preview&v=${media.thumbVersion}` : "",
+    effectiveMedia ? `/api/v1/media/${effectiveMedia.id}/thumb?size=preview&v=${effectiveMedia.thumbVersion ?? 0}` : "",
   );
 
   let imgError = $state(false);
@@ -132,6 +175,63 @@
     // ShareModal calls onClose() itself on success — match the
     // AddToAlbumModal contract; no need to flip shareOpen here.
   }
+
+  async function onHide(ids: string[]): Promise<void> {
+    if (!window.confirm("Hide this photo?")) return;
+    let result;
+    try {
+      result = await hiddenStore.hide(ids);
+    } catch {
+      toastStore.push({ message: "Hide failed. Try again.", kind: "error" });
+      return;
+    }
+    const succeeded = result.succeeded ?? [];
+    if (succeeded.length > 0) {
+      mediaStore.removeMany(succeeded);
+      // Mark albums stale so counts refresh on next visit.
+      albumsStore.loadInitial();
+      router.navigate("/library");
+      return;
+    }
+    const failed = result.failed ?? [];
+    if (failed.length > 0) {
+      toastStore.push({
+        message: "Could not hide this photo.",
+        details: failed.map((f) => `${f.id}: ${f.code}`),
+        kind: "error",
+      });
+    }
+  }
+
+  async function onUnhide(ids: string[]): Promise<void> {
+    if (!window.confirm("Unhide this photo?")) return;
+    let result;
+    try {
+      result = await hiddenStore.unhide(ids);
+    } catch {
+      toastStore.push({ message: "Unhide failed. Try again.", kind: "error" });
+      return;
+    }
+    const succeeded = result.succeeded ?? [];
+    if (succeeded.length > 0) {
+      // Clone the raw data with hidden_at=null and merge back into the
+      // visible store. No navigation — user stays on this detail page.
+      const raw = lastRaw ?? { id, thumb_version: 0, width: 1, height: 1 };
+      mediaStore.mergeRaw([{ ...raw, hidden_at: null }]);
+      // lastRaw is now stale; clear it so the derived picks up from store.
+      lastRaw = undefined;
+      // Mark albums stale so counts refresh.
+      albumsStore.loadInitial();
+    }
+    const failed = result.failed ?? [];
+    if (failed.length > 0) {
+      toastStore.push({
+        message: "Could not unhide this photo.",
+        details: failed.map((f) => `${f.id}: ${f.code}`),
+        kind: "error",
+      });
+    }
+  }
 </script>
 
 <div class="media-detail">
@@ -145,13 +245,13 @@
 
   {#if loadError}
     <p class="error">Could not load media: {loadError}</p>
-  {:else if !media}
+  {:else if !effectiveMedia}
     <p>Loading…</p>
-  {:else if media.paired_with_id}
+  {:else if effectiveMedia.paired_with_id}
     <h1 class="sidecar-heading">
       RAW sidecar for
-      {#if media.paired_with}
-        {@const primary = media.paired_with}
+      {#if effectiveMedia.paired_with}
+        {@const primary = effectiveMedia.paired_with}
         <a
           href="/media/{primary.id}"
           onclick={(e) => handleInternalLinkClick(e, `/media/${primary.id}`)}
@@ -163,44 +263,49 @@
       {/if}
     </h1>
     <dl class="info">
-      {#if media.original_filename}
+      {#if effectiveMedia.original_filename}
         <dt>File</dt>
-        <dd>{media.original_filename}</dd>
+        <dd>{effectiveMedia.original_filename}</dd>
       {/if}
-      {#if media.size}
+      {#if effectiveMedia.size}
         <dt>Size</dt>
-        <dd>{formatBytes(media.size)}</dd>
+        <dd>{formatBytes(effectiveMedia.size)}</dd>
       {/if}
-      {#if media.timestamp}
+      {#if effectiveMedia.timestamp}
         <dt>Captured</dt>
-        <dd>{formatTimestamp(media.timestamp)}</dd>
+        <dd>{formatTimestamp(effectiveMedia.timestamp)}</dd>
       {/if}
-      {#if media.location_label || (media.latitude != null && media.longitude != null)}
+      {#if effectiveMedia.location_label || (effectiveMedia.latitude != null && effectiveMedia.longitude != null)}
         <dt>Location</dt>
         <dd>
-          {#if media.location_label}{media.location_label}{/if}
-          {#if media.latitude != null && media.longitude != null}
-            <small class="coord">{formatCoord(media.latitude, media.longitude)}</small>
+          {#if effectiveMedia.location_label}{effectiveMedia.location_label}{/if}
+          {#if effectiveMedia.latitude != null && effectiveMedia.longitude != null}
+            <small class="coord">{formatCoord(effectiveMedia.latitude, effectiveMedia.longitude)}</small>
           {/if}
         </dd>
       {/if}
     </dl>
-    <a class="download" href="/api/v1/media/{media.id}/original" download={media.original_filename ?? media.id}>
-      Download {media.original_filename ?? "file"}
+    <a class="download" href="/api/v1/media/{effectiveMedia.id}/original" download={effectiveMedia.original_filename ?? effectiveMedia.id}>
+      Download {effectiveMedia.original_filename ?? "file"}
     </a>
   {:else}
     <header class="media-actions-header">
       <MediaActions
-        mediaIds={[media.id]}
+        mediaIds={[effectiveMedia.id]}
+        context="media-detail"
+        {isHidden}
+        hiddenConfigured={hiddenStore.configured}
         onAdd={openAdd}
         onShare={openShare}
+        {onHide}
+        {onUnhide}
       />
     </header>
     <div class="photo">
       {#if !imgError}
         <img
           src={previewUrl}
-          alt={media.location_label ?? media.id}
+          alt={effectiveMedia.location_label ?? effectiveMedia.id}
           onerror={() => (imgError = true)}
         />
       {:else}
@@ -209,26 +314,26 @@
     </div>
 
     <dl class="info">
-      {#if media.timestamp}
+      {#if effectiveMedia.timestamp}
         <dt>Captured</dt>
-        <dd>{formatTimestamp(media.timestamp)}</dd>
+        <dd>{formatTimestamp(effectiveMedia.timestamp)}</dd>
       {/if}
-      {#if media.location_label || (media.latitude != null && media.longitude != null)}
+      {#if effectiveMedia.location_label || (effectiveMedia.latitude != null && effectiveMedia.longitude != null)}
         <dt>Location</dt>
         <dd>
-          {#if media.location_label}{media.location_label}{/if}
-          {#if media.latitude != null && media.longitude != null}
-            <small class="coord">{formatCoord(media.latitude, media.longitude)}</small>
+          {#if effectiveMedia.location_label}{effectiveMedia.location_label}{/if}
+          {#if effectiveMedia.latitude != null && effectiveMedia.longitude != null}
+            <small class="coord">{formatCoord(effectiveMedia.latitude, effectiveMedia.longitude)}</small>
           {/if}
         </dd>
       {/if}
-      {#if media.sidecars && media.sidecars.length > 0}
+      {#if effectiveMedia.sidecars && effectiveMedia.sidecars.length > 0}
         <dt>Files</dt>
         <dd class="files">
-          <a href="/api/v1/media/{media.id}/original" download={media.original_filename ?? media.id}>
-            {media.original_filename ?? media.id}
+          <a href="/api/v1/media/{effectiveMedia.id}/original" download={effectiveMedia.original_filename ?? effectiveMedia.id}>
+            {effectiveMedia.original_filename ?? effectiveMedia.id}
           </a>
-          {#each media.sidecars as sidecar (sidecar.id)}
+          {#each effectiveMedia.sidecars as sidecar (sidecar.id)}
             <br />
             <a href="/api/v1/media/{sidecar.id}/original" download={sidecar.original_filename ?? sidecar.id}>
               {sidecar.original_filename ?? sidecar.id}

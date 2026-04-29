@@ -11,13 +11,17 @@
   import ShareModal from "../lib/components/ShareModal.svelte";
   import { selection } from "../lib/selection/selectionStore.svelte";
   import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
+  import type { HiddenStore } from "../lib/hidden/hiddenStore.svelte";
+  import type { ToastStore } from "../lib/toasts/toastStore.svelte";
   import type { CreateShareBody } from "../lib/share/shareTypes";
   import { router, handleInternalLinkClick } from "../lib/router/router.svelte";
 
-  let { id, mediaStore, albumsStore }: {
+  let { id, mediaStore, albumsStore, hiddenStore, toastStore }: {
     id: string;
     mediaStore: MediaStore;
     albumsStore: AlbumsStore;
+    hiddenStore: HiddenStore;
+    toastStore: ToastStore;
   } = $props();
 
   // AlbumDetailStore needs a stable MediaStore reference for its
@@ -127,6 +131,32 @@
     selection.clear();
   }
 
+  async function onHide(ids: string[]): Promise<void> {
+    if (!window.confirm(`Hide ${ids.length} photo${ids.length === 1 ? "" : "s"}?`)) return;
+    let result;
+    try {
+      result = await hiddenStore.hide(ids);
+    } catch {
+      toastStore.push({ message: "Hide failed. Try again.", kind: "error" });
+      return;
+    }
+    const succeeded = result.succeeded ?? [];
+    if (succeeded.length > 0) {
+      detail.pruneHidden(succeeded);
+      selection.removeAll(succeeded);
+      // Mark albums stale so counts and cover refresh on next visit.
+      albumsStore.loadInitial();
+    }
+    const failed = result.failed ?? [];
+    if (failed.length > 0) {
+      toastStore.push({
+        message: `${failed.length} photo${failed.length === 1 ? "" : "s"} could not be hidden.`,
+        details: failed.map((f) => `${f.id}: ${f.code}`),
+        kind: "error",
+      });
+    }
+  }
+
   async function onRename(name: string) {
     await detail.rename(name);
     // Sync the AlbumsStore cache so navigating back to /albums shows the
@@ -204,9 +234,11 @@
         mediaIds={selectedInAlbum}
         context="album"
         albumId={id}
+        hiddenConfigured={hiddenStore.configured}
         onAdd={openAdd}
         onShare={openShare}
         {onRemove}
+        {onHide}
       />
     {/if}
   {/snippet}
