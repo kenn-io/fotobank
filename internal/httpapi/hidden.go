@@ -219,13 +219,13 @@ func registerHiddenState(api huma.API, svc *hidden.Service) {
 
 // translateHiddenPasscodeError maps service errors on passcode-bearing endpoints.
 // On ErrLockedOut it queries the service for the active lockout time and
-// returns a lockedOutError that carries a Retry-After header.
+// returns an error that carries a Retry-After header and a serializable body.
 func translateHiddenPasscodeError(
 	ctx context.Context,
 	svc *hidden.Service,
 	caller owners.Principal,
 	err error,
-) huma.StatusError {
+) error {
 	if !errors.Is(err, errs.ErrLockedOut) {
 		return Translate(err)
 	}
@@ -236,22 +236,10 @@ func translateHiddenPasscodeError(
 			retryAfterSecs = secs
 		}
 	}
-	return &lockedOutError{retryAfterSecs: retryAfterSecs}
-}
-
-// lockedOutError is a huma.StatusError that also implements huma.HeadersError
-// so the Retry-After header is emitted on the 429 response before the body.
-type lockedOutError struct {
-	retryAfterSecs int
-}
-
-func (e *lockedOutError) Error() string  { return "passcode rejected" }
-func (e *lockedOutError) GetStatus() int { return http.StatusTooManyRequests }
-
-// GetHeaders implements huma.HeadersError so huma sets the header before
-// writing the status/body.
-func (e *lockedOutError) GetHeaders() http.Header {
 	h := make(http.Header)
-	h.Set("Retry-After", strconv.Itoa(e.retryAfterSecs))
-	return h
+	h.Set("Retry-After", strconv.Itoa(retryAfterSecs))
+	return huma.ErrorWithHeaders(
+		huma.NewError(http.StatusTooManyRequests, "passcode rejected"),
+		h,
+	)
 }

@@ -9,6 +9,15 @@
 // matching URL. The default is 18080 (not 8080) because 8080 is a
 // commonly-contested port; the env var override lets dev environments
 // shift if they hit collisions.
+//
+// Environment variables:
+//   - FOTOBANK_E2E_PORT: listen port (default 18080)
+//   - FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1: skip credential seed so the
+//     "unconfigured CTA" Playwright test can assert the gate CTA renders
+//   - FOTOBANK_E2E_LOCKOUT_WINDOW: duration string (e.g. "5s") to override
+//     the hidden-auth lockout window and duration (default 300s production).
+//     The threshold stays at 5 failures; only the window and lockout duration
+//     shrink so the lockout test can complete without real wait.
 package main
 
 import (
@@ -19,6 +28,7 @@ import (
 	"time"
 
 	"github.com/wesm/fotobank/internal/album"
+	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/cli"
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/media"
@@ -70,6 +80,11 @@ handle = "Alice"
 storage_key = "alice-sk"
 [http]
 listen_address = "127.0.0.1:%s"
+# dev_insecure_cookies must be true for the e2e server: the __Host- prefix
+# and Secure flag prevent unlock cookies from round-tripping over plain
+# http://127.0.0.1 — the browser drops them silently. The dev cookie name
+# (fotobank-hidden, no Secure) is used instead.
+dev_insecure_cookies = true
 [imports]
 file_lock_path = "%s"
 [backup]
@@ -100,9 +115,15 @@ admin_listen = "127.0.0.1:0"
 	return nil
 }
 
-// seedFixtures inserts an owner row and four media rows with deterministic
-// IDs. The IDs are referenced verbatim by the Playwright MediaDetail GPS
-// tests and the F2.2 sidecar tests in frontend/tests/e2e/library.spec.ts.
+// seedFixtures inserts an owner row and deterministic media rows used by
+// the Playwright suite. The IDs are referenced verbatim by tests in
+// frontend/tests/e2e/*.spec.ts.
+//
+// Hidden fixtures:
+//   - auth_hidden_credential for the stub principal with passcode "e2e-passcode"
+//     (Argon2id-hashed). Skipped when FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1.
+//   - hidden-prehidden-1: hidden_at = now (used by gate/grid tests)
+//   - hidden-target-1:    hidden_at = NULL (used by hide-flow test)
 func seedFixtures(dbPath string) error {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		return fmt.Errorf("create db dir: %w", err)
@@ -230,5 +251,149 @@ func seedFixtures(dbPath string) error {
 	}, owner); err != nil {
 		return fmt.Errorf("seed active share: %w", err)
 	}
+
+	// F2.4 hidden privacy fixtures.
+
+	// hidden-prehidden-1: already hidden at seed time — used by gate-render
+	// and /hidden grid tests (the grid must show this row when unlocked).
+	prehidden := media.Media{
+		ID:          "hidden-prehidden-1",
+		Owner:       owner,
+		Type:        media.TypePhoto,
+		MimeType:    "image/jpeg",
+		Path:        "hidden-prehidden-1.jpg",
+		ImportedAt:  now,
+		Size:        1,
+		Checksum:    "checksum-hidden-prehidden-1",
+		ThumbStatus: "pending",
+	}
+	if err := repo.Insert(ctx, prehidden); err != nil {
+		return fmt.Errorf("seed hidden-prehidden-1: %w", err)
+	}
+	if _, err := d.WriteDB().ExecContext(ctx,
+		`UPDATE media SET hidden_at = ? WHERE id = ?`, now, "hidden-prehidden-1",
+	); err != nil {
+		return fmt.Errorf("seed hidden-prehidden-1 hidden_at: %w", err)
+	}
+
+	// hidden-target-1: visible — used by the hide-flow test which triggers
+	// the hide action via the UI (exercising the cascade and store paths).
+	target := media.Media{
+		ID:          "hidden-target-1",
+		Owner:       owner,
+		Type:        media.TypePhoto,
+		MimeType:    "image/jpeg",
+		Path:        "hidden-target-1.jpg",
+		ImportedAt:  now,
+		Size:        1,
+		Checksum:    "checksum-hidden-target-1",
+		ThumbStatus: "pending",
+	}
+	if err := repo.Insert(ctx, target); err != nil {
+		return fmt.Errorf("seed hidden-target-1: %w", err)
+	}
+
+	// hidden-cascade-primary + hidden-cascade-sidecar: a dedicated pair for
+	// the sidecar-cascade e2e test so hiding the primary doesn't contaminate
+	// the shared pair-fixture-primary/sidecar fixtures used by other tests.
+	cascadePrimary := media.Media{
+		ID:               "hidden-cascade-primary",
+		Owner:            owner,
+		Type:             media.TypePhoto,
+		MimeType:         "image/jpeg",
+		Path:             "hidden-cascade-primary.jpg",
+		OriginalFilename: "HIDDEN_C1.JPG",
+		ImportedAt:       now,
+		Size:             1,
+		Checksum:         "checksum-hidden-cascade-primary",
+		ImportSourcePath: "fixtures/HIDDEN_C1.JPG",
+		ThumbStatus:      "pending",
+	}
+	if err := repo.Insert(ctx, cascadePrimary); err != nil {
+		return fmt.Errorf("seed hidden-cascade-primary: %w", err)
+	}
+	cascadePrimaryID := cascadePrimary.ID
+	cascadeSidecar := media.Media{
+		ID:               "hidden-cascade-sidecar",
+		Owner:            owner,
+		Type:             media.TypePhoto,
+		MimeType:         "image/x-adobe-dng",
+		Path:             "hidden-cascade-sidecar.dng",
+		OriginalFilename: "HIDDEN_C1.DNG",
+		ImportedAt:       now,
+		Size:             1,
+		Checksum:         "checksum-hidden-cascade-sidecar",
+		ImportSourcePath: "fixtures/HIDDEN_C1.DNG",
+		PairedWithID:     &cascadePrimaryID,
+		ThumbStatus:      "pending",
+	}
+	if err := repo.Insert(ctx, cascadeSidecar); err != nil {
+		return fmt.Errorf("seed hidden-cascade-sidecar: %w", err)
+	}
+
+	// hidden-album-target-1: visible, added to the Italy album — used by the
+	// album hidden_count chip test so hiding this doesn't contaminate the
+	// gps-fixture-1 fixture that the shares test relies on.
+	albumTarget := media.Media{
+		ID:          "hidden-album-target-1",
+		Owner:       owner,
+		Type:        media.TypePhoto,
+		MimeType:    "image/jpeg",
+		Path:        "hidden-album-target-1.jpg",
+		ImportedAt:  now,
+		Size:        1,
+		Checksum:    "checksum-hidden-album-target-1",
+		ThumbStatus: "pending",
+	}
+	if err := repo.Insert(ctx, albumTarget); err != nil {
+		return fmt.Errorf("seed hidden-album-target-1: %w", err)
+	}
+	// Add hidden-album-target-1 to the Italy album after inserting it.
+	if _, _, err := albumSvc.AddMedia(ctx, seededAlbum.ID, []string{
+		"hidden-album-target-1",
+	}, owner); err != nil {
+		return fmt.Errorf("seed hidden-album-target-1 album membership: %w", err)
+	}
+
+	// hidden-share-member-1: visible, included in a dedicated share
+	// ("Hidden grantee e2e share") so scenario 14 can hide it without
+	// contaminating gps-fixture-1 which is used by shares.spec.ts.
+	shareMember := media.Media{
+		ID:          "hidden-share-member-1",
+		Owner:       owner,
+		Type:        media.TypePhoto,
+		MimeType:    "image/jpeg",
+		Path:        "hidden-share-member-1.jpg",
+		ImportedAt:  now,
+		Size:        1,
+		Checksum:    "checksum-hidden-share-member-1",
+		ThumbStatus: "pending",
+	}
+	if err := repo.Insert(ctx, shareMember); err != nil {
+		return fmt.Errorf("seed hidden-share-member-1: %w", err)
+	}
+	if _, err := shareSvc.Create(ctx, service.CreateShareRequest{
+		TargetType: share.TargetMediaSet,
+		MediaIDs:   []string{"hidden-share-member-1"},
+		Grantee:    owners.Principal{Hub: "noop", UserID: "e2e-hidden"},
+		Label:      "Hidden grantee e2e share",
+	}, owner); err != nil {
+		return fmt.Errorf("seed hidden grantee share: %w", err)
+	}
+
+	// Seed the hidden credential unless running the "unconfigured" variant.
+	// FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 skips this so the CTA test can
+	// assert that the gate renders "Hidden privacy isn't set up."
+	if os.Getenv("FOTOBANK_E2E_HIDDEN_UNCONFIGURED") != "1" {
+		hash, err := hidden.HashPasscode("e2e-passcode")
+		if err != nil {
+			return fmt.Errorf("hash e2e passcode: %w", err)
+		}
+		hiddenRepo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
+		if err := hiddenRepo.UpsertCredential(ctx, owner, hash, now); err != nil {
+			return fmt.Errorf("seed hidden credential: %w", err)
+		}
+	}
+
 	return nil
 }
