@@ -47,6 +47,7 @@ base_url = ""                        # used to build absolute URLs in API respon
 request_timeout = "30s"
 write_timeout = "60s"                # accommodates range streams and large originals
 cors_origins = []                    # typically set to the frontend origin in Phase 3
+dev_insecure_cookies = false         # dev/e2e only: allow non-Secure Hidden unlock cookie over HTTP loopback
 
 [imports]
 concurrent_workers = 2               # goroutines doing EXIF + hash inside a single 'fotobank import' invocation

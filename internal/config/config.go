@@ -113,6 +113,12 @@ type HTTP struct {
 	RequestTimeout time.Duration `toml:"request_timeout"`
 	WriteTimeout   time.Duration `toml:"write_timeout"`
 	CORSOrigins    []string      `toml:"cors_origins"`
+	// DevInsecureCookies enables non-Secure cookie issuance for HTTP
+	// loopback dev/e2e. Production deployments leave this false; the
+	// server then issues __Host-fotobank-hidden with Secure unconditionally.
+	// We do NOT sniff X-Forwarded-Proto — that opens a downgrade path
+	// against an untrusted reverse proxy.
+	DevInsecureCookies bool `toml:"dev_insecure_cookies"`
 }
 
 type Imports struct {

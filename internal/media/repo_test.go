@@ -178,6 +178,40 @@ func TestMediaGetByIDNotFoundReturnsErrNotFound(t *testing.T) {
 	r.ErrorIs(err, errs.ErrNotFound)
 }
 
+// TestMediaHiddenAtRoundTrips proves the F2.4 hidden_at column round-trips
+// through Insert and GetByID. Insert with HiddenAt set must scan back
+// non-nil with the same instant; absent HiddenAt scans back nil.
+func TestMediaHiddenAtRoundTrips(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-h")
+
+	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	hidden := baseMedia(uuid.NewString(), p)
+	hidden.Path = "2024/h.jpg"
+	hidden.Checksum = "cs-h"
+	hidden.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, hidden))
+
+	visible := baseMedia(uuid.NewString(), p)
+	visible.Path = "2024/v.jpg"
+	visible.Checksum = "cs-v"
+	r.NoError(repo.Insert(ctx, visible))
+
+	gotHidden, err := repo.GetByID(ctx, hidden.ID)
+	r.NoError(err)
+	r.NotNil(gotHidden.HiddenAt)
+	r.True(gotHidden.HiddenAt.Equal(hiddenAt))
+
+	gotVisible, err := repo.GetByID(ctx, visible.ID)
+	r.NoError(err)
+	r.Nil(gotVisible.HiddenAt)
+}
+
 func TestMediaListPaginationIsStableOnTies(t *testing.T) {
 	// Rows with identical timestamp + imported_at must still paginate
 	// deterministically so successive pages don't skip or duplicate.

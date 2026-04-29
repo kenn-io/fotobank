@@ -66,6 +66,12 @@ CREATE TABLE media (
     thumb_version     INTEGER NOT NULL DEFAULT 0,  -- bumped on every regeneration
     thumb_updated_at  TIMESTAMP,                   -- when thumb_version was last bumped
 
+    -- F2.4 Hidden privacy. NULL = visible; non-NULL = hidden, set when the
+    -- owner runs Hide. Cascades to sidecars (paired_with_id IS NOT NULL)
+    -- by repo.SetHiddenCascade. App-level privacy only (not encryption);
+    -- threat model is bystander glance, see specs/2026-04-29-...-design.md.
+    hidden_at         TIMESTAMP,
+
     FOREIGN KEY (owner_hub, owner_user_id) REFERENCES owners(hub, user_id),
     UNIQUE (owner_hub, owner_user_id, checksum),
     UNIQUE (owner_hub, owner_user_id, path),
@@ -84,6 +90,11 @@ CREATE INDEX media_owner_import_source_path_idx
 -- Sidecar lookup index: GetSidecars / DTO embed path scans by FK.
 CREATE INDEX media_paired_with_id_idx
     ON media(paired_with_id) WHERE paired_with_id IS NOT NULL;
+-- F2.4 visible-row index: list endpoints (Library, Sessions, album members)
+-- always filter hidden_at IS NULL. Partial index keeps that path narrow.
+CREATE INDEX media_visible_idx
+    ON media(owner_hub, owner_user_id, timestamp DESC)
+    WHERE hidden_at IS NULL;
 
 -- Owner-consistency triggers on paired_with_id. Mirrors the
 -- album_media_owner_consistency_* pair below; defence in depth even
@@ -296,3 +307,58 @@ BEGIN
         THEN RAISE(ABORT, 'scope and target album must share owner')
     END;
 END;
+
+-- F2.4 Hidden privacy auth tables. Per-owner passcode credential, opaque
+-- unlock-cookie sessions, sliding-window failure log, and persisted
+-- lockout decision. All FK to owners(hub, user_id) so a CLI tool that
+-- removes an owner row also tears down their hidden state.
+CREATE TABLE auth_hidden_credential (
+    principal_hub      TEXT NOT NULL,
+    principal_user_id  TEXT NOT NULL,
+    passcode_hash      TEXT NOT NULL,             -- argon2id encoded string
+    created_at         TIMESTAMP NOT NULL,
+    updated_at         TIMESTAMP NOT NULL,
+    PRIMARY KEY (principal_hub, principal_user_id),
+    FOREIGN KEY (principal_hub, principal_user_id)
+        REFERENCES owners(hub, user_id)
+);
+
+CREATE TABLE auth_hidden_session (
+    token_sha256       BLOB NOT NULL PRIMARY KEY,
+    principal_hub      TEXT NOT NULL,
+    principal_user_id  TEXT NOT NULL,
+    issued_at          TIMESTAMP NOT NULL,
+    expires_at         TIMESTAMP NOT NULL,
+    revoked_at         TIMESTAMP,
+    FOREIGN KEY (principal_hub, principal_user_id)
+        REFERENCES owners(hub, user_id)
+);
+-- Active-session lookup by principal: powers revoke-all-for-principal on
+-- Change/Disable/AdminReset.
+CREATE INDEX auth_hidden_session_principal_active_idx
+    ON auth_hidden_session(principal_hub, principal_user_id)
+    WHERE revoked_at IS NULL;
+-- Expiry sweep index: background sweeper closes expired-but-unrevoked rows.
+CREATE INDEX auth_hidden_session_expiry_idx
+    ON auth_hidden_session(expires_at)
+    WHERE revoked_at IS NULL;
+
+CREATE TABLE auth_hidden_failure (
+    principal_hub      TEXT NOT NULL,
+    principal_user_id  TEXT NOT NULL,
+    occurred_at        TIMESTAMP NOT NULL,
+    FOREIGN KEY (principal_hub, principal_user_id)
+        REFERENCES owners(hub, user_id)
+);
+CREATE INDEX auth_hidden_failure_owner_idx
+    ON auth_hidden_failure(principal_hub, principal_user_id, occurred_at DESC);
+
+CREATE TABLE auth_hidden_lockout (
+    principal_hub      TEXT NOT NULL,
+    principal_user_id  TEXT NOT NULL,
+    locked_until       TIMESTAMP NOT NULL,
+    updated_at         TIMESTAMP NOT NULL,
+    PRIMARY KEY (principal_hub, principal_user_id),
+    FOREIGN KEY (principal_hub, principal_user_id)
+        REFERENCES owners(hub, user_id)
+);

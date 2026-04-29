@@ -60,6 +60,11 @@ type Media struct {
 	ThumbStatus    string
 	ThumbVersion   int
 	ThumbUpdatedAt *time.Time
+
+	// F2.4 Hidden privacy. NULL = visible; non-NULL = hidden, set when
+	// the owner runs Hide. Cascades to sidecars via repo cascade methods;
+	// service-layer Hide/Unhide rejects sidecar input ids directly.
+	HiddenAt *time.Time
 }
 
 // ListFilter narrows the List query.

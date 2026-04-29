@@ -45,7 +45,8 @@ const mediaSelect = `SELECT
 	duration_ms,
 	latitude, longitude, gps_at, location_label,
 	thumb_status, thumb_version, thumb_updated_at,
-	import_source_path, paired_with_id
+	import_source_path, paired_with_id,
+	hidden_at
 FROM media`
 
 // mediaColumnsQualified is the m-prefixed projection used when the
@@ -61,7 +62,8 @@ const mediaColumnsQualified = `
     m.duration_ms,
     m.latitude, m.longitude, m.gps_at, m.location_label,
     m.thumb_status, m.thumb_version, m.thumb_updated_at,
-    m.import_source_path, m.paired_with_id`
+    m.import_source_path, m.paired_with_id,
+    m.hidden_at`
 
 const mediaInsert = `INSERT INTO media (
 	id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
@@ -70,8 +72,9 @@ const mediaInsert = `INSERT INTO media (
 	duration_ms,
 	latitude, longitude, gps_at, location_label,
 	thumb_status, thumb_version, thumb_updated_at,
-	import_source_path, paired_with_id
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	import_source_path, paired_with_id,
+	hidden_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // Insert stores a new media row. Returns errs.ErrAlreadyExists (wrapped)
 // if a row already exists with the same (owner, checksum) or (owner, path).
@@ -112,6 +115,7 @@ func (r *Repo) Insert(ctx context.Context, m Media) error {
 		nullTime(m.ThumbUpdatedAt),
 		m.ImportSourcePath,
 		pairedWithIDArg(m.PairedWithID),
+		nullTime(m.HiddenAt),
 	)
 	if err != nil {
 		if kind := uniqueViolationKind(err); kind != nil {
@@ -516,6 +520,7 @@ func scanMedia(s rowScanner) (Media, error) {
 		thumbUpdatedAt   sql.NullTime
 		importSourcePath sql.NullString
 		pairedWithID     sql.NullString
+		hiddenAt         sql.NullTime
 	)
 	if err := s.Scan(
 		&m.ID,
@@ -547,6 +552,7 @@ func scanMedia(s rowScanner) (Media, error) {
 		&thumbUpdatedAt,
 		&importSourcePath,
 		&pairedWithID,
+		&hiddenAt,
 	); err != nil {
 		return Media{}, err
 	}
@@ -602,6 +608,10 @@ func scanMedia(s rowScanner) (Media, error) {
 	if pairedWithID.Valid {
 		v := pairedWithID.String
 		m.PairedWithID = &v
+	}
+	if hiddenAt.Valid {
+		t := hiddenAt.Time
+		m.HiddenAt = &t
 	}
 	return m, nil
 }

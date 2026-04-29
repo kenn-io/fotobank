@@ -113,6 +113,31 @@ func TestValidateRequiresNASRoot(t *testing.T) {
 	require.ErrorIs(t, err, errs.ErrBadConfiguration)
 }
 
+// TestHTTPDevInsecureCookiesDefaultsFalse verifies the F2.4 cookie-mode
+// flag stays false unless the operator opts in. Production deployments
+// must never silently emit non-Secure unlock cookies.
+func TestHTTPDevInsecureCookiesDefaultsFalse(t *testing.T) {
+	cfg, err := config.Load(filepath.Join("..", "..", "testdata", "config", "minimal.toml"))
+	require.NoError(t, err)
+	require.False(t, cfg.HTTP.DevInsecureCookies)
+}
+
+// TestHTTPDevInsecureCookiesExplicitTrue verifies the operator opt-in is
+// honored. Used for HTTP loopback dev/e2e setups.
+func TestHTTPDevInsecureCookiesExplicitTrue(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[http]
+dev_insecure_cookies = true
+`), 0o600))
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	require.True(t, cfg.HTTP.DevInsecureCookies)
+}
+
 func TestValidateHeaderModeRequiresGuard(t *testing.T) {
 	// Neutralise an inherited env secret so the test is deterministic
 	// regardless of the developer's shell.

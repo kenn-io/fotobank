@@ -1,3 +1,7 @@
+DROP TABLE IF EXISTS auth_hidden_lockout;
+DROP TABLE IF EXISTS auth_hidden_failure;
+DROP TABLE IF EXISTS auth_hidden_session;
+DROP TABLE IF EXISTS auth_hidden_credential;
 DROP TRIGGER IF EXISTS scopes_target_album_owner_consistency_update;
 DROP TRIGGER IF EXISTS scopes_target_album_owner_consistency_insert;
 DROP TRIGGER IF EXISTS scope_media_owner_consistency_update;
