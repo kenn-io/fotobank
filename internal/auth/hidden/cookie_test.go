@@ -1,0 +1,92 @@
+package hidden_test
+
+import (
+	"bytes"
+	"crypto/rand"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"github.com/wesm/fotobank/internal/auth/hidden"
+	"github.com/wesm/fotobank/internal/errs"
+)
+
+func TestValidatePasscodeRejectsEmpty(t *testing.T) {
+	require.ErrorIs(t, hidden.ValidatePasscode(""), errs.ErrInvalidArgument)
+}
+
+func TestValidatePasscodeAcceptsMinByte(t *testing.T) {
+	require.NoError(t, hidden.ValidatePasscode("x"))
+}
+
+func TestValidatePasscodeAccepts1024Bytes(t *testing.T) {
+	passcode := string(bytes.Repeat([]byte("a"), 1024))
+	require.NoError(t, hidden.ValidatePasscode(passcode))
+}
+
+func TestValidatePasscodeRejects1025Bytes(t *testing.T) {
+	passcode := string(bytes.Repeat([]byte("a"), 1025))
+	require.ErrorIs(t, hidden.ValidatePasscode(passcode), errs.ErrInvalidArgument)
+}
+
+// Multi-byte UTF-8 rune (3 bytes: €). Ensures byte length is used, not rune count.
+func TestValidatePasscodeUsesByteLength(t *testing.T) {
+	// 341 × 3 bytes = 1023 bytes — ok
+	rune341 := string(bytes.Repeat([]byte("€"), 341))
+	require.NoError(t, hidden.ValidatePasscode(rune341))
+
+	// 342 × 3 bytes = 1026 bytes — rejected
+	rune342 := string(bytes.Repeat([]byte("€"), 342))
+	require.ErrorIs(t, hidden.ValidatePasscode(rune342), errs.ErrInvalidArgument)
+}
+
+func TestHashPasscodeProducesEncodedString(t *testing.T) {
+	h, err := hidden.HashPasscode("hello")
+	require.NoError(t, err)
+	require.Contains(t, h, "argon2id$")
+}
+
+func TestVerifyPasscodeCorrect(t *testing.T) {
+	r := require.New(t)
+	h, err := hidden.HashPasscode("secret")
+	r.NoError(err)
+	ok, err := hidden.VerifyPasscode(h, "secret")
+	r.NoError(err)
+	r.True(ok)
+}
+
+func TestVerifyPasscodeWrong(t *testing.T) {
+	r := require.New(t)
+	h, err := hidden.HashPasscode("secret")
+	r.NoError(err)
+	ok, err := hidden.VerifyPasscode(h, "not-secret")
+	r.NoError(err)
+	r.False(ok)
+}
+
+func TestVerifyPasscodeRejectsBadFormat(t *testing.T) {
+	_, err := hidden.VerifyPasscode("garbage-not-a-hash", "passcode")
+	require.Error(t, err)
+}
+
+func TestNewTokenLength(t *testing.T) {
+	r := require.New(t)
+	raw, sha, err := hidden.NewToken(rand.Reader)
+	r.NoError(err)
+	r.Len(raw, 43, "32 bytes base64url = 43 chars")
+	r.Len(sha, 32, "sha256 is 32 bytes")
+}
+
+func TestTokenSHA256Decodes(t *testing.T) {
+	r := require.New(t)
+	raw, expectedSHA, err := hidden.NewToken(rand.Reader)
+	r.NoError(err)
+
+	got, err := hidden.TokenSHA256(raw)
+	r.NoError(err)
+	r.Equal(expectedSHA, got)
+}
+
+func TestTokenSHA256RejectsBadBase64(t *testing.T) {
+	_, err := hidden.TokenSHA256("not!valid!")
+	require.Error(t, err)
+}

@@ -214,6 +214,19 @@ func (r *Repo) PurgeOldFailures(ctx context.Context, before time.Time) error {
 	return nil
 }
 
+// DeleteAllFailuresForPrincipal removes all failure rows for principal.
+// Used by the service to reset failure state on successful authentication.
+func (r *Repo) DeleteAllFailuresForPrincipal(ctx context.Context, p owners.Principal) error {
+	_, err := r.rw.ExecContext(ctx,
+		`DELETE FROM auth_hidden_failure WHERE principal_hub = ? AND principal_user_id = ?`,
+		p.Hub, p.UserID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete all failures for principal: %w", err)
+	}
+	return nil
+}
+
 // GetLockout returns the lockout record for principal. Returns errs.ErrNotFound on miss.
 func (r *Repo) GetLockout(ctx context.Context, p owners.Principal) (*Lockout, error) {
 	var l Lockout

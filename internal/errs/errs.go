@@ -22,4 +22,11 @@ var (
 	ErrDirectAccessBlocked   = errors.New("direct access blocked")
 	ErrMigrationPrecondition = errors.New("migration precondition failed")
 	ErrBadConfiguration      = errors.New("bad configuration")
+	// ErrLockedOut is returned by the hidden-auth service when the principal
+	// has exceeded the failure threshold. HTTP maps it to 429 with Retry-After.
+	ErrLockedOut = errors.New("locked out")
+	// ErrHiddenNotConfigured is returned when a hidden-auth operation is
+	// requested but no credential row exists for the principal.
+	// HTTP maps it to 409 on POST /media:hidden.
+	ErrHiddenNotConfigured = errors.New("hidden not configured")
 )
