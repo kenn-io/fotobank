@@ -26,11 +26,14 @@ type CoverRef struct {
 }
 
 // AlbumListItem is the shape returned by ListByOwner and GetDetailByID.
-// ItemCount and Cover are derived in SQL so clients do not do N+1 calls.
+// ItemCount, HiddenCount and Cover are derived in SQL so clients do not do N+1 calls.
 type AlbumListItem struct {
 	Album
+	// ItemCount is the number of visible (hidden_at IS NULL) members.
 	ItemCount int
-	Cover     *CoverRef // nil when the album is empty OR has no ready thumb yet
+	// HiddenCount is the number of hidden (hidden_at IS NOT NULL) members.
+	HiddenCount int
+	Cover       *CoverRef // nil when the album is empty OR has no ready thumb yet
 }
 
 // AlbumMediaFilter narrows ListMedia.

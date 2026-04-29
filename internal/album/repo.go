@@ -123,19 +123,24 @@ func scanAlbum(s rowScanner) (Album, error) {
 	return a, nil
 }
 
-// GetDetailByID returns one album with derived ItemCount + Cover using
-// the same count/cover subquery shape as ListByOwner. ErrNotFound on miss.
+// GetDetailByID returns one album with derived ItemCount, HiddenCount, and
+// Cover using the same count/cover subquery shape as ListByOwner.
+// ErrNotFound on miss.
 func (r *Repo) GetDetailByID(ctx context.Context, id string) (AlbumListItem, error) {
 	const q = `
 SELECT a.id, a.owner_hub, a.owner_user_id, a.name, a.created_at, a.updated_at,
-       COALESCE(cnt.n, 0) AS item_count,
+       COALESCE(cnt.item_count, 0) AS item_count,
+       COALESCE(cnt.hidden_count, 0) AS hidden_count,
        cv.media_id, cv.thumb_version
   FROM albums a
   LEFT JOIN (
-    SELECT album_id, COUNT(*) AS n
-      FROM album_media
-     WHERE album_id = ?
-     GROUP BY album_id
+    SELECT am.album_id,
+           COUNT(CASE WHEN m.hidden_at IS NULL     THEN 1 END) AS item_count,
+           COUNT(CASE WHEN m.hidden_at IS NOT NULL THEN 1 END) AS hidden_count
+      FROM album_media am
+      JOIN media m ON m.id = am.media_id
+     WHERE am.album_id = ?
+     GROUP BY am.album_id
   ) cnt ON cnt.album_id = a.id
   LEFT JOIN (
     SELECT am.album_id, am.media_id, m.thumb_version,
@@ -147,6 +152,7 @@ SELECT a.id, a.owner_hub, a.owner_user_id, a.name, a.created_at, a.updated_at,
       JOIN media m ON m.id = am.media_id
      WHERE am.album_id = ?
        AND m.thumb_status = 'ready'
+       AND m.hidden_at IS NULL
   ) cv ON cv.album_id = a.id AND cv.rn = 1
  WHERE a.id = ?;
 `
@@ -171,6 +177,7 @@ func scanAlbumListItem(s rowScanner) (AlbumListItem, error) {
 		&item.ID, &item.Owner.Hub, &item.Owner.UserID, &item.Name,
 		&item.CreatedAt, &item.UpdatedAt,
 		&item.ItemCount,
+		&item.HiddenCount,
 		&coverMedia, &coverThumbV,
 	); err != nil {
 		return AlbumListItem{}, err
@@ -201,7 +208,12 @@ func (r *Repo) GetDetailsByIDs(ctx context.Context, ids []string) ([]AlbumListIt
 	q := `
 WITH ord(id, pos) AS (VALUES ` + strings.Join(valRows, ",") + `)
 SELECT a.id, a.owner_hub, a.owner_user_id, a.name, a.created_at, a.updated_at,
-       (SELECT COUNT(*) FROM album_media am WHERE am.album_id = a.id) AS item_count,
+       (SELECT COUNT(*) FROM album_media am
+          JOIN media m ON m.id = am.media_id
+         WHERE am.album_id = a.id AND m.hidden_at IS NULL)     AS item_count,
+       (SELECT COUNT(*) FROM album_media am
+          JOIN media m ON m.id = am.media_id
+         WHERE am.album_id = a.id AND m.hidden_at IS NOT NULL) AS hidden_count,
        cv.media_id, cv.thumb_version
   FROM ord
   JOIN albums a ON a.id = ord.id
@@ -214,6 +226,7 @@ SELECT a.id, a.owner_hub, a.owner_user_id, a.name, a.created_at, a.updated_at,
       FROM album_media am
       JOIN media m ON m.id = am.media_id
      WHERE m.thumb_status = 'ready'
+       AND m.hidden_at IS NULL
   ) cv ON cv.album_id = a.id AND cv.rn = 1
  ORDER BY ord.pos
 `
@@ -309,14 +322,18 @@ WITH owner_albums AS (
      LIMIT ? OFFSET ?
 )
 SELECT oa.id, oa.owner_hub, oa.owner_user_id, oa.name, oa.created_at, oa.updated_at,
-       COALESCE(cnt.n, 0) AS item_count,
+       COALESCE(cnt.item_count,  0) AS item_count,
+       COALESCE(cnt.hidden_count, 0) AS hidden_count,
        cv.media_id, cv.thumb_version
   FROM owner_albums oa
   LEFT JOIN (
-    SELECT album_id, COUNT(*) AS n
-      FROM album_media
-     WHERE album_id IN (SELECT id FROM owner_albums)
-     GROUP BY album_id
+    SELECT am.album_id,
+           COUNT(CASE WHEN m.hidden_at IS NULL     THEN 1 END) AS item_count,
+           COUNT(CASE WHEN m.hidden_at IS NOT NULL THEN 1 END) AS hidden_count
+      FROM album_media am
+      JOIN media m ON m.id = am.media_id
+     WHERE am.album_id IN (SELECT id FROM owner_albums)
+     GROUP BY am.album_id
   ) cnt ON cnt.album_id = oa.id
   LEFT JOIN (
     SELECT am.album_id, am.media_id, m.thumb_version,
@@ -328,6 +345,7 @@ SELECT oa.id, oa.owner_hub, oa.owner_user_id, oa.name, oa.created_at, oa.updated
       JOIN media m ON m.id = am.media_id
      WHERE am.album_id IN (SELECT id FROM owner_albums)
        AND m.thumb_status = 'ready'
+       AND m.hidden_at IS NULL
   ) cv ON cv.album_id = oa.id AND cv.rn = 1
  ORDER BY oa.updated_at DESC, oa.id ASC;
 `

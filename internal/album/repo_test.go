@@ -751,6 +751,106 @@ func TestRepoListMediaSortByTakenAscNullsLast(t *testing.T) {
 	r.Equal(m3, rows[2].ID)
 }
 
+// seedHiddenMediaRow inserts a minimal media row with hidden_at set.
+func seedHiddenMediaRow(t *testing.T, rw *sql.DB, p owners.Principal, id, checksum string) {
+	t.Helper()
+	hiddenAt := time.Now().UTC().Add(-time.Hour)
+	_, err := rw.ExecContext(context.Background(), `
+INSERT INTO media (
+    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
+    imported_at, timestamp, size, checksum,
+    make, model, focal_length, shutter, width, height, iso, aperture,
+    duration_ms,
+    thumb_status, thumb_version, thumb_updated_at, hidden_at
+) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+          'ready', 1, NULL, ?)`,
+		id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), checksum, hiddenAt,
+	)
+	require.NoError(t, err)
+}
+
+// TestRepoItemCountCountsVisibleOnly verifies that ListByOwner reports
+// ItemCount for visible members only (hidden_at IS NULL).
+func TestRepoItemCountCountsVisibleOnly(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk-ic")
+	a := seedAlbum(t, repo, p, "Mixed")
+
+	visibleID := uuid.NewString()
+	hiddenID := uuid.NewString()
+	seedMediaRow(t, d.WriteDB(), p, visibleID, "cs-ic-vis", "ready", 1)
+	seedHiddenMediaRow(t, d.WriteDB(), p, hiddenID, "cs-ic-hid")
+
+	base := time.Now().UTC()
+	seedAlbumMedia(t, d.WriteDB(), a.ID, visibleID, base)
+	seedAlbumMedia(t, d.WriteDB(), a.ID, hiddenID, base.Add(time.Second))
+
+	items, err := repo.ListByOwner(context.Background(), p, 10, 0)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.Equal(1, items[0].ItemCount, "ItemCount must count only visible rows")
+	r.Equal(1, items[0].HiddenCount, "HiddenCount must count hidden rows")
+}
+
+// TestRepoHiddenCountGetDetailByID verifies GetDetailByID returns correct
+// ItemCount (visible only) and HiddenCount.
+func TestRepoHiddenCountGetDetailByID(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk-gd-hid")
+	a := seedAlbum(t, repo, p, "Mixed")
+
+	v1 := uuid.NewString()
+	v2 := uuid.NewString()
+	h1 := uuid.NewString()
+	seedMediaRow(t, d.WriteDB(), p, v1, "cs-gd-v1", "ready", 1)
+	seedMediaRow(t, d.WriteDB(), p, v2, "cs-gd-v2", "ready", 1)
+	seedHiddenMediaRow(t, d.WriteDB(), p, h1, "cs-gd-h1")
+
+	base := time.Now().UTC()
+	seedAlbumMedia(t, d.WriteDB(), a.ID, v1, base)
+	seedAlbumMedia(t, d.WriteDB(), a.ID, v2, base.Add(time.Second))
+	seedAlbumMedia(t, d.WriteDB(), a.ID, h1, base.Add(2*time.Second))
+
+	got, err := repo.GetDetailByID(context.Background(), a.ID)
+	r.NoError(err)
+	r.Equal(2, got.ItemCount, "visible count must be 2")
+	r.Equal(1, got.HiddenCount, "hidden count must be 1")
+}
+
+// TestRepoCoverIgnoresHiddenRows verifies that the cover derivation
+// never selects a hidden row even when it has thumb_status='ready'.
+func TestRepoCoverIgnoresHiddenRows(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk-cov-hid")
+	a := seedAlbum(t, repo, p, "CoverTest")
+
+	visibleID := uuid.NewString()
+	hiddenID := uuid.NewString()
+	seedMediaRow(t, d.WriteDB(), p, visibleID, "cs-cov-vis", "ready", 5)
+	seedHiddenMediaRow(t, d.WriteDB(), p, hiddenID, "cs-cov-hid")
+
+	base := time.Now().UTC()
+	// Hidden row added later (higher added_at) — without the filter it would
+	// be selected as cover because ROW_NUMBER orders by added_at DESC.
+	seedAlbumMedia(t, d.WriteDB(), a.ID, visibleID, base)
+	seedAlbumMedia(t, d.WriteDB(), a.ID, hiddenID, base.Add(time.Second))
+
+	got, err := repo.GetDetailByID(context.Background(), a.ID)
+	r.NoError(err)
+	r.NotNil(got.Cover, "cover must come from visible row")
+	r.Equal(visibleID, got.Cover.MediaID, "hidden row must not be cover")
+}
+
 // TestRepoListMediaPreservesGPS exercises albumMediaMediaSelect's GPS
 // columns. The four-way projection sync (mediaSelect, mediaColumnsQualified,
 // mediaInsert, albumMediaMediaSelect) means a column-order drift here
