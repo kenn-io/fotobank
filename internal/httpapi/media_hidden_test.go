@@ -522,3 +522,94 @@ func TestMediaDTOHiddenAtAbsentForVisibleRow(t *testing.T) {
 	_, hasHiddenAt := body["hidden_at"]
 	r.False(hasHiddenAt, "hidden_at must be absent (omitempty) when media is visible")
 }
+
+// --- GET /api/v1/media list must never surface hidden rows ---
+
+// TestListMediaNeverReturnsHiddenEvenWithUnlockCookie proves the HTTP
+// boundary: even with a valid unlock cookie, GET /api/v1/media clamps
+// IncludeHidden=false and omits hidden rows from the response.
+func TestListMediaNeverReturnsHiddenEvenWithUnlockCookie(t *testing.T) {
+	r := require.New(t)
+	fx := newHiddenMediaFixture(t)
+	ctx := context.Background()
+
+	visible := seedMedia(t, fx.repo, fx.owner, "2024/vis.jpg", "cs-vis", media.TypePhoto)
+	hidden := seedMedia(t, fx.repo, fx.owner, "2024/hid.jpg", "cs-hid", media.TypePhoto)
+	r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{hidden.ID}, time.Now().UTC()))
+
+	cookie := setupHiddenAndUnlock(t, fx)
+
+	resp := getWithCookie(t, fx.srv.URL+"/api/v1/media", cookie)
+	defer resp.Body.Close()
+	r.Equal(http.StatusOK, resp.StatusCode)
+
+	var out map[string]any
+	r.NoError(json.NewDecoder(resp.Body).Decode(&out))
+	items, ok := out["items"].([]any)
+	r.True(ok, "items must be an array")
+
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		r.True(ok)
+		ids = append(ids, m["id"].(string))
+	}
+	r.Contains(ids, visible.ID, "visible row must appear in list")
+	r.NotContains(ids, hidden.ID, "hidden row must never appear in list even with unlock cookie")
+}
+
+// --- POST /api/v1/media/hidden:bulk DB error must not be masked as 409 ---
+
+// TestHideMediaBulkBubbles5xxOnDBError verifies that when GetCredential
+// returns a non-ErrNotFound error (e.g. a closed DB pool), the handler
+// translates it as a 5xx and does NOT return 409 Conflict.
+func TestHideMediaBulkBubbles5xxOnDBError(t *testing.T) {
+	r := require.New(t)
+
+	// Build the fixture inline so we have access to the db.DB and can
+	// force a read-pool error after the server is wired up.
+	d := testutil.OpenTestDB(t)
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "sk", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	store := storage.NewNASOnly(t.TempDir(), map[owners.Principal]string{p: "sk"})
+	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	mediaSvc := service.NewMediaService(mediaRepo, store)
+	thumbQ := thumb.NewQueue(d.WriteDB(), d.ReadDB())
+	thumbSvc := service.NewThumbService(mediaRepo, thumbQ, store)
+	hiddenRepo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
+	hiddenSvc := hidden.NewService(hiddenRepo, mediaSvc)
+
+	idp := identity.NewStub(p, "Test User")
+	h, err := httpapi.New(httpapi.Deps{
+		IdentityProvider:         idp,
+		MediaService:             mediaSvc,
+		ThumbService:             thumbSvc,
+		HiddenAuth:               hiddenSvc,
+		DevInsecureHiddenCookies: true,
+	})
+	r.NoError(err)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	m := seedMedia(t, mediaRepo, p, "2024/dberr.jpg", "cs-dberr", media.TypePhoto)
+
+	// Close the read pool to force a real DB error (not ErrNotFound) on
+	// GetCredential — the handler must not convert this to 409.
+	r.NoError(d.ReadDB().Close())
+
+	body, _ := json.Marshal(map[string]any{"media_ids": []string{m.ID}})
+	resp, err := http.Post(
+		srv.URL+"/api/v1/media/hidden:bulk",
+		"application/json",
+		bytes.NewReader(body),
+	)
+	r.NoError(err)
+	defer resp.Body.Close()
+	r.NotEqual(http.StatusConflict, resp.StatusCode, "DB errors must not be masked as 409")
+	r.GreaterOrEqual(resp.StatusCode, 500, "DB errors must produce a 5xx response")
+}

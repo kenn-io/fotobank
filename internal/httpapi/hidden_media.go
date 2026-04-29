@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -135,9 +136,13 @@ func registerHideMediaBulk(
 		}
 		caller := id.Principal.OwnersPrincipal()
 		// Hide requires a configured credential but NOT an unlock cookie.
-		// If there's no credential, return 409.
+		// If there's no credential, return 409; any other error is a real
+		// failure and must not be masked as a 409.
 		if _, err := hiddenAuth.GetCredential(ctx, caller); err != nil {
-			return nil, huma.Error409Conflict(errs.ErrHiddenNotConfigured.Error())
+			if errors.Is(err, errs.ErrNotFound) {
+				return nil, huma.Error409Conflict(errs.ErrHiddenNotConfigured.Error())
+			}
+			return nil, Translate(err)
 		}
 		result, err := svc.Hide(ctx, caller, in.Body.MediaIDs)
 		if err != nil {
