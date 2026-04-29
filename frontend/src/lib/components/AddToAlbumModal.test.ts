@@ -1,9 +1,15 @@
 import { render, fireEvent } from "@testing-library/svelte";
 import { describe, it, expect, vi } from "vitest";
 import AddToAlbumModal from "./AddToAlbumModal.svelte";
-import type { AlbumsStore } from "../albums/albumsStore.svelte";
+import { AlbumsStore, type AlbumListItem } from "../albums/albumsStore.svelte";
 
-function makeStore(albums: any[]): AlbumsStore {
+// makeStore builds a partial AlbumsStore stub for tests that only need a
+// frozen list. Tests that also need to react to mutations of `albums`
+// (e.g. the create-new flow) must use a real AlbumsStore class instance
+// instead — Svelte's $state proxy unwraps class instances but caches
+// plain-object property reads, so reassigning `(stub as any).albums = …`
+// does not propagate to the rendered component.
+function makeStore(albums: AlbumListItem[]): AlbumsStore {
   return {
     albums,
     loading: false,
@@ -14,12 +20,15 @@ function makeStore(albums: any[]): AlbumsStore {
     loadInitial: vi.fn(),
     loadMore: vi.fn(),
     byId: (id: string) => albums.find((a) => a.id === id),
-  } as any;
+  } as unknown as AlbumsStore;
 }
 
-const fakeAlbums = [
-  { id: "a1", name: "Italy", item_count: 12, cover: null, created_at: "x", updated_at: "x" },
-  { id: "a2", name: "Family", item_count: 5, cover: null, created_at: "x", updated_at: "x" },
+// AlbumListItem.cover is optional (not nullable) — the wire shape comes
+// from huma's `omitempty`, so the field is absent rather than null when
+// no cover is set. Match that shape in fixtures.
+const fakeAlbums: AlbumListItem[] = [
+  { id: "a1", name: "Italy", item_count: 12, created_at: "x", updated_at: "x" },
+  { id: "a2", name: "Family", item_count: 5, created_at: "x", updated_at: "x" },
 ];
 
 describe("AddToAlbumModal", () => {
@@ -84,12 +93,34 @@ describe("AddToAlbumModal", () => {
   });
 
   it("create-new flow leaves modal in 'ready to add' state with new album selected", async () => {
-    const store = makeStore(fakeAlbums);
-    store.create = vi.fn(async (n: string) => {
-      // Simulate a successful create that pushes the new album to the front.
-      (store as any).albums = [{ id: "anew", name: n, item_count: 0, cover: null, created_at: "x", updated_at: "x" }, ...fakeAlbums];
-    });
-    const { getByText, getByRole, getByPlaceholderText } = render(AddToAlbumModal, {
+    // Use a real AlbumsStore wired to a fakeClient so the create →
+    // refetch path mutates `albums` through the same setters production
+    // uses. A hand-stubbed mock with `(store as any).albums = …` would
+    // bypass Svelte's $state proxy on plain objects and the rendered
+    // modal would never see the new album.
+    const created = { id: "anew", name: "Trip", item_count: 0, created_at: "x", updated_at: "x" };
+    const seededList = [
+      { id: "a1", name: "Italy", item_count: 12, cover: { media_id: "m1", thumb_version: 1 }, created_at: "x", updated_at: "x" },
+      { id: "a2", name: "Family", item_count: 5, created_at: "x", updated_at: "x" },
+    ];
+    const refetchedList = [created, ...seededList];
+
+    let getCalls = 0;
+    const fakeClient = {
+      GET: vi.fn(async () => {
+        getCalls += 1;
+        // First GET: seeded list (mount + initial loadInitial).
+        // Subsequent GETs: post-create refetch with the new album at the front.
+        return { data: { items: getCalls === 1 ? seededList : refetchedList, next_offset: null } };
+      }),
+      POST: vi.fn(async () => ({ data: created })),
+      PATCH: vi.fn(async () => ({ data: null })),
+      DELETE: vi.fn(async () => ({ data: null })),
+    };
+    const store = new AlbumsStore(fakeClient as never);
+    await store.loadInitial();
+
+    const { getByText, getByRole, findByRole, getByPlaceholderText } = render(AddToAlbumModal, {
       props: {
         mediaIds: ["m1"],
         albumsStore: store,
@@ -100,8 +131,10 @@ describe("AddToAlbumModal", () => {
     await fireEvent.click(getByText("+ Create new album"));
     await fireEvent.input(getByPlaceholderText("Album name"), { target: { value: "Trip" } });
     await fireEvent.click(getByRole("button", { name: "Create" }));
-    // After create, modal is back in list view with "Trip" highlighted.
-    const primary = getByRole("button", { name: /^Add 1 photo$/ });
+    // The create flow awaits POST + loadInitial; findByRole polls until
+    // the modal returns to list mode and the primary "Add 1 photo"
+    // button appears.
+    const primary = await findByRole("button", { name: /^Add 1 photo$/ });
     expect(primary.hasAttribute("disabled")).toBe(false);
   });
 });

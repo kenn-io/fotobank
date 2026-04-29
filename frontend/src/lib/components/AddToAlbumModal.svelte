@@ -51,13 +51,12 @@
     // try/catch here — let creation errors propagate to NewAlbumForm.
     await albumsStore.create(name);
     // AlbumsStore.create refetches page 1 (created_at desc), so the
-    // freshly created album is at index 0. Find by name as a heuristic
-    // when names are unique; fall back to the first row otherwise so
-    // the user always lands in a "ready to add" state after Create.
+    // freshly created album is in the list — name-match it to pick
+    // the new id. If the name doesn't resolve (rare race or rename
+    // between create and refetch), leave selectedId untouched so the
+    // user picks explicitly.
     const trimmed = name.trim();
-    const fresh =
-      albumsStore.albums.find((a) => a.name === trimmed) ??
-      albumsStore.albums[0];
+    const fresh = albumsStore.albums.find((a) => a.name === trimmed);
     if (fresh) selectedId = fresh.id;
     mode = "list";
   }
