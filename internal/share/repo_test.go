@@ -2071,3 +2071,58 @@ func TestExpandScopeAlbumLiveExcludesHidden(t *testing.T) {
 	r.Len(exp.MediaIDs, 1, "ExpandScope must not include hidden album members")
 	r.Equal(mIDs[0], exp.MediaIDs[0])
 }
+
+// TestCountSharedMediaByScopeMediaSetExcludesHidden verifies that
+// CountSharedMediaByScope filters hidden media_set members from the count.
+func TestCountSharedMediaByScopeMediaSetExcludesHidden(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk-msh")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk-msh")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	m1 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m3 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2, m3)
+	bumpActive(t, d, s.UUID, now)
+
+	// Hide one member after scope creation.
+	hideMedia(t, d.WriteDB(), m3)
+
+	n, err := repo.CountSharedMediaByScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(2, n, "hidden media_set member must not be counted")
+}
+
+// TestGetByUUIDMediaSetExcludesHiddenMembers verifies that GetByUUID filters
+// hidden media rows from the ScopeDetail.MediaIDs slice so a media_set member
+// that became hidden after scope creation is not exposed.
+func TestGetByUUIDMediaSetExcludesHiddenMembers(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk-getuuid")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk-getuuid")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	m1 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2)
+	bumpActive(t, d, s.UUID, now)
+
+	// Hide m2 after scope creation.
+	hideMedia(t, d.WriteDB(), m2)
+
+	det, err := repo.GetByUUID(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Len(det.MediaIDs, 1, "hidden media_set member must be absent from GetByUUID.MediaIDs")
+	r.Equal(m1, det.MediaIDs[0])
+}

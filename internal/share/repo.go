@@ -90,8 +90,13 @@ func (r *Repo) GetByUUID(ctx context.Context, uuidStr string) (ScopeDetail, erro
 	}
 	det := ScopeDetail{Scope: s}
 	if s.TargetType == TargetMediaSet {
+		// Filter against media.hidden_at so a member that became hidden
+		// after scope creation is not exposed to the grantee.
 		rows, qerr := r.ro.QueryContext(ctx,
-			`SELECT media_id FROM scope_media WHERE scope_uuid = ? ORDER BY media_id`,
+			`SELECT sm.media_id FROM scope_media sm
+			   JOIN media m ON m.id = sm.media_id
+			  WHERE sm.scope_uuid = ? AND m.hidden_at IS NULL
+			  ORDER BY sm.media_id`,
 			uuidStr)
 		if qerr != nil {
 			return ScopeDetail{}, fmt.Errorf("list scope_media: %w", qerr)
@@ -987,7 +992,9 @@ func (r *Repo) CountSharedMediaByScope(ctx context.Context, scopeUUID string) (i
 	case TargetMediaSet:
 		var n int
 		if err := r.ro.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM scope_media WHERE scope_uuid = ?`, scopeUUID,
+			`SELECT COUNT(*) FROM scope_media sm
+			   JOIN media m ON m.id = sm.media_id
+			  WHERE sm.scope_uuid = ? AND m.hidden_at IS NULL`, scopeUUID,
 		).Scan(&n); err != nil {
 			return 0, fmt.Errorf("count scope_media: %w", err)
 		}
