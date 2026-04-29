@@ -58,6 +58,18 @@ describe("RouterStore.match", () => {
     const r = new RouterStore();
     expect(r.current).toEqual({ route: "albums" });
   });
+
+  it("matches /albums/abc-123 to albums.detail with the id", () => {
+    setLocation("/albums/abc-123");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "albums.detail", id: "abc-123" });
+  });
+
+  it("returns notfound for /albums/abc/extra (anchored regex)", () => {
+    setLocation("/albums/abc/extra");
+    const r = new RouterStore();
+    expect(r.current.route).toBe("notfound");
+  });
 });
 
 describe("RouterStore.navigate", () => {

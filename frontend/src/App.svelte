@@ -9,6 +9,7 @@
   import Sessions from "./routes/Sessions.svelte";
   import MediaDetail from "./routes/MediaDetail.svelte";
   import AlbumsIndex from "./routes/AlbumsIndex.svelte";
+  import AlbumDetail from "./routes/AlbumDetail.svelte";
   import NotFound from "./routes/NotFound.svelte";
   import { ThemeStore } from "./lib/theme/themeStore.svelte";
   import { EventsStore } from "./lib/events/eventsStore.svelte";
@@ -55,7 +56,7 @@
   function activeId(route: RouteMatch): string {
     if (route.route === "sessions") return "sessions";
     if (route.route === "settings") return "settings";
-    if (route.route === "albums") return "albums";
+    if (route.route === "albums" || route.route === "albums.detail") return "albums";
     // notfound returns "" so the sidebar highlights nothing — landing
     // on a 404 shouldn't make Library look like the active section.
     if (route.route === "notfound") return "";
@@ -80,6 +81,8 @@
       <MediaDetail id={router.current.id} {mediaStore} />
     {:else if router.current.route === "albums"}
       <AlbumsIndex {albumsStore} />
+    {:else if router.current.route === "albums.detail"}
+      <AlbumDetail id={router.current.id} {mediaStore} />
     {:else if router.current.route === "settings"}
       <div style="padding:20px">Settings (placeholder; theme = {themeStore.theme})</div>
     {:else}
