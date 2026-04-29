@@ -359,7 +359,10 @@ export function toMedia(raw: Record<string, unknown>): Media | null {
         const { sidecars: _ignoredNestedSidecars, ...rest } = r;
         return toMedia(rest);
       })
-      .filter((x): x is Media => x !== null);
+      .filter((x): x is Media => x !== null)
+      // Filter out hidden sidecars: a hidden sidecar must not appear in
+      // visible media's file list — it lives only in HiddenMediaStore.
+      .filter((x) => x.hidden_at == null);
     if (mapped.length > 0) m.sidecars = mapped;
   }
   // F2.4: hidden_at — string (ISO timestamp) or null from the backend.

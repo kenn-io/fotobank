@@ -427,6 +427,38 @@ describe("toMedia for paired rows", () => {
     expect(m?.sidecars?.[0]?.paired_with?.id).toBe("p");
   });
 
+  it("filters out hidden sidecars from media.sidecars", () => {
+    // Finding #3: a hidden sidecar must not appear in the primary's
+    // sidecars list — it belongs only in HiddenMediaStore.
+    const raw = {
+      id: "p",
+      timestamp: "2024-06-15T14:30:00Z",
+      width: 1,
+      height: 1,
+      sidecars: [
+        {
+          id: "visible-sidecar",
+          timestamp: "2024-06-15T14:30:00Z",
+          width: 1,
+          height: 1,
+          paired_with_id: "p",
+          // no hidden_at — visible
+        },
+        {
+          id: "hidden-sidecar",
+          timestamp: "2024-06-15T14:30:00Z",
+          width: 1,
+          height: 1,
+          paired_with_id: "p",
+          hidden_at: "2024-06-20T10:00:00Z",
+        },
+      ],
+    };
+    const m = toMedia(raw);
+    expect(m?.sidecars).toHaveLength(1);
+    expect(m?.sidecars?.[0]?.id).toBe("visible-sidecar");
+  });
+
   it("strips nested sidecars on the recursive call so a future backend leak can't hide deltas", () => {
     // The backend contract is sidecars are exactly one level deep:
     // a primary embeds sidecars, but each sidecar's own Sidecars is
