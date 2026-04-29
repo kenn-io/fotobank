@@ -2,11 +2,31 @@ import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/svelte";
 import MediaDetail from "./MediaDetail.svelte";
 import { MediaStore } from "../lib/media/mediaStore.svelte";
+import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
 
 function storeWith(raw: Record<string, unknown>): MediaStore {
   const s = new MediaStore({ GET: vi.fn() } as never);
   s.mergeRaw([raw]);
   return s;
+}
+
+// Minimal AlbumsStore stub: MediaDetail only forwards the prop into
+// AddToAlbumModal, which isn't mounted unless the user opens the modal.
+// Tests in this file don't open it, so a frozen empty-list stub is enough.
+function makeAlbumsStore(): AlbumsStore {
+  return {
+    albums: [],
+    loading: false,
+    exhausted: true,
+    loadError: false,
+    loadInitial: vi.fn(),
+    loadMore: vi.fn(),
+    retry: vi.fn(),
+    create: vi.fn(),
+    rename: vi.fn(),
+    delete: vi.fn(),
+    byId: () => undefined,
+  } as unknown as AlbumsStore;
 }
 
 describe("MediaDetail", () => {
@@ -26,7 +46,7 @@ describe("MediaDetail", () => {
       location_label: "Paris, Île-de-France, France",
     });
     const { getByText } = render(MediaDetail, {
-      props: { id: "abc-123", mediaStore: store },
+      props: { id: "abc-123", mediaStore: store, albumsStore: makeAlbumsStore() },
     });
     expect(getByText("Location")).toBeTruthy();
     expect(getByText("Paris, Île-de-France, France")).toBeTruthy();
@@ -36,7 +56,7 @@ describe("MediaDetail", () => {
   it("renders coords-only when label is absent", () => {
     const store = storeWith({ ...baseRaw, latitude: 48.8566, longitude: 2.3522 });
     const { getByText, queryByText } = render(MediaDetail, {
-      props: { id: "abc-123", mediaStore: store },
+      props: { id: "abc-123", mediaStore: store, albumsStore: makeAlbumsStore() },
     });
     expect(getByText("Location")).toBeTruthy();
     expect(getByText("48.8566° N, 2.3522° E")).toBeTruthy();
@@ -46,7 +66,7 @@ describe("MediaDetail", () => {
   it("renders no Location row when neither label nor coords", () => {
     const store = storeWith(baseRaw);
     const { queryByText } = render(MediaDetail, {
-      props: { id: "abc-123", mediaStore: store },
+      props: { id: "abc-123", mediaStore: store, albumsStore: makeAlbumsStore() },
     });
     expect(queryByText("Location")).toBeNull();
   });
@@ -79,16 +99,17 @@ describe("MediaDetail", () => {
         );
       });
     const store = new MediaStore({ GET: vi.fn() } as never);
+    const albumsStore = makeAlbumsStore();
     // First nav: id=first, no cached row → triggers fetch.
     const first = render(MediaDetail, {
-      props: { id: "first", mediaStore: store },
+      props: { id: "first", mediaStore: store, albumsStore },
     });
     // Wait for the first fetch to settle.
     await new Promise((r) => setTimeout(r, 0));
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/media/first");
     fetchMock.mockClear();
     // Second nav: id=second, also uncached → must trigger another fetch.
-    await first.rerender({ id: "second", mediaStore: store });
+    await first.rerender({ id: "second", mediaStore: store, albumsStore });
     await new Promise((r) => setTimeout(r, 0));
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/media/second");
     fetchMock.mockRestore();

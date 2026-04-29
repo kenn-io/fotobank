@@ -3,8 +3,18 @@
   import type { MediaStore } from "../lib/media/mediaStore.svelte";
   import { handleInternalLinkClick } from "../lib/router/router.svelte";
   import { formatCoord } from "../lib/format/coords";
+  import MediaActions from "../lib/components/MediaActions.svelte";
+  import AddToAlbumModal from "../lib/components/AddToAlbumModal.svelte";
+  import ShareModal from "../lib/components/ShareModal.svelte";
+  import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
+  import type { CreateShareBody } from "../lib/share/shareTypes";
+  import { api } from "../lib/api/client";
 
-  let { id, mediaStore }: { id: string; mediaStore: MediaStore } = $props();
+  let { id, mediaStore, albumsStore }: {
+    id: string;
+    mediaStore: MediaStore;
+    albumsStore: AlbumsStore;
+  } = $props();
 
   // Derive from the store so mergeRaw (or any later store update) flows
   // through without a manual reassignment. `mediaStore.get(id)` reads
@@ -78,6 +88,35 @@
     if (size === undefined || !Number.isFinite(size)) return "";
     return `${(size / 1024 / 1024).toFixed(1)} MB`;
   }
+
+  let addOpen = $state(false);
+  let shareOpen = $state(false);
+  let pendingMediaIds = $state<string[]>([]);
+
+  function openAdd(ids: string[]) {
+    pendingMediaIds = ids;
+    addOpen = true;
+  }
+  function openShare(ids: string[]) {
+    pendingMediaIds = ids;
+    shareOpen = true;
+  }
+
+  async function onAdd(albumId: string): Promise<{ added: number; already_present: number }> {
+    const res = await api.POST("/api/v1/albums/{id}/media", {
+      params: { path: { id: albumId } } as never,
+      body: { media_ids: pendingMediaIds } as never,
+    });
+    if (res.error) throw res.error;
+    addOpen = false;
+    return res.data as { added: number; already_present: number };
+  }
+
+  async function onCreateShare(body: CreateShareBody): Promise<void> {
+    const res = await api.POST("/api/v1/shares", { body: body as never });
+    if (res.error) throw res.error;
+    shareOpen = false;
+  }
 </script>
 
 <div class="media-detail">
@@ -135,6 +174,13 @@
       Download {media.original_filename ?? "file"}
     </a>
   {:else}
+    <header class="media-actions-header">
+      <MediaActions
+        mediaIds={[media.id]}
+        onAdd={openAdd}
+        onShare={openShare}
+      />
+    </header>
     <div class="photo">
       {#if !imgError}
         <img
@@ -179,9 +225,27 @@
   {/if}
 </div>
 
+{#if addOpen}
+  <AddToAlbumModal
+    mediaIds={pendingMediaIds}
+    {albumsStore}
+    {onAdd}
+    onClose={() => (addOpen = false)}
+  />
+{/if}
+
+{#if shareOpen}
+  <ShareModal
+    target={{ type: "media_set", mediaIds: pendingMediaIds }}
+    onCreate={onCreateShare}
+    onClose={() => (shareOpen = false)}
+  />
+{/if}
+
 <style>
   .media-detail { padding: 1rem; }
   .back-link { display: inline-block; margin-bottom: 1rem; }
+  .media-actions-header { margin-bottom: 1rem; }
   .photo img { max-width: 100%; max-height: 75vh; object-fit: contain; }
   .photo-placeholder {
     border: 1px dashed currentColor; padding: 2rem; text-align: center;

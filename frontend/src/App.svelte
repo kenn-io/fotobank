@@ -78,7 +78,7 @@
     {:else if router.current.route === "sessions"}
       <Sessions {mediaStore} />
     {:else if router.current.route === "media"}
-      <MediaDetail id={router.current.id} {mediaStore} />
+      <MediaDetail id={router.current.id} {mediaStore} {albumsStore} />
     {:else if router.current.route === "albums"}
       <AlbumsIndex {albumsStore} />
     {:else if router.current.route === "albums.detail"}
