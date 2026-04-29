@@ -6,9 +6,11 @@
 
   let { id, mediaStore }: { id: string; mediaStore: MediaStore } = $props();
 
-  // mediaStore is constructed once at App boot and passed by stable
-  // reference; capturing it in the AlbumDetailStore constructor is
-  // intentional. The Svelte compiler can't know the prop is stable.
+  // AlbumDetailStore needs a stable MediaStore reference for its
+  // lifetime — recreating it on every reactive read would lose
+  // pagination state (nextOffset, membership, itemIds). App.svelte
+  // constructs mediaStore once at boot and passes it by stable
+  // reference, so capturing the script-top prop value is correct here.
   // svelte-ignore state_referenced_locally
   const detail = new AlbumDetailStore(api, mediaStore);
 
@@ -17,10 +19,13 @@
   });
 
   // Synthetic single-month feed for VirtualGrid timelineChrome=false.
-  // Use $derived.by(...) — the codebase pattern for multi-statement
-  // deriveds (see MediaDetail.svelte:14). $derived(() => ...) would
-  // yield a function-valued derived, not what we want.
+  // mediaStore.get(...) reads from a non-reactive Map, so we touch
+  // the reactive `months` snapshot first to register a dependency —
+  // every MediaStore.merge() replaces `months`, forcing this derivation
+  // to re-run when new media rows arrive (e.g. SSE updates, thumb
+  // version bumps). Same pattern as MediaDetail.svelte:14.
   const months: Month[] = $derived.by((): Month[] => {
+    void mediaStore.months;
     if (!detail.album) return [];
     const items: Media[] = detail.itemIds
       .map((mid) => mediaStore.get(mid))
