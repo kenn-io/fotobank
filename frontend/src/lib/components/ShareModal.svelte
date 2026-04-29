@@ -22,7 +22,12 @@
   const labelTrimmed = $derived(label.trim());
   const labelOk = $derived(labelTrimmed.length <= 200);
   const setTooLarge = $derived(target.type === "media_set" && target.mediaIds.length > 1000);
-  const valid = $derived(grantee !== null && labelOk && !setTooLarge);
+  // Defensive: the action bar gates opening on selectedCount > 0, so an
+  // empty media_set should never reach here. Block submit anyway so a
+  // bug elsewhere can't POST a zero-photo share. No UI warning — the
+  // user shouldn't see this state in the first place.
+  const setEmpty = $derived(target.type === "media_set" && target.mediaIds.length === 0);
+  const valid = $derived(grantee !== null && labelOk && !setTooLarge && !setEmpty);
 
   // $derived.by(...) — multi-statement derived returning a string.
   // $derived(() => ...) would yield a function-typed value (see

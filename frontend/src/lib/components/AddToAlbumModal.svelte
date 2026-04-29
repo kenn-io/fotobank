@@ -22,14 +22,16 @@
   let error = $state<string | null>(null);
 
   // Users may open Add-to-album before ever visiting /albums, so the
-  // store may not yet be hydrated. Same dual-guard pattern as
-  // AlbumsIndex / SharesPage: empty-list AND not-loading AND not-
-  // exhausted is the only state that warrants a loadInitial.
+  // store may not yet be hydrated. Same guard pattern as AlbumsIndex:
+  // empty-list AND not-loading AND not-exhausted AND not-loadError is
+  // the only state that warrants an auto loadInitial — without the
+  // loadError gate, a transient 5xx would loop the effect.
   $effect(() => {
     if (
       albumsStore.albums.length === 0 &&
       !albumsStore.loading &&
-      !albumsStore.exhausted
+      !albumsStore.exhausted &&
+      !albumsStore.loadError
     ) {
       albumsStore.loadInitial();
     }
@@ -49,16 +51,12 @@
   async function onCreateNew(name: string) {
     // NewAlbumForm catches and surfaces errors from onCreate. Don't add a
     // try/catch here — let creation errors propagate to NewAlbumForm.
-    await albumsStore.create(name);
-    // AlbumsStore.create refetches page 1 (created_at desc), so the
-    // freshly created album sorts first — find returns it. If the name
-    // doesn't resolve (rare race, rename between create and refetch, or
-    // a same-name album already exists), clear selectedId so the user
-    // explicitly picks rather than silently accepting a stale selection
-    // they made before entering create mode.
-    const trimmed = name.trim();
-    const fresh = albumsStore.albums.find((a) => a.name === trimmed);
-    selectedId = fresh ? fresh.id : null;
+    // AlbumsStore.create returns the created album's id, which is the
+    // only reliable way to identify it: a name-match would target the
+    // wrong row when albums share a name, and the post-create refetch
+    // may not yet have placed the row in the list when this returns.
+    const newId = await albumsStore.create(name);
+    selectedId = newId;
     mode = "list";
   }
 
@@ -114,7 +112,7 @@
             <span class="count">{a.item_count}</span>
           </button>
         {/each}
-        {#if !albumsStore.exhausted}
+        {#if !albumsStore.exhausted && !albumsStore.loadError}
           <button
             type="button"
             class="row load-more"

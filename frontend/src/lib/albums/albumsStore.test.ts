@@ -43,16 +43,54 @@ describe("AlbumsStore.loadInitial", () => {
     await store.loadInitial();
     expect(store.exhausted).toBe(true);
   });
+
+  it("leaves exhausted=false on error so retry isn't gated as terminal", async () => {
+    // A 5xx during page-1 fetch must set loadError but NOT exhausted —
+    // there are still pages on the server, the user just couldn't reach
+    // them. Conflating the two would hide the "Load more" affordance and
+    // make the modal's auto-load effect treat retry-able state as done.
+    const client = fakeClient([{ error: { status: 500, message: "boom" } }]);
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    expect(store.loadError).toBe(true);
+    expect(store.exhausted).toBe(false);
+    expect(store.albums.length).toBe(0);
+  });
+
+  it("loadMore on a partial list also leaves exhausted=false on error", async () => {
+    // First page lands fine with next_offset=100; the next page errors.
+    // The store must surface the error without flipping the retry-gating
+    // exhausted flag — the user still has more pages to fetch.
+    const client = fakeClient([
+      {
+        data: {
+          items: [{ id: "a1", name: "A", item_count: 0, created_at: "x", updated_at: "x" }],
+          next_offset: 100,
+        },
+      },
+      { error: { status: 500, message: "boom" } },
+    ]);
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    expect(store.exhausted).toBe(false);
+    expect(store.loadError).toBe(false);
+    await store.loadMore();
+    expect(store.loadError).toBe(true);
+    expect(store.exhausted).toBe(false);
+  });
 });
 
 describe("AlbumsStore.create", () => {
-  it("POSTs the new album then refetches page 1", async () => {
+  it("POSTs the new album, returns the created id, then refetches page 1", async () => {
     const client = fakeClient([
       { data: { id: "new", name: "Trip", item_count: 0, created_at: "2026-04-28", updated_at: "2026-04-28" } },
       { data: { items: [{ id: "new", name: "Trip", item_count: 0, created_at: "2026-04-28", updated_at: "2026-04-28" }], next_offset: null } },
     ]);
     const store = new AlbumsStore(client as any);
-    await store.create("Trip");
+    const newId = await store.create("Trip");
+    // The id is captured from the POST response BEFORE the refetch, so
+    // callers can select-by-id without racing the refetched list.
+    expect(newId).toBe("new");
     expect(store.albums.length).toBe(1);
     expect(store.albums[0]?.name).toBe("Trip");
     expect(client.calls[0]?.path).toBe("/api/v1/albums"); // POST

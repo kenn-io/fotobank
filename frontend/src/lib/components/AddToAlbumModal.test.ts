@@ -92,14 +92,21 @@ describe("AddToAlbumModal", () => {
     expect(queryByText("Family")).not.toBeNull();
   });
 
-  it("create-new flow leaves modal in 'ready to add' state with new album selected", async () => {
+  it("create-new flow selects the created album by id, even when a same-name album already exists", async () => {
     // Use a real AlbumsStore wired to a fakeClient so the create →
     // refetch path mutates `albums` through the same setters production
     // uses. A hand-stubbed mock with `(store as any).albums = …` would
     // bypass Svelte's $state proxy on plain objects and the rendered
     // modal would never see the new album.
+    //
+    // Critical to this test: the seeded list ALREADY contains an album
+    // named "Trip" (id "old-trip"). The user creates another "Trip" —
+    // the modal must select the NEW album by id, not the older one a
+    // name-match would resolve. This exercises the id-returning
+    // AlbumsStore.create() contract that AddToAlbumModal depends on.
     const created = { id: "anew", name: "Trip", item_count: 0, created_at: "x", updated_at: "x" };
     const seededList = [
+      { id: "old-trip", name: "Trip", item_count: 3, created_at: "x", updated_at: "x" },
       { id: "a1", name: "Italy", item_count: 12, cover: { media_id: "m1", thumb_version: 1 }, created_at: "x", updated_at: "x" },
       { id: "a2", name: "Family", item_count: 5, created_at: "x", updated_at: "x" },
     ];
@@ -137,8 +144,8 @@ describe("AddToAlbumModal", () => {
     // button appears.
     const primary = await findByRole("button", { name: /^Add 1 photo$/ });
     expect(primary.hasAttribute("disabled")).toBe(false);
-    // Click primary and confirm onAdd received the freshly created
-    // album's id, not a stale selection from before create mode.
+    // The created id ("anew") must be selected, not the older same-name
+    // "old-trip" that a name-match fallback would have resolved.
     await fireEvent.click(primary);
     expect(onAdd).toHaveBeenCalledWith("anew");
   });

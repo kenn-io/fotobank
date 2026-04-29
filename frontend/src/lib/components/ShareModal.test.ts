@@ -41,6 +41,22 @@ describe("ShareModal media_set", () => {
     expect(getByText(/Selection too large/)).not.toBeNull();
   });
 
+  it("disables primary with an empty media_set, even when grantee is valid", async () => {
+    // Defensive: the action bar gates opening on selectedCount > 0, so
+    // an empty media_set should never reach this modal in practice. But
+    // a bug elsewhere shouldn't be able to POST a zero-photo share, so
+    // valid must reject the empty case regardless of grantee state.
+    const { getByRole, getByPlaceholderText } = render(ShareModal, {
+      props: {
+        target: { type: "media_set" as const, mediaIds: [] },
+        onCreate: vi.fn(),
+        onClose: vi.fn(),
+      },
+    });
+    await fireEvent.input(getByPlaceholderText("myhub:bob"), { target: { value: "myhub:bob" } });
+    expect(getByRole("button", { name: "Create share" }).hasAttribute("disabled")).toBe(true);
+  });
+
   it("submit calls onCreate with parsed grantee object and proper body shape", async () => {
     const onCreate = vi.fn().mockResolvedValue(undefined);
     const { getByRole, getByPlaceholderText, getByLabelText } = render(ShareModal, {

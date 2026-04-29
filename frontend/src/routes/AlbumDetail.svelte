@@ -73,6 +73,21 @@
   let shareAlbumOpen = $state(false);
   let pendingIds = $state<string[]>([]);
 
+  // The router reuses this component instance across /albums/:id
+  // navigations, so the three modal flags and pendingIds would carry
+  // over from the previous album. Reset them whenever id changes so
+  // navigating away from an album with an open modal doesn't leave that
+  // modal showing the prior album's selection. `void id` registers the
+  // reactive dep without using the value (same pattern as the
+  // mediaStore.months access in the months derivation above).
+  $effect(() => {
+    void id;
+    addOpen = false;
+    shareOpen = false;
+    shareAlbumOpen = false;
+    pendingIds = [];
+  });
+
   function openAdd(ids: string[]) { pendingIds = ids; addOpen = true; }
   function openShare(ids: string[]) { pendingIds = ids; shareOpen = true; }
 

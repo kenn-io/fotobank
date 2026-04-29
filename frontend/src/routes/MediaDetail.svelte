@@ -93,6 +93,20 @@
   let shareOpen = $state(false);
   let pendingMediaIds = $state<string[]>([]);
 
+  // The router reuses this component instance across /media/:id
+  // navigations (no {#key id}), so addOpen / shareOpen / pendingMediaIds
+  // would carry over from the previous photo's modal state. Reset them
+  // whenever id changes so a navigation away from a photo with an open
+  // modal doesn't leave that modal showing the prior photo's id.
+  // `void id` registers the reactive dep without using the value (same
+  // pattern as AlbumDetail.svelte's mediaStore.months access).
+  $effect(() => {
+    void id;
+    addOpen = false;
+    shareOpen = false;
+    pendingMediaIds = [];
+  });
+
   function openAdd(ids: string[]) {
     pendingMediaIds = ids;
     addOpen = true;

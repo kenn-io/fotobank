@@ -54,7 +54,10 @@ export class SharesStore {
   albumIDFilter = $state<string | null>(null);
 
   private nextOffset: number | null = 0;
-  private pollHandle: ReturnType<typeof setInterval> | null = null;
+  // Recursive setTimeout (not setInterval) so the next tick is only
+  // scheduled after the current poll's fetch resolves — overlapping
+  // polls could land out of order and merge stale rows over fresh.
+  private pollHandle: ReturnType<typeof setTimeout> | null = null;
   private detailCache = new Map<string, ScopeDetail>();
   // previewCache is intentionally not cleared by retry(): preview content
   // is broker-cached and bound to the share's identity, not its broker_status,
@@ -199,6 +202,13 @@ export class SharesStore {
     // still resolving — its response will be dropped by the token check.
     this.loading = false;
     await this.loadMore(token);
+    // The refetch may have brought new pending/revoking rows into view
+    // (e.g. setShowRevoked(true) surfaces revoking shares that were
+    // previously filtered out). Restart polling if the new list needs
+    // it, or stop it if every visible row is now settled. Token check:
+    // skip if a newer state-clearing call has already run.
+    if (token !== this.loadToken) return;
+    this.maybeStartPolling();
   }
 
   private maybeStartPolling(): void {
@@ -206,11 +216,27 @@ export class SharesStore {
       (s) => s.broker_status === "pending" || s.broker_status === "revoking",
     );
     if (needs && this.pollHandle === null) {
-      this.pollHandle = setInterval(() => this.poll(), POLL_INTERVAL_MS);
+      this.schedulePoll();
     } else if (!needs && this.pollHandle !== null) {
-      clearInterval(this.pollHandle);
+      clearTimeout(this.pollHandle);
       this.pollHandle = null;
     }
+  }
+
+  private schedulePoll(): void {
+    // Recursive setTimeout: poll() runs maybeStartPolling() after merging,
+    // which schedules the next tick if the list still has pending rows.
+    // This serializes polls — a slow fetch can't overlap with a new tick
+    // and produce out-of-order merges. The trade-off is a slight cadence
+    // skew (POLL_INTERVAL_MS + fetch latency between calls) which is
+    // acceptable for a 5s polling window.
+    this.pollHandle = setTimeout(() => {
+      // pollHandle is cleared here so maybeStartPolling() at the end of
+      // poll() sees a null handle and re-schedules. Without this, the
+      // "needs && this.pollHandle === null" branch would never fire.
+      this.pollHandle = null;
+      void this.poll();
+    }, POLL_INTERVAL_MS);
   }
 
   private async poll(): Promise<void> {
@@ -248,7 +274,7 @@ export class SharesStore {
 
   stopPolling(): void {
     if (this.pollHandle !== null) {
-      clearInterval(this.pollHandle);
+      clearTimeout(this.pollHandle);
       this.pollHandle = null;
     }
   }

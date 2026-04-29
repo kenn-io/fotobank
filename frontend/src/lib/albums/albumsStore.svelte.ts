@@ -54,11 +54,14 @@ export class AlbumsStore {
           params: { query: { limit: 100, offset: this.nextOffset ?? 0 } } as never,
         });
         if (res.error || !res.data) {
+          // loadError gates auto-retry effects in routes (so a transient
+          // 5xx doesn't spin in an infinite refetch loop), but we MUST
+          // NOT set exhausted here — there are still pages on the server
+          // we couldn't reach, and conflating the two would hide the
+          // remaining "Load more" affordance and treat retry-able state
+          // as terminal. Routes that auto-load must gate on
+          // `!exhausted && !loadError`.
           this.loadError = true;
-          // Mark exhausted so the auto-retry effects in routes don't
-          // loop on a persistent failure. Manual retry should call
-          // retry() to clear the flag and try again.
-          this.exhausted = true;
           return;
         }
         const data = res.data as { items?: AlbumListItem[]; next_offset?: number };
@@ -83,14 +86,20 @@ export class AlbumsStore {
     await this.loadInitial();
   }
 
-  async create(name: string): Promise<void> {
+  async create(name: string): Promise<string> {
     const trimmed = name.trim();
     if (trimmed.length === 0) throw new Error("Name is required");
     if (trimmed.length > 200) throw new Error("Name exceeds 200 characters");
     const res = await this.client.POST("/api/v1/albums", { body: { name: trimmed } as never });
     if (res.error) throw res.error;
+    // Capture the new id BEFORE the refetch — the response body is the
+    // created album. Returning the id lets callers (e.g. AddToAlbumModal)
+    // select by id rather than name match, which would target the wrong
+    // album when names duplicate.
+    const created = res.data as { id: string };
     // Refetch page 1 so backend ordering / cover derivation is honored.
     await this.loadInitial();
+    return created.id;
   }
 
   async rename(id: string, name: string): Promise<void> {

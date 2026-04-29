@@ -243,6 +243,37 @@ describe("SharesStore.setAlbumIDFilter", () => {
   });
 });
 
+describe("SharesStore filter setters restart polling", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("setShowRevoked restarts polling when the new list contains a pending row", async () => {
+    // The first list is fully settled (no polling), so refetchListPreservingFilter
+    // must call maybeStartPolling after the new list lands — otherwise toggling
+    // the filter would surface a pending row that never updates.
+    const client = fakeClient([
+      // loadInitial — only active rows visible, polling stays off
+      { data: { items: [baseRow], next_offset: null } },
+      // refetch after setShowRevoked(true) — now a revoking row is visible
+      { data: { items: [baseRow, { ...baseRow, uuid: "rev", broker_status: "revoking" }], next_offset: null } },
+      // first poll tick — broker has settled the revoking row
+      { data: { items: [baseRow, { ...baseRow, uuid: "rev", broker_status: "revoked_remote" }], next_offset: null } },
+    ]);
+    const store = new SharesStore(client as any);
+    await store.loadInitial();
+    expect(client.calls.length).toBe(1);
+    await store.setShowRevoked(true);
+    // After setShowRevoked: 2 fetches so far (loadInitial + refetch).
+    expect(client.calls.length).toBe(2);
+    // Polling must now be active because a revoking row is visible.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(client.calls.length).toBe(3);
+    // After the poll, the row is settled and polling stops.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(client.calls.length).toBe(3);
+  });
+});
+
 describe("SharesStore concurrent loadInitial", () => {
   it("does not produce duplicate or stale rows", async () => {
     let resolveFirst!: (v: { data: any }) => void;
