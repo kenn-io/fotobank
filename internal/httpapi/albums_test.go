@@ -44,7 +44,7 @@ func TestTranslateAlbumErrorInvalidSentinels(t *testing.T) {
 	}{
 		{album.ErrInvalidName, 400, "name must be 1..200 chars"},
 		{album.ErrInvalidBatch, 400, "batch size must be 1..500"},
-		{album.ErrInvalidSort, 400, "sort_by must be added or imported"},
+		{album.ErrInvalidSort, 400, "sort_by must be added, imported, or taken"},
 	}
 	for _, c := range cases {
 		got := httpapi.TranslateAlbumErrorForTest(c.in)

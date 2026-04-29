@@ -34,7 +34,7 @@ func translateAlbumError(err error) huma.StatusError {
 	case errors.Is(err, album.ErrInvalidBatch):
 		return huma.Error400BadRequest("batch size must be 1..500")
 	case errors.Is(err, album.ErrInvalidSort):
-		return huma.Error400BadRequest("sort_by must be added or imported")
+		return huma.Error400BadRequest("sort_by must be added, imported, or taken")
 	case errors.Is(err, share.ErrAlbumHasLiveScopes):
 		return huma.Error409Conflict("album has outstanding shares; revoke or retry them first")
 	default:
