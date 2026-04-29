@@ -12,12 +12,15 @@
   import SharesPage from "./routes/SharesPage.svelte";
   import HiddenLibrary from "./routes/HiddenLibrary.svelte";
   import NotFound from "./routes/NotFound.svelte";
+  import HiddenLockStrip from "./lib/components/HiddenLockStrip.svelte";
+  import ToastStack from "./lib/components/ToastStack.svelte";
   import { ThemeStore } from "./lib/theme/themeStore.svelte";
   import { EventsStore } from "./lib/events/eventsStore.svelte";
   import { MediaStore } from "./lib/media/mediaStore.svelte";
   import { AlbumsStore } from "./lib/albums/albumsStore.svelte";
   import { SharesStore } from "./lib/shares/sharesStore.svelte";
   import { HiddenStore } from "./lib/hidden/hiddenStore.svelte";
+  import { ToastStore } from "./lib/toasts/toastStore.svelte";
   import { selection } from "./lib/selection/selectionStore.svelte";
   import { router, type RouteMatch } from "./lib/router/router.svelte";
   import { isEditableTarget } from "./lib/dom/editable";
@@ -37,11 +40,26 @@
   const sharesStore = new SharesStore(api);
   const hiddenStore = new HiddenStore(api);
   hiddenStore.refresh();
+  const toastStore = new ToastStore();
 
   $effect(() => {
     const onPop = () => router.syncFromLocation();
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
+  });
+
+  $effect(() => {
+    const handler = () => {
+      if (hiddenStore.unlocked) {
+        hiddenStore.lock({ keepalive: true });
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    window.addEventListener("pagehide", handler);
+    return () => {
+      document.removeEventListener("visibilitychange", handler);
+      window.removeEventListener("pagehide", handler);
+    };
   });
 
   $effect(() => {
@@ -75,6 +93,9 @@
 </script>
 
 <AppHeader />
+{#if hiddenStore.unlocked}
+  <HiddenLockStrip {hiddenStore} />
+{/if}
 <ThreeColumnLayout>
   {#snippet sidebar()}
     <Sidebar active={activeId(router.current)} />
@@ -101,3 +122,4 @@
     {/if}
   {/snippet}
 </ThreeColumnLayout>
+<ToastStack {toastStore} />
