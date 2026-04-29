@@ -106,7 +106,11 @@ func registerMediaThumb(mux *http.ServeMux, svc *service.ThumbService) {
 		if m.ThumbUpdatedAt != nil {
 			h.Set("Last-Modified", m.ThumbUpdatedAt.UTC().Format(http.TimeFormat))
 		}
-		h.Set("Cache-Control", "private, max-age=31536000, immutable")
+		// must-revalidate instead of immutable: if a visible item is later
+		// hidden, the browser re-checks the ETag on the next access rather
+		// than serving a stale cached response indefinitely. The versioned
+		// ?v= URL still ensures instant cache-busting on thumb regeneration.
+		h.Set("Cache-Control", "private, max-age=31536000, must-revalidate")
 
 		if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" && etagMatches(ifNoneMatch, etag) {
 			_ = rc.Close()
