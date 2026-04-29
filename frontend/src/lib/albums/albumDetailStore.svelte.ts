@@ -23,7 +23,7 @@ export class AlbumDetailStore {
   private membership = new Set<string>();
 
   constructor(
-    private client: Pick<Client, "GET" | "DELETE">,
+    private client: Pick<Client, "GET" | "DELETE" | "PATCH">,
     private media: MediaStore,
   ) {}
 
@@ -124,5 +124,29 @@ export class AlbumDetailStore {
 
   hasInAlbum(id: string): boolean {
     return this.membership.has(id);
+  }
+
+  async rename(name: string): Promise<void> {
+    if (!this.albumId) return;
+    const trimmed = name.trim();
+    if (trimmed.length === 0) throw new Error("Name is required");
+    if (trimmed.length > 200) throw new Error("Name exceeds 200 characters");
+    const res = await this.client.PATCH("/api/v1/albums/{id}", {
+      params: { path: { id: this.albumId } } as never,
+      body: { name: trimmed } as never,
+    });
+    if (res.error) throw res.error;
+    if (res.data && this.album) {
+      const a = res.data as Album;
+      this.album = { ...this.album, name: a.name, updated_at: a.updated_at };
+    }
+  }
+
+  async delete(): Promise<void> {
+    if (!this.albumId) return;
+    const res = await this.client.DELETE("/api/v1/albums/{id}", {
+      params: { path: { id: this.albumId } } as never,
+    });
+    if (res.error) throw res.error;
   }
 }
