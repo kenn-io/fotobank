@@ -193,6 +193,7 @@ func (s *Service) Lock(ctx context.Context, rawToken string) error {
 		return nil
 	}
 	if err := s.repo.RevokeSession(ctx, sha, s.now()); err != nil {
+		slog.ErrorContext(ctx, "auth.hidden.lock", "outcome", "error", "err", err)
 		return fmt.Errorf("lock hidden: %w", err)
 	}
 	slog.InfoContext(ctx, "auth.hidden.lock", "outcome", "ok")

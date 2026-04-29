@@ -484,6 +484,90 @@ func TestHiddenLockIdempotentOnRevokedCookie(t *testing.T) {
 	r.Equal(http.StatusNoContent, lock2.StatusCode)
 }
 
+// TestHiddenStateDBErrorReturns5xx verifies that /state propagates a real DB
+// error (non-ErrNotFound) rather than silently reporting configured=false.
+func TestHiddenStateDBErrorReturns5xx(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "sk", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
+	svc := hidden.NewService(repo, &fakeHiddenMediaPrivacy{})
+	idp := identity.NewStub(p, "Test User")
+	h, err := httpapi.New(httpapi.Deps{
+		IdentityProvider:         idp,
+		HiddenAuth:               svc,
+		DevInsecureHiddenCookies: true,
+	})
+	r.NoError(err)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	// Close the read pool so GetCredential fails with a real DB error, not ErrNotFound.
+	r.NoError(d.ReadDB().Close())
+
+	resp, getErr := http.Get(srv.URL + "/api/v1/auth/hidden/state")
+	r.NoError(getErr)
+	defer resp.Body.Close()
+	// Must not return 200 with configured=false — must bubble as a 5xx.
+	r.NotEqual(http.StatusOK, resp.StatusCode,
+		"/state must not return 200 when the DB fails with a real error")
+}
+
+// TestHiddenLockReturns204WhenRevokeSessionFails verifies that the /lock
+// endpoint preserves its idempotency contract (always 204) even when the
+// underlying DB revocation fails.
+func TestHiddenLockReturns204WhenRevokeSessionFails(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "sk", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
+	svc := hidden.NewService(repo, &fakeHiddenMediaPrivacy{})
+	cookieCfg := hidden.CookieConfigFor(true)
+	idp := identity.NewStub(p, "Test User")
+	h, err := httpapi.New(httpapi.Deps{
+		IdentityProvider:         idp,
+		HiddenAuth:               svc,
+		DevInsecureHiddenCookies: true,
+	})
+	r.NoError(err)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	r.NoError(svc.Setup(context.Background(), p, "pass"))
+
+	// Unlock to get a valid cookie.
+	unlockResp := postJSON(t, srv.URL+"/api/v1/auth/hidden/unlock", `{"passcode":"pass"}`)
+	defer unlockResp.Body.Close()
+	r.Equal(http.StatusNoContent, unlockResp.StatusCode)
+	var unlockCookie *http.Cookie
+	for _, c := range unlockResp.Cookies() {
+		if c.Name == cookieCfg.Name {
+			unlockCookie = c
+		}
+	}
+	r.NotNil(unlockCookie)
+
+	// Close the write pool so RevokeSession fails with a real DB error.
+	r.NoError(d.WriteDB().Close())
+
+	// /lock must still return 204 (idempotent, best-effort revocation).
+	lockResp := postJSONWithCookie(t, srv.URL+"/api/v1/auth/hidden/lock", "", unlockCookie)
+	defer lockResp.Body.Close()
+	r.Equal(http.StatusNoContent, lockResp.StatusCode)
+}
+
 // TestHiddenProdCookieNameAndSecureFlag verifies that in production mode the
 // handler sets the __Host-fotobank-hidden cookie with Secure=true.
 func TestHiddenProdCookieNameAndSecureFlag(t *testing.T) {

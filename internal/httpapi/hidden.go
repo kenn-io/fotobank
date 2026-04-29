@@ -86,7 +86,7 @@ func registerHiddenSetup(api huma.API, svc *hidden.Service) {
 			return nil, Translate(err)
 		}
 		if err := svc.Setup(ctx, caller, in.Body.Passcode); err != nil {
-			return nil, translateHiddenSetupError(err)
+			return nil, Translate(err)
 		}
 		return &hidden204Output{Status: http.StatusNoContent}, nil
 	})
@@ -196,8 +196,12 @@ func registerHiddenState(api huma.API, svc *hidden.Service) {
 		if err != nil {
 			return nil, Translate(err)
 		}
-		_, credErr := svc.GetCredential(ctx, caller)
-		configured := credErr == nil
+		configured := false
+		if _, credErr := svc.GetCredential(ctx, caller); credErr == nil {
+			configured = true
+		} else if !errors.Is(credErr, errs.ErrNotFound) {
+			return nil, Translate(credErr)
+		}
 
 		out := &hiddenStateOutput{}
 		out.Body.Configured = configured
@@ -212,13 +216,6 @@ func registerHiddenState(api huma.API, svc *hidden.Service) {
 }
 
 // --- error translation ---
-
-// translateHiddenSetupError handles errors specific to the /setup endpoint
-// where ErrAlreadyExists → 409 (not the generic 409-for-existing).
-func translateHiddenSetupError(err error) huma.StatusError {
-	// ErrAlreadyExists maps to 409 via Translate already — just delegate.
-	return Translate(err)
-}
 
 // translateHiddenPasscodeError maps service errors on passcode-bearing endpoints.
 // On ErrLockedOut it queries the service for the active lockout time and
