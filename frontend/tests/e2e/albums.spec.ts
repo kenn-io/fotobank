@@ -73,11 +73,6 @@ test.describe("F2.3 albums", () => {
       .getByRole("button", { name: "Delete" })
       .click();
     await expect(page).toHaveURL(/\/albums$/);
-    // AlbumsStore caches the prior list (#359 follow-up); a SPA-only
-    // navigation after delete still shows the cached tile. A full
-    // reload forces /api/v1/albums to refetch, which is the only way
-    // to verify the row was actually deleted server-side.
-    await page.reload();
     await expect(page.getByText(albumName)).not.toBeVisible();
   });
 

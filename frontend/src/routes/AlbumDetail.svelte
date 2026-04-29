@@ -129,6 +129,15 @@
 
   async function onRename(name: string) {
     await detail.rename(name);
+    // Sync the AlbumsStore cache so navigating back to /albums shows the
+    // new name without forcing a refetch. detail.album reflects the
+    // PATCH response set inside AlbumDetailStore.rename.
+    if (detail.album) {
+      albumsStore.applyRename(detail.album.id, {
+        name: detail.album.name,
+        updated_at: detail.album.updated_at,
+      });
+    }
     renaming = false;
   }
 
@@ -139,6 +148,9 @@
     const albumId = id;
     try {
       await detail.delete();
+      // Drop from the AlbumsStore cache before navigating so the /albums
+      // route doesn't render a stale tile pointing at the just-deleted id.
+      albumsStore.dropLocal(albumId);
       router.navigate("/albums");
     } catch (e: unknown) {
       confirmingDelete = false;

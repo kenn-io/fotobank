@@ -126,16 +126,34 @@ export class AlbumsStore {
   }
 
   async delete(id: string): Promise<void> {
-    const wasLoaded = this.albums.some((a) => a.id === id);
     const res = await this.client.DELETE("/api/v1/albums/{id}", {
       params: { path: { id } } as never,
     });
     if (res.error) throw res.error;
-    if (wasLoaded) {
-      this.albums = this.albums.filter((a) => a.id !== id);
-      if (this.nextOffset !== null && this.nextOffset > 0) {
-        this.nextOffset -= 1;
-      }
+    this.dropLocal(id);
+  }
+
+  // Local-only mutators used by routes that already issued the network
+  // call themselves (e.g. AlbumDetail rename/delete via AlbumDetailStore)
+  // and just need to keep this list cache in sync. They don't refetch.
+  applyRename(id: string, updates: { name: string; updated_at: string }): void {
+    const idx = this.albums.findIndex((a) => a.id === id);
+    if (idx < 0) return;
+    const existing = this.albums[idx];
+    if (!existing) return;
+    this.albums = [
+      ...this.albums.slice(0, idx),
+      { ...existing, name: updates.name, updated_at: updates.updated_at },
+      ...this.albums.slice(idx + 1),
+    ];
+  }
+
+  dropLocal(id: string): void {
+    const wasLoaded = this.albums.some((a) => a.id === id);
+    if (!wasLoaded) return;
+    this.albums = this.albums.filter((a) => a.id !== id);
+    if (this.nextOffset !== null && this.nextOffset > 0) {
+      this.nextOffset -= 1;
     }
   }
 

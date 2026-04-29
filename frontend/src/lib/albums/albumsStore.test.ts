@@ -217,3 +217,82 @@ describe("AlbumsStore.delete pagination correctness", () => {
     expect((store as any).nextOffset).toBe(100); // unchanged
   });
 });
+
+describe("AlbumsStore.applyRename", () => {
+  it("updates the matching album name and updated_at locally", async () => {
+    const client = fakeClient([
+      {
+        data: {
+          items: [
+            { id: "a1", name: "Old", item_count: 0, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" },
+          ],
+          next_offset: null,
+        },
+      },
+    ]);
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    store.applyRename("a1", { name: "New", updated_at: "2026-04-29T00:00:00Z" });
+    expect(store.albums[0]?.name).toBe("New");
+    expect(store.albums[0]?.updated_at).toBe("2026-04-29T00:00:00Z");
+  });
+
+  it("is a no-op when id is not in the cached list", async () => {
+    const client = fakeClient([
+      {
+        data: {
+          items: [
+            { id: "a1", name: "A", item_count: 0, created_at: "x", updated_at: "x" },
+          ],
+          next_offset: null,
+        },
+      },
+    ]);
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    store.applyRename("missing", { name: "New", updated_at: "2026-04-29T00:00:00Z" });
+    expect(store.albums).toHaveLength(1);
+    expect(store.albums[0]?.id).toBe("a1");
+    expect(store.albums[0]?.name).toBe("A");
+  });
+});
+
+describe("AlbumsStore.dropLocal", () => {
+  it("removes the matching album and decrements nextOffset when > 0", async () => {
+    const client = fakeClient([
+      {
+        data: {
+          items: [
+            { id: "a1", name: "A", item_count: 0, created_at: "x", updated_at: "x" },
+            { id: "a2", name: "B", item_count: 0, created_at: "x", updated_at: "x" },
+          ],
+          next_offset: 5,
+        },
+      },
+    ]);
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    store.dropLocal("a1");
+    expect(store.albums).toHaveLength(1);
+    expect(store.albums[0]?.id).toBe("a2");
+    expect((store as any).nextOffset).toBe(4);
+  });
+
+  it("is a no-op when id is not in the cached list", async () => {
+    const client = fakeClient([
+      {
+        data: {
+          items: [
+            { id: "a1", name: "A", item_count: 0, created_at: "x", updated_at: "x" },
+          ],
+          next_offset: 100,
+        },
+      },
+    ]);
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    store.dropLocal("missing");
+    expect(store.albums).toHaveLength(1);
+    expect((store as any).nextOffset).toBe(100);
+  });
+});
