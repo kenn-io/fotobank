@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/identity"
 	"github.com/wesm/fotobank/internal/obs"
@@ -347,6 +348,57 @@ func (l *displayCacheLRU) shouldUpsert(p owners.Principal, now time.Time) bool {
 	}
 	l.seen[p] = now
 	return true
+}
+
+// WithHiddenUnlock wraps next so that requests carrying a valid hidden-unlock
+// cookie get an UnlockClaim attached to the request context. Missing, invalid,
+// or expired cookies do NOT reject the request — filtering belongs to
+// service/repo per spec §1.3.
+//
+// Must run INSIDE WithMiddleware (after identity is resolved) because it reads
+// IdentityFromContext to verify that the session principal matches the caller.
+// When svc or repo are nil the wrapper is a no-op pass-through (used by the
+// OpenAPI spec build path and tests that don't need the unlock surface).
+func WithHiddenUnlock(
+	next http.Handler,
+	svc *hidden.Service,
+	repo *hidden.Repo,
+	cookie hidden.CookieConfig,
+	now func() time.Time,
+) http.Handler {
+	if svc == nil || repo == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie(cookie.Name)
+		if err != nil || c == nil || c.Value == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ctx := r.Context()
+		sha, err := hidden.TokenSHA256(c.Value)
+		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		sess, err := repo.LookupActiveSession(ctx, sha, now())
+		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ident, ok := IdentityFromContext(ctx)
+		if !ok || ident.Principal.OwnersPrincipal() != sess.Principal {
+			// Cookie principal must match request principal. A stale cookie
+			// from another session must never unlock the current caller's data.
+			next.ServeHTTP(w, r)
+			return
+		}
+		ctx = hidden.WithUnlockClaim(ctx, hidden.UnlockClaim{
+			Principal: sess.Principal,
+			ExpiresAt: sess.ExpiresAt,
+		})
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // WithPrincipalDisplayCache wraps next with a middleware that upserts

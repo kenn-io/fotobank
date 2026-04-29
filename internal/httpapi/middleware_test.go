@@ -3,6 +3,8 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -10,9 +12,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/httpapi"
 	"github.com/wesm/fotobank/internal/identity"
@@ -327,4 +331,298 @@ func TestLoggerFromContext_ReturnsAttached(t *testing.T) {
 	ctx := httpapi.WithLogger(context.Background(), want)
 	got := httpapi.LoggerFromContext(ctx)
 	r.Equal(want, got)
+}
+
+// --- WithHiddenUnlock middleware tests ---
+
+// hiddenMiddleFx is a test fixture for WithHiddenUnlock.
+type hiddenMiddleFx struct {
+	repo      *hidden.Repo
+	svc       *hidden.Service
+	cookie    hidden.CookieConfig
+	principal owners.Principal
+	now       time.Time
+}
+
+func newHiddenMiddleFx(t *testing.T) hiddenMiddleFx {
+	t.Helper()
+	d := testutil.OpenTestDB(t)
+	rw := d.WriteDB()
+	ro := d.ReadDB()
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	// Seed the owner row so FK constraints on auth_hidden_* tables pass.
+	_, err := rw.ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "sk", time.Now().UTC())
+	require.NoError(t, err)
+
+	repo := hidden.NewRepo(rw, ro)
+	media := &fakeHiddenMedia{}
+	svc := hidden.NewService(repo, media)
+	now := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	return hiddenMiddleFx{
+		repo:      repo,
+		svc:       svc,
+		cookie:    hidden.CookieConfigFor(false), // prod cookie
+		principal: p,
+		now:       now,
+	}
+}
+
+// fakeHiddenMedia satisfies hidden.MediaPrivacy for middleware test fixtures.
+type fakeHiddenMedia struct{}
+
+func (f *fakeHiddenMedia) ClearAllHiddenForOwner(_ context.Context, _ owners.Principal) error {
+	return nil
+}
+
+// issueSession seeds a credential + issues a session for fx.principal.
+// Returns the raw token string.
+func (fx hiddenMiddleFx) issueSession(t *testing.T) string {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, fx.svc.Setup(ctx, fx.principal, "secret"))
+	// Advance clock so session expires in the future.
+	fx.svc.SetClockForTest(func() time.Time { return fx.now })
+	raw, _, err := fx.svc.Unlock(ctx, fx.principal, "secret")
+	require.NoError(t, err)
+	return raw
+}
+
+// buildUnlockHandler returns a handler that has WithHiddenUnlock applied.
+// The inner handler captures the claim and signals done.
+func buildUnlockHandler(
+	repo *hidden.Repo, svc *hidden.Service, cookie hidden.CookieConfig, now time.Time,
+	inner func(context.Context),
+) http.Handler {
+	innerH := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		inner(r.Context())
+	})
+	return httpapi.WithHiddenUnlock(innerH, svc, repo, cookie, func() time.Time { return now })
+}
+
+// contextWithPrincipal injects an identity into ctx so IdentityFromContext works
+// inside WithHiddenUnlock.
+func contextWithPrincipal(ctx context.Context, p owners.Principal) context.Context {
+	return httpapi.ContextWithIdentity(ctx, identity.Identity{
+		Principal: identity.Principal{Hub: p.Hub, UserID: p.UserID},
+	})
+}
+
+func TestHiddenMiddlewareNoCookiePassesThrough(t *testing.T) {
+	r := require.New(t)
+	fx := newHiddenMiddleFx(t)
+
+	var reached bool
+	var claimPresent bool
+	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+		reached = true
+		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
+	})
+	ctx := contextWithPrincipal(context.Background(), fx.principal)
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	r.True(reached)
+	r.False(claimPresent, "no cookie → no claim")
+}
+
+func TestHiddenMiddlewareValidCookieAttachesClaim(t *testing.T) {
+	r := require.New(t)
+	fx := newHiddenMiddleFx(t)
+	raw := fx.issueSession(t)
+
+	var claim hidden.UnlockClaim
+	var claimPresent bool
+	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+		claim, claimPresent = hidden.UnlockClaimFromContext(ctx)
+	})
+	ctx := contextWithPrincipal(context.Background(), fx.principal)
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	req.AddCookie(&http.Cookie{Name: fx.cookie.Name, Value: raw})
+
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	r.True(claimPresent)
+	r.Equal(fx.principal, claim.Principal)
+	r.False(claim.ExpiresAt.IsZero())
+}
+
+func TestHiddenMiddlewareMalformedCookieNoError(t *testing.T) {
+	r := require.New(t)
+	fx := newHiddenMiddleFx(t)
+
+	var reached bool
+	var claimPresent bool
+	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+		reached = true
+		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
+	})
+	ctx := contextWithPrincipal(context.Background(), fx.principal)
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	req.AddCookie(&http.Cookie{Name: fx.cookie.Name, Value: "not!valid!base64url!!"})
+
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	r.True(reached)
+	r.False(claimPresent, "malformed cookie → no claim, no error")
+}
+
+func TestHiddenMiddlewareNoSessionRowNoError(t *testing.T) {
+	// Cookie value is valid base64url but has no matching session in the DB.
+	r := require.New(t)
+	fx := newHiddenMiddleFx(t)
+	// 43-char base64url token that was never inserted.
+	fakeTok := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+	var reached bool
+	var claimPresent bool
+	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+		reached = true
+		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
+	})
+	ctx := contextWithPrincipal(context.Background(), fx.principal)
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	req.AddCookie(&http.Cookie{Name: fx.cookie.Name, Value: fakeTok})
+
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	r.True(reached)
+	r.False(claimPresent, "unknown token → ErrNotFound swallowed, no claim")
+}
+
+func TestHiddenMiddlewareRevokedSessionNoError(t *testing.T) {
+	r := require.New(t)
+	fx := newHiddenMiddleFx(t)
+	raw := fx.issueSession(t)
+
+	// Revoke the session.
+	sha, err := hidden.TokenSHA256(raw)
+	require.NoError(t, err)
+	require.NoError(t, fx.repo.RevokeSession(context.Background(), sha, fx.now))
+
+	var claimPresent bool
+	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
+	})
+	ctx := contextWithPrincipal(context.Background(), fx.principal)
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	req.AddCookie(&http.Cookie{Name: fx.cookie.Name, Value: raw})
+
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	r.False(claimPresent, "revoked session → LookupActiveSession returns ErrNotFound, swallowed")
+}
+
+func TestHiddenMiddlewareExpiredSessionNoError(t *testing.T) {
+	r := require.New(t)
+	fx := newHiddenMiddleFx(t)
+	raw := fx.issueSession(t)
+
+	// Advance the clock past session expiry.
+	future := fx.now.Add(10 * time.Minute)
+
+	var claimPresent bool
+	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, future, func(ctx context.Context) {
+		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
+	})
+	ctx := contextWithPrincipal(context.Background(), fx.principal)
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	req.AddCookie(&http.Cookie{Name: fx.cookie.Name, Value: raw})
+
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	r.False(claimPresent, "expired session → LookupActiveSession returns ErrNotFound, swallowed")
+}
+
+func TestHiddenMiddlewarePrincipalMismatchNoError(t *testing.T) {
+	// Session was issued for principal "u" but request identity is "other".
+	r := require.New(t)
+	fx := newHiddenMiddleFx(t)
+	raw := fx.issueSession(t)
+
+	other := owners.Principal{Hub: "h", UserID: "other"}
+
+	var claimPresent bool
+	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
+	})
+	ctx := contextWithPrincipal(context.Background(), other)
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	req.AddCookie(&http.Cookie{Name: fx.cookie.Name, Value: raw})
+
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	r.False(claimPresent, "principal mismatch → claim must not be attached")
+}
+
+func TestHiddenMiddlewareNilDepsPassThrough(t *testing.T) {
+	// When svc/repo are nil, middleware is a no-op pass-through.
+	r := require.New(t)
+	reached := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	})
+	h := httpapi.WithHiddenUnlock(inner, nil, nil, hidden.CookieConfigFor(false), time.Now)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	r.True(reached)
+	r.Equal(http.StatusOK, rec.Code)
+}
+
+// seedHiddenSessionRaw inserts a session for principal p directly into repo
+// using a real random token. Returns the raw token.
+func seedHiddenSessionRaw(
+	t *testing.T, rw *sql.DB, repo *hidden.Repo, p owners.Principal, now, expiresAt time.Time,
+) string {
+	t.Helper()
+	raw, sha, err := hidden.NewToken(rand.Reader)
+	require.NoError(t, err)
+	require.NoError(t, repo.InsertSession(context.Background(), hidden.Session{
+		TokenSHA256: sha,
+		Principal:   p,
+		IssuedAt:    now,
+		ExpiresAt:   expiresAt,
+	}))
+	_ = rw // passed for future use; unused right now
+	return raw
+}
+
+func TestHiddenMiddlewareDevCookieName(t *testing.T) {
+	// Dev cookie (no __Host- prefix) must also be accepted.
+	r := require.New(t)
+	fx := newHiddenMiddleFx(t)
+	devCookie := hidden.CookieConfigFor(true)
+
+	// Issue a session directly into the DB (bypass service so we control the clock).
+	expiresAt := fx.now.Add(5 * time.Minute)
+	raw := seedHiddenSessionRaw(t, nil, fx.repo, fx.principal, fx.now, expiresAt)
+
+	var claimPresent bool
+	h := buildUnlockHandler(fx.repo, fx.svc, devCookie, fx.now, func(ctx context.Context) {
+		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
+	})
+	ctx := contextWithPrincipal(context.Background(), fx.principal)
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	req.AddCookie(&http.Cookie{Name: devCookie.Name, Value: raw})
+
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	r.True(claimPresent, "dev cookie must work too")
+}
+
+// TestHiddenMiddlewareIdentityMustRunFirst documents the expected middleware order.
+// WithHiddenUnlock reads IdentityFromContext; if identity is NOT in context,
+// the principal check fails and no claim is attached — even for a valid cookie.
+func TestHiddenMiddlewareIdentityMustRunFirst(t *testing.T) {
+	r := require.New(t)
+	fx := newHiddenMiddleFx(t)
+	expiresAt := fx.now.Add(5 * time.Minute)
+	raw := seedHiddenSessionRaw(t, nil, fx.repo, fx.principal, fx.now, expiresAt)
+
+	var claimPresent bool
+	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
+	})
+	// No identity in context — middleware must NOT attach a claim.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: fx.cookie.Name, Value: raw})
+
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	r.False(claimPresent, "no identity in context → no claim even with valid cookie")
 }

@@ -7,10 +7,12 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/identity"
 	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/service"
@@ -65,6 +67,16 @@ type Deps struct {
 	// middleware — handles won't be refreshed from live traffic but the
 	// rest of the API keeps working.
 	PrincipalDisplay *share.PrincipalDisplayRepo
+	// HiddenAuth is the hidden-privacy service used by WithHiddenUnlock to
+	// validate cookies. Nil disables the middleware.
+	HiddenAuth *hidden.Service
+	// HiddenRepo is the hidden-privacy repo used by WithHiddenUnlock for
+	// session lookups. Nil disables the middleware.
+	HiddenRepo *hidden.Repo
+	// DevInsecureHiddenCookies, when true, configures WithHiddenUnlock to
+	// use the dev cookie name (fotobank-hidden, no Secure flag) instead of
+	// the production __Host-fotobank-hidden cookie.
+	DevInsecureHiddenCookies bool
 	// Logger is the base slog.Logger used by the request middleware to
 	// build per-request loggers. nil falls back to slog.Default().
 	Logger *slog.Logger
@@ -88,6 +100,11 @@ type Deps struct {
 // deps.PrincipalDisplay is also set the chain gains the display-cache
 // middleware between identity resolution and request dispatch, so the
 // cache observes the post-resolution Identity on the request context.
+// New constructs the Fotobank HTTP handler. The middleware chain is:
+//
+//	metrics → recovery → identity → hidden-unlock → display-cache → mux
+//
+// Layers are only inserted when the relevant Deps fields are non-nil.
 func New(deps Deps) (http.Handler, error) {
 	mux, _ := buildAPI(deps)
 	var handler http.Handler = mux
@@ -98,6 +115,11 @@ func New(deps Deps) (http.Handler, error) {
 		}
 		handler = WithPrincipalDisplayCache(deps.PrincipalDisplay, dispLogger)(handler)
 	}
+	// hidden-unlock runs after display-cache in the outer chain but its context
+	// value is read by display-cache; insert it between display-cache and
+	// the identity wrap so the resolved principal is available.
+	cookieCfg := hidden.CookieConfigFor(deps.DevInsecureHiddenCookies)
+	handler = WithHiddenUnlock(handler, deps.HiddenAuth, deps.HiddenRepo, cookieCfg, time.Now)
 	if deps.IdentityProvider != nil {
 		handler = WithMiddleware(WithMiddlewareDeps{
 			Provider:        deps.IdentityProvider,

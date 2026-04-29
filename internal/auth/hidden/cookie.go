@@ -1,18 +1,94 @@
 package hidden
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/argon2"
 
 	"github.com/wesm/fotobank/internal/errs"
+	"github.com/wesm/fotobank/internal/owners"
 )
+
+const (
+	prodCookieName = "__Host-fotobank-hidden"
+	devCookieName  = "fotobank-hidden"
+)
+
+// CookieConfig captures the deployment-mode-dependent cookie attributes.
+// Production: __Host-fotobank-hidden, Secure. Dev: fotobank-hidden, no Secure.
+type CookieConfig struct {
+	Name   string
+	Secure bool
+}
+
+// CookieConfigFor returns the right config for the deployment mode.
+// devInsecure=true means the operator opted into HTTP-loopback dev cookies via
+// http.dev_insecure_cookies; the __Host- prefix and Secure flag are dropped.
+func CookieConfigFor(devInsecure bool) CookieConfig {
+	if devInsecure {
+		return CookieConfig{Name: devCookieName, Secure: false}
+	}
+	return CookieConfig{Name: prodCookieName, Secure: true}
+}
+
+// IssueCookie builds a *http.Cookie carrying the raw token. Max-Age is
+// derived from expiresAt - now (rounded down to whole seconds, min 1).
+func (c CookieConfig) IssueCookie(rawToken string, now, expiresAt time.Time) *http.Cookie {
+	secs := max(int(expiresAt.Sub(now)/time.Second), 1)
+	return &http.Cookie{
+		Name:     c.Name,
+		Value:    rawToken,
+		Path:     "/",
+		Secure:   c.Secure,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   secs,
+	}
+}
+
+// ClearCookie returns a Set-Cookie that immediately expires the unlock cookie.
+// Max-Age=-1 deletes; Value="" zeroes the payload as defense in depth.
+func (c CookieConfig) ClearCookie() *http.Cookie {
+	return &http.Cookie{
+		Name:     c.Name,
+		Value:    "",
+		Path:     "/",
+		Secure:   c.Secure,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	}
+}
+
+// UnlockClaim is attached to the request context when the hidden-unlock cookie
+// is present, valid, and references an active session matching the caller.
+type UnlockClaim struct {
+	Principal owners.Principal
+	ExpiresAt time.Time
+}
+
+type unlockClaimKey struct{}
+
+// WithUnlockClaim returns a derived context carrying claim.
+func WithUnlockClaim(ctx context.Context, claim UnlockClaim) context.Context {
+	return context.WithValue(ctx, unlockClaimKey{}, claim)
+}
+
+// UnlockClaimFromContext returns the UnlockClaim attached to ctx, if any.
+// The second return value reports whether a claim was present.
+func UnlockClaimFromContext(ctx context.Context) (UnlockClaim, bool) {
+	c, ok := ctx.Value(unlockClaimKey{}).(UnlockClaim)
+	return c, ok
+}
 
 // Argon2id parameters — locked per spec §2.3; not configurable in F2.4.
 const (

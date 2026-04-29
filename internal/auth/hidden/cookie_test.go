@@ -3,7 +3,9 @@ package hidden_test
 import (
 	"bytes"
 	"crypto/rand"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/wesm/fotobank/internal/auth/hidden"
@@ -89,4 +91,73 @@ func TestTokenSHA256Decodes(t *testing.T) {
 func TestTokenSHA256RejectsBadBase64(t *testing.T) {
 	_, err := hidden.TokenSHA256("not!valid!")
 	require.Error(t, err)
+}
+
+// --- CookieConfig tests ---
+
+func TestCookieConfigForProd(t *testing.T) {
+	r := require.New(t)
+	cfg := hidden.CookieConfigFor(false)
+	r.Equal("__Host-fotobank-hidden", cfg.Name)
+	r.True(cfg.Secure)
+}
+
+func TestCookieConfigForDev(t *testing.T) {
+	r := require.New(t)
+	cfg := hidden.CookieConfigFor(true)
+	r.Equal("fotobank-hidden", cfg.Name)
+	r.False(cfg.Secure)
+}
+
+func TestIssueCookieProdAttributes(t *testing.T) {
+	r := require.New(t)
+	cfg := hidden.CookieConfigFor(false)
+	now := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(5 * time.Minute)
+	c := cfg.IssueCookie("rawtoken", now, expiresAt)
+
+	r.Equal("__Host-fotobank-hidden", c.Name)
+	r.Equal("rawtoken", c.Value)
+	r.Equal("/", c.Path)
+	r.True(c.Secure)
+	r.True(c.HttpOnly)
+	r.Equal(http.SameSiteStrictMode, c.SameSite)
+	r.Equal(300, c.MaxAge)
+}
+
+func TestIssueCookieDevAttributes(t *testing.T) {
+	r := require.New(t)
+	cfg := hidden.CookieConfigFor(true)
+	now := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(5 * time.Minute)
+	c := cfg.IssueCookie("rawtoken", now, expiresAt)
+
+	r.Equal("fotobank-hidden", c.Name)
+	r.False(c.Secure)
+	r.True(c.HttpOnly)
+	r.Equal(http.SameSiteStrictMode, c.SameSite)
+	r.Equal(300, c.MaxAge)
+}
+
+func TestIssueCookieMaxAgeMinOne(t *testing.T) {
+	// When expiresAt <= now, MaxAge must floor to 1 (not 0 or negative).
+	r := require.New(t)
+	cfg := hidden.CookieConfigFor(false)
+	now := time.Now().UTC()
+	c := cfg.IssueCookie("tok", now, now) // zero duration
+	r.Equal(1, c.MaxAge)
+}
+
+func TestClearCookieAttributes(t *testing.T) {
+	r := require.New(t)
+	cfg := hidden.CookieConfigFor(false)
+	c := cfg.ClearCookie()
+
+	r.Equal("__Host-fotobank-hidden", c.Name)
+	r.Empty(c.Value)
+	r.Equal("/", c.Path)
+	r.True(c.Secure)
+	r.True(c.HttpOnly)
+	r.Equal(http.SameSiteStrictMode, c.SameSite)
+	r.Equal(-1, c.MaxAge)
 }
