@@ -67,6 +67,31 @@ func TestSetupRejectsDuplicateSetup(t *testing.T) {
 	r.ErrorIs(svc.Setup(context.Background(), p, "passcode2"), errs.ErrAlreadyExists)
 }
 
+// TestUnlockFailsClosedOnLockoutLookupError verifies that when GetLockout
+// hits a transient DB error (not ErrNotFound), Unlock returns the error
+// instead of silently allowing passcode verification to proceed. This
+// closes a hole where a flaky lockout-table read would let an attacker
+// retry past their lockout window.
+func TestUnlockFailsClosedOnLockoutLookupError(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
+	mp := &fakeMediaPrivacy{}
+	svc := hidden.NewService(repo, mp)
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+
+	r.NoError(svc.Setup(context.Background(), p, "correct-passcode"))
+
+	// Close the read pool so GetLockout returns a non-NotFound DB error.
+	r.NoError(d.ReadDB().Close())
+
+	_, _, err := svc.Unlock(context.Background(), p, "correct-passcode")
+	r.Error(err, "must not silently bypass an unreadable lockout table")
+	r.NotErrorIs(err, errs.ErrPermissionDenied,
+		"should not advance to passcode verification when lockout read fails")
+}
+
 // --- Passcode length validation ---
 
 func TestSetupRejectsEmptyPasscode(t *testing.T) {

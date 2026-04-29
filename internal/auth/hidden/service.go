@@ -63,25 +63,23 @@ func (s *Service) SetLockoutForTest(window, duration time.Duration, threshold in
 func (s *Service) SetRandForTest(r io.Reader) { s.rand = r }
 
 // Setup stores a new passcode hash for principal. Returns ErrAlreadyExists if
-// a credential already exists.
+// a credential already exists. Uses InsertCredential (insert-only with
+// conflict mapping) instead of check-then-upsert so two concurrent Setup
+// calls cannot race past a "no credential" snapshot and have the later
+// one silently overwrite the earlier passcode.
 func (s *Service) Setup(ctx context.Context, principal owners.Principal, passcode string) error {
 	if err := ValidatePasscode(passcode); err != nil {
 		return fmt.Errorf("setup hidden: %w", err)
-	}
-	_, err := s.repo.GetCredential(ctx, principal)
-	if err == nil {
-		slog.InfoContext(ctx, "auth.hidden.setup",
-			"principal", principal.String(), "outcome", "already_exists")
-		return fmt.Errorf("setup hidden: %w", errs.ErrAlreadyExists)
-	}
-	if !errors.Is(err, errs.ErrNotFound) {
-		return fmt.Errorf("setup hidden: check existing: %w", err)
 	}
 	hash, err := HashPasscode(passcode)
 	if err != nil {
 		return fmt.Errorf("setup hidden: %w", err)
 	}
-	if err := s.repo.UpsertCredential(ctx, principal, hash, s.now()); err != nil {
+	if err := s.repo.InsertCredential(ctx, principal, hash, s.now()); err != nil {
+		if errors.Is(err, errs.ErrAlreadyExists) {
+			slog.InfoContext(ctx, "auth.hidden.setup",
+				"principal", principal.String(), "outcome", "already_exists")
+		}
 		return fmt.Errorf("setup hidden: %w", err)
 	}
 	slog.InfoContext(ctx, "auth.hidden.setup", "principal", principal.String(), "outcome", "ok")
@@ -247,7 +245,14 @@ func (s *Service) consumePasscode(ctx context.Context, principal owners.Principa
 	now := s.now()
 
 	// Step 1: active lockout check (must happen before verification).
-	if lo, err := s.repo.GetLockout(ctx, principal); err == nil && lo.LockedUntil.After(now) {
+	// Fail closed on any non-NotFound DB error so a transient failure
+	// reading auth_hidden_lockout cannot let attackers bypass an active
+	// lockout window by retrying past the read failure.
+	lo, lockErr := s.repo.GetLockout(ctx, principal)
+	if lockErr != nil && !errors.Is(lockErr, errs.ErrNotFound) {
+		return fmt.Errorf("check lockout: %w", lockErr)
+	}
+	if lockErr == nil && lo.LockedUntil.After(now) {
 		return errs.ErrLockedOut
 	}
 

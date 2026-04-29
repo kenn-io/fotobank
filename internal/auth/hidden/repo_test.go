@@ -291,6 +291,36 @@ func TestLookupActiveSessionBoundaryOneNsAfterNow(t *testing.T) {
 	r.Equal(p, got.Principal)
 }
 
+// TestSweepExpiredSessionsBoundaryAtExactNow ensures the sweep predicate
+// matches LookupActiveSession's strict > at the boundary: a row with
+// expires_at == now is inactive to lookups, so the sweep must reclaim it
+// (otherwise it sits forever as un-revoked, un-active limbo).
+func TestSweepExpiredSessionsBoundaryAtExactNow(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testPrincipal()
+	seedOwner(t, d.WriteDB(), p, "sk")
+
+	now := fixedNow
+	tok := tokenSHA256("token-sweep-boundary")
+	r.NoError(repo.InsertSession(context.Background(), hidden.Session{
+		TokenSHA256: tok, Principal: p,
+		IssuedAt:  now.Add(-time.Minute),
+		ExpiresAt: now,
+	}))
+
+	r.NoError(repo.SweepExpiredSessions(context.Background(), now))
+
+	var revokedAt sql.NullTime
+	err := d.WriteDB().QueryRowContext(context.Background(),
+		`SELECT revoked_at FROM auth_hidden_session WHERE token_sha256 = ?`, tok,
+	).Scan(&revokedAt)
+	r.NoError(err)
+	r.True(revokedAt.Valid, "session at expires_at == now must be revoked by sweep")
+	r.Equal(now, revokedAt.Time)
+}
+
 // --- Failure tests ---
 
 func TestFailureInsertAndCountRecent(t *testing.T) {

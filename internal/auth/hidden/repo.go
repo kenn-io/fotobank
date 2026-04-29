@@ -83,6 +83,31 @@ func (r *Repo) UpsertCredential(ctx context.Context, p owners.Principal, hash st
 	return nil
 }
 
+// InsertCredential inserts a new credential for principal, failing closed
+// if one already exists. Returns errs.ErrAlreadyExists on conflict so two
+// concurrent Setup calls can't both think they won — only the first
+// commit takes effect, the second sees ErrAlreadyExists.
+func (r *Repo) InsertCredential(ctx context.Context, p owners.Principal, hash string, now time.Time) error {
+	res, err := r.rw.ExecContext(ctx, `
+		INSERT INTO auth_hidden_credential
+		    (principal_hub, principal_user_id, passcode_hash, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT DO NOTHING`,
+		p.Hub, p.UserID, hash, now, now,
+	)
+	if err != nil {
+		return fmt.Errorf("insert credential: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("insert credential rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: credential principal=%s", errs.ErrAlreadyExists, p)
+	}
+	return nil
+}
+
 // DeleteCredential removes the credential for principal.
 func (r *Repo) DeleteCredential(ctx context.Context, p owners.Principal) error {
 	_, err := r.rw.ExecContext(ctx,
@@ -163,11 +188,14 @@ func (r *Repo) RevokeAllSessionsForPrincipal(ctx context.Context, p owners.Princ
 }
 
 // SweepExpiredSessions marks revoked_at on rows that have passed their
-// expires_at but have not yet been explicitly revoked.
+// expires_at but have not yet been explicitly revoked. Uses <= so the
+// sweep matches LookupActiveSession's > predicate at the boundary —
+// without this, a session at exactly expires_at == now would be inactive
+// to lookups but un-reclaimed by the sweeper.
 func (r *Repo) SweepExpiredSessions(ctx context.Context, now time.Time) error {
 	_, err := r.rw.ExecContext(ctx,
 		`UPDATE auth_hidden_session SET revoked_at = ?
-		  WHERE expires_at < ? AND revoked_at IS NULL`,
+		  WHERE expires_at <= ? AND revoked_at IS NULL`,
 		now, now,
 	)
 	if err != nil {

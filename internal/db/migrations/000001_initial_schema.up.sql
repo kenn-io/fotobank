@@ -320,7 +320,7 @@ CREATE TABLE auth_hidden_credential (
     updated_at         TIMESTAMP NOT NULL,
     PRIMARY KEY (principal_hub, principal_user_id),
     FOREIGN KEY (principal_hub, principal_user_id)
-        REFERENCES owners(hub, user_id)
+        REFERENCES owners(hub, user_id) ON DELETE CASCADE
 );
 
 CREATE TABLE auth_hidden_session (
@@ -331,7 +331,7 @@ CREATE TABLE auth_hidden_session (
     expires_at         TIMESTAMP NOT NULL,
     revoked_at         TIMESTAMP,
     FOREIGN KEY (principal_hub, principal_user_id)
-        REFERENCES owners(hub, user_id)
+        REFERENCES owners(hub, user_id) ON DELETE CASCADE
 );
 -- Active-session lookup by principal: powers revoke-all-for-principal on
 -- Change/Disable/AdminReset.
@@ -348,7 +348,7 @@ CREATE TABLE auth_hidden_failure (
     principal_user_id  TEXT NOT NULL,
     occurred_at        TIMESTAMP NOT NULL,
     FOREIGN KEY (principal_hub, principal_user_id)
-        REFERENCES owners(hub, user_id)
+        REFERENCES owners(hub, user_id) ON DELETE CASCADE
 );
 CREATE INDEX auth_hidden_failure_owner_idx
     ON auth_hidden_failure(principal_hub, principal_user_id, occurred_at DESC);
@@ -360,5 +360,5 @@ CREATE TABLE auth_hidden_lockout (
     updated_at         TIMESTAMP NOT NULL,
     PRIMARY KEY (principal_hub, principal_user_id),
     FOREIGN KEY (principal_hub, principal_user_id)
-        REFERENCES owners(hub, user_id)
+        REFERENCES owners(hub, user_id) ON DELETE CASCADE
 );
