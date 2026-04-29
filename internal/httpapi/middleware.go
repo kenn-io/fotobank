@@ -357,16 +357,15 @@ func (l *displayCacheLRU) shouldUpsert(p owners.Principal, now time.Time) bool {
 //
 // Must run INSIDE WithMiddleware (after identity is resolved) because it reads
 // IdentityFromContext to verify that the session principal matches the caller.
-// When svc or repo are nil the wrapper is a no-op pass-through (used by the
-// OpenAPI spec build path and tests that don't need the unlock surface).
+// When svc is nil the wrapper is a no-op pass-through (used by the OpenAPI
+// spec build path and tests that don't need the unlock surface).
 func WithHiddenUnlock(
 	next http.Handler,
 	svc *hidden.Service,
-	repo *hidden.Repo,
 	cookie hidden.CookieConfig,
 	now func() time.Time,
 ) http.Handler {
-	if svc == nil || repo == nil {
+	if svc == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -381,7 +380,7 @@ func WithHiddenUnlock(
 			next.ServeHTTP(w, r)
 			return
 		}
-		sess, err := repo.LookupActiveSession(ctx, sha, now())
+		sess, err := svc.LookupSession(ctx, sha, now())
 		if err != nil {
 			next.ServeHTTP(w, r)
 			return

@@ -306,6 +306,17 @@ func (s *Service) clearFailureState(ctx context.Context, principal owners.Princi
 	return nil
 }
 
+// LookupSession is the read-only session lookup used by the unlock-cookie
+// middleware. It returns errs.ErrNotFound for any miss (unknown token,
+// expired, revoked) so the middleware can swallow uniformly.
+func (s *Service) LookupSession(ctx context.Context, sha []byte, now time.Time) (Session, error) {
+	sess, err := s.repo.LookupActiveSession(ctx, sha, now)
+	if err != nil {
+		return Session{}, fmt.Errorf("lookup session: %w", err)
+	}
+	return *sess, nil
+}
+
 // outcomeFor returns a log-friendly outcome string for known sentinel errors.
 func outcomeFor(err error) string {
 	switch {

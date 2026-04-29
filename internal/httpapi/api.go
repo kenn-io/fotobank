@@ -70,9 +70,6 @@ type Deps struct {
 	// HiddenAuth is the hidden-privacy service used by WithHiddenUnlock to
 	// validate cookies. Nil disables the middleware.
 	HiddenAuth *hidden.Service
-	// HiddenRepo is the hidden-privacy repo used by WithHiddenUnlock for
-	// session lookups. Nil disables the middleware.
-	HiddenRepo *hidden.Repo
 	// DevInsecureHiddenCookies, when true, configures WithHiddenUnlock to
 	// use the dev cookie name (fotobank-hidden, no Secure flag) instead of
 	// the production __Host-fotobank-hidden cookie.
@@ -92,19 +89,13 @@ type Deps struct {
 	RequestIDHeader string
 }
 
-// New constructs the Fotobank HTTP handler: a net/http.ServeMux with a
-// huma API layered on top. The returned handler serves every operation
-// registered during setup; an error is returned if any registration or
-// wiring step fails. When deps.IdentityProvider is non-nil the handler
-// is wrapped with the identity + request-id + logging middleware. When
-// deps.PrincipalDisplay is also set the chain gains the display-cache
-// middleware between identity resolution and request dispatch, so the
-// cache observes the post-resolution Identity on the request context.
-// New constructs the Fotobank HTTP handler. The middleware chain is:
+// New constructs the Fotobank HTTP handler. The full middleware chain is:
 //
 //	metrics → recovery → identity → hidden-unlock → display-cache → mux
 //
 // Layers are only inserted when the relevant Deps fields are non-nil.
+// hidden-unlock wraps display-cache so the resolved identity is already in
+// context when the cookie is validated.
 func New(deps Deps) (http.Handler, error) {
 	mux, _ := buildAPI(deps)
 	var handler http.Handler = mux
@@ -115,11 +106,11 @@ func New(deps Deps) (http.Handler, error) {
 		}
 		handler = WithPrincipalDisplayCache(deps.PrincipalDisplay, dispLogger)(handler)
 	}
-	// hidden-unlock runs after display-cache in the outer chain but its context
-	// value is read by display-cache; insert it between display-cache and
-	// the identity wrap so the resolved principal is available.
+	// hidden-unlock wraps display-cache (so identity is already attached and
+	// display-cache can read the post-cookie context). Execution order is
+	// identity → hidden-unlock → display-cache → mux.
 	cookieCfg := hidden.CookieConfigFor(deps.DevInsecureHiddenCookies)
-	handler = WithHiddenUnlock(handler, deps.HiddenAuth, deps.HiddenRepo, cookieCfg, time.Now)
+	handler = WithHiddenUnlock(handler, deps.HiddenAuth, cookieCfg, time.Now)
 	if deps.IdentityProvider != nil {
 		handler = WithMiddleware(WithMiddlewareDeps{
 			Provider:        deps.IdentityProvider,

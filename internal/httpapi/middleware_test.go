@@ -392,13 +392,13 @@ func (fx hiddenMiddleFx) issueSession(t *testing.T) string {
 // buildUnlockHandler returns a handler that has WithHiddenUnlock applied.
 // The inner handler captures the claim and signals done.
 func buildUnlockHandler(
-	repo *hidden.Repo, svc *hidden.Service, cookie hidden.CookieConfig, now time.Time,
+	svc *hidden.Service, cookie hidden.CookieConfig, now time.Time,
 	inner func(context.Context),
 ) http.Handler {
 	innerH := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		inner(r.Context())
 	})
-	return httpapi.WithHiddenUnlock(innerH, svc, repo, cookie, func() time.Time { return now })
+	return httpapi.WithHiddenUnlock(innerH, svc, cookie, func() time.Time { return now })
 }
 
 // contextWithPrincipal injects an identity into ctx so IdentityFromContext works
@@ -415,7 +415,7 @@ func TestHiddenMiddlewareNoCookiePassesThrough(t *testing.T) {
 
 	var reached bool
 	var claimPresent bool
-	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+	h := buildUnlockHandler(fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
 		reached = true
 		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
 	})
@@ -434,7 +434,7 @@ func TestHiddenMiddlewareValidCookieAttachesClaim(t *testing.T) {
 
 	var claim hidden.UnlockClaim
 	var claimPresent bool
-	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+	h := buildUnlockHandler(fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
 		claim, claimPresent = hidden.UnlockClaimFromContext(ctx)
 	})
 	ctx := contextWithPrincipal(context.Background(), fx.principal)
@@ -454,7 +454,7 @@ func TestHiddenMiddlewareMalformedCookieNoError(t *testing.T) {
 
 	var reached bool
 	var claimPresent bool
-	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+	h := buildUnlockHandler(fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
 		reached = true
 		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
 	})
@@ -476,7 +476,7 @@ func TestHiddenMiddlewareNoSessionRowNoError(t *testing.T) {
 
 	var reached bool
 	var claimPresent bool
-	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+	h := buildUnlockHandler(fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
 		reached = true
 		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
 	})
@@ -500,7 +500,7 @@ func TestHiddenMiddlewareRevokedSessionNoError(t *testing.T) {
 	require.NoError(t, fx.repo.RevokeSession(context.Background(), sha, fx.now))
 
 	var claimPresent bool
-	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+	h := buildUnlockHandler(fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
 		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
 	})
 	ctx := contextWithPrincipal(context.Background(), fx.principal)
@@ -520,7 +520,7 @@ func TestHiddenMiddlewareExpiredSessionNoError(t *testing.T) {
 	future := fx.now.Add(10 * time.Minute)
 
 	var claimPresent bool
-	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, future, func(ctx context.Context) {
+	h := buildUnlockHandler(fx.svc, fx.cookie, future, func(ctx context.Context) {
 		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
 	})
 	ctx := contextWithPrincipal(context.Background(), fx.principal)
@@ -540,7 +540,7 @@ func TestHiddenMiddlewarePrincipalMismatchNoError(t *testing.T) {
 	other := owners.Principal{Hub: "h", UserID: "other"}
 
 	var claimPresent bool
-	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+	h := buildUnlockHandler(fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
 		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
 	})
 	ctx := contextWithPrincipal(context.Background(), other)
@@ -559,7 +559,7 @@ func TestHiddenMiddlewareNilDepsPassThrough(t *testing.T) {
 		reached = true
 		w.WriteHeader(http.StatusOK)
 	})
-	h := httpapi.WithHiddenUnlock(inner, nil, nil, hidden.CookieConfigFor(false), time.Now)
+	h := httpapi.WithHiddenUnlock(inner, nil, hidden.CookieConfigFor(false), time.Now)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	r.True(reached)
@@ -595,7 +595,7 @@ func TestHiddenMiddlewareDevCookieName(t *testing.T) {
 	raw := seedHiddenSessionRaw(t, nil, fx.repo, fx.principal, fx.now, expiresAt)
 
 	var claimPresent bool
-	h := buildUnlockHandler(fx.repo, fx.svc, devCookie, fx.now, func(ctx context.Context) {
+	h := buildUnlockHandler(fx.svc, devCookie, fx.now, func(ctx context.Context) {
 		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
 	})
 	ctx := contextWithPrincipal(context.Background(), fx.principal)
@@ -616,7 +616,7 @@ func TestHiddenMiddlewareIdentityMustRunFirst(t *testing.T) {
 	raw := seedHiddenSessionRaw(t, nil, fx.repo, fx.principal, fx.now, expiresAt)
 
 	var claimPresent bool
-	h := buildUnlockHandler(fx.repo, fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
+	h := buildUnlockHandler(fx.svc, fx.cookie, fx.now, func(ctx context.Context) {
 		_, claimPresent = hidden.UnlockClaimFromContext(ctx)
 	})
 	// No identity in context — middleware must NOT attach a claim.
