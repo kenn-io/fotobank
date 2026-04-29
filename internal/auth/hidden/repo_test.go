@@ -223,6 +223,74 @@ func TestSessionSweepExpired(t *testing.T) {
 	r.ErrorIs(err, errs.ErrNotFound)
 }
 
+func TestRevokeSessionIdempotent(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testPrincipal()
+	seedOwner(t, d.WriteDB(), p, "sk")
+
+	tok := tokenSHA256("token-idempotent")
+	r.NoError(repo.InsertSession(context.Background(), hidden.Session{
+		TokenSHA256: tok, Principal: p,
+		IssuedAt:  fixedNow.Add(-time.Minute),
+		ExpiresAt: fixedNow.Add(time.Hour),
+	}))
+
+	firstRevoke := fixedNow
+	r.NoError(repo.RevokeSession(context.Background(), tok, firstRevoke))
+
+	// Second call with a later timestamp must not overwrite the original.
+	laterRevoke := fixedNow.Add(time.Minute)
+	r.NoError(repo.RevokeSession(context.Background(), tok, laterRevoke))
+
+	var revokedAt time.Time
+	err := d.WriteDB().QueryRowContext(context.Background(),
+		`SELECT revoked_at FROM auth_hidden_session WHERE token_sha256 = ?`, tok,
+	).Scan(&revokedAt)
+	r.NoError(err)
+	r.Equal(firstRevoke, revokedAt, "original revoke timestamp must win")
+}
+
+func TestLookupActiveSessionBoundaryAtExactNow(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testPrincipal()
+	seedOwner(t, d.WriteDB(), p, "sk")
+
+	now := fixedNow
+	tok := tokenSHA256("token-boundary-exact")
+	r.NoError(repo.InsertSession(context.Background(), hidden.Session{
+		TokenSHA256: tok, Principal: p,
+		IssuedAt:  now.Add(-time.Minute),
+		ExpiresAt: now, // exactly now — not strictly after
+	}))
+
+	_, err := repo.LookupActiveSession(context.Background(), tok, now)
+	r.ErrorIs(err, errs.ErrNotFound, "expires_at == now must be rejected (strict >)")
+}
+
+func TestLookupActiveSessionBoundaryOneNsAfterNow(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testPrincipal()
+	seedOwner(t, d.WriteDB(), p, "sk")
+
+	now := fixedNow
+	tok := tokenSHA256("token-boundary-1ns")
+	r.NoError(repo.InsertSession(context.Background(), hidden.Session{
+		TokenSHA256: tok, Principal: p,
+		IssuedAt:  now.Add(-time.Minute),
+		ExpiresAt: now.Add(time.Nanosecond), // one nanosecond after now
+	}))
+
+	got, err := repo.LookupActiveSession(context.Background(), tok, now)
+	r.NoError(err, "expires_at == now+1ns must be accepted (strict >)")
+	r.Equal(p, got.Principal)
+}
+
 // --- Failure tests ---
 
 func TestFailureInsertAndCountRecent(t *testing.T) {

@@ -136,10 +136,11 @@ func (r *Repo) LookupActiveSession(ctx context.Context, tokenSHA256 []byte, now 
 	return &s, nil
 }
 
-// RevokeSession sets revoked_at on the token to now.
+// RevokeSession sets revoked_at on the token to now. Idempotent: a second call
+// on an already-revoked token is a no-op (the original revoke timestamp wins).
 func (r *Repo) RevokeSession(ctx context.Context, tokenSHA256 []byte, now time.Time) error {
 	_, err := r.rw.ExecContext(ctx,
-		`UPDATE auth_hidden_session SET revoked_at = ? WHERE token_sha256 = ?`,
+		`UPDATE auth_hidden_session SET revoked_at = ? WHERE token_sha256 = ? AND revoked_at IS NULL`,
 		now, tokenSHA256,
 	)
 	if err != nil {
