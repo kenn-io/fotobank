@@ -429,6 +429,26 @@ func TestAlbumServiceListMediaInvalidSort(t *testing.T) {
 	r.ErrorIs(err, album.ErrInvalidSort)
 }
 
+func TestAlbumServiceListMediaAcceptsSortByTaken(t *testing.T) {
+	r := require.New(t)
+	fx := newAlbumSvcFixture(t)
+	a, err := fx.svc.Create(context.Background(), fx.caller, "Trip")
+	r.NoError(err)
+	_, err = fx.svc.ListMedia(context.Background(), a.ID,
+		album.AlbumMediaFilter{SortBy: "taken", Limit: 10}, fx.caller)
+	r.NoError(err)
+}
+
+func TestAlbumServiceListMediaRejectsUnknownSortBy(t *testing.T) {
+	r := require.New(t)
+	fx := newAlbumSvcFixture(t)
+	a, err := fx.svc.Create(context.Background(), fx.caller, "Trip")
+	r.NoError(err)
+	_, err = fx.svc.ListMedia(context.Background(), a.ID,
+		album.AlbumMediaFilter{SortBy: "garbage", Limit: 10}, fx.caller)
+	r.ErrorIs(err, album.ErrInvalidSort)
+}
+
 func TestAlbumServiceListMediaCrossOwner(t *testing.T) {
 	r := require.New(t)
 	fx := newAlbumSvcFixture(t)

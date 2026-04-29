@@ -256,7 +256,7 @@ func (s *AlbumService) ListMedia(
 	caller owners.Principal,
 ) ([]media.Media, error) {
 	switch filter.SortBy {
-	case "", "added", "imported":
+	case "", "added", "imported", "taken":
 		// ok
 	default:
 		return nil, album.ErrInvalidSort

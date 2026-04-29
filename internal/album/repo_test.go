@@ -662,6 +662,95 @@ func TestRepoListMediaImportedSort(t *testing.T) {
 	r.Equal(early, got[1].ID)
 }
 
+// seedMediaRowWithTimestamp inserts a minimal media row with a
+// caller-supplied timestamp string (RFC3339) that may be empty to
+// indicate NULL. Used by sort_by=taken tests.
+func seedMediaRowWithTimestamp(t *testing.T, rw *sql.DB, p owners.Principal, id, checksum, takenAt string) {
+	t.Helper()
+	var ts any
+	if takenAt != "" {
+		parsed, err := time.Parse(time.RFC3339, takenAt)
+		require.NoError(t, err)
+		ts = parsed
+	}
+	_, err := rw.ExecContext(context.Background(), `
+INSERT INTO media (
+    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
+    imported_at, timestamp, size, checksum,
+    make, model, focal_length, shutter, width, height, iso, aperture,
+    duration_ms,
+    thumb_status, thumb_version, thumb_updated_at
+) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, ?, 0, ?,
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+          'ready', 1, NULL)`,
+		id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), ts, checksum,
+	)
+	require.NoError(t, err)
+}
+
+func TestRepoListMediaSortByTakenDescNullsLast(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	ctx := context.Background()
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	a := seedAlbum(t, repo, owner, "T1")
+
+	m1 := uuid.NewString()
+	m2 := uuid.NewString()
+	m3 := uuid.NewString()
+	seedMediaRowWithTimestamp(t, d.WriteDB(), owner, m1, "cs1", "2024-01-01T00:00:00Z")
+	seedMediaRowWithTimestamp(t, d.WriteDB(), owner, m2, "cs2", "2025-06-01T00:00:00Z")
+	seedMediaRowWithTimestamp(t, d.WriteDB(), owner, m3, "cs3", "")
+
+	// Add all three at the same timestamp so the secondary sort by
+	// am.media_id can't accidentally produce the expected order under a
+	// non-taken comparator.
+	addedAt := time.Now().UTC()
+	added, _, err := repo.AddMedia(ctx, a.ID, []string{m1, m2, m3}, addedAt)
+	r.NoError(err)
+	r.Equal(3, added)
+
+	rows, err := repo.ListMedia(ctx, a.ID, album.AlbumMediaFilter{SortBy: "taken", Limit: 10})
+	r.NoError(err)
+	r.Len(rows, 3)
+	// Expect: m2 (2025) → m1 (2024) → m3 (NULL last).
+	r.Equal(m2, rows[0].ID)
+	r.Equal(m1, rows[1].ID)
+	r.Equal(m3, rows[2].ID)
+}
+
+func TestRepoListMediaSortByTakenAscNullsLast(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	ctx := context.Background()
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	a := seedAlbum(t, repo, owner, "T2")
+
+	m1 := uuid.NewString()
+	m2 := uuid.NewString()
+	m3 := uuid.NewString()
+	seedMediaRowWithTimestamp(t, d.WriteDB(), owner, m1, "cs1", "2024-01-01T00:00:00Z")
+	seedMediaRowWithTimestamp(t, d.WriteDB(), owner, m2, "cs2", "2025-06-01T00:00:00Z")
+	seedMediaRowWithTimestamp(t, d.WriteDB(), owner, m3, "cs3", "")
+
+	addedAt := time.Now().UTC()
+	added, _, err := repo.AddMedia(ctx, a.ID, []string{m1, m2, m3}, addedAt)
+	r.NoError(err)
+	r.Equal(3, added)
+
+	rows, err := repo.ListMedia(ctx, a.ID, album.AlbumMediaFilter{SortBy: "taken", SortAsc: true, Limit: 10})
+	r.NoError(err)
+	r.Len(rows, 3)
+	// Expect: m1 (2024) → m2 (2025) → m3 (NULL last in BOTH directions).
+	r.Equal(m1, rows[0].ID)
+	r.Equal(m2, rows[1].ID)
+	r.Equal(m3, rows[2].ID)
+}
+
 // TestRepoListMediaPreservesGPS exercises albumMediaMediaSelect's GPS
 // columns. The four-way projection sync (mediaSelect, mediaColumnsQualified,
 // mediaInsert, albumMediaMediaSelect) means a column-order drift here

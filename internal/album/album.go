@@ -37,8 +37,9 @@ type AlbumListItem struct {
 type AlbumMediaFilter struct {
 	Limit  int
 	Offset int
-	// SortBy is "added" (default) or "imported". The service rejects
-	// anything else with ErrInvalidSort.
+	// SortBy is "added" (default), "imported", or "taken". The service
+	// rejects anything else with ErrInvalidSort. "taken" sorts by the
+	// media row's EXIF timestamp with NULLS LAST in both directions.
 	SortBy string
 	// SortAsc inverts the default DESC sort. A plain bool so the HTTP
 	// layer can bind it directly from ?sort_asc=true without pointer
@@ -56,5 +57,5 @@ const (
 var (
 	ErrInvalidName  = errors.New("album: name must be 1..200 chars after trim")
 	ErrInvalidBatch = errors.New("album: media_ids batch must be 1..500")
-	ErrInvalidSort  = errors.New("album: sort_by must be \"added\" or \"imported\"")
+	ErrInvalidSort  = errors.New("album: sort_by must be \"added\", \"imported\", or \"taken\"")
 )

@@ -395,7 +395,7 @@ FROM album_media am JOIN media m ON m.id = am.media_id`
 
 // ListMedia returns paginated media rows that belong to albumID. The
 // SortBy / SortAsc fields must be validated by the caller (service);
-// the repo trusts SortBy ∈ {"added","imported"}.
+// the repo trusts SortBy ∈ {"added","imported","taken"}.
 func (r *Repo) ListMedia(
 	ctx context.Context,
 	albumID string,
@@ -417,6 +417,8 @@ func (r *Repo) ListMedia(
 		orderBy = "am.added_at " + direction + ", am.media_id " + direction
 	case "imported":
 		orderBy = "m.imported_at " + direction + " NULLS LAST, m.id " + direction
+	case "taken":
+		orderBy = "m.timestamp " + direction + " NULLS LAST, am.media_id " + direction
 	default:
 		// The service validates SortBy; hitting this means a caller bypassed it.
 		return nil, fmt.Errorf("album.ListMedia: invalid SortBy %q", filter.SortBy)
