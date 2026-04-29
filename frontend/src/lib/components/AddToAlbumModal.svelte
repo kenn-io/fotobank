@@ -112,7 +112,12 @@
             <span class="count">{a.item_count}</span>
           </button>
         {/each}
-        {#if !albumsStore.exhausted && !albumsStore.loadError}
+        {#if albumsStore.loadError}
+          <div class="row error-row" role="alert">
+            <span class="error-msg">Failed to load albums.</span>
+            <button type="button" onclick={() => albumsStore.retry()}>Retry</button>
+          </div>
+        {:else if !albumsStore.exhausted}
           <button
             type="button"
             class="row load-more"
@@ -184,6 +189,8 @@
   .row.create-new { color: var(--accent); font-weight: 500; }
   .row.load-more { color: var(--text-muted); font-style: italic; justify-content: center; }
   .row.load-more:disabled { cursor: not-allowed; opacity: 0.6; }
+  .row.error-row { color: var(--danger); align-items: center; }
+  .error-msg { flex: 1; }
   .count { color: var(--text-muted); font-size: 12px; }
   .error { color: var(--danger); font-size: 13px; margin-top: 8px; }
   .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }

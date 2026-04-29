@@ -4,15 +4,19 @@ test.describe("F2.3 albums", () => {
   test("create album, add 2 photos, switch sort, remove 1, delete", async ({
     page,
   }) => {
+    // Unique-per-run name so a retry after a partial failure (album
+    // created, test failed before delete) doesn't collide with the
+    // leftover row on the next attempt. CI has retries enabled.
+    const albumName = `Trip ${Date.now()}`;
     await page.goto("/albums");
     await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
 
     // Create a fresh album. Cobra: AlbumsIndex's "+ New Album" button
     // opens the new-album modal, NewAlbumForm submits via api.POST.
     await page.getByRole("button", { name: "+ New Album" }).click();
-    await page.getByLabel("Name").fill("Trip 2026");
+    await page.getByLabel("Name").fill(albumName);
     await page.getByRole("button", { name: "Create" }).click();
-    await expect(page.getByText("Trip 2026")).toBeVisible();
+    await expect(page.getByText(albumName)).toBeVisible();
 
     // Multi-select 2 photos in Library, then bulk Add to album. The
     // Library list is async — wait for at least one fixture cell to
@@ -29,12 +33,16 @@ test.describe("F2.3 albums", () => {
     await expect(page.getByText("2 selected")).toBeVisible();
     await page.getByRole("button", { name: "Add to album" }).click();
     // Pick the freshly created album in the modal list, then submit.
-    await page.getByRole("dialog").getByText("Trip 2026").click();
+    await page.getByRole("dialog").getByText(albumName).click();
     await page.getByRole("button", { name: "Add 2 photos" }).click();
+    // Wait for the modal to close — onAdd POSTs, then AddToAlbumModal
+    // calls onClose() on success. Without this wait the next page.goto
+    // can race the in-flight POST and produce flakes.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
 
     // Open the album and verify both members are present.
     await page.goto("/albums");
-    await page.getByText("Trip 2026").click();
+    await page.getByText(albumName).click();
     await expect(page).toHaveURL(/\/albums\/[a-f0-9-]+$/);
     await expect(
       page.getByLabel(/^Photo (gps-fixture-1|pair-fixture-primary)$/),
@@ -70,7 +78,7 @@ test.describe("F2.3 albums", () => {
     // reload forces /api/v1/albums to refetch, which is the only way
     // to verify the row was actually deleted server-side.
     await page.reload();
-    await expect(page.getByText("Trip 2026")).not.toBeVisible();
+    await expect(page.getByText(albumName)).not.toBeVisible();
   });
 
   test("bulk-select-by-group via month header", async ({ page }) => {

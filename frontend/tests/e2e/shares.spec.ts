@@ -4,24 +4,28 @@ test.describe("F2.3 owner-side sharing", () => {
   test("create media-set share from MediaDetail, see in /shares, revoke", async ({
     page,
   }) => {
+    // Unique-per-run label so a retry after a partial failure (share
+    // created, test failed before revoke) doesn't see two rows match
+    // "Test share". CI has retries enabled.
+    const shareLabel = `Test share ${Date.now()}`;
     await page.goto("/media/gps-fixture-1");
     await expect(page.getByText("fotobank")).toBeVisible();
     await page.getByRole("button", { name: "Share" }).click();
     await page.getByPlaceholder("myhub:bob").fill("noop:test-grantee");
-    await page.getByLabel("Label").fill("Test share");
+    await page.getByLabel("Label").fill(shareLabel);
     await page.getByRole("button", { name: "Create share" }).click();
 
     // ShareModal closes itself on success; navigate to /shares to
     // confirm the row landed and rendered with a state pill.
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await page.goto("/shares");
-    await expect(page.getByText("Test share")).toBeVisible();
+    await expect(page.getByText(shareLabel)).toBeVisible();
     await expect(page.locator(".pill").first()).toBeVisible();
 
     // Revoke. Two "Revoke" buttons exist after click — the row's button
     // and the ConfirmModal's confirm. Scope the row click to the row,
     // and the confirm click to the dialog.
-    const row = page.locator("tr", { has: page.getByText("Test share") });
+    const row = page.locator("tr", { has: page.getByText(shareLabel) });
     await row.getByRole("button", { name: "Revoke" }).click();
     await page
       .getByRole("dialog")
@@ -67,11 +71,14 @@ test.describe("F2.3 owner-side sharing", () => {
     // Use the seeded "E2E Italy 2025" album. Share it via album_live,
     // then attempt to delete — the API returns 409 share.ErrAlbumHasLiveScopes
     // and AlbumDetail surfaces a toast with a /shares?album_id deep link.
+    // Unique-per-run grantee so a retry after a partial failure doesn't
+    // see two conflict shares against the same album. CI has retries.
+    const grantee = `noop:conflict-${Date.now()}`;
     await page.goto("/albums");
     await expect(page.getByText("E2E Italy 2025")).toBeVisible();
     await page.getByText("E2E Italy 2025").click();
     await page.getByRole("button", { name: "Share album" }).click();
-    await page.getByPlaceholder("myhub:bob").fill("noop:conflict");
+    await page.getByPlaceholder("myhub:bob").fill(grantee);
     await page.getByRole("button", { name: "Create share" }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
 

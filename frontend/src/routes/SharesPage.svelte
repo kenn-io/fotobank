@@ -14,12 +14,14 @@
   // The narrowing check is necessary because TS only narrows the union after
   // the discriminant check. void the async setter — filter changes are
   // user-perceived as instantaneous and the underlying refetch can resolve
-  // in the background.
+  // in the background. Both filters mirror the URL symmetrically so
+  // navigating from /shares?show_revoked=true to /shares clears the
+  // toggle (URL is the source of truth on route change).
   $effect(() => {
     if (router.current.route !== "shares") return;
     const albumId = router.current.album_id ?? null;
     void sharesStore.setAlbumIDFilter(albumId);
-    if (router.current.show_revoked) void sharesStore.setShowRevoked(true);
+    void sharesStore.setShowRevoked(router.current.show_revoked === true);
   });
 
   // Same quad-guard pattern as AlbumsIndex / AddToAlbumModal.
@@ -59,6 +61,24 @@
     await sharesStore.retry(uuid);
   }
 
+  // Mirror checkbox + filter changes back into the URL via
+  // history.replaceState so refresh / back-forward preserves the user's
+  // current filters. replaceState doesn't fire popstate, so the
+  // route-sync $effect above won't re-run and clobber the user's
+  // change — URL and store stay in sync without a feedback loop.
+  function syncShowRevokedToUrl(next: boolean) {
+    const url = new URL(window.location.href);
+    if (next) url.searchParams.set("show_revoked", "true");
+    else url.searchParams.delete("show_revoked");
+    history.replaceState({}, "", url.toString());
+  }
+  function syncAlbumIDFilterToUrl(next: string | null) {
+    const url = new URL(window.location.href);
+    if (next) url.searchParams.set("album_id", next);
+    else url.searchParams.delete("album_id");
+    history.replaceState({}, "", url.toString());
+  }
+
   // The confirm modal needs the grantee to render its title. Find the
   // matching scope from the current list — the user must have just seen
   // it in the table for the Revoke button to fire, so it'll be present.
@@ -88,7 +108,11 @@
     <input
       type="checkbox"
       checked={sharesStore.showRevoked}
-      onchange={(e) => sharesStore.setShowRevoked((e.currentTarget as HTMLInputElement).checked)}
+      onchange={(e) => {
+        const next = (e.currentTarget as HTMLInputElement).checked;
+        void sharesStore.setShowRevoked(next);
+        syncShowRevokedToUrl(next);
+      }}
     />
     <span>Show revoked</span>
   </label>
@@ -97,7 +121,10 @@
 {#if sharesStore.albumIDFilter}
   <div class="filter-banner">
     <span>Showing shares for album <code>{sharesStore.albumIDFilter}</code></span>
-    <button type="button" onclick={() => sharesStore.setAlbumIDFilter(null)}>Clear filter</button>
+    <button type="button" onclick={() => {
+      void sharesStore.setAlbumIDFilter(null);
+      syncAlbumIDFilterToUrl(null);
+    }}>Clear filter</button>
   </div>
 {/if}
 

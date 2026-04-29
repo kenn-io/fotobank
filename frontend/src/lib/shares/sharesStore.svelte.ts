@@ -224,9 +224,10 @@ export class SharesStore {
   }
 
   private schedulePoll(): void {
-    // Recursive setTimeout: poll() runs maybeStartPolling() after merging,
-    // which schedules the next tick if the list still has pending rows.
-    // This serializes polls — a slow fetch can't overlap with a new tick
+    // Recursive setTimeout: poll() runs maybeStartPolling() in a
+    // finally so the next tick is scheduled after every poll attempt
+    // (success OR error) so long as the token is still current. This
+    // serializes polls — a slow fetch can't overlap with a new tick
     // and produce out-of-order merges. The trade-off is a slight cadence
     // skew (POLL_INTERVAL_MS + fetch latency between calls) which is
     // acceptable for a 5s polling window.
@@ -260,16 +261,27 @@ export class SharesStore {
       include_settled: true,
     };
     if (this.albumIDFilter) query["album_id"] = this.albumIDFilter;
-    const res = await this.client.GET("/api/v1/shares", { params: { query } as never });
-    // Drop the response if a user-initiated state-clearing call ran while
-    // we were waiting; otherwise we'd merge stale data into the fresh list.
-    if (token !== this.loadToken) return;
-    if (res.error || !res.data) return;
-    const data = res.data as { items?: ScopeListRow[] };
-    const fresh = new Map<string, ScopeListRow>();
-    for (const row of data.items ?? []) fresh.set(row.uuid, row);
-    this.scopes = this.scopes.map((row) => fresh.get(row.uuid) ?? row);
-    this.maybeStartPolling();
+    try {
+      const res = await this.client.GET("/api/v1/shares", { params: { query } as never });
+      // Drop the response if a user-initiated state-clearing call ran while
+      // we were waiting; otherwise we'd merge stale data into the fresh list.
+      if (token !== this.loadToken) return;
+      if (res.error || !res.data) return;
+      const data = res.data as { items?: ScopeListRow[] };
+      const fresh = new Map<string, ScopeListRow>();
+      for (const row of data.items ?? []) fresh.set(row.uuid, row);
+      this.scopes = this.scopes.map((row) => fresh.get(row.uuid) ?? row);
+    } finally {
+      // Re-arm on every path (success, transient error, or thrown
+      // rejection) when the token is still current — without this, a
+      // single failed GET would silently kill polling because the
+      // setTimeout already fired and pollHandle was cleared at fire
+      // time. The token guard prevents a stale poll from re-arming
+      // when a fresh user-driven action (loadInitial / refetch) is in
+      // flight — that path will arm its own poll after the new fetch
+      // resolves.
+      if (token === this.loadToken) this.maybeStartPolling();
+    }
   }
 
   stopPolling(): void {

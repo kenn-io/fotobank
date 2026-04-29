@@ -129,15 +129,15 @@ export class AlbumDetailStore {
 
   async removeMany(ids: string[]): Promise<{ succeeded: string[]; failed: string[] }> {
     if (!this.albumId) return { succeeded: [], failed: [] };
-    // Capture both albumId and the load token at entry. The DELETE calls
-    // are correctly scoped to the original album by the captured albumId,
-    // but the local state mutation below (itemIds / membership /
-    // album.item_count) only makes sense if the store still owns that
-    // album view. If the user navigates mid-flight, load() bumps the
-    // token and resets state for the new album — applying the original
-    // album's deletes to that fresh state would corrupt it.
+    // Capture albumId at entry. The DELETE calls are correctly scoped
+    // to the original album by the captured albumId, and the local
+    // state mutation below (itemIds / membership / album.item_count)
+    // is keyed off the same albumId. We DON'T capture loadToken here:
+    // setSort() also bumps the token but stays on the same album, and
+    // a sort change must not cancel pending removes — itemIds remains
+    // sort-orderable after filtering removed ids out, so the local
+    // mutation is still correct after a sort flip.
     const albumId = this.albumId;
-    const token = this.loadToken;
     const concurrency = 4;
     const succeeded: string[] = [];
     const failed: string[] = [];
@@ -157,11 +157,12 @@ export class AlbumDetailStore {
     await Promise.all(
       Array.from({ length: Math.min(concurrency, ids.length) }, () => worker()),
     );
-    // Return the result regardless of navigation so the caller can still
-    // process the global selection.removeAll(succeeded) — those ids are
-    // global and no longer belong to ANY album view, so dropping them
-    // from the global selection is correct either way.
-    if (token !== this.loadToken) return { succeeded, failed };
+    // Skip the local mutation only if the user navigated to a
+    // different album — those ids no longer belong to this view. The
+    // caller still gets {succeeded, failed} so it can update the
+    // global selection (those ids are global and no longer belong to
+    // ANY album view).
+    if (this.albumId !== albumId) return { succeeded, failed };
     if (succeeded.length > 0) {
       const succSet = new Set(succeeded);
       this.itemIds = this.itemIds.filter((id) => !succSet.has(id));

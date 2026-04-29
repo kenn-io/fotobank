@@ -168,6 +168,35 @@ describe("SharesStore polling", () => {
     expect(client.calls.length).toBe(1);
   });
 
+  it("re-arms polling after a transient error so the loop doesn't die", async () => {
+    // Regression: an errored GET in poll() returned early without
+    // calling maybeStartPolling(), and because the setTimeout had
+    // already fired (clearing pollHandle), no new tick was ever
+    // scheduled. A single transient 5xx silently killed polling.
+    const client = fakeClient([
+      // loadInitial — pending row so polling starts
+      { data: { items: [{ ...baseRow, broker_status: "pending" }], next_offset: null } },
+      // first poll tick fails
+      { error: { status: 500, message: "boom" } },
+      // second poll tick succeeds — proves the loop is still alive
+      { data: { items: [{ ...baseRow, broker_status: "pending" }], next_offset: null } },
+      // third tick still pending so polling continues
+      { data: { items: [{ ...baseRow, broker_status: "pending" }], next_offset: null } },
+    ]);
+    const store = new SharesStore(client as any);
+    await store.loadInitial();
+    expect(client.calls.length).toBe(1);
+    // First tick — GET errors. Without the fix, polling stops here.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(client.calls.length).toBe(2);
+    // Second tick — GET succeeds. With the fix, the loop continues.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(client.calls.length).toBe(3);
+    // Third tick — confirm polling is still active.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(client.calls.length).toBe(4);
+  });
+
   it("uses include_settled=true regardless of showRevoked=false", async () => {
     const client = fakeClient([
       // loadInitial — pending so polling starts
