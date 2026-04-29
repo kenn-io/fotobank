@@ -4,9 +4,11 @@
 // then delegates to internal/cli the same way the production fotobank
 // binary does.
 //
-// The server listens on 127.0.0.1:8080 deterministically so the
-// Playwright webServer config in the frontend package can target a
-// fixed URL.
+// The server listens on 127.0.0.1:$FOTOBANK_E2E_PORT (default 18080) so
+// the Playwright webServer config in the frontend package can target a
+// matching URL. The default is 18080 (not 8080) because 8080 is a
+// commonly-contested port; the env var override lets dev environments
+// shift if they hit collisions.
 package main
 
 import (
@@ -24,6 +26,15 @@ import (
 	"github.com/wesm/fotobank/internal/service"
 	"github.com/wesm/fotobank/internal/share"
 )
+
+// e2ePort returns the listen port for the e2e server, honoring
+// FOTOBANK_E2E_PORT and falling back to 18080.
+func e2ePort() string {
+	if p := os.Getenv("FOTOBANK_E2E_PORT"); p != "" {
+		return p
+	}
+	return "18080"
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -58,14 +69,14 @@ user_id = "alice"
 handle = "Alice"
 storage_key = "alice-sk"
 [http]
-listen_address = "127.0.0.1:8080"
+listen_address = "127.0.0.1:%s"
 [imports]
 file_lock_path = "%s"
 [backup]
 enabled = false
 [observability]
 admin_listen = "127.0.0.1:0"
-`, nasRoot, flashRoot, filepath.Join(tmp, "import.lock"))
+`, nasRoot, flashRoot, e2ePort(), filepath.Join(tmp, "import.lock"))
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
