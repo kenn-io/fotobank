@@ -9,6 +9,7 @@
   import MediaCell from "../lib/grid/MediaCell.svelte";
   import { router } from "../lib/router/router.svelte";
   import { selection } from "../lib/selection/selectionStore.svelte";
+  import GroupSelectButton from "../lib/components/GroupSelectButton.svelte";
 
   let { mediaStore }: { mediaStore: MediaStore } = $props();
 
@@ -87,6 +88,12 @@
             media={m}
             selected={selection.ids.has(m.id)}
             onCellClick={(e) => handleCellClick(e, m.id)}
+          />
+        {/snippet}
+        {#snippet headerAction()}
+          <GroupSelectButton
+            ids={s.items.map((m) => m.id)}
+            label={`${first.taken.toUTCString().slice(0, 16)} session`}
           />
         {/snippet}
       </MonthChunk>
