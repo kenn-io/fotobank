@@ -104,3 +104,78 @@ describe("AlbumsStore.delete", () => {
     expect(store.byId("a1")).not.toBeUndefined();
   });
 });
+
+describe("AlbumsStore concurrent loadInitial", () => {
+  it("waits for in-flight loadMore before resetting state", async () => {
+    let resolveFirst!: (v: { data: any }) => void;
+    const firstResponse = new Promise<{ data: any }>((res) => { resolveFirst = res; });
+    const calls: string[] = [];
+    let i = 0;
+    const responses: Array<Promise<{ data: any }> | { data: any }> = [
+      firstResponse, // page 1 — kept pending
+      { data: { items: [{ id: "fresh", name: "Fresh", item_count: 0, created_at: "x", updated_at: "x" }], next_offset: null } },
+    ];
+    const client = {
+      GET: vi.fn(async (path: string) => {
+        calls.push(path);
+        return responses[i++] ?? { data: { items: [] } };
+      }),
+      POST: vi.fn(),
+      PATCH: vi.fn(),
+      DELETE: vi.fn(),
+    };
+    const store = new AlbumsStore(client as any);
+    const firstLoad = store.loadInitial();
+    // Start a refresh while the first page is still pending.
+    const secondLoad = store.loadInitial();
+    // Resolve the first request with stale data AFTER the refresh fires.
+    resolveFirst({ data: { items: [{ id: "stale", name: "Stale", item_count: 0, created_at: "x", updated_at: "x" }], next_offset: 100 } });
+    await firstLoad;
+    await secondLoad;
+    // The fresh page should win — albums should contain the post-refresh row, not the stale row.
+    expect(store.albums.find((a) => a.id === "fresh")).toBeDefined();
+    expect(store.albums.find((a) => a.id === "stale")).toBeUndefined();
+  });
+});
+
+describe("AlbumsStore.delete pagination correctness", () => {
+  it("decrements nextOffset so the next page does not skip an album", async () => {
+    const calls: any[] = [];
+    let i = 0;
+    const responses: Array<{ data: any }> = [
+      { data: { items: [{ id: "a1", name: "A", item_count: 0, created_at: "x", updated_at: "x" }], next_offset: 100 } },
+      { data: null }, // DELETE 204
+    ];
+    const client = {
+      GET: vi.fn(async (...args: any[]) => { calls.push(["GET", ...args]); return responses[i++] ?? { data: { items: [] } }; }),
+      POST: vi.fn(),
+      PATCH: vi.fn(),
+      DELETE: vi.fn(async (...args: any[]) => { calls.push(["DELETE", ...args]); return responses[i++] ?? { data: null }; }),
+    };
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    expect((store as any).nextOffset).toBe(100);
+    await store.delete("a1");
+    // Loaded prefix shrunk by 1 → cursor must move back one.
+    expect((store as any).nextOffset).toBe(99);
+  });
+
+  it("does not adjust nextOffset when deleting an unloaded id (no-op safety)", async () => {
+    let i = 0;
+    const responses: Array<{ data: any }> = [
+      { data: { items: [], next_offset: 100 } },
+      { data: null },
+    ];
+    const client = {
+      GET: vi.fn(async () => responses[i++] ?? { data: { items: [] } }),
+      POST: vi.fn(),
+      PATCH: vi.fn(),
+      DELETE: vi.fn(async () => responses[i++] ?? { data: null }),
+    };
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    expect((store as any).nextOffset).toBe(100);
+    await store.delete("not-in-list");
+    expect((store as any).nextOffset).toBe(100); // unchanged
+  });
+});
