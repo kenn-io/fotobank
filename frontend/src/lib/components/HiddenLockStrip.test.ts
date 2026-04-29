@@ -87,4 +87,17 @@ describe("HiddenLockStrip", () => {
     const { container } = render(HiddenLockStrip, { props: { hiddenStore: store } });
     expect(container.textContent).toContain("0:00");
   });
+
+  it("auto-locks when countdown ticks to 0:00 (finding #7)", async () => {
+    const lockMock = vi.fn().mockResolvedValue(undefined);
+    const now = Date.now();
+    // expires in 1 second
+    const expiresAt = new Date(now + 1_000).toISOString();
+    const store = makeStore({ expiresAt, lock: lockMock as never });
+    render(HiddenLockStrip, { props: { hiddenStore: store } });
+
+    // Advance past expiry — interval fires and remaining becomes 0
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(lockMock).toHaveBeenCalledOnce();
+  });
 });

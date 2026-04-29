@@ -44,6 +44,14 @@
     }
   });
 
+  // Watch for 403 from the hidden media store — the session expired
+  // mid-view. Clear the unlock state so the gate re-appears (finding #6).
+  $effect(() => {
+    if (hiddenMediaStore.loadError === 403) {
+      void hiddenStore.lock();
+    }
+  });
+
   // Filter the global selection to IDs that are actually present in the
   // hidden store — the global selection is shared across routes and may
   // contain IDs from Library/Sessions (finding #9).

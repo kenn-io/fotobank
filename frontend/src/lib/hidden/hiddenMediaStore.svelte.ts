@@ -14,6 +14,10 @@ export class HiddenMediaStore {
   months = $state<Month[]>([]);
   loading = $state(false);
   exhausted = $state(false);
+  // loadError surfaces the HTTP status code of the last failed fetch, or
+  // null when no error has occurred. 403 means the session expired and the
+  // caller should re-show the gate (finding #6).
+  loadError = $state<number | null>(null);
 
   private nextOffset: number | null = 0;
   private byMonth = new Map<string, Map<string, Media>>();
@@ -34,7 +38,12 @@ export class HiddenMediaStore {
           query: { limit: 200, offset: this.nextOffset ?? 0 },
         } as never,
       });
-      if (res.error || !res.data) return;
+      if (res.error || !res.data) {
+        const status = (res.error as { status?: number } | undefined)?.status ?? 0;
+        this.loadError = status;
+        return;
+      }
+      this.loadError = null;
       const items = ((res.data as { items?: Array<Record<string, unknown>> }).items ?? [])
         .map(toMedia)
         .filter((m): m is Media => m !== null);

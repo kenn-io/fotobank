@@ -30,11 +30,19 @@
     const expires = hiddenStore.expiresAt;
     secondsLeft = computeSecondsLeft(expires);
 
-    const id = setInterval(() => {
-      secondsLeft = computeSecondsLeft(hiddenStore.expiresAt);
+    let autoLocked = false;
+    const intervalId = setInterval(() => {
+      const remaining = computeSecondsLeft(hiddenStore.expiresAt);
+      secondsLeft = remaining;
+      // Auto-lock once when countdown reaches 0 (finding #7): the cookie
+      // has expired so clear client state and let the gate re-appear.
+      if (remaining === 0 && !autoLocked) {
+        autoLocked = true;
+        void hiddenStore.lock();
+      }
     }, 1000);
 
-    return () => clearInterval(id);
+    return () => clearInterval(intervalId);
   });
 </script>
 

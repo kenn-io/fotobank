@@ -141,3 +141,45 @@ describe("HiddenMediaStore never merges into visible MediaStore", () => {
     expect(store.months[0]?.items[0]?.id).toBe("h1");
   });
 });
+
+describe("HiddenMediaStore.loadError (finding #6)", () => {
+  it("sets loadError to 403 when the server returns 403", async () => {
+    const client = {
+      GET: vi.fn().mockResolvedValue({ error: { status: 403 }, data: undefined }),
+    };
+    const store = new HiddenMediaStore(client as never);
+    await store.loadInitial();
+    expect(store.loadError).toBe(403);
+    expect(store.months).toHaveLength(0);
+  });
+
+  it("sets loadError to 500 on server error", async () => {
+    const client = {
+      GET: vi.fn().mockResolvedValue({ error: { status: 500 }, data: undefined }),
+    };
+    const store = new HiddenMediaStore(client as never);
+    await store.loadInitial();
+    expect(store.loadError).toBe(500);
+  });
+
+  it("clears loadError to null on subsequent success", async () => {
+    const client = {
+      GET: vi.fn()
+        .mockResolvedValueOnce({ error: { status: 403 }, data: undefined })
+        .mockResolvedValueOnce({
+          data: { items: [rawItem], next_offset: null },
+          error: undefined,
+        }),
+    };
+    // Reset nextOffset so second load doesn't short-circuit on exhausted
+    const store = new HiddenMediaStore(client as never);
+    await store.loadMore(); // 403
+    expect(store.loadError).toBe(403);
+    // Manually reset exhausted/offset to allow a second attempt
+    (store as unknown as { nextOffset: number; exhausted: boolean }).nextOffset = 0;
+    (store as unknown as { nextOffset: number; exhausted: boolean }).exhausted = false;
+    await store.loadMore(); // success
+    expect(store.loadError).toBeNull();
+    expect(store.months).toHaveLength(1);
+  });
+});
