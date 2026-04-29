@@ -1,0 +1,109 @@
+<script lang="ts">
+  import AlbumGrid from "../lib/components/AlbumGrid.svelte";
+  import NewAlbumForm from "../lib/components/NewAlbumForm.svelte";
+  import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
+
+  let { albumsStore }: { albumsStore: AlbumsStore } = $props();
+
+  let modalOpen = $state(false);
+
+  // The mount effect needs both guards. `albums.length === 0` ensures
+  // we don't re-run loadInitial after a successful first fetch (without
+  // it, a second response with `next_offset` set leaves `exhausted=false`
+  // and the effect retriggers when loading flips back to false). And
+  // `!exhausted` ensures an account with truly zero albums doesn't loop
+  // (length stays 0; exhausted=true after the first response, gating
+  // the effect). Both guards together cover the populated-paginated AND
+  // empty-account cases without an extra "hasLoadedInitial" flag.
+  $effect(() => {
+    if (
+      albumsStore.albums.length === 0 &&
+      !albumsStore.loading &&
+      !albumsStore.exhausted
+    ) {
+      albumsStore.loadInitial();
+    }
+  });
+
+  let sentinel: HTMLDivElement | null = $state(null);
+  $effect(() => {
+    if (!sentinel) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) albumsStore.loadMore();
+    }, { rootMargin: "200px 0px" });
+    io.observe(sentinel);
+    return () => io.disconnect();
+  });
+
+  async function onCreate(name: string) {
+    await albumsStore.create(name);
+    modalOpen = false;
+  }
+</script>
+
+<header class="page-header">
+  <h1>Albums</h1>
+  <button type="button" onclick={() => (modalOpen = true)}>+ New Album</button>
+</header>
+
+{#if albumsStore.albums.length > 0}
+  <AlbumGrid albums={albumsStore.albums} />
+{:else if !albumsStore.loading}
+  <div class="empty">
+    <p>No albums yet</p>
+    <button type="button" onclick={() => (modalOpen = true)}>Create your first album</button>
+  </div>
+{/if}
+
+{#if albumsStore.loading}<div class="loading">Loading…</div>{/if}
+<div bind:this={sentinel} style="height:1px"></div>
+
+{#if modalOpen}
+  <!-- Backdrop is a button so click + Esc/Enter all dismiss the modal
+       without separate keydown plumbing. The inner modal stops click
+       propagation so interactions inside don't bubble up and dismiss. -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="modal-backdrop" role="presentation" onclick={() => (modalOpen = false)}>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal" role="dialog" aria-modal="true" aria-label="New album" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+      <h2>New album</h2>
+      <NewAlbumForm {onCreate} onCancel={() => (modalOpen = false)} />
+    </div>
+  </div>
+{/if}
+
+<style>
+  .page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .page-header h1 { font-size: 18px; margin: 0; }
+  .empty {
+    padding: 64px 16px;
+    text-align: center;
+    color: var(--text-secondary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .loading { padding: 12px; color: var(--text-muted); }
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+  }
+  .modal {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    min-width: 320px;
+  }
+  .modal h2 { margin-top: 0; }
+</style>

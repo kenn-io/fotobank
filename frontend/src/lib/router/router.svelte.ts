@@ -4,6 +4,7 @@ export type RouteMatch =
   | { route: "library" }
   | { route: "sessions" }
   | { route: "settings" }
+  | { route: "albums" }
   | { route: "media"; id: string }
   | { route: "notfound"; path: string };
 
@@ -15,6 +16,7 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
   { re: /^\/library$/,    build: () => ({ route: "library" }) },
   { re: /^\/sessions$/,   build: () => ({ route: "sessions" }) },
   { re: /^\/settings$/,   build: () => ({ route: "settings" }) },
+  { re: /^\/albums\/?$/,  build: () => ({ route: "albums" }) },
   { re: /^\/media\/([^/]+)$/, build: (m) => ({ route: "media", id: m[1]! }) },
 ];
 

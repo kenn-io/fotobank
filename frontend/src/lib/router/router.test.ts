@@ -46,6 +46,18 @@ describe("RouterStore.match", () => {
     const r = new RouterStore();
     expect(r.current.route).toBe("notfound");
   });
+
+  it("matches /albums to the albums route", () => {
+    setLocation("/albums");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "albums" });
+  });
+
+  it("matches /albums/ (trailing slash) to the albums route", () => {
+    setLocation("/albums/");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "albums" });
+  });
 });
 
 describe("RouterStore.navigate", () => {
