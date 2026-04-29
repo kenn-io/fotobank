@@ -174,55 +174,53 @@ Append to `internal/album/repo_test.go`:
 
 ```go
 func TestRepoListMediaSortByTakenDescNullsLast(t *testing.T) {
-    db := testutil.OpenTestDB(t)
-    defer db.Close()
-    repo := album.NewRepo(db)
+    d := testutil.OpenTestDB(t)
+    defer d.Close()
+    repo := album.NewRepo(d.WriteDB(), d.ReadDB())
     ctx := context.Background()
     owner := owners.Principal{Hub: "h", UserID: "u"}
 
-    a, err := repo.Create(ctx, album.Album{Owner: owner, Name: "T1"})
-    require.NoError(t, err)
-    mr := media.NewRepo(db)
+    seedOwner(t, d.WriteDB(), owner, "sk")
+    a := seedAlbum(t, repo, owner, "T1")
 
     // m1: timestamp 2024-01-01, m2: timestamp 2025-06-01, m3: NULL timestamp.
-    m1 := newTestMedia(t, owner, "m1", "2024-01-01T00:00:00Z")
-    m2 := newTestMedia(t, owner, "m2", "2025-06-01T00:00:00Z")
-    m3 := newTestMediaNullTimestamp(t, owner, "m3")
-    require.NoError(t, mr.Insert(ctx, m1))
-    require.NoError(t, mr.Insert(ctx, m2))
-    require.NoError(t, mr.Insert(ctx, m3))
+    // seedMediaRow inserts via raw SQL (the helper at the bottom of
+    // repo_test.go) so album tests stay independent of media.Repo's
+    // larger insert surface. Extend it with a *time.Time variant for
+    // NULL-timestamp rows if the existing helper doesn't already cover that.
+    m1ID := newTestMediaWithTimestamp(t, d.WriteDB(), owner, "2024-01-01T00:00:00Z")
+    m2ID := newTestMediaWithTimestamp(t, d.WriteDB(), owner, "2025-06-01T00:00:00Z")
+    m3ID := newTestMediaNullTimestamp(t, d.WriteDB(), owner)
 
     // Add all three at the same timestamp; order would be alphabetical
     // by media_id under the "added" sort, so this test isolates the
     // taken sort behavior.
-    require.NoError(t, repo.AddMedia(ctx, a.ID, []string{m1.ID, m2.ID, m3.ID}, time.Now()))
+    _, _, err := repo.AddMedia(ctx, a.ID, []string{m1ID, m2ID, m3ID}, time.Now())
+    require.NoError(t, err)
 
     rows, err := repo.ListMedia(ctx, a.ID, album.AlbumMediaFilter{SortBy: "taken", Limit: 10})
     require.NoError(t, err)
     require.Len(t, rows, 3)
     // Expect: m2 (2025) → m1 (2024) → m3 (NULL last).
-    require.Equal(t, m2.ID, rows[0].ID)
-    require.Equal(t, m1.ID, rows[1].ID)
-    require.Equal(t, m3.ID, rows[2].ID)
+    require.Equal(t, m2ID, rows[0].ID)
+    require.Equal(t, m1ID, rows[1].ID)
+    require.Equal(t, m3ID, rows[2].ID)
 }
 
 func TestRepoListMediaSortByTakenAscNullsLast(t *testing.T) {
-    db := testutil.OpenTestDB(t)
-    defer db.Close()
-    repo := album.NewRepo(db)
+    d := testutil.OpenTestDB(t)
+    defer d.Close()
+    repo := album.NewRepo(d.WriteDB(), d.ReadDB())
     ctx := context.Background()
     owner := owners.Principal{Hub: "h", UserID: "u"}
 
-    a, err := repo.Create(ctx, album.Album{Owner: owner, Name: "T2"})
+    seedOwner(t, d.WriteDB(), owner, "sk")
+    a := seedAlbum(t, repo, owner, "T2")
+    m1ID := newTestMediaWithTimestamp(t, d.WriteDB(), owner, "2024-01-01T00:00:00Z")
+    m2ID := newTestMediaWithTimestamp(t, d.WriteDB(), owner, "2025-06-01T00:00:00Z")
+    m3ID := newTestMediaNullTimestamp(t, d.WriteDB(), owner)
+    _, _, err := repo.AddMedia(ctx, a.ID, []string{m1ID, m2ID, m3ID}, time.Now())
     require.NoError(t, err)
-    mr := media.NewRepo(db)
-    m1 := newTestMedia(t, owner, "m1", "2024-01-01T00:00:00Z")
-    m2 := newTestMedia(t, owner, "m2", "2025-06-01T00:00:00Z")
-    m3 := newTestMediaNullTimestamp(t, owner, "m3")
-    require.NoError(t, mr.Insert(ctx, m1))
-    require.NoError(t, mr.Insert(ctx, m2))
-    require.NoError(t, mr.Insert(ctx, m3))
-    require.NoError(t, repo.AddMedia(ctx, a.ID, []string{m1.ID, m2.ID, m3.ID}, time.Now()))
 
     rows, err := repo.ListMedia(ctx, a.ID, album.AlbumMediaFilter{SortBy: "taken", SortAsc: true, Limit: 10})
     require.NoError(t, err)
@@ -348,16 +346,15 @@ Append to `internal/album/repo_test.go`:
 
 ```go
 func TestRepoGetNamesByIDsHappy(t *testing.T) {
-    db := testutil.OpenTestDB(t)
-    defer db.Close()
-    repo := album.NewRepo(db)
+    d := testutil.OpenTestDB(t)
+    defer d.Close()
+    repo := album.NewRepo(d.WriteDB(), d.ReadDB())
     ctx := context.Background()
     owner := owners.Principal{Hub: "h", UserID: "u"}
 
-    a1, err := repo.Create(ctx, album.Album{Owner: owner, Name: "Italy 2025"})
-    require.NoError(t, err)
-    a2, err := repo.Create(ctx, album.Album{Owner: owner, Name: "Family"})
-    require.NoError(t, err)
+    seedOwner(t, d.WriteDB(), owner, "sk")
+    a1 := seedAlbum(t, repo, owner, "Italy 2025")
+    a2 := seedAlbum(t, repo, owner, "Family")
 
     names, err := repo.GetNamesByIDs(ctx, []string{a1.ID, a2.ID, "missing"})
     require.NoError(t, err)
@@ -368,9 +365,9 @@ func TestRepoGetNamesByIDsHappy(t *testing.T) {
 }
 
 func TestRepoGetNamesByIDsEmptyInput(t *testing.T) {
-    db := testutil.OpenTestDB(t)
-    defer db.Close()
-    repo := album.NewRepo(db)
+    d := testutil.OpenTestDB(t)
+    defer d.Close()
+    repo := album.NewRepo(d.WriteDB(), d.ReadDB())
     names, err := repo.GetNamesByIDs(context.Background(), nil)
     require.NoError(t, err)
     require.Empty(t, names)
@@ -413,7 +410,7 @@ func (r *Repo) GetNamesByIDs(ctx context.Context, ids []string) (map[string]stri
         for i, id := range chunk {
             args[i] = id
         }
-        rows, err := r.db.QueryContext(ctx, query, args...)
+        rows, err := r.ro.QueryContext(ctx, query, args...)
         if err != nil {
             return nil, fmt.Errorf("album: GetNamesByIDs: %w", err)
         }
@@ -490,8 +487,13 @@ Append to `internal/share/repo.go`:
 // CountSharedMediaByScopes returns a map of scope_uuid → count of
 // scope_media rows. Scopes with zero rows (album_live, or media_set
 // whose membership was never inserted) appear in the map with count 0.
-// Scopes whose UUID is not in the input chunk return absent. Chunks at
-// 250 IDs (500 bind vars) to stay under SQLite's 999-variable cap.
+// Scopes whose UUID does not exist in the scopes table are absent
+// from the output (callers can distinguish "scope exists with zero
+// media" from "unknown uuid"). Chunks at 250 IDs (500 bind vars) to
+// stay under SQLite's 999-variable cap. Two-query pattern: an
+// existence pass against scopes seeds count=0 for every uuid that
+// resolves to a row; a count pass against scope_media layers actual
+// counts on top.
 func (r *Repo) CountSharedMediaByScopes(ctx context.Context, uuids []string) (map[string]int, error) {
     out := map[string]int{}
     if len(uuids) == 0 {
@@ -504,21 +506,34 @@ func (r *Repo) CountSharedMediaByScopes(ctx context.Context, uuids []string) (ma
             end = len(uuids)
         }
         chunk := uuids[start:end]
-        // Initialize all chunk uuids to 0 so callers can distinguish
-        // "scope exists with zero media" from "unknown uuid".
-        for _, u := range chunk {
-            out[u] = 0
-        }
         placeholders := strings.Repeat("?,", len(chunk))
         placeholders = placeholders[:len(placeholders)-1]
-        query := `SELECT scope_uuid, COUNT(*) FROM scope_media
-                  WHERE scope_uuid IN (` + placeholders + `)
-                  GROUP BY scope_uuid`
         args := make([]any, len(chunk))
         for i, u := range chunk {
             args[i] = u
         }
-        rows, err := r.db.QueryContext(ctx, query, args...)
+        // Existence pass: seed count=0 only for uuids that actually
+        // resolve to a scopes row. Missing uuids stay absent.
+        existsRows, err := r.ro.QueryContext(ctx,
+            `SELECT uuid FROM scopes WHERE uuid IN (`+placeholders+`)`, args...)
+        if err != nil {
+            return nil, fmt.Errorf("share: CountSharedMediaByScopes exists: %w", err)
+        }
+        for existsRows.Next() {
+            var u string
+            if err := existsRows.Scan(&u); err != nil {
+                existsRows.Close()
+                return nil, err
+            }
+            out[u] = 0
+        }
+        if err := existsRows.Close(); err != nil {
+            return nil, err
+        }
+        query := `SELECT scope_uuid, COUNT(*) FROM scope_media
+                  WHERE scope_uuid IN (` + placeholders + `)
+                  GROUP BY scope_uuid`
+        rows, err := r.ro.QueryContext(ctx, query, args...)
         if err != nil {
             return nil, fmt.Errorf("share: CountSharedMediaByScopes: %w", err)
         }
@@ -591,14 +606,14 @@ func TestShareServicePopulateTargetSummaryMixed(t *testing.T) {
     a, err := fx.albumSvc.Create(ctx, "Italy 2025", owner)
     require.NoError(t, err)
     require.NoError(t, fx.albumSvc.AddMedia(ctx, a.ID, []string{"m1", "m2"}, owner))
-    sLive, err := fx.shareSvc.Create(ctx, service.ShareCreateRequest{
-        TargetType: share.TargetAlbumLive, TargetAlbumID: a.ID,
+    sLive, err := fx.shareSvc.Create(ctx, service.CreateShareRequest{
+        TargetType: share.TargetAlbumLive, AlbumID: a.ID,
         Grantee: owners.Principal{Hub: "h", UserID: "g"},
     }, owner)
     require.NoError(t, err)
 
     // media_set scope with 3 ids
-    sSet, err := fx.shareSvc.Create(ctx, service.ShareCreateRequest{
+    sSet, err := fx.shareSvc.Create(ctx, service.CreateShareRequest{
         TargetType: share.TargetMediaSet, MediaIDs: []string{"m1", "m2", "m3"},
         Grantee: owners.Principal{Hub: "h", UserID: "g"},
     }, owner)
@@ -2228,8 +2243,13 @@ Create `frontend/src/routes/AlbumsIndex.svelte`:
 
   let modalOpen = $state(false);
 
+  // Guard on `exhausted` (set when next_offset is null) instead of
+  // `albums.length === 0`. An owner with no albums has length 0 forever
+  // — guarding on length alone re-runs loadInitial each time `loading`
+  // toggles, looping. exhausted flips true after the first response
+  // regardless of row count.
   $effect(() => {
-    if (albumsStore.albums.length === 0 && !albumsStore.loading) {
+    if (!albumsStore.loading && !albumsStore.exhausted) {
       albumsStore.loadInitial();
     }
   });
@@ -3254,6 +3274,16 @@ Create `frontend/src/lib/components/AddToAlbumModal.svelte`:
   let pending = $state(false);
   let error = $state<string | null>(null);
 
+  // Users may open Add-to-album before ever visiting /albums, so the
+  // store may not yet be hydrated. Trigger loadInitial on mount when
+  // it isn't already loading and hasn't been exhausted (matches the
+  // AlbumsIndex / SharesPage guards).
+  $effect(() => {
+    if (!albumsStore.loading && !albumsStore.exhausted) {
+      albumsStore.loadInitial();
+    }
+  });
+
   const subtitle = $derived(`${mediaIds.length} ${mediaIds.length === 1 ? "photo" : "photos"}`);
   const primaryLabel = $derived(`Add ${mediaIds.length} ${mediaIds.length === 1 ? "photo" : "photos"}`);
 
@@ -3541,7 +3571,7 @@ describe("ShareModal media_set", () => {
 });
 
 describe("ShareModal album_live", () => {
-  it("title reflects album-share context and submit uses target_album_id", async () => {
+  it("title reflects album-share context and submit uses album_id", async () => {
     const onCreate = vi.fn().mockResolvedValue(undefined);
     const { getByRole, getByPlaceholderText, getByText } = render(ShareModal, {
       props: {
@@ -3555,7 +3585,7 @@ describe("ShareModal album_live", () => {
     await fireEvent.click(getByRole("button", { name: "Create share" }));
     expect(onCreate).toHaveBeenCalledWith({
       target_type: "album_live",
-      target_album_id: "a1",
+      album_id: "a1",
       grantee: { hub: "h", user_id: "b" },
       label: "",
       allow_download: false,
@@ -3594,7 +3624,7 @@ Create `frontend/src/lib/components/ShareModal.svelte`:
       }
     | {
         target_type: "album_live";
-        target_album_id: string;
+        album_id: string;
         grantee: { hub: string; user_id: string };
         label: string;
         allow_download: boolean;
@@ -3650,7 +3680,7 @@ Create `frontend/src/lib/components/ShareModal.svelte`:
             }
           : {
               target_type: "album_live",
-              target_album_id: target.albumId,
+              album_id: target.albumId,
               grantee,
               label: labelTrimmed,
               allow_download: allowDownload,
@@ -4026,15 +4056,20 @@ Edit `frontend/src/lib/components/ActionBar.svelte`:
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { SelectionStore } from "../selection/selectionStore.svelte";
-  let { selection, actions }: {
+  // selectedCount overrides selection.ids.size for routes that scope
+  // selection (e.g. AlbumDetail, where only album-member ids count).
+  // Default to selection.ids.size for the global Library/Sessions case.
+  let { selection, actions, selectedCount }: {
     selection: SelectionStore;
     actions?: Snippet;
+    selectedCount?: number;
   } = $props();
+  const count = $derived(selectedCount ?? selection.ids.size);
 </script>
 
-{#if selection.ids.size > 0}
+{#if count > 0}
   <div class="action-bar">
-    <span class="count">{selection.ids.size} selected</span>
+    <span class="count">{count} selected</span>
     {#if actions}
       <span class="actions">{@render actions()}</span>
     {/if}
@@ -4262,7 +4297,14 @@ Edit `frontend/src/routes/AlbumDetail.svelte`. Add ActionBar with MediaActions i
   Share album
 </button>
 
-<ActionBar {selection}>
+<!--
+  ActionBar reads `selectedCount` from the prop, not from
+  `selection.ids.size`, so on the album-detail route it shows only the
+  count of selections that intersect this album. This avoids a
+  misleading bar that displays unrelated Library/Sessions selections
+  when the user navigates over with stale global selection.
+-->
+<ActionBar {selection} selectedCount={selectedInAlbum.length}>
   {#snippet actions()}
     {#if selectedInAlbum.length > 0}
       <MediaActions
@@ -4527,7 +4569,7 @@ export type CreateShareInput =
     }
   | {
       target_type: "album_live";
-      target_album_id: string;
+      album_id: string;
       grantee: { hub: string; user_id: string };
       label: string;
       allow_download: boolean;
@@ -4661,7 +4703,24 @@ export class SharesStore {
   }
 
   private async poll(): Promise<void> {
-    await this.refetchListPreservingFilter();
+    // Polling MUST NOT replace the list — that would drop rows the
+    // user has already paginated past. Refetch the first 200 rows
+    // (covers any sane pending-row count) and merge by uuid into the
+    // current scopes. Older rows update on the next user-driven
+    // loadMore (acceptable: settled rows don't change state, and
+    // pending rows are almost always recent).
+    const query: Record<string, unknown> = {
+      limit: 200,
+      offset: 0,
+      include_settled: this.showRevoked,
+    };
+    if (this.albumIDFilter) query.album_id = this.albumIDFilter;
+    const res = await this.client.GET("/api/v1/shares", { params: { query } as never });
+    if (res.error || !res.data) return;
+    const data = res.data as { items?: ScopeListRow[] };
+    const fresh = new Map<string, ScopeListRow>();
+    for (const row of data.items ?? []) fresh.set(row.uuid, row);
+    this.scopes = this.scopes.map((row) => fresh.get(row.uuid) ?? row);
     this.maybeStartPolling();
   }
 
@@ -4944,8 +5003,11 @@ Create `frontend/src/routes/SharesPage.svelte`:
 
   let revokingUuid = $state<string | null>(null);
 
+  // Guard on `exhausted` (see same pattern in AlbumsIndex). An empty
+  // shares list with `scopes.length === 0` would otherwise re-trigger
+  // loadInitial whenever loading toggles, looping.
   $effect(() => {
-    if (sharesStore.scopes.length === 0 && !sharesStore.loading) {
+    if (!sharesStore.loading && !sharesStore.exhausted) {
       sharesStore.loadInitial();
     }
   });
@@ -5343,7 +5405,7 @@ if err := albumSvc.AddMedia(ctx, seededAlbum.ID, []string{
 
 // Shares seed: one active media_set share with a "noop:e2e" grantee,
 // and one failed share so the tests exercise both Retry and Revoke.
-_, err = shareSvc.Create(ctx, service.ShareCreateRequest{
+_, err = shareSvc.Create(ctx, service.CreateShareRequest{
     TargetType: share.TargetMediaSet,
     MediaIDs:   []string{"library-fixture-1"},
     Grantee:    owners.Principal{Hub: "noop", UserID: "e2e"},

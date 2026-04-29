@@ -264,8 +264,13 @@ class SharesStore {
 
 Polling auto-starts in `loadInitial` and `create`/`retry`/`revoke` if
 the resulting list contains any `pending` or `revoking` row. It
-auto-stops when all rows are settled. The poll just refetches the list
-(cheap; bounded by `limit=100`).
+auto-stops when all rows are settled. Each tick refetches `limit=200`
+rows from offset 0 and **merges by uuid into the existing list** — it
+never replaces the list, so rows the user already paginated into stay
+put. If the user has loaded more than the poll's limit, the poll only
+refreshes status for the first 200 rows; older rows update on the next
+user-driven `loadMore` (acceptable: stale settled rows do not change
+state, and pending rows are almost always recent).
 
 Detail and preview caches are populated lazily when the drawer opens.
 They are cleared on revoke/retry success (the data has changed).
@@ -482,7 +487,10 @@ domains. The user goes to /shares, revokes, comes back.
 ### §9.6 Share album
 
 Triggered from header button. Opens `ShareModal` pre-set to
-`{target_type: "album_live", target_album_id: id, label: "", allow_download: false}`.
+`{target_type: "album_live", album_id: id, label: "", allow_download: false}`.
+(Backend create body uses `album_id`; the response surfaces it as
+`target_album_id` on `scopeDTO` — see `internal/httpapi/shares.go:154` for
+the request shape and `:67` for the response.)
 See §12.
 
 ### §9.7 Bulk Remove
@@ -703,9 +711,11 @@ already-attempted publish; nothing new is exposed). On click:
 ### §11.5 Polling
 
 `SharesStore.startPolling()` fires every 5s while at least one row is
-`pending` or `revoking`. Each tick refetches the current list. When
-all visible rows settle, polling stops automatically. Polling resumes
-on Create / Revoke / Retry.
+`pending` or `revoking`. Each tick refetches `limit=200` rows from
+offset 0 and merges status updates by `uuid` into the current `scopes`
+list (no list replacement, no pagination reset). When all visible rows
+settle, polling stops automatically. Polling resumes on Create /
+Revoke / Retry.
 
 The interval is hardcoded at 5s. No exponential backoff — the worker
 is local; the broker is the bottleneck. If polling becomes load-
@@ -771,7 +781,7 @@ Opened from `MediaActions` Share button OR album detail "Share album":
 | MediaDetail (single photo)  | media_set     | `media_ids: [media.id]`                              |
 | Library/Sessions ActionBar  | media_set     | `media_ids: Array.from(selection.ids)`               |
 | Album detail ActionBar      | media_set     | `media_ids: selectedIds ∩ albumItemIds`              |
-| Album detail header         | album_live    | `target_album_id: id`                                |
+| Album detail header         | album_live    | `album_id: id` (request); `target_album_id` on response |
 
 The selection ∩ rule for the album-detail-ActionBar Share is the same
 rule as Remove from this album (§9.7): respect the route, don't share
@@ -814,7 +824,8 @@ body.grantee = { hub, user_id };
 ```
 
 `POST /api/v1/shares` with `{target_type, label, allow_download,
-grantee, [media_ids | target_album_id]}`. On 201:
+grantee, [media_ids | album_id]}` (request body uses `album_id`; the
+response surfaces it as `target_album_id`). On 201:
 - Toast "Share created" with link "View in Shares →" routing to
   `/shares`.
 - Modal closes; bulk-path selection cleared (single-photo selection,
