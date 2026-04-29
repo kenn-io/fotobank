@@ -105,7 +105,6 @@ func encodeArgon2(salt, hash []byte) string {
 // decodeArgon2 parses the encoded string produced by encodeArgon2.
 // Returns an error if the string has an unexpected format or variant.
 func decodeArgon2(encoded string) (salt, hash []byte, err error) {
-	const expectedPrefix = "argon2id$m=19456,t=2,p=1$"
 	if !strings.HasPrefix(encoded, "argon2id$") {
 		return nil, nil, fmt.Errorf("unsupported hash variant or format")
 	}
@@ -128,6 +127,5 @@ func decodeArgon2(encoded string) (salt, hash []byte, err error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("decode hash: %w", err)
 	}
-	_ = expectedPrefix // silences unused-import; used only for documentation
 	return salt, hash, nil
 }

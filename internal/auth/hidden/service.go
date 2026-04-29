@@ -68,10 +68,14 @@ func (s *Service) Setup(ctx context.Context, principal owners.Principal, passcod
 	if err := ValidatePasscode(passcode); err != nil {
 		return fmt.Errorf("setup hidden: %w", err)
 	}
-	if _, err := s.repo.GetCredential(ctx, principal); err == nil {
+	_, err := s.repo.GetCredential(ctx, principal)
+	if err == nil {
 		slog.InfoContext(ctx, "auth.hidden.setup",
 			"principal", principal.String(), "outcome", "already_exists")
 		return fmt.Errorf("setup hidden: %w", errs.ErrAlreadyExists)
+	}
+	if !errors.Is(err, errs.ErrNotFound) {
+		return fmt.Errorf("setup hidden: check existing: %w", err)
 	}
 	hash, err := HashPasscode(passcode)
 	if err != nil {
@@ -116,11 +120,13 @@ func (s *Service) Change(
 	return nil
 }
 
-// Disable verifies passcode, deletes the credential, clears all hidden media
-// flags for principal, and revokes all active sessions. All three operations
-// are performed but are not wrapped in a single SQL transaction because they
-// span repos; idempotency on re-run is acceptable (delete is a no-op if
-// already gone, ClearAllHidden is idempotent).
+// Disable verifies passcode, clears all hidden media flags for principal,
+// revokes all active sessions, then deletes the credential. Operations are
+// ordered so that a mid-sequence failure leaves the credential intact and the
+// caller can re-run Disable to retry from the beginning.
+//
+// All three operations span repos so they cannot share a SQL transaction;
+// ClearAllHidden and RevokeAllSessions are idempotent and safe to re-run.
 func (s *Service) Disable(ctx context.Context, principal owners.Principal, passcode string) error {
 	if err := ValidatePasscode(passcode); err != nil {
 		return fmt.Errorf("disable hidden: %w", err)
@@ -130,14 +136,14 @@ func (s *Service) Disable(ctx context.Context, principal owners.Principal, passc
 			"principal", principal.String(), "outcome", outcomeFor(err))
 		return fmt.Errorf("disable hidden: %w", err)
 	}
-	if err := s.repo.DeleteCredential(ctx, principal); err != nil {
-		return fmt.Errorf("disable hidden: delete credential: %w", err)
-	}
 	if err := s.media.ClearAllHiddenForOwner(ctx, principal); err != nil {
 		return fmt.Errorf("disable hidden: clear hidden flags: %w", err)
 	}
 	if err := s.repo.RevokeAllSessionsForPrincipal(ctx, principal, s.now()); err != nil {
 		return fmt.Errorf("disable hidden: revoke sessions: %w", err)
+	}
+	if err := s.repo.DeleteCredential(ctx, principal); err != nil {
+		return fmt.Errorf("disable hidden: delete credential: %w", err)
 	}
 	slog.InfoContext(ctx, "auth.hidden.disable", "principal", principal.String(), "outcome", "ok")
 	return nil

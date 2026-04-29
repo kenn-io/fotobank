@@ -312,8 +312,10 @@ exists). `admin reset-hidden-passcode`:
   - Failure-log purge: deletes rows older than the lockout window.
   - Session sweeper: marks `revoked_at` on rows where `expires_at < now AND revoked_at IS NULL`.
 - Audit: Setup/Change/Disable/AdminReset write structured INFO logs with
-  `event=auth.hidden.<op>`, `principal=hub:user`, `outcome=ok|denied|locked`. No passcode
-  material is ever logged.
+  `event=auth.hidden.<op>`, `principal=hub:user`,
+  `outcome ∈ {ok, denied, locked, not_configured, already_exists, noop_malformed}` —
+  finer-grained outcome strings emitted for non-`ok` paths so log-based audits can
+  distinguish them. No passcode material is ever logged.
 
 ### 2.7 Cookie config
 

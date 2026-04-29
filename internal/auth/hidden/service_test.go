@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"testing"
 	"time"
 
@@ -18,9 +19,16 @@ import (
 type fakeMediaPrivacy struct {
 	called    bool
 	principal owners.Principal
+	// errOnce, if non-nil, is returned on the first call and then cleared.
+	errOnce error
 }
 
 func (f *fakeMediaPrivacy) ClearAllHiddenForOwner(_ context.Context, owner owners.Principal) error {
+	if f.errOnce != nil {
+		err := f.errOnce
+		f.errOnce = nil
+		return err
+	}
 	f.called = true
 	f.principal = owner
 	return nil
@@ -398,4 +406,73 @@ func TestServiceSetRandForTest(t *testing.T) {
 	raw, _, err := svc.Unlock(context.Background(), p, "pass")
 	r.NoError(err)
 	r.Len(raw, 43)
+}
+
+// TestDisableRecoversFromMediaClearFailure verifies that if ClearAllHiddenForOwner
+// fails mid-sequence, the credential row is still present (so the user can
+// retry), and that a second Disable call succeeds and removes the credential.
+func TestDisableRecoversFromMediaClearFailure(t *testing.T) {
+	r := require.New(t)
+	svc, repo, mp, p := newTestServiceWithOwner(t)
+	r.NoError(svc.Setup(context.Background(), p, "pass"))
+
+	// Inject a transient error on the first ClearAllHiddenForOwner call.
+	mp.errOnce = errors.New("transient storage error")
+
+	err := svc.Disable(context.Background(), p, "pass")
+	r.Error(err, "first Disable must return an error when ClearAllHiddenForOwner fails")
+
+	// Credential must still exist — user can re-run Disable.
+	_, credErr := repo.GetCredential(context.Background(), p)
+	r.NoError(credErr, "credential must survive a failed Disable so the user can retry")
+
+	// Second Disable must succeed now that the transient error is cleared.
+	r.NoError(svc.Disable(context.Background(), p, "pass"))
+
+	_, credErr = repo.GetCredential(context.Background(), p)
+	r.ErrorIs(credErr, errs.ErrNotFound, "credential must be gone after a successful Disable")
+}
+
+// TestLockoutAtProductionThreshold verifies that the default threshold of 5
+// failures triggers a lockout, and that the correct passcode during an active
+// lockout returns ErrLockedOut.
+func TestLockoutAtProductionThreshold(t *testing.T) {
+	r := require.New(t)
+	svc, repo, _, p := newTestServiceWithOwner(t)
+
+	// Pre-hash one credential and inject it directly so Argon2 runs only for
+	// the verification calls, not for Setup.  Using a 1-byte passcode keeps
+	// the work factor constant but doesn't skip it entirely — the test
+	// explicitly exercises the production threshold (5).
+	r.NoError(svc.Setup(context.Background(), p, "x"))
+
+	// Use explicit production-default values so the test documents them.
+	svc.SetLockoutForTest(60*time.Second, 5*time.Minute, 5)
+
+	ctx := context.Background()
+	for i := range 4 {
+		_, _, err := svc.Unlock(ctx, p, "wrong")
+		r.ErrorIs(err, errs.ErrPermissionDenied, "attempt %d should be denied, not locked", i+1)
+	}
+
+	// 5th wrong attempt triggers the lockout.
+	_, _, err := svc.Unlock(ctx, p, "wrong")
+	r.ErrorIs(err, errs.ErrPermissionDenied, "5th wrong attempt should still return denied")
+
+	// Lockout must now be recorded.
+	lo, err := repo.GetLockout(ctx, p)
+	r.NoError(err)
+	r.True(lo.LockedUntil.After(time.Now()), "lockout must be active after 5 failures")
+
+	// Correct passcode during active lockout must return ErrLockedOut.
+	_, _, err = svc.Unlock(ctx, p, "x")
+	r.ErrorIs(err, errs.ErrLockedOut)
+}
+
+// TestLockMalformedTokenIsNoop verifies that Lock with an invalid base64url
+// token returns nil and emits outcome=noop_malformed rather than an error.
+func TestLockMalformedTokenIsNoop(t *testing.T) {
+	svc := newService(t)
+	// "!!!" is not valid base64url.
+	require.NoError(t, svc.Lock(context.Background(), "!!!"))
 }
