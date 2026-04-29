@@ -340,6 +340,25 @@ func TestAdminResetHiddenPasscodeNonStubWithOwner(t *testing.T) {
 	require.Contains(t, stdout, "reset")
 }
 
+// TestAdminResetHiddenPasscodeConfirmFalseIsRejected verifies that
+// --confirm=false does NOT perform the reset even though the flag is provided.
+// The previous implementation used _ bool for the confirm parameter, so any
+// boolean value (including false) would proceed to AdminReset.
+func TestAdminResetHiddenPasscodeConfirmFalseIsRejected(t *testing.T) {
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	t.Setenv("FOTOBANK_CONFIG", cfgPath)
+	bootstrapHiddenOwner(t)
+	seedCredentialInDB(t, dbPath, "h", "u")
+
+	// --confirm=false must be rejected with a usage error (exit code 2).
+	_, stderr, code := runHiddenCLI(
+		"admin", "reset-hidden-passcode", "--confirm=false", "--config", cfgPath)
+	require.Equal(t, 2, code, "must exit 2 on --confirm=false: stderr=%s", stderr)
+}
+
 func TestAdminResetHiddenPasscodePreservesHiddenAt(t *testing.T) {
 	tmp := t.TempDir()
 	cfgPath := writeBasicConfig(t, tmp)

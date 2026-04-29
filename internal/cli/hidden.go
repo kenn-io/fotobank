@@ -320,7 +320,14 @@ func newAdminResetHiddenPasscodeCmd() *cobra.Command {
 	return cmd
 }
 
-func runAdminResetHiddenPasscode(cmd *cobra.Command, cfgPath, ownerRaw string, _ bool) error {
+func runAdminResetHiddenPasscode(cmd *cobra.Command, cfgPath, ownerRaw string, confirm bool) error {
+	// MarkFlagRequired only checks that the flag was provided; it does not
+	// verify the value. Reject --confirm=false explicitly so a scripted
+	// mistake cannot accidentally trigger the reset.
+	if !confirm {
+		return newUsageError("--confirm=true is required to perform a destructive reset")
+	}
+
 	hctx, cfg, err := loadHiddenCtx(cfgPath)
 	if err != nil {
 		return err
