@@ -16,10 +16,13 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/wesm/fotobank/internal/album"
 	"github.com/wesm/fotobank/internal/cli"
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
+	"github.com/wesm/fotobank/internal/service"
+	"github.com/wesm/fotobank/internal/share"
 )
 
 func main() {
@@ -183,6 +186,38 @@ func seedFixtures(dbPath string) error {
 	}
 	if err := repo.Insert(ctx, sidecarRow); err != nil {
 		return fmt.Errorf("seed pair fixture sidecar: %w", err)
+	}
+
+	// F2.3 album + share seeds. Albums and shares for the Playwright
+	// e2e suite — exercised by frontend/tests/e2e/albums.spec.ts and
+	// shares.spec.ts. AlbumService/ShareService both enforce stub-mode
+	// owner scoping; the seeds use the same owner Principal so the
+	// Playwright caller (the SPA) can read them via the API.
+	albumRepo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	shareRepo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	albumSvc := service.NewAlbumService(albumRepo, repo, shareRepo, d)
+	shareSvc := service.NewShareService(shareRepo, albumRepo, repo)
+
+	if _, err := albumSvc.Create(ctx, owner, "E2E Empty Album"); err != nil {
+		return fmt.Errorf("seed empty album: %w", err)
+	}
+	seededAlbum, err := albumSvc.Create(ctx, owner, "E2E Italy 2025")
+	if err != nil {
+		return fmt.Errorf("seed populated album: %w", err)
+	}
+	if _, _, err := albumSvc.AddMedia(ctx, seededAlbum.ID, []string{
+		"pair-fixture-primary", "gps-fixture-1",
+	}, owner); err != nil {
+		return fmt.Errorf("seed populated album members: %w", err)
+	}
+
+	if _, err := shareSvc.Create(ctx, service.CreateShareRequest{
+		TargetType: share.TargetMediaSet,
+		MediaIDs:   []string{"gps-fixture-1"},
+		Grantee:    owners.Principal{Hub: "noop", UserID: "e2e"},
+		Label:      "Active e2e share",
+	}, owner); err != nil {
+		return fmt.Errorf("seed active share: %w", err)
 	}
 	return nil
 }

@@ -77,8 +77,8 @@ Design docs live in `docs/superpowers/specs/`, plans in `docs/superpowers/plans/
 - **Plan A** — DB foundation, migrations, principals, storage. **Done.**
 - **Plan B** — Import pipeline, reconcile, media HTTP CRUD. **Done.**
 - **Plan C** — Thumbnail pipeline (queue, worker, flash cache subdir, `/thumb` endpoint). **Done.**
-- **Plan D** — Albums (CRUD service + HTTP + CLI; no sharing). **In design.**
-- **Plan E** — Sharing: scopes, broker registration, outbox worker, cross-owner reads. **Deferred.**
+- **Plan D** — Albums (CRUD service + HTTP + CLI; no sharing). **Done.**
+- **Plan E** — Sharing: scopes, broker registration, outbox worker, cross-owner reads. **Done (owner side; grantee-side viewing deferred).**
 - **Observability** — Structured logging (slog), Prometheus metrics, /readyz, admin HTTP listener. **Done.**
 
 ## Instructions for agents
