@@ -89,9 +89,14 @@ Source routes call `lightboxSession.open({...})` **before** pushing `/media/:id?
 - `from` absent → render `<DirectMediaDetail>` directly (existing F2.4 behavior, unchanged).
 - `from` present → render `<Lightbox>`.
 
-`Lightbox` itself can render `<DirectMediaDetail>` in place of its frame for any fallback path (reconstruction failure, hidden cross-context, "not found"). The lightbox does **not** unmount/remount across the fallback boundary; it just delegates rendering for the active id. `LightboxSession` is left intact, so navigating to a different id under the same `from` resumes lightbox mode naturally if the conditions are right.
+**Lightbox always owns the modalStack registration, Esc dispatch, and source-aware close** (Esc, toolbar X, browser back). In fallback mode, lightbox renders a minimal **fallback shell** consisting of the close X only — no prev/next, no source actions. The shell wraps one of two inner contents:
 
-**Hidden rule (scoped to lightbox mode only):** if `from != hidden` and the fetched media has `hidden_at != null`, lightbox mode is **disabled for this render** — no prev/next, no source actions. `Lightbox` delegates to `<DirectMediaDetail>`, which applies F2.4 cookie rules (200 if unlocked, "not found" otherwise). The F2.4 direct-detail flow itself is unchanged; the only refactor is splitting the component out of `MediaDetail.svelte`.
+- **Reconstruction failure or hidden cross-context** → `<DirectMediaDetail>` rendered inside the shell. The lightbox does not unmount/remount across the fallback boundary; it just delegates rendering for the active id. `LightboxSession` is left intact, so navigating to a different id under the same `from` resumes lightbox mode naturally if the conditions are right.
+- **API 404 (id missing, or hidden+locked)** → a dedicated "Photo not found" content block (no `DirectMediaDetail`; there's no row to render).
+
+`DirectMediaDetail.svelte` exposes optional `backHref` / `onClose` props. When mounted directly by `MediaDetail` (no `from`), its built-in back link uses default direct-detail behavior. When mounted inside the lightbox fallback shell, the lightbox suppresses the inner back link and routes close exclusively through its own toolbar X / Esc / source-aware-close path.
+
+**Hidden rule (scoped to lightbox mode only):** if `from != hidden` and the fetched media has `hidden_at != null`, lightbox mode is **disabled for this render** — no prev/next, no source actions. The lightbox renders the fallback shell wrapping `<DirectMediaDetail>`, which applies F2.4 cookie rules (200 if unlocked, "not found" otherwise). The F2.4 direct-detail flow itself is unchanged; the only refactor is splitting the component out of `MediaDetail.svelte`.
 
 **Router/history state (extended shape):** `history.state = { depth, sourceScroll? }`. F2.3 router already tracks `depth`; F2.5 adds the optional `sourceScroll` field for reload-survivability of scroll restoration.
 
@@ -128,8 +133,8 @@ frontend/src/lib/lightbox/
   modalStack.svelte.ts             — central store: ordered open-modal entries; topmost-first Esc dispatch; pause/resume of focus traps on stack changes.
 
 frontend/src/lib/components/lightbox/
-  Lightbox.svelte                  — top-level; reads ?from= via router match; resolves session or runs reconstruction; mounts subviews; registers self with modalStack.
-  LightboxFrame.svelte             — black bg, layout, header/footer chrome, focus trap.
+  Lightbox.svelte                  — top-level; reads ?from= via router match; resolves session or runs reconstruction; mounts subviews; registers self with modalStack. Owns the modalStack registration, Esc dispatch, and source-aware close in both normal and fallback modes.
+  LightboxFrame.svelte             — black bg, layout, focus trap. Supports two modes: `full` (header/footer chrome, prev/next, info, MediaActions slot) and `fallback` (close X only). The frame is always present so Esc/X always have a close target.
   LightboxMedia.svelte             — branches on media type: <LightboxImage> for photos, <LightboxVideo> for videos. Prevents /original being assigned to <img> on video rows.
   LightboxImage.svelte             — <img>, panzoom binding (vendored), progressive grid → preview → large swap, decode handling.
   LightboxVideo.svelte             — <video controls> against /original; no panzoom; reuses lightboxLoader's generation token where relevant (e.g., poster).
@@ -153,7 +158,7 @@ frontend/src/routes/
   MediaDetail.svelte               — MODIFY: thin dispatcher. With from → render <Lightbox>. Without from → render <DirectMediaDetail>.
 
 frontend/src/lib/components/
-  DirectMediaDetail.svelte         — NEW (extracted from existing MediaDetail.svelte): the existing direct-detail UI, including F2.4 hidden-with-cookie behavior. Renders for both the from-absent route and the lightbox fallback paths. No behavioral change vs. F2.4.
+  DirectMediaDetail.svelte         — NEW (extracted from existing MediaDetail.svelte): the existing direct-detail UI, including F2.4 hidden-with-cookie behavior. Renders for both the from-absent route and the lightbox fallback paths. Optional `backHref` and `onClose` props let the lightbox suppress the inner back link and route close exclusively through its own source-aware close. No behavioral change vs. F2.4 when invoked directly.
 
 frontend/src/lib/router/
   router.svelte.ts                 — MODIFY: parse query params on the /media/:id match; expose `from` on RouteMatch; widen history.state typing for { depth, sourceScroll? }.
@@ -372,12 +377,12 @@ function handleKeydown(e: KeyboardEvent) {
 
 | Scenario | Detection | UI |
 |---|---|---|
-| API 404 on `/media/:id` (id missing, or hidden+locked) | initial fetch | "Photo not found" frame; toolbar shows close only; nav buttons hidden |
+| API 404 on `/media/:id` (id missing, or hidden+locked) | initial fetch | Lightbox renders fallback shell (close X only, no prev/next/source actions) wrapping a "Photo not found" content block |
 | Network failure on media metadata | fetch rejects | "Couldn't load photo" frame with Retry; close works |
 | Image fetch / decode fails (preview or large) | rejection / decode throw | Keep last successful source; corner badge; Retry in toolbar |
 | Video fetch fails | `<video> error` event | Same as image fetch fail |
 | **Hidden 403** on `/hidden/media` or unhide action | response status 403 | `router.navigate('/hidden', { replace: true })` (gate page) |
-| **Hidden 404 while in `from=hidden`** (typical expired-cookie surface) | response status 404 | Call `hiddenStore.refresh()`. If response shows locked → `router.navigate('/hidden', { replace: true })`. If still unlocked → "Photo not found" frame. |
+| **Hidden 404 while in `from=hidden`** (typical expired-cookie surface) | response status 404 | Call `hiddenStore.refresh()`. If response shows locked → `router.navigate('/hidden', { replace: true })`. If still unlocked → fallback shell + "Photo not found" content. |
 | Reconstruction can't find active id within page cap | loop exhaustion | Fall back to direct-detail mode (no prev/next) |
 | Reconstruction request fails (album 404, network) | catch | Fall back to direct-detail mode |
 | Hidden mismatch (`from != hidden && hidden_at != null`) | API response inspection | Disable lightbox mode; render direct-detail (F2.4 cookie rules) |
@@ -411,7 +416,7 @@ Prefetch queue caps to 2 concurrent. v1 ships immediate prev/next only — no se
   - `album` → mutates `LightboxSession.navIds`, calls `albumsStore.markStale()`.
   - `hidden` unhide → mutates session navIds, calls `mediaStore.mergeRaw([{...row, hidden_at: null}])`, calls `albumsStore.markStale()`.
 - Hidden cross-context fallback: API returns `hidden_at != null` under `from=library` → lightbox mode disabled, direct-detail rendered.
-- **404-while-unlocked**: route-intercept the `/api/v1/media/:id` call to 404; assert "Photo not found" frame, no redirect. (Avoids a server-side test endpoint.)
+- **404-while-unlocked**: route-intercept the `/api/v1/media/:id` call to 404; assert lightbox fallback shell with "Photo not found" content, no redirect. (Avoids a server-side test endpoint.)
 - Editable-target keyboard guard: typing in a `<textarea>` inside info panel doesn't trigger arrows/Space/h.
 
 ### Playwright e2e (`frontend/tests/e2e/lightbox.spec.ts`, new — config `frontend/playwright-e2e.config.ts`)
@@ -440,7 +445,7 @@ Required scenarios:
 18. **Image source verification.** Initial `<img src>` is `size=grid&v=N`; subsequent network requests include `size=preview` and then `size=large`; no `/original` request fires before clicking the explicit Download action. (Don't assert the grid request fires, it may already be cached.)
 19. **Modal migration regression.** AddToAlbum, Share, Confirm, RenameAlbum: each opens, Esc closes, no double-close on rapid Esc.
 20. **Paginated source scroll restore.** In an album with N≥30 items spanning multiple paginated loads, scroll past the first page and click a tile on a later page; close lightbox; verify the originating tile is visible and focused, and `scrollY` matches the captured value within tolerance. Asserts the guarded restore loop tolerates content arriving after the source remounts.
-21. **Direct entry → fallback delegation.** Open `/media/:id?from=album:bogus` where `bogus` 404s; verify the page renders DirectMediaDetail content (no lightbox chrome, no prev/next), close still navigates back to source via Esc/X.
+21. **Direct entry → fallback delegation.** Open `/media/:id?from=album:bogus` where `bogus` 404s; verify the page renders the lightbox fallback shell (close X visible, no prev/next, no source actions) wrapping `DirectMediaDetail` content; verify the inner back link is suppressed; verify Esc and the toolbar X both close to source via the lightbox's source-aware close (returnHref or history.back).
 
 ### Running
 
