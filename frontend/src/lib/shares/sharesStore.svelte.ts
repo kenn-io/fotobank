@@ -46,25 +46,46 @@ export class SharesStore {
   scopes = $state<ScopeListRow[]>([]);
   loading = $state(false);
   exhausted = $state(false);
+  // True when the most recent load attempt failed. Routes use this to
+  // gate auto-retry effects and to render an error state so a transient
+  // 5xx doesn't cause the route to spin in an infinite refetch loop.
+  loadError = $state(false);
   showRevoked = $state(false);
   albumIDFilter = $state<string | null>(null);
 
   private nextOffset: number | null = 0;
   private pollHandle: ReturnType<typeof setInterval> | null = null;
   private detailCache = new Map<string, ScopeDetail>();
+  // previewCache is intentionally not cleared by retry(): preview content
+  // is broker-cached and bound to the share's identity, not its broker_status,
+  // so a retry that re-issues the broker grant doesn't change what /preview
+  // returns. detailCache is cleared because broker_status is part of the
+  // detail DTO and retry transitions it.
   private previewCache = new Map<string, SharePreview>();
+  // Monotonic token bumped on every state-clearing call (loadInitial,
+  // refetchListPreservingFilter). Async fetches capture the token at
+  // entry and check it before mutating state, so a slower stale response
+  // can't overwrite a newer one's result.
+  private loadToken = 0;
 
   constructor(private client: Pick<Client, "GET" | "POST" | "DELETE">) {}
 
   async loadInitial(): Promise<void> {
+    const token = ++this.loadToken;
     this.scopes = [];
     this.nextOffset = 0;
     this.exhausted = false;
-    await this.loadMore();
+    this.loadError = false;
+    // Reset loading so a new loadMore can fetch even if a stale one is
+    // still resolving — its response will be dropped by the token check.
+    this.loading = false;
+    await this.loadMore(token);
+    if (token !== this.loadToken) return;
     this.maybeStartPolling();
   }
 
-  async loadMore(): Promise<void> {
+  async loadMore(token?: number): Promise<void> {
+    const t = token ?? this.loadToken;
     if (this.loading || this.exhausted) return;
     this.loading = true;
     try {
@@ -75,7 +96,15 @@ export class SharesStore {
       };
       if (this.albumIDFilter) query["album_id"] = this.albumIDFilter;
       const res = await this.client.GET("/api/v1/shares", { params: { query } as never });
-      if (res.error || !res.data) return;
+      if (t !== this.loadToken) return;
+      if (res.error || !res.data) {
+        this.loadError = true;
+        // Mark exhausted so any auto-retry effect in the route doesn't
+        // loop on a persistent failure. Manual retry via retryLoad()
+        // clears the flag.
+        this.exhausted = true;
+        return;
+      }
       const data = res.data as { items?: ScopeListRow[]; next_offset?: number | null };
       const items = data.items ?? [];
       this.scopes = [...this.scopes, ...items];
@@ -83,8 +112,18 @@ export class SharesStore {
       this.nextOffset = next;
       if (next === null) this.exhausted = true;
     } finally {
-      this.loading = false;
+      // Only clear loading if we're still the active token; otherwise a
+      // newer loadInitial / refetch owns the flag and we shouldn't reset it.
+      if (t === this.loadToken) this.loading = false;
     }
+  }
+
+  // Manual retry after a load failure. Clears the error flag and the
+  // exhausted-on-error gate, then reissues loadInitial.
+  async retryLoad(): Promise<void> {
+    this.loadError = false;
+    this.exhausted = false;
+    await this.loadInitial();
   }
 
   async create(input: CreateShareInput): Promise<void> {
@@ -138,23 +177,28 @@ export class SharesStore {
     return res.data;
   }
 
-  setShowRevoked(v: boolean): void {
+  async setShowRevoked(v: boolean): Promise<void> {
     if (this.showRevoked === v) return;
     this.showRevoked = v;
-    this.refetchListPreservingFilter();
+    await this.refetchListPreservingFilter();
   }
 
-  setAlbumIDFilter(v: string | null): void {
+  async setAlbumIDFilter(v: string | null): Promise<void> {
     if (this.albumIDFilter === v) return;
     this.albumIDFilter = v;
-    this.refetchListPreservingFilter();
+    await this.refetchListPreservingFilter();
   }
 
   private async refetchListPreservingFilter(): Promise<void> {
+    const token = ++this.loadToken;
     this.scopes = [];
     this.nextOffset = 0;
     this.exhausted = false;
-    await this.loadMore();
+    this.loadError = false;
+    // Reset loading so a new loadMore can fetch even if a stale one is
+    // still resolving — its response will be dropped by the token check.
+    this.loading = false;
+    await this.loadMore(token);
   }
 
   private maybeStartPolling(): void {
@@ -183,6 +227,7 @@ export class SharesStore {
     // drop out of the response and the local copy would stay stuck at
     // "revoking" forever, polling indefinitely. The user-facing filter
     // is applied in the route view, not at the polling boundary.
+    const token = this.loadToken;
     const query: Record<string, unknown> = {
       limit: 200,
       offset: 0,
@@ -190,6 +235,9 @@ export class SharesStore {
     };
     if (this.albumIDFilter) query["album_id"] = this.albumIDFilter;
     const res = await this.client.GET("/api/v1/shares", { params: { query } as never });
+    // Drop the response if a user-initiated state-clearing call ran while
+    // we were waiting; otherwise we'd merge stale data into the fresh list.
+    if (token !== this.loadToken) return;
     if (res.error || !res.data) return;
     const data = res.data as { items?: ScopeListRow[] };
     const fresh = new Map<string, ScopeListRow>();
