@@ -157,6 +157,8 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerSharedBytes(mux, deps.SharedRead)
 	registerUserSettings(api, deps.UserSettings)
 	registerEvents(mux, deps.EventBus)
+	cookieCfg := hidden.CookieConfigFor(deps.DevInsecureHiddenCookies)
+	registerHiddenAuth(api, deps.HiddenAuth, cookieCfg)
 	return mux, api
 }
 

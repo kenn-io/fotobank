@@ -44,6 +44,13 @@ func Translate(err error) huma.StatusError {
 		return huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
 	case errors.Is(err, errs.ErrBrokerUnavailable):
 		return huma.Error503ServiceUnavailable(errs.ErrBrokerUnavailable.Error())
+	case errors.Is(err, errs.ErrLockedOut):
+		// 429: body is deliberately generic (same wording as wrong-passcode)
+		// so lockout vs. rejection is not trivially distinguishable.
+		// The Retry-After header is set by the handler that detects lockout.
+		return huma.Error429TooManyRequests("passcode rejected")
+	case errors.Is(err, errs.ErrHiddenNotConfigured):
+		return huma.Error409Conflict("hidden not configured")
 	default:
 		return huma.Error500InternalServerError(http.StatusText(http.StatusInternalServerError))
 	}

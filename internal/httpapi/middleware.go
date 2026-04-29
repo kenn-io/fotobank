@@ -25,6 +25,11 @@ const (
 	ctxKeyIdentity ctxKey = iota
 	ctxKeyRequestID
 	ctxKeyObs
+	// ctxKeyRawHiddenToken stores the raw value of the hidden-unlock cookie
+	// as a string, whether or not it belongs to a valid session. The lock
+	// handler uses it to revoke the token server-side without re-reading
+	// the request (which is not directly available in huma handler funcs).
+	ctxKeyRawHiddenToken
 )
 
 // WithMiddlewareDeps groups the collaborators consumed by the
@@ -260,6 +265,14 @@ func statusClass(status int) string {
 	}
 }
 
+// RawHiddenTokenFromContext returns the raw value of the hidden-unlock cookie
+// as stored by WithHiddenUnlock, regardless of whether the session was valid.
+// Returns ("", false) when no cookie was present on the request.
+func RawHiddenTokenFromContext(ctx context.Context) (string, bool) {
+	s, ok := ctx.Value(ctxKeyRawHiddenToken).(string)
+	return s, ok && s != ""
+}
+
 // IdentityFromContext returns the Identity attached to ctx by
 // WithMiddleware. The second return value reports whether an Identity
 // was present.
@@ -375,21 +388,24 @@ func WithHiddenUnlock(
 			return
 		}
 		ctx := r.Context()
+		// Always store the raw token so the /lock handler can revoke it
+		// without needing to re-read the request.
+		ctx = context.WithValue(ctx, ctxKeyRawHiddenToken, c.Value)
 		sha, err := hidden.TokenSHA256(c.Value)
 		if err != nil {
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		sess, err := svc.LookupSession(ctx, sha, now())
 		if err != nil {
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		ident, ok := IdentityFromContext(ctx)
 		if !ok || ident.Principal.OwnersPrincipal() != sess.Principal {
 			// Cookie principal must match request principal. A stale cookie
 			// from another session must never unlock the current caller's data.
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		ctx = hidden.WithUnlockClaim(ctx, hidden.UnlockClaim{

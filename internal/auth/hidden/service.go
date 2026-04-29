@@ -213,6 +213,13 @@ func (s *Service) AdminReset(ctx context.Context, principal owners.Principal) er
 	return nil
 }
 
+// GetCredential returns the credential for principal, or errs.ErrNotFound if
+// no credential has been set up. The HTTP /state handler uses this to
+// determine whether hidden is configured for the caller.
+func (s *Service) GetCredential(ctx context.Context, principal owners.Principal) (*Credential, error) {
+	return s.repo.GetCredential(ctx, principal)
+}
+
 // Sweep revokes expired sessions and purges failure rows older than the
 // lockout window. Active lockout rows are not touched.
 func (s *Service) Sweep(ctx context.Context) error {
@@ -304,6 +311,27 @@ func (s *Service) clearFailureState(ctx context.Context, principal owners.Princi
 		return fmt.Errorf("clear failure state: delete lockout: %w", err)
 	}
 	return nil
+}
+
+// ActiveLockoutUntil returns the locked_until time and true if there is a
+// currently active lockout for principal. Returns (zero, false, nil) when no
+// active lockout exists. Returns a non-nil error only on DB failure.
+// Used by HTTP handlers to supply a Retry-After header on 429 responses.
+func (s *Service) ActiveLockoutUntil(
+	ctx context.Context, principal owners.Principal,
+) (time.Time, bool, error) {
+	now := s.now()
+	lo, err := s.repo.GetLockout(ctx, principal)
+	if err != nil {
+		if errors.Is(err, errs.ErrNotFound) {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, false, fmt.Errorf("active lockout until: %w", err)
+	}
+	if lo.LockedUntil.After(now) {
+		return lo.LockedUntil, true, nil
+	}
+	return time.Time{}, false, nil
 }
 
 // LookupSession is the read-only session lookup used by the unlock-cookie
