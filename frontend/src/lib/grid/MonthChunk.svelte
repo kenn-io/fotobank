@@ -3,18 +3,26 @@
   import type { LayoutOptions } from "./justifiedLayout";
   import { computeMonthLayout, type MediaLite } from "./monthChunkLayout";
 
-  let { items, options, label, renderCell }: {
+  let { items, options, label, renderCell, headerAction }: {
     items: MediaLite[];
     options: LayoutOptions;
     label?: string;
     renderCell?: Snippet<[MediaLite, { x: number; y: number; w: number; h: number }]>;
+    headerAction?: Snippet;
   } = $props();
 
   let computed = $derived(computeMonthLayout(items, options, !!label));
 </script>
 
 <section class="month" style="min-height: {computed.intrinsicHeight}px;">
-  {#if label}<header class="day-header">{label}</header>{/if}
+  {#if label}
+    <header class="day-header">
+      <span class="label">{label}</span>
+      {#if headerAction}
+        <span class="header-action">{@render headerAction()}</span>
+      {/if}
+    </header>
+  {/if}
   <div class="cells" style="position: relative; height: {computed.layout.totalHeight}px;">
     {#each computed.layout.rows as row (row.y)}
       {#each row.items as cell (cell.index)}
@@ -46,6 +54,12 @@
     color: var(--text-secondary);
     padding: 16px 4px 8px;
     font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .header-action {
+    margin-left: auto;
   }
   .placeholder {
     width: 100%;

@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { render } from "@testing-library/svelte";
 import { DAY_HEADER_HEIGHT, computeMonthLayout, type MediaLite } from "./monthChunkLayout";
+import HeaderActionFixture from "./HeaderActionFixture.svelte";
 
 describe("computeMonthLayout", () => {
   it("returns intrinsic height for content-visibility:auto skipping", () => {
@@ -36,5 +38,25 @@ describe("computeMonthLayout", () => {
     // nothing to render.
     const out = computeMonthLayout([], { containerWidth: 900, targetRowHeight: 200, gap: 4 }, true);
     expect(out.intrinsicHeight).toBe(0);
+  });
+});
+
+describe("MonthChunk headerAction slot", () => {
+  it("renders the headerAction snippet inside the day-header", () => {
+    const { container } = render(HeaderActionFixture, {
+      props: { label: "April 2024" },
+    });
+    const header = container.querySelector("header.day-header");
+    expect(header).not.toBeNull();
+    expect(header!.querySelector("button.test-action")).not.toBeNull();
+    expect(header!.textContent).toContain("April 2024");
+    expect(header!.textContent).toContain("ACT");
+  });
+
+  it("does not render header at all when label is undefined (flat mode)", () => {
+    const { container } = render(HeaderActionFixture, {
+      props: { label: undefined },
+    });
+    expect(container.querySelector("header.day-header")).toBeNull();
   });
 });
