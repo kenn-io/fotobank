@@ -144,8 +144,10 @@
     if (succeeded.length > 0) {
       detail.pruneHidden(succeeded);
       selection.removeAll(succeeded);
-      // Mark albums stale so counts and cover refresh on next visit.
-      albumsStore.loadInitial();
+      // Refresh this album's header counts inline; mark the albums list
+      // stale so cover and counts refresh the next time /albums is visited.
+      void detail.refreshMeta();
+      albumsStore.markStale();
     }
     const failed = result.failed ?? [];
     if (failed.length > 0) {
@@ -207,6 +209,9 @@
     <div class="title-row">
       <h1>{detail.album.name}</h1>
       <span class="count">{detail.album.item_count} {detail.album.item_count === 1 ? "photo" : "photos"}</span>
+      {#if (detail.album.hidden_count ?? 0) > 0}
+        <span class="hidden-chip">{detail.album.hidden_count} hidden</span>
+      {/if}
     </div>
     <div class="action-row">
       <div class="actions">
@@ -325,6 +330,14 @@
   .title-row { display: flex; align-items: baseline; gap: 12px; }
   .title-row h1 { margin: 0; font-size: 20px; }
   .count { color: var(--text-muted); font-size: 14px; }
+  .hidden-chip {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
   .action-row {
     display: flex;
     justify-content: space-between;

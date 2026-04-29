@@ -62,6 +62,8 @@ function makeAlbumsStore(): AlbumsStore {
     exhausted: true,
     loadError: false,
     loadInitial: vi.fn().mockResolvedValue(undefined),
+    markStale: vi.fn(),
+    refreshIfStale: vi.fn().mockResolvedValue(undefined),
     loadMore: vi.fn(),
     retry: vi.fn(),
     create: vi.fn(),

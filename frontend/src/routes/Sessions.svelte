@@ -126,7 +126,7 @@
       mediaStore.removeMany(succeeded);
       selection.removeAll(succeeded);
       // Mark albums stale so cover and counts refresh on next visit.
-      albumsStore.loadInitial();
+      albumsStore.markStale();
     }
     const failed = result.failed ?? [];
     if (failed.length > 0) {

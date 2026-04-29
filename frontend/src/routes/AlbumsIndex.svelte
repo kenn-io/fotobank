@@ -26,6 +26,15 @@
     }
   });
 
+  // On every mount, check if the albums list was marked stale by a
+  // hide/unhide in another route. If so, refetch page 1 to update counts
+  // and covers. This is intentionally deferred to mount — we don't want
+  // an eager refetch from Library or HiddenLibrary polluting the network
+  // if the user never navigates to /albums.
+  $effect(() => {
+    void albumsStore.refreshIfStale();
+  });
+
   let sentinel: HTMLDivElement | null = $state(null);
   $effect(() => {
     if (!sentinel) return;

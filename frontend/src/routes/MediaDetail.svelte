@@ -189,7 +189,7 @@
     if (succeeded.length > 0) {
       mediaStore.removeMany(succeeded);
       // Mark albums stale so counts refresh on next visit.
-      albumsStore.loadInitial();
+      albumsStore.markStale();
       router.navigate("/library");
       return;
     }
@@ -221,7 +221,7 @@
       // lastRaw is now stale; clear it so the derived picks up from store.
       lastRaw = undefined;
       // Mark albums stale so counts refresh.
-      albumsStore.loadInitial();
+      albumsStore.markStale();
     }
     const failed = result.failed ?? [];
     if (failed.length > 0) {

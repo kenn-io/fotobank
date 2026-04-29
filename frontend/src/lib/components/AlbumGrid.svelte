@@ -26,7 +26,7 @@
       {/if}
       <div class="meta">
         <div class="name" title={a.name}>{a.name}</div>
-        <div class="count">{a.item_count} {a.item_count === 1 ? "photo" : "photos"}</div>
+        <div class="count">{a.item_count} {a.item_count === 1 ? "photo" : "photos"}{(a.hidden_count ?? 0) > 0 ? ` · ${a.hidden_count} hidden` : ""}</div>
       </div>
     </a>
   {/each}
