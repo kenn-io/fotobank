@@ -1,6 +1,7 @@
 <!-- frontend/src/routes/Library.svelte -->
 <script lang="ts">
   import VirtualGrid from "../lib/grid/VirtualGrid.svelte";
+  import GroupSelectButton from "../lib/components/GroupSelectButton.svelte";
   import type { MediaStore } from "../lib/media/mediaStore.svelte";
   import { DensityStore } from "../lib/density/densityStore.svelte";
   import DensityControl from "../lib/components/DensityControl.svelte";
@@ -20,7 +21,14 @@
   months={mediaStore.months}
   onLoadMore={() => mediaStore.loadMore()}
   targetRowHeight={density.targetRowHeight}
-/>
+>
+  {#snippet headerAction(month)}
+    <GroupSelectButton
+      ids={month.items.map((it) => it.id)}
+      label={month.key}
+    />
+  {/snippet}
+</VirtualGrid>
 
 {#if mediaStore.loading}
   <div style="padding:12px; color: var(--text-muted)">Loading…</div>
