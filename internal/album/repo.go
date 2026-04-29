@@ -476,7 +476,7 @@ func (r *Repo) ListMedia(
 	}
 
 	q := albumMediaMediaSelect +
-		" WHERE am.album_id = ?" +
+		" WHERE am.album_id = ? AND m.hidden_at IS NULL" +
 		" ORDER BY " + orderBy +
 		" LIMIT ? OFFSET ?"
 	rows, err := r.ro.QueryContext(ctx, q, albumID, limit, offset)

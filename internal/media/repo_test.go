@@ -979,3 +979,366 @@ func TestRepoGetSidecarsReturnsSortedByOriginalFilename(t *testing.T) {
 	r.NoError(err)
 	r.Empty(sidecars)
 }
+
+// --- F2.4 Hidden filtering and cascade tests ---
+
+// TestListExcludesHiddenByDefault verifies that List omits rows with
+// hidden_at set when IncludeHidden is false (the zero value).
+func TestListExcludesHiddenByDefault(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-hidden-list")
+
+	visible := baseMedia(uuid.NewString(), p)
+	visible.Path = "2024/vis.jpg"
+	visible.Checksum = "cs-vis"
+	r.NoError(repo.Insert(ctx, visible))
+
+	hiddenAt := time.Date(2026, 4, 29, 10, 0, 0, 0, time.UTC)
+	hidden := baseMedia(uuid.NewString(), p)
+	hidden.Path = "2024/hid.jpg"
+	hidden.Checksum = "cs-hid"
+	hidden.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, hidden))
+
+	got, err := repo.List(ctx, media.ListFilter{Owner: p})
+	r.NoError(err)
+	r.Len(got, 1)
+	r.Equal(visible.ID, got[0].ID)
+}
+
+// TestListIncludesHiddenWhenFlagSet verifies that IncludeHidden=true
+// surfaces both visible and hidden rows.
+func TestListIncludesHiddenWhenFlagSet(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-hidden-include")
+
+	visible := baseMedia(uuid.NewString(), p)
+	visible.Path = "2024/vis2.jpg"
+	visible.Checksum = "cs-vis2"
+	r.NoError(repo.Insert(ctx, visible))
+
+	hiddenAt := time.Date(2026, 4, 29, 10, 0, 0, 0, time.UTC)
+	hidden := baseMedia(uuid.NewString(), p)
+	hidden.Path = "2024/hid2.jpg"
+	hidden.Checksum = "cs-hid2"
+	hidden.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, hidden))
+
+	got, err := repo.List(ctx, media.ListFilter{Owner: p, IncludeHidden: true})
+	r.NoError(err)
+	r.Len(got, 2)
+}
+
+// TestGetByIDVisibleRejectsHiddenWhenIncludeFalse checks that
+// GetByIDVisible returns ErrNotFound for a hidden row when includeHidden=false.
+func TestGetByIDVisibleRejectsHiddenWhenIncludeFalse(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-getvis")
+
+	hiddenAt := time.Date(2026, 4, 29, 10, 0, 0, 0, time.UTC)
+	hidden := baseMedia(uuid.NewString(), p)
+	hidden.Path = "2024/hid3.jpg"
+	hidden.Checksum = "cs-hid3"
+	hidden.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, hidden))
+
+	_, err := repo.GetByIDVisible(ctx, hidden.ID, false)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+// TestGetByIDVisibleReturnsHiddenWhenIncludeTrue checks that
+// GetByIDVisible returns the row when includeHidden=true even if hidden.
+func TestGetByIDVisibleReturnsHiddenWhenIncludeTrue(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-getvis2")
+
+	hiddenAt := time.Date(2026, 4, 29, 10, 0, 0, 0, time.UTC)
+	hidden := baseMedia(uuid.NewString(), p)
+	hidden.Path = "2024/hid4.jpg"
+	hidden.Checksum = "cs-hid4"
+	hidden.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, hidden))
+
+	got, err := repo.GetByIDVisible(ctx, hidden.ID, true)
+	r.NoError(err)
+	r.Equal(hidden.ID, got.ID)
+}
+
+// TestGetByIDVisibleReturnsVisibleRow checks that GetByIDVisible works
+// for a normal visible row regardless of includeHidden.
+func TestGetByIDVisibleReturnsVisibleRow(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-getvis3")
+
+	visible := baseMedia(uuid.NewString(), p)
+	visible.Path = "2024/vis3.jpg"
+	visible.Checksum = "cs-vis3"
+	r.NoError(repo.Insert(ctx, visible))
+
+	got, err := repo.GetByIDVisible(ctx, visible.ID, false)
+	r.NoError(err)
+	r.Equal(visible.ID, got.ID)
+}
+
+// TestSetHiddenCascadeHidesPrimaryAndSidecar verifies that
+// SetHiddenCascade with only the primary id also flips the sidecar's hidden_at.
+func TestSetHiddenCascadeHidesPrimaryAndSidecar(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-cascade")
+
+	primary := baseMedia(uuid.NewString(), p)
+	primary.Path = "2024/p.jpg"
+	primary.Checksum = "cs-p"
+	r.NoError(repo.Insert(ctx, primary))
+
+	sidecar := baseMedia(uuid.NewString(), p)
+	sidecar.Path = "2024/p.dng"
+	sidecar.Checksum = "cs-p-dng"
+	sidecar.PairedWithID = &primary.ID
+	r.NoError(repo.Insert(ctx, sidecar))
+
+	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	r.NoError(repo.SetHiddenCascade(ctx, p, []string{primary.ID}, hiddenAt))
+
+	gotPrimary, err := repo.GetByID(ctx, primary.ID)
+	r.NoError(err)
+	r.NotNil(gotPrimary.HiddenAt, "primary must be hidden")
+	r.True(gotPrimary.HiddenAt.Equal(hiddenAt))
+
+	gotSidecar, err := repo.GetByID(ctx, sidecar.ID)
+	r.NoError(err)
+	r.NotNil(gotSidecar.HiddenAt, "sidecar must cascade-hidden with its primary")
+	r.True(gotSidecar.HiddenAt.Equal(hiddenAt))
+}
+
+// TestSetHiddenCascadeIsOwnerScoped ensures SetHiddenCascade does not
+// touch rows belonging to a different owner.
+func TestSetHiddenCascadeIsOwnerScoped(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	pA := testOwner()
+	pB := owners.Principal{Hub: "h", UserID: "other"}
+	seedOwner(t, d.WriteDB(), pA, "sk-ca")
+	seedOwner(t, d.WriteDB(), pB, "sk-cb")
+
+	mA := baseMedia(uuid.NewString(), pA)
+	mA.Path = "2024/a.jpg"
+	mA.Checksum = "cs-a"
+	r.NoError(repo.Insert(ctx, mA))
+
+	mB := baseMedia(uuid.NewString(), pB)
+	mB.Path = "2024/b.jpg"
+	mB.Checksum = "cs-b"
+	r.NoError(repo.Insert(ctx, mB))
+
+	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	// Pass pB's id but scope the update to pA — must not affect mB.
+	r.NoError(repo.SetHiddenCascade(ctx, pA, []string{mB.ID}, hiddenAt))
+
+	gotB, err := repo.GetByID(ctx, mB.ID)
+	r.NoError(err)
+	r.Nil(gotB.HiddenAt, "other owner's row must not be touched")
+}
+
+// TestClearHiddenCascadeClearsAndCascades verifies ClearHiddenCascade
+// resets hidden_at on both primary and its sidecar.
+func TestClearHiddenCascadeClearsAndCascades(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-clear-cascade")
+
+	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	primary := baseMedia(uuid.NewString(), p)
+	primary.Path = "2024/q.jpg"
+	primary.Checksum = "cs-q"
+	primary.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, primary))
+
+	sidecar := baseMedia(uuid.NewString(), p)
+	sidecar.Path = "2024/q.dng"
+	sidecar.Checksum = "cs-q-dng"
+	sidecar.PairedWithID = &primary.ID
+	sidecar.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, sidecar))
+
+	r.NoError(repo.ClearHiddenCascade(ctx, p, []string{primary.ID}))
+
+	gotPrimary, err := repo.GetByID(ctx, primary.ID)
+	r.NoError(err)
+	r.Nil(gotPrimary.HiddenAt, "primary hidden_at must be cleared")
+
+	gotSidecar, err := repo.GetByID(ctx, sidecar.ID)
+	r.NoError(err)
+	r.Nil(gotSidecar.HiddenAt, "sidecar hidden_at must cascade-clear")
+}
+
+// TestClearAllHiddenForOwnerClearsOnlyThatOwner verifies that
+// ClearAllHiddenForOwner resets all hidden rows for one owner and leaves
+// another owner's rows untouched.
+func TestClearAllHiddenForOwnerClearsOnlyThatOwner(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	pA := testOwner()
+	pB := owners.Principal{Hub: "h", UserID: "other2"}
+	seedOwner(t, d.WriteDB(), pA, "sk-clrA")
+	seedOwner(t, d.WriteDB(), pB, "sk-clrB")
+
+	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+
+	mA := baseMedia(uuid.NewString(), pA)
+	mA.Path = "2024/a2.jpg"
+	mA.Checksum = "cs-a2"
+	mA.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, mA))
+
+	mB := baseMedia(uuid.NewString(), pB)
+	mB.Path = "2024/b2.jpg"
+	mB.Checksum = "cs-b2"
+	mB.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, mB))
+
+	r.NoError(repo.ClearAllHiddenForOwner(ctx, pA))
+
+	gotA, err := repo.GetByID(ctx, mA.ID)
+	r.NoError(err)
+	r.Nil(gotA.HiddenAt, "owner A row must be cleared")
+
+	gotB, err := repo.GetByID(ctx, mB.ID)
+	r.NoError(err)
+	r.NotNil(gotB.HiddenAt, "owner B row must not be touched")
+}
+
+// TestListHiddenReturnsPrimaryAndStandaloneOnly verifies that ListHidden
+// returns hidden primaries and standalones but NOT sidecars as separate rows.
+func TestListHiddenReturnsPrimaryAndStandaloneOnly(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-listhidden")
+
+	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+
+	primary := baseMedia(uuid.NewString(), p)
+	primary.Path = "2024/r.jpg"
+	primary.Checksum = "cs-r"
+	primary.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, primary))
+
+	sidecar := baseMedia(uuid.NewString(), p)
+	sidecar.Path = "2024/r.dng"
+	sidecar.Checksum = "cs-r-dng"
+	sidecar.PairedWithID = &primary.ID
+	sidecar.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, sidecar))
+
+	standalone := baseMedia(uuid.NewString(), p)
+	standalone.Path = "2024/s.jpg"
+	standalone.Checksum = "cs-s"
+	standalone.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, standalone))
+
+	// A visible row that must not appear.
+	visible := baseMedia(uuid.NewString(), p)
+	visible.Path = "2024/vis4.jpg"
+	visible.Checksum = "cs-vis4"
+	r.NoError(repo.Insert(ctx, visible))
+
+	got, err := repo.ListHidden(ctx, p, 100, 0)
+	r.NoError(err)
+	// Should contain primary + standalone only; sidecar suppressed.
+	r.Len(got, 2)
+	ids := map[string]bool{}
+	for _, m := range got {
+		ids[m.ID] = true
+	}
+	r.True(ids[primary.ID], "primary must appear")
+	r.True(ids[standalone.ID], "standalone must appear")
+	r.False(ids[sidecar.ID], "sidecar must not appear as a separate row")
+}
+
+// TestListHiddenSortOrder verifies the sort: timestamp IS NULL ASC,
+// timestamp DESC, imported_at DESC, id DESC.
+func TestListHiddenSortOrder(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-listhidden-sort")
+
+	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	base := time.Now().UTC().Truncate(time.Second)
+
+	ts1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	ts2 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	// Row with no timestamp (nulls last in IS NULL ASC means they come after non-null).
+	// Wait — plan says "timestamp IS NULL ASC" which means NULL comes first (IS NULL=1>0).
+	// Actually: timestamp IS NULL → 1 when NULL, 0 when not NULL.
+	// ASC on that means rows where IS NULL=0 (non-null) come first, IS NULL=1 (null) last.
+	// So: has-timestamp rows sorted by timestamp DESC, then null-timestamp rows.
+	withTS1 := baseMedia(uuid.NewString(), p)
+	withTS1.Path = "2024/w1.jpg"
+	withTS1.Checksum = "cs-w1"
+	withTS1.Timestamp = &ts1
+	withTS1.ImportedAt = base
+	withTS1.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, withTS1))
+
+	withTS2 := baseMedia(uuid.NewString(), p)
+	withTS2.Path = "2024/w2.jpg"
+	withTS2.Checksum = "cs-w2"
+	withTS2.Timestamp = &ts2
+	withTS2.ImportedAt = base
+	withTS2.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, withTS2))
+
+	noTS := baseMedia(uuid.NewString(), p)
+	noTS.Path = "2024/n.jpg"
+	noTS.Checksum = "cs-n"
+	noTS.ImportedAt = base
+	noTS.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, noTS))
+
+	got, err := repo.ListHidden(ctx, p, 100, 0)
+	r.NoError(err)
+	r.Len(got, 3)
+	// timestamp IS NULL ASC: non-null first (0 < 1), then null
+	// Among non-null: timestamp DESC → ts2 (2025) before ts1 (2024)
+	r.Equal(withTS2.ID, got[0].ID, "highest timestamp first")
+	r.Equal(withTS1.ID, got[1].ID, "second timestamp")
+	r.Equal(noTS.ID, got[2].ID, "null timestamp last")
+}

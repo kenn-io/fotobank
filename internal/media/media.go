@@ -83,4 +83,9 @@ type ListFilter struct {
 	// Internal callers (pairing pass, backfill, reconcile) may set
 	// true.
 	IncludeSidecars bool
+	// F2.4 Hidden privacy. When false (default), List appends
+	// hidden_at IS NULL to the WHERE clause. Set true only by
+	// internal callers that explicitly need hidden rows (e.g.
+	// the hidden-management service layer).
+	IncludeHidden bool
 }

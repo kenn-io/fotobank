@@ -823,3 +823,45 @@ INSERT INTO media (
 	r.True(got[0].GPSAt.Equal(gps), "got %v", got[0].GPSAt)
 	r.Equal("Paris, Île-de-France, France", got[0].LocationLabel)
 }
+
+// TestRepoListMediaExcludesHiddenRows verifies that ListMedia on an album
+// only returns rows whose hidden_at IS NULL, even when the album_media
+// row still references the hidden media.
+func TestRepoListMediaExcludesHiddenRows(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk-hidden-album")
+	a := seedAlbum(t, repo, p, "Mixed")
+
+	visibleID := uuid.NewString()
+	hiddenID := uuid.NewString()
+	seedMediaRow(t, d.WriteDB(), p, visibleID, "cs-vis-alb", "ready", 1)
+
+	// Insert the hidden media row directly with hidden_at set.
+	now := time.Now().UTC()
+	hiddenAt := now.Add(-time.Hour)
+	_, err := d.WriteDB().ExecContext(context.Background(), `
+INSERT INTO media (
+    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
+    imported_at, timestamp, size, checksum,
+    make, model, focal_length, shutter, width, height, iso, aperture,
+    duration_ms,
+    thumb_status, thumb_version, thumb_updated_at, hidden_at
+) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+          'ready', 1, NULL, ?)`,
+		hiddenID, p.Hub, p.UserID, "p/"+hiddenID, now, "cs-hid-alb", hiddenAt,
+	)
+	r.NoError(err)
+
+	base := time.Now().UTC()
+	seedAlbumMedia(t, d.WriteDB(), a.ID, visibleID, base)
+	seedAlbumMedia(t, d.WriteDB(), a.ID, hiddenID, base.Add(time.Second))
+
+	got, err := repo.ListMedia(context.Background(), a.ID, album.AlbumMediaFilter{SortBy: "added"})
+	r.NoError(err)
+	r.Len(got, 1, "only visible row should appear")
+	r.Equal(visibleID, got[0].ID)
+}

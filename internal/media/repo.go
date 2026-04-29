@@ -258,6 +258,9 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Media, error) {
 	if !f.IncludeSidecars {
 		conds = append(conds, "paired_with_id IS NULL")
 	}
+	if !f.IncludeHidden {
+		conds = append(conds, "hidden_at IS NULL")
+	}
 	if f.Type != nil {
 		conds = append(conds, "media_type = ?")
 		args = append(args, string(*f.Type))
@@ -776,6 +779,148 @@ ORDER BY COALESCE(original_filename, '') ASC, id ASC`
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate media: %w", err)
+	}
+	return out, nil
+}
+
+// GetByIDVisible returns the media row with the given id. If
+// includeHidden is false and the row has hidden_at set, it returns
+// errs.ErrNotFound as if the row did not exist. When includeHidden is
+// true the behaviour is identical to GetByID.
+func (r *Repo) GetByIDVisible(ctx context.Context, id string, includeHidden bool) (Media, error) {
+	m, err := r.GetByID(ctx, id)
+	if err != nil {
+		return Media{}, err
+	}
+	if !includeHidden && m.HiddenAt != nil {
+		return Media{}, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, id)
+	}
+	return m, nil
+}
+
+// inPlaceholders returns a string of n comma-separated "?" placeholders.
+func inPlaceholders(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return strings.Repeat("?,", n)[:n*2-1]
+}
+
+// SetHiddenCascade sets hidden_at = at on every row owned by owner
+// whose id IN ids OR paired_with_id IN ids. Owner-scoped; runs in a
+// single transaction.
+func (r *Repo) SetHiddenCascade(
+	ctx context.Context,
+	owner owners.Principal,
+	ids []string,
+	at time.Time,
+) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	ph := inPlaceholders(len(ids))
+	args := make([]any, 0, 2+len(ids)*2)
+	args = append(args, at, owner.Hub, owner.UserID)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	q := `UPDATE media
+	   SET hidden_at = ?
+	 WHERE owner_hub = ? AND owner_user_id = ?
+	   AND (id IN (` + ph + `) OR paired_with_id IN (` + ph + `))`
+	if _, err := r.rw.ExecContext(ctx, q, args...); err != nil {
+		return fmt.Errorf("set hidden cascade: %w", err)
+	}
+	return nil
+}
+
+// ClearHiddenCascade sets hidden_at = NULL on every row owned by owner
+// whose id IN ids OR paired_with_id IN ids. Owner-scoped; runs in a
+// single transaction.
+func (r *Repo) ClearHiddenCascade(
+	ctx context.Context,
+	owner owners.Principal,
+	ids []string,
+) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	ph := inPlaceholders(len(ids))
+	args := make([]any, 0, 2+len(ids)*2)
+	args = append(args, owner.Hub, owner.UserID)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	q := `UPDATE media
+	   SET hidden_at = NULL
+	 WHERE owner_hub = ? AND owner_user_id = ?
+	   AND (id IN (` + ph + `) OR paired_with_id IN (` + ph + `))`
+	if _, err := r.rw.ExecContext(ctx, q, args...); err != nil {
+		return fmt.Errorf("clear hidden cascade: %w", err)
+	}
+	return nil
+}
+
+// ClearAllHiddenForOwner sets hidden_at = NULL on every row the owner
+// owns where hidden_at IS NOT NULL. Used by hidden.Service.Disable to
+// make all media visible again after the hidden feature is disabled.
+func (r *Repo) ClearAllHiddenForOwner(ctx context.Context, owner owners.Principal) error {
+	q := `UPDATE media
+	   SET hidden_at = NULL
+	 WHERE owner_hub = ? AND owner_user_id = ?
+	   AND hidden_at IS NOT NULL`
+	if _, err := r.rw.ExecContext(ctx, q, owner.Hub, owner.UserID); err != nil {
+		return fmt.Errorf("clear all hidden for owner: %w", err)
+	}
+	return nil
+}
+
+// ListHidden returns primary and standalone hidden rows for owner,
+// paginated by limit/offset. Sidecars (paired_with_id IS NOT NULL) are
+// suppressed — they cascade with their primary so surfacing them
+// separately would be redundant.
+//
+// Sort order: timestamp IS NULL ASC, timestamp DESC, imported_at DESC,
+// id DESC. Rows with a timestamp sort before null-timestamp rows;
+// among rows with a timestamp the most recent appears first.
+func (r *Repo) ListHidden(
+	ctx context.Context,
+	owner owners.Principal,
+	limit, offset int,
+) ([]Media, error) {
+	if limit <= 0 {
+		limit = defaultListLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	q := mediaSelect + `
+ WHERE owner_hub = ? AND owner_user_id = ?
+   AND hidden_at IS NOT NULL
+   AND paired_with_id IS NULL
+ ORDER BY timestamp IS NULL ASC, timestamp DESC, imported_at DESC, id DESC
+ LIMIT ? OFFSET ?`
+	rows, err := r.ro.QueryContext(ctx, q, owner.Hub, owner.UserID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list hidden: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Media
+	for rows.Next() {
+		m, err := scanMedia(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan hidden: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate hidden: %w", err)
 	}
 	return out, nil
 }
