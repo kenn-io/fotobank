@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -107,18 +108,21 @@ func (s *MediaService) UpdateGPS(
 // errs.ErrNotFound on caller mismatch — so a caller that does not own
 // the primary cannot enumerate its sidecars. The optional includeHidden
 // variadic matches Get's convention so callers with the unlock claim can
-// retrieve sidecars of hidden primaries. Returns an empty slice (not an
-// error) when the primary has no sidecars.
+// retrieve sidecars of hidden primaries. Hidden sidecars are only
+// returned when includeHidden is true, matching the primary's visibility
+// gate. Returns an empty slice (not an error) when the primary has no
+// sidecars.
 func (s *MediaService) GetSidecars(
 	ctx context.Context,
 	primaryID string,
 	caller owners.Principal,
 	includeHidden ...bool,
 ) ([]media.Media, error) {
+	wantHidden := len(includeHidden) > 0 && includeHidden[0]
 	if _, err := s.Get(ctx, primaryID, caller, includeHidden...); err != nil {
 		return nil, err
 	}
-	return s.repo.GetSidecars(ctx, primaryID)
+	return s.repo.GetSidecars(ctx, primaryID, wantHidden)
 }
 
 // OpenOriginal resolves the media row, enforces the owner check, and
@@ -192,6 +196,11 @@ func (s *MediaService) bulkHideOp(
 		// status regardless of current visibility.
 		m, err := s.repo.GetByID(ctx, id)
 		if err != nil {
+			if !errors.Is(err, errs.ErrNotFound) {
+				// Unexpected DB error — fail fast rather than silently treating
+				// it as "not found" which would produce a partial-success lie.
+				return result, fmt.Errorf("bulk hide op: fetch id=%s: %w", id, err)
+			}
 			result.Failed = append(result.Failed, HiddenBulkFailure{ID: id, Code: "not_found"})
 			continue
 		}

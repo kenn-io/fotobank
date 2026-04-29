@@ -963,7 +963,7 @@ func TestRepoGetSidecarsReturnsSortedByOriginalFilename(t *testing.T) {
 		r.NoError(repo.Insert(ctx, s))
 	}
 
-	sidecars, err := repo.GetSidecars(ctx, primary.ID)
+	sidecars, err := repo.GetSidecars(ctx, primary.ID, false)
 	r.NoError(err)
 	r.Len(sidecars, 2)
 	r.Equal("A.dng", sidecars[0].OriginalFilename)
@@ -975,7 +975,7 @@ func TestRepoGetSidecarsReturnsSortedByOriginalFilename(t *testing.T) {
 	lone.Path = "2024/lone.jpg"
 	lone.Checksum = "cs-lone"
 	r.NoError(repo.Insert(ctx, lone))
-	sidecars, err = repo.GetSidecars(ctx, loneID)
+	sidecars, err = repo.GetSidecars(ctx, loneID, false)
 	r.NoError(err)
 	r.Empty(sidecars)
 }
@@ -1397,4 +1397,79 @@ func TestSetHiddenCascadeChunksLargeIDList(t *testing.T) {
 		r.NoError(err)
 		r.Nil(got.HiddenAt, "real[%d] must be visible after ClearHiddenCascade", i)
 	}
+}
+
+// TestMediaListAllReturnsHiddenRows verifies that ListAll includes hidden
+// rows (IncludeHidden=true) so reconcile and pairing backfill see every
+// row regardless of hidden status.
+func TestMediaListAllReturnsHiddenRows(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-listall-hidden")
+
+	visible := baseMedia(uuid.NewString(), p)
+	visible.Path = "2024/la-vis.jpg"
+	visible.Checksum = "cs-la-vis"
+	r.NoError(repo.Insert(ctx, visible))
+
+	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	hidden := baseMedia(uuid.NewString(), p)
+	hidden.Path = "2024/la-hid.jpg"
+	hidden.Checksum = "cs-la-hid"
+	hidden.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, hidden))
+
+	rows, err := repo.ListAll(ctx, p)
+	r.NoError(err)
+	r.Len(rows, 2, "ListAll must return both visible and hidden rows")
+	ids := make(map[string]struct{}, 2)
+	for _, m := range rows {
+		ids[m.ID] = struct{}{}
+	}
+	r.Contains(ids, visible.ID, "visible row must be present in ListAll")
+	r.Contains(ids, hidden.ID, "hidden row must be present in ListAll")
+}
+
+// TestGetSidecarsFiltersHiddenWhenIncludeFalse verifies that a hidden
+// sidecar under a visible primary does not leak when includeHidden=false.
+func TestGetSidecarsFiltersHiddenWhenIncludeFalse(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-sidecars-hidden")
+
+	primary := baseMedia(uuid.NewString(), p)
+	primary.Path = "2024/sc-primary.jpg"
+	primary.Checksum = "cs-sc-primary"
+	r.NoError(repo.Insert(ctx, primary))
+
+	visible := baseMedia(uuid.NewString(), p)
+	visible.Path = "2024/sc-visible.dng"
+	visible.Checksum = "cs-sc-vis"
+	visible.PairedWithID = &primary.ID
+	r.NoError(repo.Insert(ctx, visible))
+
+	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	hiddenSidecar := baseMedia(uuid.NewString(), p)
+	hiddenSidecar.Path = "2024/sc-hidden.dng"
+	hiddenSidecar.Checksum = "cs-sc-hid"
+	hiddenSidecar.PairedWithID = &primary.ID
+	hiddenSidecar.HiddenAt = &hiddenAt
+	r.NoError(repo.Insert(ctx, hiddenSidecar))
+
+	// Without includeHidden the hidden sidecar must be absent.
+	got, err := repo.GetSidecars(ctx, primary.ID, false)
+	r.NoError(err)
+	r.Len(got, 1, "only the visible sidecar should be returned when includeHidden=false")
+	r.Equal(visible.ID, got[0].ID)
+
+	// With includeHidden both sidecars are returned.
+	gotAll, err := repo.GetSidecars(ctx, primary.ID, true)
+	r.NoError(err)
+	r.Len(gotAll, 2, "both sidecars should be returned when includeHidden=true")
 }

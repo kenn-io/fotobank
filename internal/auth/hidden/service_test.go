@@ -501,3 +501,40 @@ func TestLockMalformedTokenIsNoop(t *testing.T) {
 	// "!!!" is not valid base64url.
 	require.NoError(t, svc.Lock(context.Background(), "!!!"))
 }
+
+// --- Setup fast-path ---
+
+// TestSetupFastPathShortCircuitsOnExistingCredential verifies that a second
+// Setup call returns ErrAlreadyExists via the cheap GetCredential fast-path
+// (before HashPasscode). Functional proof: the duplicate returns the correct
+// sentinel without needing to hash anything.
+func TestSetupFastPathShortCircuitsOnExistingCredential(t *testing.T) {
+	r := require.New(t)
+	svc, _, _, p := newTestServiceWithOwner(t)
+
+	r.NoError(svc.Setup(context.Background(), p, "passcode1"))
+
+	// Second Setup must fail with ErrAlreadyExists (caught by fast-path).
+	err := svc.Setup(context.Background(), p, "passcode2")
+	r.ErrorIs(err, errs.ErrAlreadyExists)
+}
+
+// TestSetupDBErrorOnExistenceCheckIsReturned verifies that a transient DB
+// error during the GetCredential fast-path is propagated to the caller
+// rather than swallowed. This prevents Setup from proceeding when the
+// existence check is uncertain.
+func TestSetupDBErrorOnExistenceCheckIsReturned(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
+	mp := &fakeMediaPrivacy{}
+	svc := hidden.NewService(repo, mp)
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk")
+
+	// Close the read pool so GetCredential hits a non-NotFound DB error.
+	r.NoError(d.ReadDB().Close())
+
+	err := svc.Setup(context.Background(), p, "passcode")
+	r.Error(err, "must return error when existence check fails")
+}

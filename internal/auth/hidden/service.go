@@ -63,13 +63,26 @@ func (s *Service) SetLockoutForTest(window, duration time.Duration, threshold in
 func (s *Service) SetRandForTest(r io.Reader) { s.rand = r }
 
 // Setup stores a new passcode hash for principal. Returns ErrAlreadyExists if
-// a credential already exists. Uses InsertCredential (insert-only with
-// conflict mapping) instead of check-then-upsert so two concurrent Setup
-// calls cannot race past a "no credential" snapshot and have the later
-// one silently overwrite the earlier passcode.
+// a credential already exists.
+//
+// The cheap GetCredential fast-path runs before the expensive HashPasscode so
+// a duplicate-Setup hammer cannot force Argon2id work. A concurrent Setup that
+// races past the fast-path is caught by InsertCredential's unique-conflict
+// mapping, which is the authoritative guard.
 func (s *Service) Setup(ctx context.Context, principal owners.Principal, passcode string) error {
 	if err := ValidatePasscode(passcode); err != nil {
 		return fmt.Errorf("setup hidden: %w", err)
+	}
+	// Fast-path: short-circuit before the expensive Argon2id hash when a
+	// credential already exists. A non-NotFound error (transient DB failure)
+	// is returned to the caller rather than swallowed, so Setup never
+	// silently proceeds when the existence check is uncertain.
+	if _, err := s.repo.GetCredential(ctx, principal); err == nil {
+		slog.InfoContext(ctx, "auth.hidden.setup",
+			"principal", principal.String(), "outcome", "already_exists")
+		return fmt.Errorf("setup hidden: %w", errs.ErrAlreadyExists)
+	} else if !errors.Is(err, errs.ErrNotFound) {
+		return fmt.Errorf("setup hidden: check existing: %w", err)
 	}
 	hash, err := HashPasscode(passcode)
 	if err != nil {

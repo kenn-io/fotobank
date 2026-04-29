@@ -314,8 +314,8 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Media, error) {
 // ListAll returns every media row for owner, paging through the database
 // in batches of defaultListLimit. It is intended for bulk operations such
 // as reconcile; user-facing queries should use List with an explicit Limit.
-// IncludeSidecars is set internally so reconcile and other bulk callers
-// see every row regardless of pair status.
+// IncludeSidecars and IncludeHidden are both set so reconcile and pairing
+// backfill callers see every row regardless of pair or hidden status.
 func (r *Repo) ListAll(ctx context.Context, owner owners.Principal) ([]Media, error) {
 	var out []Media
 	offset := 0
@@ -325,6 +325,7 @@ func (r *Repo) ListAll(ctx context.Context, owner owners.Principal) ([]Media, er
 			Limit:           defaultListLimit,
 			Offset:          offset,
 			IncludeSidecars: true, // reconcile + bulk callers see every row
+			IncludeHidden:   true, // hidden rows must not be invisible to bulk ops
 		})
 		if err != nil {
 			return nil, err
@@ -757,12 +758,20 @@ func (r *Repo) UpdatePairedWithID(
 // a primary's DTO. Returns an empty slice when the primary has no
 // sidecars; never returns errs.ErrNotFound for that case (an empty
 // list is the legitimate result, not an error).
+//
+// When includeHidden is false, rows whose hidden_at IS NOT NULL are
+// excluded — a hidden sidecar under a visible primary must not leak.
 func (r *Repo) GetSidecars(
 	ctx context.Context,
 	primaryID string,
+	includeHidden bool,
 ) ([]Media, error) {
 	q := mediaSelect + `
-WHERE paired_with_id = ?
+WHERE paired_with_id = ?`
+	if !includeHidden {
+		q += ` AND hidden_at IS NULL`
+	}
+	q += `
 ORDER BY COALESCE(original_filename, '') ASC, id ASC`
 	rows, err := r.ro.QueryContext(ctx, q, primaryID)
 	if err != nil {
@@ -809,7 +818,8 @@ func inPlaceholders(n int) string {
 // SetHiddenCascade sets hidden_at = at on every owned row whose id IS in
 // ids OR paired_with_id IS in ids. Sidecars cascade with their primary.
 // Large id slices are chunked transparently to stay under the SQLite
-// parameter limit.
+// parameter limit. All chunks run inside a single transaction so a
+// mid-chunk failure leaves no partial state.
 func (r *Repo) SetHiddenCascade(
 	ctx context.Context,
 	owner owners.Principal,
@@ -819,6 +829,12 @@ func (r *Repo) SetHiddenCascade(
 	if len(ids) == 0 {
 		return nil
 	}
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set hidden cascade: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	const chunkSize = 250
 	for start := 0; start < len(ids); start += chunkSize {
 		end := min(start+chunkSize, len(ids))
@@ -836,17 +852,18 @@ func (r *Repo) SetHiddenCascade(
 		   SET hidden_at = ?
 		 WHERE owner_hub = ? AND owner_user_id = ?
 		   AND (id IN (` + ph + `) OR paired_with_id IN (` + ph + `))`
-		if _, err := r.rw.ExecContext(ctx, q, args...); err != nil {
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
 			return fmt.Errorf("set hidden cascade: %w", err)
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ClearHiddenCascade clears hidden_at on every owned row whose id IS in
 // ids OR paired_with_id IS in ids. Sidecars cascade with their primary.
 // Large id slices are chunked transparently to stay under the SQLite
-// parameter limit.
+// parameter limit. All chunks run inside a single transaction so a
+// mid-chunk failure leaves no partial state.
 func (r *Repo) ClearHiddenCascade(
 	ctx context.Context,
 	owner owners.Principal,
@@ -855,6 +872,12 @@ func (r *Repo) ClearHiddenCascade(
 	if len(ids) == 0 {
 		return nil
 	}
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("clear hidden cascade: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	const chunkSize = 250
 	for start := 0; start < len(ids); start += chunkSize {
 		end := min(start+chunkSize, len(ids))
@@ -872,11 +895,11 @@ func (r *Repo) ClearHiddenCascade(
 		   SET hidden_at = NULL
 		 WHERE owner_hub = ? AND owner_user_id = ?
 		   AND (id IN (` + ph + `) OR paired_with_id IN (` + ph + `))`
-		if _, err := r.rw.ExecContext(ctx, q, args...); err != nil {
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
 			return fmt.Errorf("clear hidden cascade: %w", err)
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ClearAllHiddenForOwner sets hidden_at = NULL on every row the owner
