@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import MonthChunk from "./MonthChunk.svelte";
   import type { MediaLite } from "./monthChunkLayout";
   import StickyMonthBar from "../components/StickyMonthBar.svelte";
@@ -8,10 +9,17 @@
   import MediaCell from "./MediaCell.svelte";
   import { router } from "../router/router.svelte";
 
-  let { months, onLoadMore, targetRowHeight = 200 }: {
+  // timelineChrome=false drops the sticky month bar, year scrubber,
+  // and per-chunk day-header — the "flat" mode used by AlbumDetail
+  // where dates aren't a meaningful axis. headerAction forwards a
+  // per-month snippet (e.g. Task 7's GroupSelectButton) into each
+  // MonthChunk's day-header in timeline mode.
+  let { months, onLoadMore, targetRowHeight = 200, timelineChrome = true, headerAction }: {
     months: Month[];
     onLoadMore?: () => void;
     targetRowHeight?: number;
+    timelineChrome?: boolean;
+    headerAction?: Snippet<[Month]>;
   } = $props();
 
   let containerEl: HTMLDivElement | null = $state(null);
@@ -119,23 +127,67 @@
 </script>
 
 <div bind:this={containerEl} class="grid">
-  <StickyMonthBar label={activeMonth} />
-  <YearScrubber {months} onJump={jumpTo} />
+  {#if timelineChrome}
+    <StickyMonthBar label={activeMonth} />
+    <YearScrubber {months} onJump={jumpTo} />
+  {/if}
   {#each months as month (month.key)}
     <div data-month={month.key}>
-      <MonthChunk
-        items={toLite(month.items)}
-        label={month.key}
-        options={{ containerWidth, targetRowHeight, gap: 4 }}
-      >
-        {#snippet renderCell(m)}
-          <MediaCell
-            media={m}
-            selected={selection.ids.has(m.id)}
-            onCellClick={(e) => handleCellClick(e, m.id)}
-          />
-        {/snippet}
-      </MonthChunk>
+      {#if timelineChrome}
+        {#if headerAction}
+          <!-- Capture the prop into a non-shadowed local; inside the
+               `{#snippet headerAction()}` body, the name `headerAction`
+               binds to the snippet itself, not the prop. -->
+          {@const action = headerAction}
+          <MonthChunk
+            items={toLite(month.items)}
+            label={month.key}
+            options={{ containerWidth, targetRowHeight, gap: 4 }}
+          >
+            {#snippet headerAction()}
+              {@render action(month)}
+            {/snippet}
+            {#snippet renderCell(m)}
+              <MediaCell
+                media={m}
+                selected={selection.ids.has(m.id)}
+                onCellClick={(e) => handleCellClick(e, m.id)}
+              />
+            {/snippet}
+          </MonthChunk>
+        {:else}
+          <MonthChunk
+            items={toLite(month.items)}
+            label={month.key}
+            options={{ containerWidth, targetRowHeight, gap: 4 }}
+          >
+            {#snippet renderCell(m)}
+              <MediaCell
+                media={m}
+                selected={selection.ids.has(m.id)}
+                onCellClick={(e) => handleCellClick(e, m.id)}
+              />
+            {/snippet}
+          </MonthChunk>
+        {/if}
+      {:else}
+        <!-- Flat mode: omit `label` entirely (exactOptionalPropertyTypes
+             rejects label={undefined}) so MonthChunk skips the
+             day-header altogether, and don't forward headerAction
+             since there's no header to mount it on. -->
+        <MonthChunk
+          items={toLite(month.items)}
+          options={{ containerWidth, targetRowHeight, gap: 4 }}
+        >
+          {#snippet renderCell(m)}
+            <MediaCell
+              media={m}
+              selected={selection.ids.has(m.id)}
+              onCellClick={(e) => handleCellClick(e, m.id)}
+            />
+          {/snippet}
+        </MonthChunk>
+      {/if}
     </div>
   {/each}
   <div bind:this={sentinel} style="height:1px"></div>
