@@ -57,4 +57,167 @@ describe("MediaActions", () => {
     expect(queryByRole("button", { name: "Add to album" })).toBeNull();
     expect(queryByRole("button", { name: "Share" })).toBeNull();
   });
+
+  // --- Hide/Unhide button matrix ---
+
+  it("shows Hide button in library context when hiddenConfigured=true", () => {
+    const { getByRole, queryByRole } = render(MediaActions, {
+      props: {
+        mediaIds: ["m1"],
+        context: "library",
+        hiddenConfigured: true,
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+        onHide: vi.fn(),
+      },
+    });
+    expect(getByRole("button", { name: "Hide" })).not.toBeNull();
+    expect(queryByRole("button", { name: "Unhide" })).toBeNull();
+    expect(queryByRole("button", { name: "Share" })).not.toBeNull();
+  });
+
+  it("shows Hide button in session context when hiddenConfigured=true", () => {
+    const { getByRole } = render(MediaActions, {
+      props: {
+        mediaIds: ["m1"],
+        context: "session",
+        hiddenConfigured: true,
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+        onHide: vi.fn(),
+      },
+    });
+    expect(getByRole("button", { name: "Hide" })).not.toBeNull();
+  });
+
+  it("shows Hide button in album context when hiddenConfigured=true", () => {
+    const { getByRole } = render(MediaActions, {
+      props: {
+        mediaIds: ["m1"],
+        context: "album",
+        albumId: "a1",
+        hiddenConfigured: true,
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+        onHide: vi.fn(),
+      },
+    });
+    expect(getByRole("button", { name: "Hide" })).not.toBeNull();
+  });
+
+  it("shows Hide button in media-detail context when not hidden and hiddenConfigured=true", () => {
+    const { getByRole } = render(MediaActions, {
+      props: {
+        mediaIds: ["m1"],
+        context: "media-detail",
+        hiddenConfigured: true,
+        isHidden: false,
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+        onHide: vi.fn(),
+      },
+    });
+    expect(getByRole("button", { name: "Hide" })).not.toBeNull();
+  });
+
+  it("does NOT show Hide button when hiddenConfigured=false", () => {
+    const { queryByRole } = render(MediaActions, {
+      props: {
+        mediaIds: ["m1"],
+        context: "library",
+        hiddenConfigured: false,
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+      },
+    });
+    expect(queryByRole("button", { name: "Hide" })).toBeNull();
+  });
+
+  it("does NOT show Hide button when hiddenConfigured not set", () => {
+    const { queryByRole } = render(MediaActions, {
+      props: {
+        mediaIds: ["m1"],
+        context: "library",
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+      },
+    });
+    expect(queryByRole("button", { name: "Hide" })).toBeNull();
+  });
+
+  it("hidden context: shows Unhide and Add, no Share, no Hide", () => {
+    const { getByRole, queryByRole } = render(MediaActions, {
+      props: {
+        mediaIds: ["m1"],
+        context: "hidden",
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+        onUnhide: vi.fn(),
+      },
+    });
+    expect(getByRole("button", { name: "Unhide" })).not.toBeNull();
+    expect(getByRole("button", { name: "Add to album" })).not.toBeNull();
+    expect(queryByRole("button", { name: "Share" })).toBeNull();
+    expect(queryByRole("button", { name: "Hide" })).toBeNull();
+  });
+
+  it("media-detail hidden: shows Unhide and Add, no Share, no Hide", () => {
+    const { getByRole, queryByRole } = render(MediaActions, {
+      props: {
+        mediaIds: ["m1"],
+        context: "media-detail",
+        isHidden: true,
+        hiddenConfigured: true,
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+        onUnhide: vi.fn(),
+      },
+    });
+    expect(getByRole("button", { name: "Unhide" })).not.toBeNull();
+    expect(getByRole("button", { name: "Add to album" })).not.toBeNull();
+    expect(queryByRole("button", { name: "Share" })).toBeNull();
+    expect(queryByRole("button", { name: "Hide" })).toBeNull();
+  });
+
+  it("clicking Hide invokes onHide with mediaIds", async () => {
+    const onHide = vi.fn();
+    const { getByRole } = render(MediaActions, {
+      props: {
+        mediaIds: ["m1"],
+        context: "library",
+        hiddenConfigured: true,
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+        onHide,
+      },
+    });
+    await fireEvent.click(getByRole("button", { name: "Hide" }));
+    expect(onHide).toHaveBeenCalledWith(["m1"]);
+  });
+
+  it("clicking Unhide invokes onUnhide with mediaIds", async () => {
+    const onUnhide = vi.fn();
+    const { getByRole } = render(MediaActions, {
+      props: {
+        mediaIds: ["m1"],
+        context: "hidden",
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+        onUnhide,
+      },
+    });
+    await fireEvent.click(getByRole("button", { name: "Unhide" }));
+    expect(onUnhide).toHaveBeenCalledWith(["m1"]);
+  });
+
+  // Backwards-compat: no context prop behaves like library (no hide)
+  it("no context prop: backward-compatible, shows Add and Share", () => {
+    const { getByRole, queryByRole } = render(MediaActions, {
+      props: { mediaIds: ["m1"], onAdd: vi.fn(), onShare: vi.fn() },
+    });
+    expect(getByRole("button", { name: "Add to album" })).not.toBeNull();
+    expect(getByRole("button", { name: "Share" })).not.toBeNull();
+    expect(queryByRole("button", { name: "Hide" })).toBeNull();
+    expect(queryByRole("button", { name: "Unhide" })).toBeNull();
+  });
 });

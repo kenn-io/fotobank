@@ -87,3 +87,53 @@ describe("AlbumDetailStore.hasInAlbum", () => {
     expect(store.hasInAlbum("m2")).toBe(false);
   });
 });
+
+describe("AlbumDetailStore.pruneHidden", () => {
+  it("removes ids from itemIds and membership without calling DELETE", async () => {
+    const client = fakeClient([
+      { data: { id: "a1", name: "X", item_count: 3, cover: null, created_at: "x", updated_at: "x" } },
+      { data: { items: [fakeMedia("m1"), fakeMedia("m2"), fakeMedia("m3")], next_offset: null } },
+    ]);
+    const ms = new MediaStore(client as any);
+    const store = new AlbumDetailStore(client as any, ms);
+    await store.load("a1");
+    const callsBefore = client.calls.length;
+
+    store.pruneHidden(["m1", "m3"]);
+
+    // No new HTTP calls
+    expect(client.calls.length).toBe(callsBefore);
+    // m1 and m3 removed from view
+    expect(store.itemIds).toEqual(["m2"]);
+    expect(store.hasInAlbum("m1")).toBe(false);
+    expect(store.hasInAlbum("m3")).toBe(false);
+    expect(store.hasInAlbum("m2")).toBe(true);
+  });
+
+  it("decrements item_count by the number of pruned ids", async () => {
+    const client = fakeClient([
+      { data: { id: "a1", name: "X", item_count: 3, cover: null, created_at: "x", updated_at: "x" } },
+      { data: { items: [fakeMedia("m1"), fakeMedia("m2"), fakeMedia("m3")], next_offset: null } },
+    ]);
+    const ms = new MediaStore(client as any);
+    const store = new AlbumDetailStore(client as any, ms);
+    await store.load("a1");
+
+    store.pruneHidden(["m1", "m2"]);
+    expect(store.album?.item_count).toBe(1);
+  });
+
+  it("is a no-op when ids is empty", async () => {
+    const client = fakeClient([
+      { data: { id: "a1", name: "X", item_count: 2, cover: null, created_at: "x", updated_at: "x" } },
+      { data: { items: [fakeMedia("m1"), fakeMedia("m2")], next_offset: null } },
+    ]);
+    const ms = new MediaStore(client as any);
+    const store = new AlbumDetailStore(client as any, ms);
+    await store.load("a1");
+
+    store.pruneHidden([]);
+    expect(store.itemIds).toEqual(["m1", "m2"]);
+    expect(store.album?.item_count).toBe(2);
+  });
+});

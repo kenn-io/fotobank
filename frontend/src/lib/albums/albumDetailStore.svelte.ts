@@ -178,6 +178,26 @@ export class AlbumDetailStore {
     return { succeeded, failed };
   }
 
+  /**
+   * Remove ids from the in-memory item list and membership set after a
+   * Hide operation. The album_member row stays in the DB (the media is
+   * hidden, not removed from the album), so this does NOT call the
+   * DELETE /albums/{id}/media endpoint. Item count is adjusted so the
+   * header count stays consistent with what the user sees.
+   */
+  pruneHidden(ids: string[]): void {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    this.itemIds = this.itemIds.filter((id) => !idSet.has(id));
+    for (const id of ids) this.membership.delete(id);
+    if (this.album) {
+      this.album = {
+        ...this.album,
+        item_count: this.album.item_count - ids.length,
+      };
+    }
+  }
+
   hasInAlbum(id: string): boolean {
     return this.membership.has(id);
   }
