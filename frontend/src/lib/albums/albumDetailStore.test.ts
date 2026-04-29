@@ -133,6 +133,62 @@ describe("AlbumDetailStore.refreshMeta", () => {
     await store.refreshMeta(); // should not throw
     expect(client.calls.length).toBe(0);
   });
+
+  it("updates cover from API response (finding #10)", async () => {
+    const client = fakeClient([
+      { data: { id: "a1", name: "X", item_count: 1, hidden_count: 0, cover: null, created_at: "x", updated_at: "x" } },
+      { data: { items: [fakeMedia("m1")], next_offset: null } },
+      { data: { id: "a1", name: "X", item_count: 1, hidden_count: 0, cover: { media_id: "m1", thumb_version: 2 }, created_at: "x", updated_at: "y" } },
+    ]);
+    const ms = new MediaStore(client as any);
+    const store = new AlbumDetailStore(client as any, ms);
+    await store.load("a1");
+    expect(store.album?.cover).toBeUndefined();
+
+    await store.refreshMeta();
+    expect(store.album?.cover?.media_id).toBe("m1");
+    expect(store.album?.cover?.thumb_version).toBe(2);
+  });
+
+  it("drops stale response if album changed mid-flight (finding #11)", async () => {
+    // Simulate: refreshMeta starts for a1, then load("a2") fires before
+    // the response lands. The stale a1 response must not overwrite a2's data.
+    let resolveStale!: (v: { data: any }) => void;
+    const stalePromise = new Promise<{ data: any }>((r) => { resolveStale = r; });
+    let callIdx = 0;
+    const responses: Array<{ data: any } | Promise<{ data: any }>> = [
+      // load("a1"): meta + items
+      { data: { id: "a1", name: "A1", item_count: 1, hidden_count: 0, cover: null, created_at: "x", updated_at: "x" } },
+      { data: { items: [fakeMedia("m1")], next_offset: null } },
+      // refreshMeta("a1"): held pending
+      stalePromise,
+      // load("a2"): meta + items
+      { data: { id: "a2", name: "A2", item_count: 0, hidden_count: 0, cover: null, created_at: "x", updated_at: "x" } },
+      { data: { items: [], next_offset: null } },
+    ];
+    const client = {
+      GET: vi.fn(async () => responses[callIdx++] ?? { data: null }),
+      PATCH: vi.fn(), DELETE: vi.fn(), POST: vi.fn(),
+    };
+    const ms = new MediaStore(client as any);
+    const store = new AlbumDetailStore(client as any, ms);
+
+    await store.load("a1");
+    expect(store.album?.name).toBe("A1");
+
+    // Start refreshMeta while it will block on the pending promise
+    const refresh = store.refreshMeta();
+    // Navigate to a2 (bumps loadToken, changes albumId)
+    await store.load("a2");
+    expect(store.album?.name).toBe("A2");
+
+    // Resolve the stale refreshMeta response now
+    resolveStale({ data: { id: "a1", name: "A1-stale", item_count: 0, hidden_count: 0, cover: null, created_at: "x", updated_at: "z" } });
+    await refresh;
+
+    // The stale response must not have overwritten the a2 album.
+    expect(store.album?.name).toBe("A2");
+  });
 });
 
 describe("AlbumDetailStore.pruneHidden", () => {
@@ -195,5 +251,24 @@ describe("AlbumDetailStore.pruneHidden", () => {
     store.pruneHidden([]);
     expect(store.itemIds).toEqual(["m1", "m2"]);
     expect(store.album?.item_count).toBe(2);
+  });
+
+  it("only decrements by the intersection with album membership (finding #14)", async () => {
+    // Caller passes ids from a wider scope (e.g. global selection) that
+    // includes items not in this album. Only the ones actually present
+    // should affect item_count and hidden_count.
+    const client = fakeClient([
+      { data: { id: "a1", name: "X", item_count: 2, hidden_count: 0, cover: null, created_at: "x", updated_at: "x" } },
+      { data: { items: [fakeMedia("m1"), fakeMedia("m2")], next_offset: null } },
+    ]);
+    const ms = new MediaStore(client as any);
+    const store = new AlbumDetailStore(client as any, ms);
+    await store.load("a1");
+
+    // m1 is in album, "outside" is not
+    store.pruneHidden(["m1", "outside"]);
+    expect(store.album?.item_count).toBe(1);
+    expect(store.album?.hidden_count).toBe(1);
+    expect(store.itemIds).toEqual(["m2"]);
   });
 });

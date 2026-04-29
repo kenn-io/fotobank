@@ -100,12 +100,16 @@ export class AlbumsStore {
   }
 
   // refreshIfStale refetches /api/v1/albums when the stale flag is set.
-  // No-op otherwise. Clears the flag after a successful reload so repeated
-  // calls without intervening markStale() are cheap.
+  // No-op otherwise. The stale flag is cleared only after a successful
+  // reload so a failed request leaves it set for the next attempt (finding #15).
   async refreshIfStale(): Promise<void> {
     if (!this.stale) return;
-    this.stale = false;
     await this.loadInitial();
+    // Clear stale only on success (no loadError). On error, preserve the
+    // stale flag so the next mount retries instead of silently staying stale.
+    if (!this.loadError) {
+      this.stale = false;
+    }
   }
 
   async create(name: string): Promise<string> {

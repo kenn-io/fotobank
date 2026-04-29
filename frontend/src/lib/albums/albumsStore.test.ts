@@ -355,4 +355,26 @@ describe("AlbumsStore.markStale / refreshIfStale", () => {
     await store.refreshIfStale();
     expect(client.calls.length).toBe(callsAfterFirstRefresh);
   });
+
+  it("preserves stale flag when refreshIfStale fails (finding #15)", async () => {
+    // stale=false is cleared BEFORE the fetch in the old code, so on
+    // error the flag is gone and the next refreshIfStale is a no-op.
+    // The fix: only clear stale on success.
+    const client = fakeClient([
+      { data: { items: [], next_offset: null } },          // loadInitial
+      { error: { status: 500, message: "boom" } },         // refreshIfStale attempt 1 → fail
+      { data: { items: [{ id: "a1", name: "A", item_count: 0, created_at: "x", updated_at: "x" }], next_offset: null } }, // attempt 2 → success
+    ]);
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    store.markStale();
+
+    await store.refreshIfStale(); // fails
+    expect(store.loadError).toBe(true);
+    // stale must still be set so the next call retries
+    const callsAfterFail = client.calls.length;
+    await store.refreshIfStale(); // succeeds
+    expect(client.calls.length).toBeGreaterThan(callsAfterFail);
+    expect(store.albums[0]?.name).toBe("A");
+  });
 });

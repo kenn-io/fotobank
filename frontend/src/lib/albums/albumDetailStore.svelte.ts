@@ -8,6 +8,7 @@ export type Album = {
   updated_at: string;
   item_count: number;
   hidden_count: number;
+  cover?: { media_id: string; thumb_version: number };
 };
 
 export type AlbumSort = "taken" | "added";
@@ -74,6 +75,7 @@ export class AlbumDetailStore {
       updated_at: a.updated_at,
       item_count: a.item_count,
       hidden_count: a.hidden_count ?? 0,
+      ...(a.cover ? { cover: a.cover } : {}),
     };
 
     await this.loadMore();
@@ -134,19 +136,31 @@ export class AlbumDetailStore {
   // after a hide/unhide to update header counts without a full reload.
   async refreshMeta(): Promise<void> {
     if (!this.albumId) return;
+    // Capture both albumId and loadToken at entry. If the user navigates
+    // to a different album before the response lands, loadToken is bumped
+    // by load() — bail before assignment to avoid clobbering the new
+    // album's metadata (finding #11).
+    const albumId = this.albumId;
+    const token = this.loadToken;
     const res = await this.client.GET("/api/v1/albums/{id}", {
-      params: { path: { id: this.albumId } } as never,
+      params: { path: { id: albumId } } as never,
     });
+    if (token !== this.loadToken || this.albumId !== albumId) return;
     if (res.error || !res.data) return;
     const a = res.data as Album;
     if (this.album) {
-      this.album = {
+      // Build the update object without cover first, then conditionally
+      // add cover. exactOptionalPropertyTypes rejects `cover: undefined`
+      // inline, so we spread it only when present.
+      const updated: Album = {
         ...this.album,
         name: a.name,
         updated_at: a.updated_at,
         item_count: a.item_count,
         hidden_count: a.hidden_count ?? 0,
       };
+      if (a.cover) updated.cover = a.cover;
+      this.album = updated;
     }
   }
 
@@ -205,19 +219,22 @@ export class AlbumDetailStore {
    * Remove ids from the in-memory item list and membership set after a
    * Hide operation. The album_member row stays in the DB (the media is
    * hidden, not removed from the album), so this does NOT call the
-   * DELETE /albums/{id}/media endpoint. Item count is adjusted so the
-   * header count stays consistent with what the user sees.
+   * DELETE /albums/{id}/media endpoint. Item count is adjusted by the
+   * number of ids that are actually present (intersection), so callers
+   * that pass ids from a wider scope don't drift the count (finding #14).
    */
   pruneHidden(ids: string[]): void {
     if (ids.length === 0) return;
     const idSet = new Set(ids);
+    // Count only the ids that were actually present in this album.
+    const actualCount = ids.filter((id) => this.membership.has(id)).length;
     this.itemIds = this.itemIds.filter((id) => !idSet.has(id));
     for (const id of ids) this.membership.delete(id);
-    if (this.album) {
+    if (this.album && actualCount > 0) {
       this.album = {
         ...this.album,
-        item_count: this.album.item_count - ids.length,
-        hidden_count: (this.album.hidden_count ?? 0) + ids.length,
+        item_count: this.album.item_count - actualCount,
+        hidden_count: (this.album.hidden_count ?? 0) + actualCount,
       };
     }
   }
