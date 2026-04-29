@@ -1,6 +1,7 @@
 import { render } from "@testing-library/svelte";
 import { describe, it, expect, beforeAll, vi } from "vitest";
 import VirtualGrid from "./VirtualGrid.svelte";
+import VirtualGridHeaderActionFixture from "./VirtualGridHeaderActionFixture.svelte";
 import type { Month } from "../media/mediaStore.svelte";
 
 // VirtualGrid wires ResizeObserver + IntersectionObserver in $effect
@@ -77,5 +78,34 @@ describe("VirtualGrid timelineChrome=false", () => {
     // only renders once IntersectionObserver fires (unreliable under
     // jsdom), so assert against the scrubber as the chrome witness.
     expect(container.querySelector(".scrubber")).not.toBeNull();
+  });
+});
+
+describe("VirtualGrid headerAction forwarding", () => {
+  it("renders the headerAction snippet on each MonthChunk with the correct month", () => {
+    const twoMonths = [
+      { key: "2024-04", items: [{ id: "m1", aspect: 1.5, thumbUrl: "/t/m1" }] },
+      { key: "2024-03", items: [{ id: "m2", aspect: 1.0, thumbUrl: "/t/m2" }] },
+    ] as unknown as Month[];
+    const { container } = render(VirtualGridHeaderActionFixture, {
+      props: { months: twoMonths },
+    });
+    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>("button.ha"));
+    expect(buttons).toHaveLength(2);
+    // Snippet `headerAction(month)` should receive the per-iteration `month`,
+    // not capture the loop variable. Verify by reading data-month and text
+    // on each rendered button — they must match the corresponding month.key.
+    const pairs = buttons.map((b) => [b.dataset["month"], b.textContent?.trim()]);
+    expect(pairs).toEqual([
+      ["2024-04", "act:2024-04"],
+      ["2024-03", "act:2024-03"],
+    ]);
+  });
+
+  it("does not render headerAction when prop is omitted", () => {
+    const { container } = render(VirtualGrid, {
+      props: { months, onLoadMore: () => {}, targetRowHeight: 200 },
+    });
+    expect(container.querySelector("button.ha")).toBeNull();
   });
 });
