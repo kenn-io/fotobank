@@ -7,19 +7,20 @@
 
   let modalOpen = $state(false);
 
-  // The mount effect needs both guards. `albums.length === 0` ensures
+  // The mount effect needs three guards. `albums.length === 0` ensures
   // we don't re-run loadInitial after a successful first fetch (without
   // it, a second response with `next_offset` set leaves `exhausted=false`
-  // and the effect retriggers when loading flips back to false). And
+  // and the effect retriggers when loading flips back to false).
   // `!exhausted` ensures an account with truly zero albums doesn't loop
   // (length stays 0; exhausted=true after the first response, gating
-  // the effect). Both guards together cover the populated-paginated AND
-  // empty-account cases without an extra "hasLoadedInitial" flag.
+  // the effect). `!loadError` breaks the auto-retry loop when the API
+  // returns an error — the user must click Retry to clear the flag.
   $effect(() => {
     if (
       albumsStore.albums.length === 0 &&
       !albumsStore.loading &&
-      !albumsStore.exhausted
+      !albumsStore.exhausted &&
+      !albumsStore.loadError
     ) {
       albumsStore.loadInitial();
     }
@@ -48,6 +49,11 @@
 
 {#if albumsStore.albums.length > 0}
   <AlbumGrid albums={albumsStore.albums} />
+{:else if albumsStore.loadError}
+  <div class="empty">
+    <p>Couldn't load albums.</p>
+    <button type="button" onclick={() => albumsStore.retry()}>Retry</button>
+  </div>
 {:else if !albumsStore.loading}
   <div class="empty">
     <p>No albums yet</p>

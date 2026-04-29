@@ -53,6 +53,10 @@
   }
 
   async function onConfirmDelete() {
+    // Capture id before the await — if the user navigates between albums
+    // while delete is in flight, the route's `id` would already point at
+    // a different album by the time the 409 toast fires.
+    const albumId = id;
     try {
       await detail.delete();
       router.navigate("/albums");
@@ -60,7 +64,7 @@
       confirmingDelete = false;
       const status = (e as { status?: number })?.status;
       if (status === 409) {
-        deleteConflictAlbumId = id;
+        deleteConflictAlbumId = albumId;
       } else {
         // Generic toast surface lands later; for now, log.
         console.error("delete failed:", e);
@@ -69,7 +73,14 @@
   }
 </script>
 
-{#if detail.album}
+{#if detail.metaLoading && !detail.album}
+  <div class="loading">Loading album…</div>
+{:else if detail.metaError}
+  <div class="empty">
+    Album not found.<br />
+    It may have been deleted, or you might not have access.
+  </div>
+{:else if detail.album}
   <header class="album-header">
     <div class="title-row">
       <h1>{detail.album.name}</h1>
@@ -82,7 +93,7 @@
       </div>
       <label class="sort">
         Sort:
-        <select value={detail.sort} onchange={changeSort}>
+        <select value={detail.sort} onchange={changeSort} disabled={detail.loading}>
           <option value="taken">Date taken</option>
           <option value="added">Recently added</option>
         </select>

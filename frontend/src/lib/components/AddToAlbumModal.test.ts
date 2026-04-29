@@ -120,11 +120,12 @@ describe("AddToAlbumModal", () => {
     const store = new AlbumsStore(fakeClient as never);
     await store.loadInitial();
 
+    const onAdd = vi.fn().mockResolvedValue({ added: 1, already_present: 0 });
     const { getByText, getByRole, findByRole, getByPlaceholderText } = render(AddToAlbumModal, {
       props: {
         mediaIds: ["m1"],
         albumsStore: store,
-        onAdd: vi.fn(),
+        onAdd,
         onClose: vi.fn(),
       },
     });
@@ -136,5 +137,9 @@ describe("AddToAlbumModal", () => {
     // button appears.
     const primary = await findByRole("button", { name: /^Add 1 photo$/ });
     expect(primary.hasAttribute("disabled")).toBe(false);
+    // Click primary and confirm onAdd received the freshly created
+    // album's id, not a stale selection from before create mode.
+    await fireEvent.click(primary);
+    expect(onAdd).toHaveBeenCalledWith("anew");
   });
 });

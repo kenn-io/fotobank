@@ -13,12 +13,21 @@ export class AlbumsStore {
   albums = $state<AlbumListItem[]>([]);
   loading = $state(false);
   exhausted = $state(false);
+  // True when the most recent load attempt failed. Routes use this to
+  // gate auto-retry effects and to render an error state so a transient
+  // 5xx doesn't cause the route to spin in an infinite refetch loop.
+  loadError = $state(false);
   private nextOffset: number | null = 0;
   private inflight: Promise<void> | null = null;
+  // Monotonic token bumped on every loadInitial(). Concurrent refreshes
+  // capture the token and check it before mutating state, so a slower
+  // earlier refresh can't overwrite a newer one's result.
+  private initialToken = 0;
 
   constructor(private client: Pick<Client, "GET" | "POST" | "PATCH" | "DELETE">) {}
 
   async loadInitial(): Promise<void> {
+    const token = ++this.initialToken;
     // Wait for any in-flight loadMore to settle so resetting state and
     // re-fetching doesn't race with the prior request's response landing.
     if (this.inflight) {
@@ -28,9 +37,11 @@ export class AlbumsStore {
         /* swallow; we're about to refetch */
       }
     }
+    if (token !== this.initialToken) return;
     this.albums = [];
     this.nextOffset = 0;
     this.exhausted = false;
+    this.loadError = false;
     await this.loadMore();
   }
 
@@ -42,7 +53,14 @@ export class AlbumsStore {
         const res = await this.client.GET("/api/v1/albums", {
           params: { query: { limit: 100, offset: this.nextOffset ?? 0 } } as never,
         });
-        if (res.error || !res.data) return;
+        if (res.error || !res.data) {
+          this.loadError = true;
+          // Mark exhausted so the auto-retry effects in routes don't
+          // loop on a persistent failure. Manual retry should call
+          // retry() to clear the flag and try again.
+          this.exhausted = true;
+          return;
+        }
         const data = res.data as { items?: AlbumListItem[]; next_offset?: number };
         const items = data.items ?? [];
         this.albums = [...this.albums, ...items];
@@ -55,6 +73,14 @@ export class AlbumsStore {
       }
     })();
     await this.inflight;
+  }
+
+  // Manual retry after a load failure. Clears the error flag and the
+  // exhausted-on-error gate, then reissues loadInitial.
+  async retry(): Promise<void> {
+    this.loadError = false;
+    this.exhausted = false;
+    await this.loadInitial();
   }
 
   async create(name: string): Promise<void> {

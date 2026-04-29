@@ -51,13 +51,14 @@
     // try/catch here — let creation errors propagate to NewAlbumForm.
     await albumsStore.create(name);
     // AlbumsStore.create refetches page 1 (created_at desc), so the
-    // freshly created album is in the list — name-match it to pick
-    // the new id. If the name doesn't resolve (rare race or rename
-    // between create and refetch), leave selectedId untouched so the
-    // user picks explicitly.
+    // freshly created album sorts first — find returns it. If the name
+    // doesn't resolve (rare race, rename between create and refetch, or
+    // a same-name album already exists), clear selectedId so the user
+    // explicitly picks rather than silently accepting a stale selection
+    // they made before entering create mode.
     const trimmed = name.trim();
     const fresh = albumsStore.albums.find((a) => a.name === trimmed);
-    if (fresh) selectedId = fresh.id;
+    selectedId = fresh ? fresh.id : null;
     mode = "list";
   }
 
@@ -113,6 +114,16 @@
             <span class="count">{a.item_count}</span>
           </button>
         {/each}
+        {#if !albumsStore.exhausted}
+          <button
+            type="button"
+            class="row load-more"
+            onclick={() => albumsStore.loadMore()}
+            disabled={albumsStore.loading}
+          >
+            {albumsStore.loading ? "Loading…" : "Load more albums"}
+          </button>
+        {/if}
       </div>
       {#if error}<div class="error" role="alert">{error}</div>{/if}
       <div class="actions">
@@ -173,6 +184,8 @@
   .row:hover { background: var(--bg-surface); }
   .row.selected { background: var(--bg-surface); font-weight: 600; outline: 2px solid var(--accent); outline-offset: -2px; }
   .row.create-new { color: var(--accent); font-weight: 500; }
+  .row.load-more { color: var(--text-muted); font-style: italic; justify-content: center; }
+  .row.load-more:disabled { cursor: not-allowed; opacity: 0.6; }
   .count { color: var(--text-muted); font-size: 12px; }
   .error { color: var(--danger); font-size: 13px; margin-top: 8px; }
   .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
