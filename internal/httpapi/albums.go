@@ -276,7 +276,7 @@ type listAlbumMediaInput struct {
 	AlbumID string `path:"id"`
 	Limit   int    `query:"limit" doc:"max rows to return (default 100, cap 1000)"`
 	Offset  int    `query:"offset" doc:"pagination offset"`
-	SortBy  string `query:"sort_by" doc:"added (default) or imported"`
+	SortBy  string `query:"sort_by" doc:"added (default), imported, or taken"`
 	SortAsc bool   `query:"sort_asc" doc:"invert the default DESC sort when true"`
 }
 

@@ -981,7 +981,7 @@ export interface operations {
                 limit?: number;
                 /** @description pagination offset */
                 offset?: number;
-                /** @description added (default) or imported */
+                /** @description added (default), imported, or taken */
                 sort_by?: string;
                 /** @description invert the default DESC sort when true */
                 sort_asc?: boolean;
