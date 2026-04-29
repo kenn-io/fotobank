@@ -553,6 +553,85 @@ func TestPreviewScopeUnknownScopeReturnsNotFound(t *testing.T) {
 	require.ErrorIs(t, err, errs.ErrNotFound)
 }
 
+func TestShareServicePopulateTargetSummaryMixed(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	ctx := context.Background()
+
+	// album_live scope over a 2-item album.
+	albumID := fx.seedAlbum(t, 2)
+	// Rename the album so we can assert the "Album: <name>" label exactly.
+	_, err := fx.rw.ExecContext(ctx, `UPDATE albums SET name = ? WHERE id = ?`, "Italy 2025", albumID)
+	r.NoError(err)
+	sLive, err := fx.svc.Create(ctx, service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "alice"}, TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	// media_set scope with 3 frozen members.
+	m1 := fx.seedMediaRow(t)
+	m2 := fx.seedMediaRow(t)
+	m3 := fx.seedMediaRow(t)
+	sSet, err := fx.svc.Create(ctx, service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "alice"}, TargetType: share.TargetMediaSet,
+		MediaIDs: []string{m1, m2, m3},
+	}, fx.owner)
+	r.NoError(err)
+
+	summaries, err := fx.svc.PopulateTargetSummary(ctx, []share.Scope{sLive, sSet})
+	r.NoError(err)
+
+	live := summaries[sLive.UUID]
+	r.Equal("Album: Italy 2025", live.Label)
+	r.Nil(live.ItemCount, "album_live exposes a label only, no item_count")
+
+	set := summaries[sSet.UUID]
+	r.Equal("3 photos", set.Label)
+	r.NotNil(set.ItemCount)
+	r.Equal(3, *set.ItemCount)
+}
+
+func TestShareServicePopulateTargetSummarySingularPhoto(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	ctx := context.Background()
+	m1 := fx.seedMediaRow(t)
+	s, err := fx.svc.Create(ctx, service.CreateShareRequest{
+		Grantee: owners.Principal{Hub: "h", UserID: "alice"}, TargetType: share.TargetMediaSet,
+		MediaIDs: []string{m1},
+	}, fx.owner)
+	r.NoError(err)
+
+	summaries, err := fx.svc.PopulateTargetSummary(ctx, []share.Scope{s})
+	r.NoError(err)
+	r.Equal("1 photo", summaries[s.UUID].Label)
+	r.NotNil(summaries[s.UUID].ItemCount)
+	r.Equal(1, *summaries[s.UUID].ItemCount)
+}
+
+func TestShareServicePopulateTargetSummaryMissingAlbum(t *testing.T) {
+	r := require.New(t)
+	fx := newShareFixture(t)
+	missing := "nonexistent"
+	s := share.Scope{
+		UUID:          "fake",
+		Owner:         fx.owner,
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &missing,
+	}
+	summaries, err := fx.svc.PopulateTargetSummary(context.Background(), []share.Scope{s})
+	r.NoError(err)
+	r.Equal("Album: (deleted)", summaries["fake"].Label)
+	r.Nil(summaries["fake"].ItemCount)
+}
+
+func TestShareServicePopulateTargetSummaryEmptyInput(t *testing.T) {
+	fx := newShareFixture(t)
+	summaries, err := fx.svc.PopulateTargetSummary(context.Background(), nil)
+	require.NoError(t, err)
+	require.Empty(t, summaries)
+}
+
 func TestShareServiceCreateRejectsSidecarInMediaSet(t *testing.T) {
 	r := require.New(t)
 	fx := newShareFixture(t)

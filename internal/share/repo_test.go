@@ -1862,3 +1862,41 @@ func TestListSharedMediaIDsExcludesSidecars(t *testing.T) {
 	r.Len(rows, 1, "shared-grid lists primaries only")
 	r.Equal(primary, rows[0].MediaID)
 }
+
+func TestRepoCountSharedMediaByScopesBatch(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	m1 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m3 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+
+	// media_set with 3 members, media_set with 1 member, album_live with no media.
+	s1 := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2, m3)
+	s2 := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1)
+	emptyAlbum := seedAlbum(t, d.WriteDB(), alice)
+	s3 := makeAlbumLiveScope(t, d, repo, alice, bob, emptyAlbum, nil, now, false)
+
+	counts, err := repo.CountSharedMediaByScopes(context.Background(),
+		[]string{s1.UUID, s2.UUID, s3.UUID, "missing"})
+	r.NoError(err)
+	r.Equal(3, counts[s1.UUID])
+	r.Equal(1, counts[s2.UUID])
+	r.Equal(0, counts[s3.UUID], "album_live with no media → 0, not absent")
+	_, ok := counts["missing"]
+	r.False(ok, "uuid not in scopes table is absent from result")
+}
+
+func TestRepoCountSharedMediaByScopesEmpty(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	counts, err := repo.CountSharedMediaByScopes(context.Background(), nil)
+	require.NoError(t, err)
+	require.Empty(t, counts)
+}

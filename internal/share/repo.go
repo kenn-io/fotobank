@@ -998,6 +998,104 @@ func (r *Repo) CountSharedMediaByScope(ctx context.Context, scopeUUID string) (i
 	}
 }
 
+// CountSharedMediaByScopes returns a map of scope_uuid → count of
+// scope_media members for the given scope UUIDs. Scopes that exist in
+// the scopes table are present in the result map (with 0 if they have
+// no scope_media rows, which is normal for album_live scopes since
+// their membership is derived from album_media). UUIDs that do not
+// exist in the scopes table are absent from the result map. Chunked
+// at 250 UUIDs (500 bind vars) to stay safely under SQLite's 999-cap.
+//
+// The two-query pattern (existence check, then counts) is what makes
+// the absent-vs-zero distinction work: an album_live scope that has no
+// scope_media rows still ends up in the map at 0; a uuid that is not
+// in the scopes table at all is absent. Callers that want full media
+// coverage for album_live should use CountSharedMediaByScope (singular)
+// which dispatches on target_type and counts album_media.
+func (r *Repo) CountSharedMediaByScopes(ctx context.Context, uuids []string) (map[string]int, error) {
+	out := map[string]int{}
+	if len(uuids) == 0 {
+		return out, nil
+	}
+	const chunkSize = 250
+	for start := 0; start < len(uuids); start += chunkSize {
+		end := min(start+chunkSize, len(uuids))
+		chunk := uuids[start:end]
+		if err := r.countSharedMediaChunk(ctx, chunk, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// countSharedMediaChunk runs the two-query exist+count pass for one
+// chunk and merges results into out. Extracted so the outer loop in
+// CountSharedMediaByScopes stays under the cyclomatic-complexity cap.
+func (r *Repo) countSharedMediaChunk(ctx context.Context, chunk []string, out map[string]int) error {
+	placeholders := strings.Repeat("?,", len(chunk))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(chunk))
+	for i, u := range chunk {
+		args[i] = u
+	}
+	existsRows, err := r.ro.QueryContext(ctx,
+		`SELECT uuid FROM scopes WHERE uuid IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return fmt.Errorf("share: CountSharedMediaByScopes exists: %w", err)
+	}
+	if err := drainExistsRows(existsRows, out); err != nil {
+		return err
+	}
+	countRows, err := r.ro.QueryContext(ctx,
+		`SELECT scope_uuid, COUNT(*) FROM scope_media
+		  WHERE scope_uuid IN (`+placeholders+`)
+		  GROUP BY scope_uuid`, args...)
+	if err != nil {
+		return fmt.Errorf("share: CountSharedMediaByScopes: %w", err)
+	}
+	return drainCountRows(countRows, out)
+}
+
+// drainExistsRows reads a "SELECT uuid" stream into out, initialising
+// every existing scope to 0. Closes rows on return.
+func drainExistsRows(rows *sql.Rows, out map[string]int) error {
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return fmt.Errorf("share: CountSharedMediaByScopes exists scan: %w", err)
+		}
+		out[u] = 0
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("share: CountSharedMediaByScopes exists iter: %w", err)
+	}
+	return nil
+}
+
+// drainCountRows reads a "(scope_uuid, COUNT(*))" stream and overwrites
+// existing entries in out. Closes rows on return. Entries that are not
+// already present are also written, but the canonical path is via
+// drainExistsRows first so the album_live (no scope_media) case stays
+// at 0.
+func drainCountRows(rows *sql.Rows, out map[string]int) error {
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			u string
+			c int
+		)
+		if err := rows.Scan(&u, &c); err != nil {
+			return fmt.Errorf("share: CountSharedMediaByScopes scan: %w", err)
+		}
+		out[u] = c
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("share: CountSharedMediaByScopes iter: %w", err)
+	}
+	return nil
+}
+
 // AlbumSummary is the minimal album view attached to ExpandedScope for
 // album_live scopes. Kept here (rather than reusing album.AlbumListItem)
 // to avoid a share→album dependency in this direction.

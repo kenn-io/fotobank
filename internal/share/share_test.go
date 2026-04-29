@@ -50,6 +50,13 @@ func TestLimitsMatchSpec(t *testing.T) {
 	r.Equal(255, share.PrincipalFieldMaxLen)
 }
 
+func TestTargetSummaryZeroValue(t *testing.T) {
+	r := require.New(t)
+	var s share.TargetSummary
+	r.Empty(s.Label)
+	r.Nil(s.ItemCount)
+}
+
 func TestParseStatusFilter(t *testing.T) {
 	r := require.New(t)
 	cases := []struct {

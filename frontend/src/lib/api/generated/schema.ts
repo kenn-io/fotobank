@@ -670,6 +670,7 @@ export interface components {
             /** Format: date-time */
             revoked_at?: string;
             target_album_id?: string;
+            target_summary?: components["schemas"]["TargetSummaryDTO"];
             target_type: string;
             uuid: string;
         };
@@ -776,6 +777,11 @@ export interface components {
             target_album_id?: string;
             target_type: string;
             uuid: string;
+        };
+        TargetSummaryDTO: {
+            /** Format: int64 */
+            item_count?: number;
+            label: string;
         };
         UserSettingPutInputBody: {
             /**

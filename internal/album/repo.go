@@ -236,6 +236,56 @@ SELECT a.id, a.owner_hub, a.owner_user_id, a.name, a.created_at, a.updated_at,
 	return out, nil
 }
 
+// GetNamesByIDs returns a map of album_id → name for the given IDs.
+// Missing IDs are silently absent from the map; no error is returned for
+// not-found rows. Chunked at 250 IDs to stay safely under SQLite's
+// 999-variable cap.
+func (r *Repo) GetNamesByIDs(ctx context.Context, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	const chunkSize = 250
+	for start := 0; start < len(ids); start += chunkSize {
+		end := min(start+chunkSize, len(ids))
+		chunk := ids[start:end]
+		placeholders := strings.Repeat("?,", len(chunk))
+		placeholders = placeholders[:len(placeholders)-1]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		rows, err := r.ro.QueryContext(ctx,
+			`SELECT id, name FROM albums WHERE id IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("album: GetNamesByIDs: %w", err)
+		}
+		if err := scanNamesByIDs(rows, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// scanNamesByIDs drains rows into out and closes them. Extracted so the
+// outer chunk loop in GetNamesByIDs stays under the cyclomatic-complexity
+// cap. Errors are wrapped in the same "album: GetNamesByIDs" prefix used
+// by the caller for consistent log surface.
+func scanNamesByIDs(rows *sql.Rows, out map[string]string) error {
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return fmt.Errorf("album: GetNamesByIDs scan: %w", err)
+		}
+		out[id] = name
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("album: GetNamesByIDs iter: %w", err)
+	}
+	return nil
+}
+
 // ListByOwner returns albums belonging to owner, paginated by limit /
 // offset and ordered by updated_at DESC, id ASC. ItemCount and Cover
 // are derived in the same statement.

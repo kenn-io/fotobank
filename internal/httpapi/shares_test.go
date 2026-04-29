@@ -496,3 +496,130 @@ func TestSharesListNoDisplayRowOmitsGranteeHandle(t *testing.T) {
 	_, present := resp.Items[0]["grantee_handle"]
 	r.False(present, "grantee_handle must be absent from JSON when no display row exists")
 }
+
+func TestSharesListIncludesTargetSummaryForBothTypes(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	fx := newSharesHTTPFixture(t)
+
+	// album_live with two members, then rename it for label assertion.
+	albumID := fx.seedAlbumWithMedia(t)
+	_, err := fx.db.WriteDB().ExecContext(ctx,
+		`UPDATE albums SET name = ? WHERE id = ?`, "Italy 2025", albumID)
+	r.NoError(err)
+	liveScope, err := fx.shares.Create(ctx, service.CreateShareRequest{
+		Grantee:    owners.Principal{Hub: "h", UserID: "alice"},
+		TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	// media_set with two frozen members.
+	m1 := media.Media{
+		ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
+		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
+		Size: 100, Checksum: "cs" + uuid.NewString(), ThumbStatus: "pending",
+	}
+	r.NoError(fx.media.Insert(ctx, m1))
+	m2 := media.Media{
+		ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
+		OriginalFilename: "y.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
+		Size: 100, Checksum: "cs" + uuid.NewString(), ThumbStatus: "pending",
+	}
+	r.NoError(fx.media.Insert(ctx, m2))
+	setScope, err := fx.shares.Create(ctx, service.CreateShareRequest{
+		Grantee:    owners.Principal{Hub: "h", UserID: "alice"},
+		TargetType: share.TargetMediaSet, MediaIDs: []string{m1.ID, m2.ID},
+	}, fx.owner)
+	r.NoError(err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares", nil)
+	rec := httptest.NewRecorder()
+	fx.h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &resp))
+	r.Len(resp.Items, 2)
+	byUUID := map[string]map[string]any{}
+	for _, it := range resp.Items {
+		uuidStr, _ := it["uuid"].(string)
+		byUUID[uuidStr] = it
+	}
+
+	live := byUUID[liveScope.UUID]
+	r.NotNil(live, "list must include the album_live scope")
+	liveSummary, ok := live["target_summary"].(map[string]any)
+	r.True(ok, "album_live scope must have target_summary")
+	r.Equal("Album: Italy 2025", liveSummary["label"])
+	_, hasItemCount := liveSummary["item_count"]
+	r.False(hasItemCount, "album_live target_summary omits item_count")
+
+	set := byUUID[setScope.UUID]
+	r.NotNil(set, "list must include the media_set scope")
+	setSummary, ok := set["target_summary"].(map[string]any)
+	r.True(ok, "media_set scope must have target_summary")
+	r.Equal("2 photos", setSummary["label"])
+	r.EqualValues(2, setSummary["item_count"])
+}
+
+func TestSharesGetIncludesTargetSummary(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	fx := newSharesHTTPFixture(t)
+	albumID := fx.seedAlbumWithMedia(t)
+	_, err := fx.db.WriteDB().ExecContext(ctx,
+		`UPDATE albums SET name = ? WHERE id = ?`, "Family", albumID)
+	r.NoError(err)
+	s, err := fx.shares.Create(ctx, service.CreateShareRequest{
+		Grantee:    owners.Principal{Hub: "h", UserID: "alice"},
+		TargetType: share.TargetAlbumLive, AlbumID: albumID,
+	}, fx.owner)
+	r.NoError(err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares/"+s.UUID, nil)
+	rec := httptest.NewRecorder()
+	fx.h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var body map[string]any
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	summary, ok := body["target_summary"].(map[string]any)
+	r.True(ok, "detail response must include target_summary")
+	r.Equal("Album: Family", summary["label"])
+	_, hasItemCount := summary["item_count"]
+	r.False(hasItemCount)
+}
+
+func TestSharesGetMediaSetIncludesTargetSummary(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	fx := newSharesHTTPFixture(t)
+	m := media.Media{
+		ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
+		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
+		Size: 100, Checksum: "cs" + uuid.NewString(), ThumbStatus: "pending",
+	}
+	r.NoError(fx.media.Insert(ctx, m))
+	s, err := fx.shares.Create(ctx, service.CreateShareRequest{
+		Grantee:    owners.Principal{Hub: "h", UserID: "alice"},
+		TargetType: share.TargetMediaSet, MediaIDs: []string{m.ID},
+	}, fx.owner)
+	r.NoError(err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/shares/"+s.UUID, nil)
+	rec := httptest.NewRecorder()
+	fx.h.ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+
+	var body map[string]any
+	r.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	summary, ok := body["target_summary"].(map[string]any)
+	r.True(ok, "media_set detail must include target_summary")
+	r.Equal("1 photo", summary["label"])
+	r.EqualValues(1, summary["item_count"])
+}

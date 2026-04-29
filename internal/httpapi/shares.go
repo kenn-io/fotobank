@@ -53,27 +53,37 @@ type principalDTO struct {
 	UserID string `json:"user_id"`
 }
 
+type targetSummaryDTO struct {
+	Label     string `json:"label"`
+	ItemCount *int   `json:"item_count,omitempty"`
+}
+
 type scopeDTO struct {
-	UUID                string       `json:"uuid"`
-	Owner               principalDTO `json:"owner"`
-	Grantee             principalDTO `json:"grantee"`
-	GranteeHandle       string       `json:"grantee_handle,omitempty"`
-	TargetType          string       `json:"target_type"`
-	TargetAlbumID       string       `json:"target_album_id,omitempty"`
-	AllowDownload       bool         `json:"allow_download"`
-	Label               string       `json:"label,omitempty"`
-	CreatedAt           time.Time    `json:"created_at"`
-	ExpiresAt           *time.Time   `json:"expires_at,omitempty"`
-	Expired             bool         `json:"expired"`
-	RevokedAt           *time.Time   `json:"revoked_at,omitempty"`
-	BrokerStatus        string       `json:"broker_status"`
-	BrokerRegisteredAt  *time.Time   `json:"broker_registered_at,omitempty"`
-	BrokerGrantedAt     *time.Time   `json:"broker_granted_at,omitempty"`
-	BrokerRevokedAt     *time.Time   `json:"broker_revoked_at,omitempty"`
-	BrokerLastError     string       `json:"broker_last_error,omitempty"`
-	BrokerAttempts      int          `json:"broker_attempts"`
-	BrokerNextAttemptAt *time.Time   `json:"broker_next_attempt_at,omitempty"`
-	MediaIDs            []string     `json:"media_ids,omitempty"`
+	UUID                string            `json:"uuid"`
+	Owner               principalDTO      `json:"owner"`
+	Grantee             principalDTO      `json:"grantee"`
+	GranteeHandle       string            `json:"grantee_handle,omitempty"`
+	TargetType          string            `json:"target_type"`
+	TargetAlbumID       string            `json:"target_album_id,omitempty"`
+	TargetSummary       *targetSummaryDTO `json:"target_summary,omitempty"`
+	AllowDownload       bool              `json:"allow_download"`
+	Label               string            `json:"label,omitempty"`
+	CreatedAt           time.Time         `json:"created_at"`
+	ExpiresAt           *time.Time        `json:"expires_at,omitempty"`
+	Expired             bool              `json:"expired"`
+	RevokedAt           *time.Time        `json:"revoked_at,omitempty"`
+	BrokerStatus        string            `json:"broker_status"`
+	BrokerRegisteredAt  *time.Time        `json:"broker_registered_at,omitempty"`
+	BrokerGrantedAt     *time.Time        `json:"broker_granted_at,omitempty"`
+	BrokerRevokedAt     *time.Time        `json:"broker_revoked_at,omitempty"`
+	BrokerLastError     string            `json:"broker_last_error,omitempty"`
+	BrokerAttempts      int               `json:"broker_attempts"`
+	BrokerNextAttemptAt *time.Time        `json:"broker_next_attempt_at,omitempty"`
+	MediaIDs            []string          `json:"media_ids,omitempty"`
+}
+
+func toTargetSummaryDTO(s share.TargetSummary) *targetSummaryDTO {
+	return &targetSummaryDTO{Label: s.Label, ItemCount: s.ItemCount}
 }
 
 func toScopeDTO(s share.Scope) scopeDTO {
@@ -240,11 +250,18 @@ func registerSharesList(api huma.API, svc *service.ShareService, displayRepo *sh
 		if err != nil {
 			return nil, translateShareError(err)
 		}
+		summaries, err := svc.PopulateTargetSummary(ctx, rows)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
 		out := &listSharesOutput{}
 		out.Body.Items = make([]scopeDTO, 0, len(rows))
 		for _, s := range rows {
 			dto := toScopeDTO(s)
 			dto.GranteeHandle = handles[s.Grantee]
+			if sum, ok := summaries[s.UUID]; ok {
+				dto.TargetSummary = toTargetSummaryDTO(sum)
+			}
 			out.Body.Items = append(out.Body.Items, dto)
 		}
 		return out, nil
@@ -293,6 +310,13 @@ func registerSharesGet(api huma.API, svc *service.ShareService, displayRepo *sha
 				return nil, translateShareError(err)
 			}
 			dto.GranteeHandle = handle
+		}
+		summaries, err := svc.PopulateTargetSummary(ctx, []share.Scope{det.Scope})
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		if sum, ok := summaries[det.UUID]; ok {
+			dto.TargetSummary = toTargetSummaryDTO(sum)
 		}
 		return &scopeDetailOutput{Status: http.StatusOK, Body: dto}, nil
 	})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -338,4 +339,83 @@ func (s *ShareService) Retry(ctx context.Context, uuidStr string, caller owners.
 		return share.Scope{}, err
 	}
 	return fresh.Scope, nil
+}
+
+// PopulateTargetSummary builds a UI-friendly summary per scope. For
+// album_live scopes the label is "Album: <name>" (or "Album: (deleted)"
+// if the target_album_id no longer resolves) and ItemCount is nil. For
+// media_set scopes the label is "N photos" (or "1 photo") and ItemCount
+// carries the integer count. Album names and scope_media counts are
+// fetched in two batched repo calls; scopes whose target_type is
+// unknown are silently skipped. Empty input returns an empty (non-nil)
+// map.
+//
+// The caller is expected to have already auth-scoped scopes; this
+// helper does no owner check of its own. Used by HTTP list/detail
+// handlers that have already gone through ShareService.List/Get.
+func (s *ShareService) PopulateTargetSummary(
+	ctx context.Context,
+	scopes []share.Scope,
+) (map[string]share.TargetSummary, error) {
+	out := map[string]share.TargetSummary{}
+	if len(scopes) == 0 {
+		return out, nil
+	}
+	var albumIDs, setUUIDs []string
+	for _, sc := range scopes {
+		switch sc.TargetType {
+		case share.TargetAlbumLive:
+			if sc.TargetAlbumID != nil {
+				albumIDs = append(albumIDs, *sc.TargetAlbumID)
+			}
+		case share.TargetMediaSet:
+			setUUIDs = append(setUUIDs, sc.UUID)
+		}
+	}
+	names, err := s.albums.GetNamesByIDs(ctx, albumIDs)
+	if err != nil {
+		return nil, fmt.Errorf("share: PopulateTargetSummary album names: %w", err)
+	}
+	counts, err := s.shares.CountSharedMediaByScopes(ctx, setUUIDs)
+	if err != nil {
+		return nil, fmt.Errorf("share: PopulateTargetSummary media counts: %w", err)
+	}
+	for _, sc := range scopes {
+		switch sc.TargetType {
+		case share.TargetAlbumLive:
+			out[sc.UUID] = share.TargetSummary{Label: albumLiveLabel(sc, names)}
+		case share.TargetMediaSet:
+			n := counts[sc.UUID]
+			out[sc.UUID] = share.TargetSummary{
+				Label:     mediaSetLabel(n),
+				ItemCount: &n,
+			}
+		}
+	}
+	return out, nil
+}
+
+// albumLiveLabel resolves the "Album: <name>" string. When the
+// target_album_id is missing or no longer in the names map (album was
+// deleted out from under the scope), it falls back to "Album: (deleted)"
+// so the UI never renders a bare "Album:" prefix. Extracted from
+// PopulateTargetSummary so the helper stays under the cyclomatic-
+// complexity cap.
+func albumLiveLabel(sc share.Scope, names map[string]string) string {
+	if sc.TargetAlbumID == nil {
+		return "Album: (deleted)"
+	}
+	if name, ok := names[*sc.TargetAlbumID]; ok {
+		return "Album: " + name
+	}
+	return "Album: (deleted)"
+}
+
+// mediaSetLabel renders the "N photos" / "1 photo" string used by the
+// scope target_summary. Singular vs plural is the only branch.
+func mediaSetLabel(n int) string {
+	if n == 1 {
+		return "1 photo"
+	}
+	return strconv.Itoa(n) + " photos"
 }

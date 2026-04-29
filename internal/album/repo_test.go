@@ -756,6 +756,32 @@ func TestRepoListMediaSortByTakenAscNullsLast(t *testing.T) {
 // mediaInsert, albumMediaMediaSelect) means a column-order drift here
 // would corrupt /api/v1/albums/.../media DTOs without breaking the
 // other three projections.
+func TestRepoGetNamesByIDsHappy(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+
+	a1 := seedAlbum(t, repo, owner, "Italy 2025")
+	a2 := seedAlbum(t, repo, owner, "Family")
+
+	names, err := repo.GetNamesByIDs(context.Background(), []string{a1.ID, a2.ID, "missing"})
+	r.NoError(err)
+	r.Equal("Italy 2025", names[a1.ID])
+	r.Equal("Family", names[a2.ID])
+	_, ok := names["missing"]
+	r.False(ok)
+}
+
+func TestRepoGetNamesByIDsEmptyInput(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	names, err := repo.GetNamesByIDs(context.Background(), nil)
+	require.NoError(t, err)
+	require.Empty(t, names)
+}
+
 func TestRepoListMediaPreservesGPS(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)

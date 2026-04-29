@@ -64,6 +64,15 @@ type ScopeDetail struct {
 	MediaIDs []string
 }
 
+// TargetSummary is a UI-friendly summary of a Scope's target. The
+// helper that builds these lives in the service tier
+// (ShareService.PopulateTargetSummary) because it joins over album
+// names and scope_media counts; the domain package owns only the type.
+type TargetSummary struct {
+	Label     string
+	ItemCount *int
+}
+
 // ScopeFilter narrows Repo.ListByOwner / ShareService.List. An empty
 // Status slice + IncludeSettled=false means "owner-actionable rows
 // only"; the SQL filter hides broker_status = 'revoked_remote'. A
