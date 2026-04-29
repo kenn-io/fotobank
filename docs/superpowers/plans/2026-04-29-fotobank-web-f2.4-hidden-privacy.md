@@ -1183,12 +1183,16 @@ git commit -m "feat(hidden): integrate albums"
 
 - [ ] **Step 1: Write failing MediaStore tests**
 
-Add tests:
+Per spec §3.14, MediaStore is **visible-only across all four indexes**. Tests:
 
-- raw hidden row is cached by id but not inserted into `months`
-- visible row re-merged as hidden is removed from `months`
-- hidden cached row re-merged as visible enters `months`
-- `removeMany(ids, hiddenAt)` removes visible rows and sets cached `hidden_at`
+- raw hidden row in a `mergeRaw` payload is skipped — does not appear in
+  `months`, `byMonth`, `byId`, or `byMediaId`
+- visible row re-merged as hidden is removed from all four indexes
+- a direct-detail fetch that returns a now-visible row enters via the
+  normal merge path (no special hidden→visible cache transition)
+- `removeMany(ids, hiddenAt)` removes rows from all four indexes; the
+  `hiddenAt` argument is forwarded on the event payload, not stored on
+  the row
 - identity-field compile guard includes `hidden_at`
 
 - [ ] **Step 2: Run tests and confirm failure**
@@ -1211,12 +1215,13 @@ In `toMedia`, assign `hidden_at` when raw value is a string or `null` if present
 
 - [ ] **Step 4: Make `merge` hidden-aware**
 
-Before inserting into a month bucket:
+Skip hidden rows entirely; if a previously-visible row becomes hidden,
+remove it from all four indexes:
 
 ```ts
 if (it.hidden_at != null) {
   this.removeFromVisibleIndexes(it.id);
-  this.byMediaId.set(it.id, it);
+  // do NOT cache it; HiddenMediaStore owns hidden rows
   continue;
 }
 ```
@@ -1227,13 +1232,18 @@ Add private helper:
 private removeFromVisibleIndexes(id: string): void
 ```
 
-that removes from `byMonth`, `byId`, prunes empty buckets, and rebuilds `months`.
+that removes from `byMonth`, `byId`, `byMediaId`, prunes empty buckets,
+and rebuilds `months`.
 
 Add public:
 
 ```ts
 removeMany(ids: string[], hiddenAt: string = new Date().toISOString()): void
 ```
+
+`removeMany` evicts entries from all four indexes; the `hiddenAt`
+argument is included on the emitted `media:hidden` event payload (for
+album store / toast subscribers) but not stored on any row.
 
 - [ ] **Step 5: Run tests**
 
