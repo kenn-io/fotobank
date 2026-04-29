@@ -6,7 +6,7 @@ export type RouteMatch =
   | { route: "settings" }
   | { route: "albums" }
   | { route: "albums.detail"; id: string }
-  | { route: "shares" }
+  | { route: "shares"; album_id?: string; show_revoked?: boolean }
   | { route: "media"; id: string }
   | { route: "notfound"; path: string };
 
@@ -20,7 +20,20 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
   { re: /^\/settings$/,   build: () => ({ route: "settings" }) },
   { re: /^\/albums\/?$/,  build: () => ({ route: "albums" }) },
   { re: /^\/albums\/([^/]+)\/?$/, build: (m) => ({ route: "albums.detail", id: m[1]! }) },
-  { re: /^\/shares\/?$/,  build: () => ({ route: "shares" }) },
+  // /shares accepts optional ?album_id and ?show_revoked query params.
+  // With exactOptionalPropertyTypes, optional discriminant properties
+  // can't be set to undefined — spread the keys only when present so
+  // plain `/shares` produces exactly `{ route: "shares" }` (no extras).
+  { re: /^\/shares\/?$/,  build: () => {
+    const sp = new URLSearchParams(window.location.search);
+    const albumId = sp.get("album_id");
+    const showRevoked = sp.get("show_revoked") === "true";
+    return {
+      route: "shares" as const,
+      ...(albumId ? { album_id: albumId } : {}),
+      ...(showRevoked ? { show_revoked: true } : {}),
+    };
+  } },
   { re: /^\/media\/([^/]+)$/, build: (m) => ({ route: "media", id: m[1]! }) },
 ];
 

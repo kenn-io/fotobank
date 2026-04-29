@@ -82,6 +82,24 @@ describe("RouterStore.match", () => {
     const r = new RouterStore();
     expect(r.current).toEqual({ route: "shares" });
   });
+
+  it("parses ?album_id from /shares", () => {
+    setLocation("/shares?album_id=abc-123");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "shares", album_id: "abc-123" });
+  });
+
+  it("parses ?show_revoked=true from /shares", () => {
+    setLocation("/shares?show_revoked=true");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "shares", show_revoked: true });
+  });
+
+  it("parses both ?album_id and ?show_revoked from /shares", () => {
+    setLocation("/shares?album_id=abc&show_revoked=true");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "shares", album_id: "abc", show_revoked: true });
+  });
 });
 
 describe("RouterStore.navigate", () => {

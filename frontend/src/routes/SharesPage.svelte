@@ -1,11 +1,26 @@
 <script lang="ts">
   import SharesList from "../lib/components/SharesList.svelte";
+  import ShareDrawer from "../lib/components/ShareDrawer.svelte";
   import ConfirmModal from "../lib/components/ConfirmModal.svelte";
   import type { SharesStore } from "../lib/shares/sharesStore.svelte";
+  import { router } from "../lib/router/router.svelte";
 
   let { sharesStore }: { sharesStore: SharesStore } = $props();
 
+  let openUuid = $state<string | null>(null);
   let revokingUuid = $state<string | null>(null);
+
+  // Sync filter from route params on mount and on subsequent route changes.
+  // The narrowing check is necessary because TS only narrows the union after
+  // the discriminant check. void the async setter — filter changes are
+  // user-perceived as instantaneous and the underlying refetch can resolve
+  // in the background.
+  $effect(() => {
+    if (router.current.route !== "shares") return;
+    const albumId = router.current.album_id ?? null;
+    void sharesStore.setAlbumIDFilter(albumId);
+    if (router.current.show_revoked) void sharesStore.setShowRevoked(true);
+  });
 
   // Same quad-guard pattern as AlbumsIndex / AddToAlbumModal.
   // `scopes.length === 0` prevents re-runs after a successful first
@@ -26,12 +41,12 @@
   });
 
   function onOpen(uuid: string) {
-    // Drawer wiring lands in Task 22.
-    console.log("open share", uuid);
+    openUuid = uuid;
   }
 
   function onRevoke(uuid: string) {
     revokingUuid = uuid;
+    openUuid = null;
   }
 
   async function confirmRevoke() {
@@ -58,6 +73,13 @@
       ? (revokingScope.grantee_handle ?? `${revokingScope.grantee.hub}:${revokingScope.grantee.user_id}`)
       : "",
   );
+
+  // openScope re-derives whenever the scopes list refreshes (e.g. after
+  // poll or retry merges new state), so the drawer reflects the latest
+  // broker_status without a manual refresh.
+  const openScope = $derived(
+    openUuid ? sharesStore.scopes.find((s) => s.uuid === openUuid) ?? null : null,
+  );
 </script>
 
 <header class="page-header">
@@ -72,6 +94,13 @@
   </label>
 </header>
 
+{#if sharesStore.albumIDFilter}
+  <div class="filter-banner">
+    <span>Showing shares for album <code>{sharesStore.albumIDFilter}</code></span>
+    <button type="button" onclick={() => sharesStore.setAlbumIDFilter(null)}>Clear filter</button>
+  </div>
+{/if}
+
 {#if sharesStore.scopes.length > 0}
   <SharesList scopes={sharesStore.scopes} {onOpen} {onRevoke} {onRetry} />
 {:else if sharesStore.loadError}
@@ -84,6 +113,16 @@
 {/if}
 
 {#if sharesStore.loading}<div class="loading">Loading…</div>{/if}
+
+{#if openScope}
+  <ShareDrawer
+    scope={openScope}
+    {sharesStore}
+    onClose={() => (openUuid = null)}
+    {onRevoke}
+    {onRetry}
+  />
+{/if}
 
 {#if revokingUuid}
   <ConfirmModal
@@ -112,6 +151,17 @@
     font-size: 13px;
     color: var(--text-muted);
   }
+  .filter-banner {
+    background: var(--bg-elevated);
+    padding: 8px 16px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .filter-banner code { font-family: monospace; }
   .empty {
     padding: 64px 16px;
     text-align: center;
