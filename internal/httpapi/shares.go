@@ -178,7 +178,8 @@ type listSharesInput struct {
 
 type listSharesOutput struct {
 	Body struct {
-		Items []scopeDTO `json:"items"`
+		Items      []scopeDTO `json:"items"`
+		NextOffset *int       `json:"next_offset,omitempty"`
 	}
 }
 
@@ -234,17 +235,28 @@ func registerSharesList(api huma.API, svc *service.ShareService, displayRepo *sh
 			return nil, huma.Error400BadRequest(err.Error())
 		}
 		limit := clampLimit(in.Limit, sharesListDefaultLimit, sharesListMaxLimit)
+		offset := max(in.Offset, 0)
+		// Fetch one extra row so we can emit next_offset only when a
+		// real continuation row exists, not merely because the page was
+		// full by coincidence.
 		filter := share.ScopeFilter{
 			AlbumID:        in.AlbumID,
 			Grantee:        owners.Principal{Hub: in.GranteeHub, UserID: in.GranteeUserID},
 			Status:         statuses,
 			IncludeSettled: in.IncludeSettled,
-			Limit:          limit,
-			Offset:         in.Offset,
+			Limit:          limit + 1,
+			Offset:         offset,
 		}
 		rows, err := svc.List(ctx, filter, caller)
 		if err != nil {
 			return nil, translateShareError(err)
+		}
+		out := &listSharesOutput{}
+		hasMore := len(rows) > limit
+		if hasMore {
+			rows = rows[:limit]
+			next := offset + limit
+			out.Body.NextOffset = &next
 		}
 		handles, err := batchGranteeHandles(ctx, displayRepo, rows)
 		if err != nil {
@@ -254,7 +266,6 @@ func registerSharesList(api huma.API, svc *service.ShareService, displayRepo *sh
 		if err != nil {
 			return nil, translateShareError(err)
 		}
-		out := &listSharesOutput{}
 		out.Body.Items = make([]scopeDTO, 0, len(rows))
 		for _, s := range rows {
 			dto := toScopeDTO(s)

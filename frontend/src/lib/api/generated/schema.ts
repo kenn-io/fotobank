@@ -527,6 +527,8 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["ScopeDTO"][] | null;
+            /** Format: int64 */
+            next_offset?: number;
         };
         MeOutputBody: {
             /**

@@ -623,3 +623,59 @@ func TestSharesGetMediaSetIncludesTargetSummary(t *testing.T) {
 	r.Equal("1 photo", summary["label"])
 	r.EqualValues(1, summary["item_count"])
 }
+
+// TestSharesListNextOffsetPaginates walks /api/v1/shares with limit=2
+// across five media_set scopes. Pages 1 and 2 (each two items) must
+// emit next_offset; the final page (one item) must omit it. This pins
+// the limit+1 sniff so a coincidentally-full final page is not
+// mis-reported as having more.
+func TestSharesListNextOffsetPaginates(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	fx := newSharesHTTPFixture(t)
+
+	// Seed five media rows owned by fx.owner and mint one media_set
+	// scope per row so List has five scopes to paginate over.
+	for range 5 {
+		m := media.Media{
+			ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
+			MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
+			OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
+			Size: 100, Checksum: "cs" + uuid.NewString(), ThumbStatus: "pending",
+		}
+		r.NoError(fx.media.Insert(ctx, m))
+		_, err := fx.shares.Create(ctx, service.CreateShareRequest{
+			Grantee: owners.Principal{Hub: "h", UserID: "alice"}, TargetType: share.TargetMediaSet,
+			MediaIDs: []string{m.ID},
+		}, fx.owner)
+		r.NoError(err)
+	}
+
+	type listPage struct {
+		Items      []map[string]any `json:"items"`
+		NextOffset *int             `json:"next_offset"`
+	}
+	get := func(url string) listPage {
+		req := httptest.NewRequest(http.MethodGet, url, nil)
+		rec := httptest.NewRecorder()
+		fx.h.ServeHTTP(rec, req)
+		r.Equal(http.StatusOK, rec.Code, rec.Body.String())
+		var resp listPage
+		r.NoError(json.Unmarshal(rec.Body.Bytes(), &resp))
+		return resp
+	}
+
+	page1 := get("/api/v1/shares?limit=2&offset=0")
+	r.Len(page1.Items, 2)
+	r.NotNil(page1.NextOffset)
+	r.Equal(2, *page1.NextOffset)
+
+	page2 := get("/api/v1/shares?limit=2&offset=2")
+	r.Len(page2.Items, 2)
+	r.NotNil(page2.NextOffset)
+	r.Equal(4, *page2.NextOffset)
+
+	page3 := get("/api/v1/shares?limit=2&offset=4")
+	r.Len(page3.Items, 1)
+	r.Nil(page3.NextOffset, "final page must omit next_offset")
+}
