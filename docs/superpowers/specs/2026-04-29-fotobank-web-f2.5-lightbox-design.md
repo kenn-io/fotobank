@@ -80,7 +80,7 @@ Source routes call `lightboxSession.open({...})` **before** pushing `/media/:id?
 - `from=library` or `from=sessions` → use app-level `mediaStore` (warm) for navIds.
 - `from=album:abc` → fetch album detail and paginate items until active id found or page-cap exhausted.
 - `from=hidden` → fetch `/api/v1/hidden/media` paged similarly. On 403 → redirect to `/hidden`.
-- Reconstruction throws or active id not found within cap → fall back to direct-detail mode (no prev/next), as if `from` were absent.
+- Reconstruction throws or active id not found within cap → render the fallback shell wrapping `DirectMediaDetail` (no prev/next).
 
 **Router change:** parse query params on the `/media/:id` match; expose `from` (and other query params) on `RouteMatch`. Current router ignores query params except special cases like `/shares`.
 
@@ -383,8 +383,8 @@ function handleKeydown(e: KeyboardEvent) {
 | Video fetch fails | `<video> error` event | Same as image fetch fail |
 | **Hidden 403** on `/hidden/media` or unhide action | response status 403 | `router.navigate('/hidden', { replace: true })` (gate page) |
 | **Hidden 404 while in `from=hidden`** (typical expired-cookie surface) | response status 404 | Call `hiddenStore.refresh()`. If response shows locked → `router.navigate('/hidden', { replace: true })`. If still unlocked → fallback shell + "Photo not found" content. |
-| Reconstruction can't find active id within page cap | loop exhaustion | Fall back to direct-detail mode (no prev/next) |
-| Reconstruction request fails (album 404, network) | catch | Fall back to direct-detail mode |
+| Reconstruction can't find active id within page cap | loop exhaustion | Fallback shell wrapping `DirectMediaDetail` (no prev/next) |
+| Reconstruction request fails (album 404, network) | catch | Fallback shell wrapping `DirectMediaDetail` |
 | Hidden mismatch (`from != hidden && hidden_at != null`) | API response inspection | Disable lightbox mode; render direct-detail (F2.4 cookie rules) |
 | Hide/unhide partial failure | bulk action result | Toast lists failures; snapshot mutated only for succeeded ids; lightbox stays on active id |
 | Hide/unhide fails on active id | bulk action result | Toast; no advance/close |
