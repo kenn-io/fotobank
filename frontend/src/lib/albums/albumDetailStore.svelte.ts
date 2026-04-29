@@ -1,0 +1,128 @@
+import type { Client } from "../api/client";
+import type { MediaStore } from "../media/mediaStore.svelte";
+
+export type Album = {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  item_count: number;
+};
+
+export type AlbumSort = "taken" | "added";
+
+export class AlbumDetailStore {
+  album = $state<Album | null>(null);
+  itemIds = $state<string[]>([]);
+  loading = $state(false);
+  exhausted = $state(false);
+  sort = $state<AlbumSort>("taken");
+
+  private nextOffset: number | null = 0;
+  private albumId: string | null = null;
+  private membership = new Set<string>();
+
+  constructor(
+    private client: Pick<Client, "GET" | "DELETE">,
+    private media: MediaStore,
+  ) {}
+
+  async load(id: string): Promise<void> {
+    this.albumId = id;
+    this.itemIds = [];
+    this.membership = new Set();
+    this.nextOffset = 0;
+    this.exhausted = false;
+
+    const meta = await this.client.GET("/api/v1/albums/{id}", {
+      params: { path: { id } } as never,
+    });
+    if (meta.error || !meta.data) return;
+    const a = meta.data as Album;
+    this.album = {
+      id: a.id,
+      name: a.name,
+      created_at: a.created_at,
+      updated_at: a.updated_at,
+      item_count: a.item_count,
+    };
+
+    await this.loadMore();
+  }
+
+  async loadMore(): Promise<void> {
+    if (!this.albumId || this.loading || this.exhausted) return;
+    this.loading = true;
+    try {
+      const res = await this.client.GET("/api/v1/albums/{id}/media", {
+        params: {
+          path: { id: this.albumId },
+          query: {
+            limit: 200,
+            offset: this.nextOffset ?? 0,
+            sort_by: this.sort,
+            sort_asc: false,
+          },
+        } as never,
+      });
+      if (res.error || !res.data) return;
+      const data = res.data as { items?: Array<Record<string, unknown>>; next_offset?: number | null };
+      const items = data.items ?? [];
+      this.media.mergeRaw(items);
+      const newIds = items
+        .map((it) => it["id"])
+        .filter((v): v is string => typeof v === "string");
+      this.itemIds = [...this.itemIds, ...newIds];
+      for (const id of newIds) this.membership.add(id);
+      const next = data.next_offset ?? null;
+      this.nextOffset = next;
+      if (next === null) this.exhausted = true;
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  async setSort(next: AlbumSort): Promise<void> {
+    if (this.sort === next || !this.albumId) return;
+    this.sort = next;
+    this.itemIds = [];
+    this.membership = new Set();
+    this.nextOffset = 0;
+    this.exhausted = false;
+    await this.loadMore();
+  }
+
+  async removeMany(ids: string[]): Promise<{ succeeded: string[]; failed: string[] }> {
+    if (!this.albumId) return { succeeded: [], failed: [] };
+    const albumId = this.albumId;
+    const concurrency = 4;
+    const succeeded: string[] = [];
+    const failed: string[] = [];
+    let i = 0;
+    const client = this.client;
+    async function worker() {
+      while (i < ids.length) {
+        const myIdx = i++;
+        const mediaId = ids[myIdx]!;
+        const res = await client.DELETE("/api/v1/albums/{id}/media/{media_id}", {
+          params: { path: { id: albumId, media_id: mediaId } } as never,
+        });
+        if (res.error) failed.push(mediaId);
+        else succeeded.push(mediaId);
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, ids.length) }, () => worker()),
+    );
+    if (succeeded.length > 0) {
+      const succSet = new Set(succeeded);
+      this.itemIds = this.itemIds.filter((id) => !succSet.has(id));
+      for (const id of succeeded) this.membership.delete(id);
+    }
+    return { succeeded, failed };
+  }
+
+  hasInAlbum(id: string): boolean {
+    return this.membership.has(id);
+  }
+}
