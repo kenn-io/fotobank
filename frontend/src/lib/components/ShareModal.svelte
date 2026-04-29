@@ -29,15 +29,14 @@
   // AlbumDetail.svelte:30, AddToAlbumModal.svelte:43 precedent).
   const title: string = $derived.by((): string => {
     if (target.type === "album_live") return `Share album: ${target.albumName}`;
-    return "Share photos";
+    const n = target.mediaIds.length;
+    return `Share ${n} ${n === 1 ? "photo" : "photos"}`;
   });
 
   const summary: string = $derived.by((): string => {
-    if (target.type === "media_set") {
-      const n = target.mediaIds.length;
-      return `${n} ${n === 1 ? "photo" : "photos"} selected`;
-    }
-    return "Live album share — recipient sees future additions.";
+    if (target.type === "album_live") return "Live album";
+    const n = target.mediaIds.length;
+    return `${n} ${n === 1 ? "photo" : "photos"} selected`;
   });
 
   async function submit(e: Event) {
@@ -92,20 +91,24 @@
     <div class="summary">{summary}</div>
     <form onsubmit={submit}>
       <label>
-        <span>Grantee (hub:user_id)</span>
+        <span>Grantee</span>
         <!-- svelte-ignore a11y_autofocus -->
         <input
           type="text"
+          class="grantee"
           bind:value={granteeRaw}
           placeholder="myhub:bob"
           autocomplete="off"
           spellcheck="false"
+          aria-invalid={granteeRaw !== "" && grantee === null}
           autofocus
         />
+        <span class="helper">hub:user_id</span>
       </label>
       <label>
-        <span>Label (optional)</span>
+        <span>Label</span>
         <input type="text" bind:value={label} maxlength="200" />
+        <span class="helper">Helps identify this share later.</span>
       </label>
       <label class="checkbox">
         <input type="checkbox" bind:checked={allowDownload} />
@@ -143,6 +146,8 @@
   form { display: flex; flex-direction: column; gap: 12px; }
   label { display: flex; flex-direction: column; gap: 4px; }
   label.checkbox { flex-direction: row; align-items: center; gap: 8px; }
+  .grantee { font-family: monospace; }
+  .helper { font-size: 12px; color: var(--text-muted); }
   .warn { color: var(--warn); font-size: 13px; }
   .error { color: var(--danger); font-size: 13px; }
   .actions { display: flex; gap: 8px; justify-content: flex-end; }
