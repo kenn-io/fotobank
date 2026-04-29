@@ -39,21 +39,25 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
   { re: /^\/hidden\/?$/, build: () => ({ route: "hidden" as const }) },
 ];
 
+// State key stored in history.state so the depth survives back/forward
+// navigation. Each pushState embed the depth so popstate restores it.
+const DEPTH_KEY = "__fotobank_depth__";
+
 export class RouterStore {
   current = $state<RouteMatch>(this.match(window.location.pathname));
 
   // Track entries pushed by navigate() so back() only steps back when the
-  // previous entry is known to be in-app. window.history.length is unreliable:
-  // a tab opened straight to /hidden has length > 1 (about:blank, then us),
-  // so a naive history.back() would land off-site instead of using fallback.
-  private appHistoryDepth = 0;
+  // previous entry is known to be in-app. Stored in history.state so
+  // browser back/forward navigation restores the correct depth (finding #12).
+  private appHistoryDepth: number =
+    (history.state as Record<string, unknown> | null)?.[DEPTH_KEY] as number | undefined ?? 0;
 
   navigate(path: string, opts?: { replace?: boolean }) {
     if (opts?.replace) {
-      history.replaceState({}, "", path);
+      history.replaceState({ [DEPTH_KEY]: this.appHistoryDepth }, "", path);
     } else {
-      history.pushState({}, "", path);
       this.appHistoryDepth += 1;
+      history.pushState({ [DEPTH_KEY]: this.appHistoryDepth }, "", path);
     }
     this.syncFromLocation();
   }
@@ -68,6 +72,12 @@ export class RouterStore {
   }
 
   syncFromLocation() {
+    // Restore depth from history.state on popstate navigation so back()
+    // knows how many in-app entries remain (finding #12).
+    const stateDepth = (history.state as Record<string, unknown> | null)?.[DEPTH_KEY];
+    if (typeof stateDepth === "number") {
+      this.appHistoryDepth = stateDepth;
+    }
     this.current = this.match(window.location.pathname);
   }
 

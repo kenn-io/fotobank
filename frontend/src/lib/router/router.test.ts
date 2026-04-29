@@ -202,6 +202,35 @@ describe("RouterStore.back", () => {
   });
 });
 
+describe("RouterStore.syncFromLocation depth restore (finding #12)", () => {
+  beforeEach(() => setLocation("/"));
+
+  it("restores appHistoryDepth from history.state on syncFromLocation", () => {
+    const r = new RouterStore();
+    r.navigate("/library");
+    r.navigate("/sessions");
+    // Simulate browser back/forward: directly set history.state with a depth
+    window.history.replaceState({ __fotobank_depth__: 1 }, "", "/library");
+    r.syncFromLocation();
+    // After restoring depth=1, back() should call history.back, not fallback
+    const backSpy = vi.spyOn(window.history, "back").mockReturnValue(undefined);
+    r.back("/notfound");
+    expect(backSpy).toHaveBeenCalledOnce();
+    backSpy.mockRestore();
+  });
+
+  it("depth=0 in history.state causes back() to navigate to fallback", () => {
+    const r = new RouterStore();
+    window.history.replaceState({ __fotobank_depth__: 0 }, "", "/library");
+    r.syncFromLocation();
+    const backSpy = vi.spyOn(window.history, "back").mockReturnValue(undefined);
+    r.back("/sessions");
+    expect(backSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/sessions");
+    backSpy.mockRestore();
+  });
+});
+
 describe("handleInternalLinkClick", () => {
   it("preventDefaults and navigates on plain left click", () => {
     setLocation("/");

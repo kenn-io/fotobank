@@ -41,8 +41,9 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    max-width: 380px;
-    width: 100%;
+    /* min(380px, 100vw - 40px) prevents the stack from extending past
+       the left edge on narrow viewports (finding #13). */
+    width: min(380px, calc(100vw - 40px));
   }
 
   .toast {
