@@ -68,6 +68,11 @@
         };
       }
       await onCreate(body);
+      // Match AddToAlbumModal's close contract: dismiss on success so
+      // every caller's onCreate handler can stay focused on the network
+      // call + side effects (selection.clear, etc) without remembering
+      // to flip a parent-owned `shareOpen` flag.
+      onClose();
     } catch (err: unknown) {
       // huma errors come back as `{title, detail}`; inline thrown JS
       // Errors as `{message}`. Match NewAlbumForm's extraction order.

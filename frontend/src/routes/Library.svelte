@@ -39,8 +39,9 @@
   async function onCreateShare(body: CreateShareBody): Promise<void> {
     const res = await api.POST("/api/v1/shares", { body: body as never });
     if (res.error) throw res.error;
+    // ShareModal calls onClose() itself on success — match the
+    // AddToAlbumModal contract; no need to flip shareOpen here.
     selection.clear();
-    shareOpen = false;
   }
 </script>
 

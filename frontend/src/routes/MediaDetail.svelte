@@ -108,14 +108,15 @@
       body: { media_ids: pendingMediaIds } as never,
     });
     if (res.error) throw res.error;
-    addOpen = false;
+    // AddToAlbumModal calls onClose() itself on success.
     return res.data as { added: number; already_present: number };
   }
 
   async function onCreateShare(body: CreateShareBody): Promise<void> {
     const res = await api.POST("/api/v1/shares", { body: body as never });
     if (res.error) throw res.error;
-    shareOpen = false;
+    // ShareModal calls onClose() itself on success — match the
+    // AddToAlbumModal contract; no need to flip shareOpen here.
   }
 </script>
 
