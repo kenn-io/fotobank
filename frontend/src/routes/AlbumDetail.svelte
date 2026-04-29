@@ -5,9 +5,20 @@
   import { api } from "../lib/api/client";
   import RenameAlbumModal from "../lib/components/RenameAlbumModal.svelte";
   import ConfirmModal from "../lib/components/ConfirmModal.svelte";
+  import ActionBar from "../lib/components/ActionBar.svelte";
+  import MediaActions from "../lib/components/MediaActions.svelte";
+  import AddToAlbumModal from "../lib/components/AddToAlbumModal.svelte";
+  import ShareModal from "../lib/components/ShareModal.svelte";
+  import { selection } from "../lib/selection/selectionStore.svelte";
+  import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
+  import type { CreateShareBody } from "../lib/share/shareTypes";
   import { router, handleInternalLinkClick } from "../lib/router/router.svelte";
 
-  let { id, mediaStore }: { id: string; mediaStore: MediaStore } = $props();
+  let { id, mediaStore, albumsStore }: {
+    id: string;
+    mediaStore: MediaStore;
+    albumsStore: AlbumsStore;
+  } = $props();
 
   // AlbumDetailStore needs a stable MediaStore reference for its
   // lifetime — recreating it on every reactive read would lose
@@ -36,6 +47,16 @@
     return [{ key: `album:${id}`, items }];
   });
 
+  // Route-scoped selection: only the global-selection ids that are
+  // actually members of THIS album. Reading detail.itemIds inside the
+  // derivation registers a reactive dep — membership is a non-reactive
+  // Set, but every loadMore/removeMany pairs a membership mutation with
+  // an itemIds reassignment, so itemIds is the right reactive proxy.
+  const selectedInAlbum = $derived.by((): string[] => {
+    void detail.itemIds;
+    return Array.from(selection.ids).filter((sid) => detail.hasInAlbum(sid));
+  });
+
   function loadMore() { detail.loadMore(); }
 
   function changeSort(e: Event) {
@@ -46,6 +67,50 @@
   let renaming = $state(false);
   let confirmingDelete = $state(false);
   let deleteConflictAlbumId = $state<string | null>(null);
+
+  let addOpen = $state(false);
+  let shareOpen = $state(false);
+  let shareAlbumOpen = $state(false);
+  let pendingIds = $state<string[]>([]);
+
+  function openAdd(ids: string[]) { pendingIds = ids; addOpen = true; }
+  function openShare(ids: string[]) { pendingIds = ids; shareOpen = true; }
+
+  async function onRemove(ids: string[]): Promise<void> {
+    const result = await detail.removeMany(ids);
+    if (result.succeeded.length > 0) {
+      selection.removeAll(result.succeeded);
+    }
+    if (result.failed.length > 0) {
+      // Toast surface lands later; for now log the partial-failure ids
+      // so a developer can investigate without a silent drop.
+      console.warn("partial remove failure:", result.failed);
+    }
+  }
+
+  async function onAdd(albumId: string): Promise<{ added: number; already_present: number }> {
+    const res = await api.POST("/api/v1/albums/{id}/media", {
+      params: { path: { id: albumId } } as never,
+      body: { media_ids: pendingIds } as never,
+    });
+    if (res.error) throw res.error;
+    selection.clear();
+    if (albumId === id) {
+      // Adding to the current album → refetch this view so the count
+      // and item list reflect the new membership.
+      await detail.load(id);
+    }
+    return res.data as { added: number; already_present: number };
+  }
+
+  async function onCreateShare(body: CreateShareBody): Promise<void> {
+    const res = await api.POST("/api/v1/shares", { body: body as never });
+    if (res.error) throw res.error;
+    // ShareModal calls onClose() itself on success — just clear the
+    // selection. Whichever modal owns the open flag (shareOpen or
+    // shareAlbumOpen) closes via its own bound onClose handler.
+    selection.clear();
+  }
 
   async function onRename(name: string) {
     await detail.rename(name);
@@ -89,6 +154,9 @@
     <div class="action-row">
       <div class="actions">
         <button type="button" onclick={() => (renaming = true)}>Rename</button>
+        <button type="button" onclick={() => (shareAlbumOpen = true)} disabled={!detail.album || detail.album.item_count === 0}>
+          Share album
+        </button>
         <button type="button" class="danger" onclick={() => (confirmingDelete = true)}>Delete</button>
       </div>
       <label class="sort">
@@ -101,6 +169,21 @@
     </div>
   </header>
 {/if}
+
+<ActionBar {selection} selectedCount={selectedInAlbum.length}>
+  {#snippet actions()}
+    {#if selectedInAlbum.length > 0}
+      <MediaActions
+        mediaIds={selectedInAlbum}
+        context="album"
+        albumId={id}
+        onAdd={openAdd}
+        onShare={openShare}
+        {onRemove}
+      />
+    {/if}
+  {/snippet}
+</ActionBar>
 
 {#if renaming && detail.album}
   <RenameAlbumModal
@@ -149,6 +232,31 @@
 {/if}
 
 {#if detail.loading}<div class="loading">Loading…</div>{/if}
+
+{#if addOpen}
+  <AddToAlbumModal
+    mediaIds={pendingIds}
+    {albumsStore}
+    {onAdd}
+    onClose={() => (addOpen = false)}
+  />
+{/if}
+
+{#if shareOpen}
+  <ShareModal
+    target={{ type: "media_set", mediaIds: pendingIds }}
+    onCreate={onCreateShare}
+    onClose={() => (shareOpen = false)}
+  />
+{/if}
+
+{#if shareAlbumOpen && detail.album}
+  <ShareModal
+    target={{ type: "album_live", albumId: id, albumName: detail.album.name }}
+    onCreate={onCreateShare}
+    onClose={() => (shareAlbumOpen = false)}
+  />
+{/if}
 
 <style>
   .album-header {

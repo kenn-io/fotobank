@@ -80,7 +80,7 @@
     {:else if router.current.route === "albums"}
       <AlbumsIndex {albumsStore} />
     {:else if router.current.route === "albums.detail"}
-      <AlbumDetail id={router.current.id} {mediaStore} />
+      <AlbumDetail id={router.current.id} {mediaStore} {albumsStore} />
     {:else if router.current.route === "settings"}
       <div style="padding:20px">Settings (placeholder; theme = {themeStore.theme})</div>
     {:else}
