@@ -24,7 +24,7 @@ describe("AlbumsStore.loadInitial", () => {
         data: {
           items: [
             { id: "a1", name: "Italy", item_count: 12, cover: { media_id: "m1", thumb_version: 1 }, created_at: "2025-01-01", updated_at: "2025-04-01" },
-            { id: "a2", name: "Family", item_count: 0, cover: null, created_at: "2024-06-01", updated_at: "2024-06-01" },
+            { id: "a2", name: "Family", item_count: 0, created_at: "2024-06-01", updated_at: "2024-06-01" },
           ],
           next_offset: 100,
         },
@@ -48,8 +48,8 @@ describe("AlbumsStore.loadInitial", () => {
 describe("AlbumsStore.create", () => {
   it("POSTs the new album then refetches page 1", async () => {
     const client = fakeClient([
-      { data: { id: "new", name: "Trip", item_count: 0, cover: null, created_at: "2026-04-28", updated_at: "2026-04-28" } },
-      { data: { items: [{ id: "new", name: "Trip", item_count: 0, cover: null, created_at: "2026-04-28", updated_at: "2026-04-28" }], next_offset: null } },
+      { data: { id: "new", name: "Trip", item_count: 0, created_at: "2026-04-28", updated_at: "2026-04-28" } },
+      { data: { items: [{ id: "new", name: "Trip", item_count: 0, created_at: "2026-04-28", updated_at: "2026-04-28" }], next_offset: null } },
     ]);
     const store = new AlbumsStore(client as any);
     await store.create("Trip");
@@ -71,8 +71,8 @@ describe("AlbumsStore.create", () => {
 describe("AlbumsStore.rename", () => {
   it("PATCHes and merges returned DTO into the list", async () => {
     const client = fakeClient([
-      { data: { items: [{ id: "a1", name: "Old", item_count: 0, cover: null, created_at: "x", updated_at: "x" }], next_offset: null } },
-      { data: { id: "a1", name: "New", item_count: 0, cover: null, created_at: "x", updated_at: "y" } },
+      { data: { items: [{ id: "a1", name: "Old", item_count: 0, created_at: "x", updated_at: "x" }], next_offset: null } },
+      { data: { id: "a1", name: "New", item_count: 0, created_at: "x", updated_at: "y" } },
     ]);
     const store = new AlbumsStore(client as any);
     await store.loadInitial();
@@ -84,7 +84,7 @@ describe("AlbumsStore.rename", () => {
 describe("AlbumsStore.delete", () => {
   it("DELETEs and removes from list on 204", async () => {
     const client = fakeClient([
-      { data: { items: [{ id: "a1", name: "X", item_count: 0, cover: null, created_at: "x", updated_at: "x" }], next_offset: null } },
+      { data: { items: [{ id: "a1", name: "X", item_count: 0, created_at: "x", updated_at: "x" }], next_offset: null } },
       { data: null },
     ]);
     const store = new AlbumsStore(client as any);
@@ -95,7 +95,7 @@ describe("AlbumsStore.delete", () => {
 
   it("rethrows 409 errors so caller can surface the live-scopes toast", async () => {
     const client = fakeClient([
-      { data: { items: [{ id: "a1", name: "X", item_count: 0, cover: null, created_at: "x", updated_at: "x" }], next_offset: null } },
+      { data: { items: [{ id: "a1", name: "X", item_count: 0, created_at: "x", updated_at: "x" }], next_offset: null } },
       { error: { status: 409, message: "album has outstanding broker grants" } },
     ]);
     const store = new AlbumsStore(client as any);

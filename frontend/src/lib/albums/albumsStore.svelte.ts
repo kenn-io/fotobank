@@ -6,7 +6,7 @@ export type AlbumListItem = {
   created_at: string;
   updated_at: string;
   item_count: number;
-  cover: { media_id: string; thumb_version: number } | null;
+  cover?: { media_id: string; thumb_version: number };
 };
 
 export class AlbumsStore {
@@ -32,7 +32,7 @@ export class AlbumsStore {
         params: { query: { limit: 100, offset: this.nextOffset ?? 0 } } as never,
       });
       if (res.error || !res.data) return;
-      const data = res.data as { items?: AlbumListItem[]; next_offset?: number | null };
+      const data = res.data as { items?: AlbumListItem[]; next_offset?: number };
       const items = data.items ?? [];
       this.albums = [...this.albums, ...items];
       const next = data.next_offset ?? null;
