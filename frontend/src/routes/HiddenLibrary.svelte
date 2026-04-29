@@ -4,6 +4,7 @@
      created here and torn down when this component unmounts.
 -->
 <script lang="ts">
+  import { untrack } from "svelte";
   import HiddenGate from "../lib/components/HiddenGate.svelte";
   import VirtualGrid from "../lib/grid/VirtualGrid.svelte";
   import ActionBar from "../lib/components/ActionBar.svelte";
@@ -30,11 +31,28 @@
     hiddenMediaStore?: HiddenMediaStore;
   } = $props();
 
-  // Load initial items when the store is configured and unlocked.
+  // Load initial items once when the store becomes configured+unlocked.
+  // Use untrack so the effect doesn't subscribe to hiddenMediaStore's
+  // pagination state (loading, exhausted, months), which would cause an
+  // infinite refetch loop (finding #5). A `started` guard ensures we
+  // only call loadInitial once per mount even if hiddenStore re-renders.
+  let started = false;
   $effect(() => {
-    if (hiddenStore.configured && hiddenStore.unlocked) {
-      void hiddenMediaStore.loadInitial();
+    if (hiddenStore.configured && hiddenStore.unlocked && !started) {
+      started = true;
+      untrack(() => void hiddenMediaStore.loadInitial());
     }
+  });
+
+  // Filter the global selection to IDs that are actually present in the
+  // hidden store — the global selection is shared across routes and may
+  // contain IDs from Library/Sessions (finding #9).
+  const selectedInHidden = $derived.by((): string[] => {
+    void hiddenMediaStore.months; // register dep
+    const hiddenIds = new Set(
+      hiddenMediaStore.months.flatMap((m) => m.items.map((it) => it.id)),
+    );
+    return Array.from(selection.ids).filter((id) => hiddenIds.has(id));
   });
 
   let addOpen = $state(false);
@@ -80,10 +98,10 @@
 
 <HiddenGate {hiddenStore}>
   {#snippet children()}
-    <ActionBar {selection}>
+    <ActionBar {selection} selectedCount={selectedInHidden.length}>
       {#snippet actions()}
         <MediaActions
-          mediaIds={Array.from(selection.ids)}
+          mediaIds={selectedInHidden}
           context="hidden"
           onAdd={openAdd}
           onShare={() => {}}
@@ -92,9 +110,11 @@
       {/snippet}
     </ActionBar>
 
+    <!-- TODO(F2.5): pass disableNavigation=false once hidden-aware lightbox lands -->
     <VirtualGrid
       months={hiddenMediaStore.months}
       onLoadMore={() => hiddenMediaStore.loadMore()}
+      disableNavigation={true}
     />
 
     {#if hiddenMediaStore.loading}

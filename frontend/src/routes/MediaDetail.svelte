@@ -1,6 +1,7 @@
 <!-- frontend/src/routes/MediaDetail.svelte -->
 <script lang="ts">
   import type { MediaStore } from "../lib/media/mediaStore.svelte";
+  import { toMedia } from "../lib/media/mediaStore.svelte";
   import { handleInternalLinkClick, router } from "../lib/router/router.svelte";
   import { formatCoord } from "../lib/format/coords";
   import MediaActions from "../lib/components/MediaActions.svelte";
@@ -84,20 +85,13 @@
   let effectiveMedia = $derived.by((): (typeof media & { hidden_at?: string | null }) | undefined => {
     if (media) return media;
     if (!lastRaw) return undefined;
-    // Minimal reconstruction for hidden items: enough to render details
-    // and the Unhide action. The full toMedia adapter lives in the store;
-    // we just need id, timestamp, hidden_at, and display fields.
+    // Normalize through toMedia so thumb_version → thumbVersion is mapped
+    // correctly (finding #8). The hidden_at field passes through toMedia
+    // unchanged, so the Unhide flow still works.
     const raw = lastRaw;
-    const id_ = typeof raw["id"] === "string" ? raw["id"] : undefined;
-    if (!id_) return undefined;
     const ha = raw["hidden_at"];
-    if (ha === null || typeof ha === "string") {
-      // Return the raw shape cast to Media — it has the fields we need
-      // for the template. The cast is safe because lastRaw came from the
-      // same JSON endpoint as normal media rows.
-      return raw as unknown as typeof media;
-    }
-    return undefined;
+    if (ha !== null && typeof ha !== "string") return undefined;
+    return toMedia(raw) ?? undefined;
   });
 
   // Whether the currently-viewed media is hidden.

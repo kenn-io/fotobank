@@ -14,12 +14,17 @@
   // where dates aren't a meaningful axis. headerAction forwards a
   // per-month snippet (e.g. Task 7's GroupSelectButton) into each
   // MonthChunk's day-header in timeline mode.
-  let { months, onLoadMore, targetRowHeight = 200, timelineChrome = true, headerAction }: {
+  // disableNavigation=true suppresses the plain-click router.navigate()
+  // call so clicks only select (shift/ctrl-click) — used by HiddenLibrary
+  // where the hidden-detail flow is deferred to F2.5. TODO(F2.5): remove
+  // once a hidden-aware detail lightbox is implemented.
+  let { months, onLoadMore, targetRowHeight = 200, timelineChrome = true, headerAction, disableNavigation = false }: {
     months: Month[];
     onLoadMore?: () => void;
     targetRowHeight?: number;
     timelineChrome?: boolean;
     headerAction?: Snippet<[Month]>;
+    disableNavigation?: boolean;
   } = $props();
 
   let containerEl: HTMLDivElement | null = $state(null);
@@ -120,7 +125,9 @@
       return;
     }
     // Plain click: SPA-route via the router instead of the anchor's
-    // default full-page navigation.
+    // default full-page navigation. Skipped when disableNavigation is
+    // set (e.g. HiddenLibrary where detail view is deferred to F2.5).
+    if (disableNavigation) return;
     e.preventDefault();
     router.navigate(`/media/${id}`);
   }

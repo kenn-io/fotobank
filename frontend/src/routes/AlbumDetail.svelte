@@ -143,6 +143,9 @@
     const succeeded = result.succeeded ?? [];
     if (succeeded.length > 0) {
       detail.pruneHidden(succeeded);
+      // Evict from the shared visible store (Library/Sessions caches) so
+      // the hidden rows don't linger in other views (finding #1).
+      mediaStore.removeMany(succeeded);
       selection.removeAll(succeeded);
       // Refresh this album's header counts inline; mark the albums list
       // stale so cover and counts refresh the next time /albums is visited.
