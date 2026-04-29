@@ -23,7 +23,10 @@
       await onCreate(trimmed);
       name = "";
     } catch (err: unknown) {
-      error = (err as { message?: string })?.message ?? "Failed to create album";
+      // huma errors come back as `{title, detail}`; inline `throw new Error(...)`
+      // surfaces as `{message}`. Prefer the most specific text available.
+      const e = (err ?? {}) as { message?: string; detail?: string; title?: string };
+      error = e.detail ?? e.message ?? e.title ?? "Failed to create album";
     } finally {
       pending = false;
     }

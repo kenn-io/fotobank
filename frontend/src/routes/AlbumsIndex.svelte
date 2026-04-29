@@ -58,10 +58,16 @@
 {#if albumsStore.loading}<div class="loading">Loading…</div>{/if}
 <div bind:this={sentinel} style="height:1px"></div>
 
+<svelte:window
+  onkeydown={(e) => {
+    if (modalOpen && e.key === "Escape") modalOpen = false;
+  }}
+/>
+
 {#if modalOpen}
-  <!-- Backdrop is a button so click + Esc/Enter all dismiss the modal
-       without separate keydown plumbing. The inner modal stops click
-       propagation so interactions inside don't bubble up and dismiss. -->
+  <!-- Backdrop click dismisses; Esc dismisses via the window keydown
+       handler above. Inner modal stops click propagation so interactions
+       inside don't bubble up to the backdrop. -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-backdrop" role="presentation" onclick={() => (modalOpen = false)}>
@@ -99,7 +105,7 @@
     z-index: 100;
   }
   .modal {
-    background: var(--bg);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 16px;

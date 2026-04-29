@@ -43,7 +43,7 @@
     display: flex;
     flex-direction: column;
     text-decoration: none;
-    color: var(--text);
+    color: var(--text-primary);
   }
   .cover {
     aspect-ratio: 1 / 1;

@@ -33,7 +33,7 @@
     cursor: pointer;
   }
   .group-select:hover {
-    color: var(--text);
+    color: var(--text-primary);
     border-color: var(--text-muted);
   }
   .group-select:focus-visible {
