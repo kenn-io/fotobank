@@ -1342,3 +1342,59 @@ func TestListHiddenSortOrder(t *testing.T) {
 	r.Equal(withTS1.ID, got[1].ID, "second timestamp")
 	r.Equal(noTS.ID, got[2].ID, "null timestamp last")
 }
+
+// TestSetHiddenCascadeChunksLargeIDList verifies that SetHiddenCascade and
+// ClearHiddenCascade chunk large id slices correctly. We pass 600 ids so
+// chunking is exercised (chunkSize=250 yields 3 batches). Only 5 of those ids
+// correspond to real owned rows; the rest are phantom ids that produce no-ops.
+// After SetHiddenCascade the 5 real rows must be hidden; after ClearHiddenCascade
+// they must be visible again.
+func TestSetHiddenCascadeChunksLargeIDList(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-chunk-large")
+
+	// Seed 5 real rows spread across the 600-id list.
+	real := make([]media.Media, 5)
+	for i := range real {
+		m := baseMedia(uuid.NewString(), p)
+		m.Path = "chunk/" + uuid.NewString() + ".jpg"
+		m.Checksum = uuid.NewString()
+		r.NoError(repo.Insert(ctx, m))
+		real[i] = m
+	}
+
+	// Build a 600-element id list: embed the 5 real ids at positions 0, 149,
+	// 300, 450, and 599 so they span all three 250-id chunks.
+	const total = 600
+	ids := make([]string, total)
+	for i := range ids {
+		ids[i] = uuid.NewString() // phantom by default
+	}
+	ids[0] = real[0].ID
+	ids[149] = real[1].ID
+	ids[300] = real[2].ID
+	ids[450] = real[3].ID
+	ids[599] = real[4].ID
+
+	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	r.NoError(repo.SetHiddenCascade(ctx, p, ids, hiddenAt))
+
+	for i, m := range real {
+		got, err := repo.GetByID(ctx, m.ID)
+		r.NoError(err)
+		r.NotNil(got.HiddenAt, "real[%d] must be hidden after SetHiddenCascade", i)
+		r.True(got.HiddenAt.Equal(hiddenAt))
+	}
+
+	r.NoError(repo.ClearHiddenCascade(ctx, p, ids))
+
+	for i, m := range real {
+		got, err := repo.GetByID(ctx, m.ID)
+		r.NoError(err)
+		r.Nil(got.HiddenAt, "real[%d] must be visible after ClearHiddenCascade", i)
+	}
+}

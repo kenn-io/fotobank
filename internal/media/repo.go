@@ -806,9 +806,10 @@ func inPlaceholders(n int) string {
 	return strings.Repeat("?,", n)[:n*2-1]
 }
 
-// SetHiddenCascade sets hidden_at = at on every row owned by owner
-// whose id IN ids OR paired_with_id IN ids. Owner-scoped; runs in a
-// single transaction.
+// SetHiddenCascade sets hidden_at = at on every owned row whose id IS in
+// ids OR paired_with_id IS in ids. Sidecars cascade with their primary.
+// Large id slices are chunked transparently to stay under the SQLite
+// parameter limit.
 func (r *Repo) SetHiddenCascade(
 	ctx context.Context,
 	owner owners.Principal,
@@ -818,28 +819,34 @@ func (r *Repo) SetHiddenCascade(
 	if len(ids) == 0 {
 		return nil
 	}
-	ph := inPlaceholders(len(ids))
-	args := make([]any, 0, 2+len(ids)*2)
-	args = append(args, at, owner.Hub, owner.UserID)
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	q := `UPDATE media
-	   SET hidden_at = ?
-	 WHERE owner_hub = ? AND owner_user_id = ?
-	   AND (id IN (` + ph + `) OR paired_with_id IN (` + ph + `))`
-	if _, err := r.rw.ExecContext(ctx, q, args...); err != nil {
-		return fmt.Errorf("set hidden cascade: %w", err)
+	const chunkSize = 250
+	for start := 0; start < len(ids); start += chunkSize {
+		end := min(start+chunkSize, len(ids))
+		chunk := ids[start:end]
+		ph := inPlaceholders(len(chunk))
+		args := make([]any, 0, 3+len(chunk)*2)
+		args = append(args, at, owner.Hub, owner.UserID)
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		q := `UPDATE media
+		   SET hidden_at = ?
+		 WHERE owner_hub = ? AND owner_user_id = ?
+		   AND (id IN (` + ph + `) OR paired_with_id IN (` + ph + `))`
+		if _, err := r.rw.ExecContext(ctx, q, args...); err != nil {
+			return fmt.Errorf("set hidden cascade: %w", err)
+		}
 	}
 	return nil
 }
 
-// ClearHiddenCascade sets hidden_at = NULL on every row owned by owner
-// whose id IN ids OR paired_with_id IN ids. Owner-scoped; runs in a
-// single transaction.
+// ClearHiddenCascade clears hidden_at on every owned row whose id IS in
+// ids OR paired_with_id IS in ids. Sidecars cascade with their primary.
+// Large id slices are chunked transparently to stay under the SQLite
+// parameter limit.
 func (r *Repo) ClearHiddenCascade(
 	ctx context.Context,
 	owner owners.Principal,
@@ -848,21 +855,26 @@ func (r *Repo) ClearHiddenCascade(
 	if len(ids) == 0 {
 		return nil
 	}
-	ph := inPlaceholders(len(ids))
-	args := make([]any, 0, 2+len(ids)*2)
-	args = append(args, owner.Hub, owner.UserID)
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	q := `UPDATE media
-	   SET hidden_at = NULL
-	 WHERE owner_hub = ? AND owner_user_id = ?
-	   AND (id IN (` + ph + `) OR paired_with_id IN (` + ph + `))`
-	if _, err := r.rw.ExecContext(ctx, q, args...); err != nil {
-		return fmt.Errorf("clear hidden cascade: %w", err)
+	const chunkSize = 250
+	for start := 0; start < len(ids); start += chunkSize {
+		end := min(start+chunkSize, len(ids))
+		chunk := ids[start:end]
+		ph := inPlaceholders(len(chunk))
+		args := make([]any, 0, 2+len(chunk)*2)
+		args = append(args, owner.Hub, owner.UserID)
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		q := `UPDATE media
+		   SET hidden_at = NULL
+		 WHERE owner_hub = ? AND owner_user_id = ?
+		   AND (id IN (` + ph + `) OR paired_with_id IN (` + ph + `))`
+		if _, err := r.rw.ExecContext(ctx, q, args...); err != nil {
+			return fmt.Errorf("clear hidden cascade: %w", err)
+		}
 	}
 	return nil
 }
