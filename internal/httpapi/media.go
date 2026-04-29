@@ -8,6 +8,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/service"
@@ -52,6 +53,10 @@ type mediaDTO struct {
 	PairedWithID *string         `json:"paired_with_id,omitempty"`
 	PairedWith   *pairSummaryDTO `json:"paired_with,omitempty"`
 	Sidecars     []mediaDTO      `json:"sidecars,omitempty"`
+
+	// F2.4 Hidden privacy. Omitted (omitempty) when nil so the field is
+	// absent from visible-media responses — minimises client-side noise.
+	HiddenAt *time.Time `json:"hidden_at,omitempty"`
 }
 
 // pairSummaryDTO is the slim primary-side projection embedded under a
@@ -90,6 +95,7 @@ func toMediaDTO(m media.Media) mediaDTO {
 		LocationLabel:    m.LocationLabel,
 	}
 	dto.PairedWithID = m.PairedWithID
+	dto.HiddenAt = m.HiddenAt
 	return dto
 }
 
@@ -193,7 +199,14 @@ func registerMedia(api huma.API, svc *service.MediaService) {
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
 		}
 		caller := id.Principal.OwnersPrincipal()
-		m, err := svc.Get(ctx, in.ID, caller)
+		// Honor the unlock claim for direct-by-id reads. A hidden row with a
+		// valid unlock cookie from the same principal returns 200; without a
+		// cookie it returns 404 (anti-enumeration).
+		includeHidden := false
+		if claim, hasClaim := hidden.UnlockClaimFromContext(ctx); hasClaim && claim.Principal == caller {
+			includeHidden = true
+		}
+		m, err := svc.Get(ctx, in.ID, caller, includeHidden)
 		if err != nil {
 			if errors.Is(err, errs.ErrNotFound) {
 				return nil, huma.Error404NotFound("media not found")
@@ -204,7 +217,7 @@ func registerMedia(api huma.API, svc *service.MediaService) {
 		if dto.PairedWithID == nil {
 			// Primary path: embed any sidecars on the response so the
 			// frontend can render a "Files" row without an extra trip.
-			sidecars, err := svc.GetSidecars(ctx, m.ID, caller)
+			sidecars, err := svc.GetSidecars(ctx, m.ID, caller, includeHidden)
 			if err != nil {
 				return nil, err
 			}
@@ -230,7 +243,7 @@ func registerMedia(api huma.API, svc *service.MediaService) {
 			// primary was deleted between the sidecar fetch and this
 			// follow-up. Treat that as PairedWith nil; surface every
 			// other error.
-			primary, err := svc.Get(ctx, *m.PairedWithID, caller)
+			primary, err := svc.Get(ctx, *m.PairedWithID, caller, includeHidden)
 			switch {
 			case err == nil:
 				dto.PairedWith = &pairSummaryDTO{

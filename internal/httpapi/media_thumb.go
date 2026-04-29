@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/service"
 	"github.com/wesm/fotobank/internal/thumb"
@@ -69,7 +70,12 @@ func registerMediaThumb(mux *http.ServeMux, svc *service.ThumbService) {
 		}
 
 		caller := ident.Principal.OwnersPrincipal()
-		rc, m, err := svc.Get(r.Context(), id, size, version, caller)
+		// Honor the unlock claim for direct-by-id reads (anti-enumeration).
+		includeHidden := false
+		if claim, hasClaim := hidden.UnlockClaimFromContext(r.Context()); hasClaim && claim.Principal == caller {
+			includeHidden = true
+		}
+		rc, m, err := svc.Get(r.Context(), id, size, version, caller, includeHidden)
 		if err != nil {
 			if errors.Is(err, errs.ErrNotFound) {
 				notFound()

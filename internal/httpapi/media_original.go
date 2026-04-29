@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/service"
 )
@@ -30,7 +31,15 @@ func registerMediaOriginal(mux *http.ServeMux, svc *service.MediaService) {
 			return
 		}
 		caller := ident.Principal.OwnersPrincipal()
-		m, err := svc.Get(r.Context(), id, caller)
+		// Honor the unlock claim for direct-by-id reads. Pass includeHidden
+		// through both the initial Get (header phase) and the later
+		// OpenOriginal call (streaming phase) so an unlocked hidden original
+		// passes both phases consistently.
+		includeHidden := false
+		if claim, hasClaim := hidden.UnlockClaimFromContext(r.Context()); hasClaim && claim.Principal == caller {
+			includeHidden = true
+		}
+		m, err := svc.Get(r.Context(), id, caller, includeHidden)
 		if err != nil {
 			if errors.Is(err, errs.ErrNotFound) {
 				http.Error(w, "media not found", http.StatusNotFound)
@@ -58,7 +67,7 @@ func registerMediaOriginal(mux *http.ServeMux, svc *service.MediaService) {
 		}
 
 		writeOriginalResponse(w, r, m, func(off, length int64) (io.ReadCloser, error) {
-			rc, _, err := svc.OpenOriginal(r.Context(), id, caller, off, length)
+			rc, _, err := svc.OpenOriginal(r.Context(), id, caller, off, length, includeHidden)
 			return rc, err
 		})
 	})))

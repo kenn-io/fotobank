@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wesm/fotobank/internal/album"
+	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/backup"
 	"github.com/wesm/fotobank/internal/config"
 	"github.com/wesm/fotobank/internal/db"
@@ -163,6 +164,12 @@ func runServer(ctx context.Context, opts serverOpts) error {
 
 	mediaSvc := service.NewMediaService(media.NewRepo(d.WriteDB(), d.ReadDB()), storeLayer)
 
+	// F2.4 Hidden privacy. hiddenRepo and hiddenSvc are wired after
+	// mediaSvc because hidden.NewService takes MediaPrivacy which is
+	// implemented by *service.MediaService via ClearAllHiddenForOwner.
+	hiddenRepo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
+	hiddenSvc := hidden.NewService(hiddenRepo, mediaSvc)
+
 	sharesRepo := share.NewRepo(d.WriteDB(), d.ReadDB())
 	albumSvc := service.NewAlbumService(
 		album.NewRepo(d.WriteDB(), d.ReadDB()),
@@ -244,8 +251,14 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		UserSettings:     usersettingsSvc,
 		EventBus:         eventBus,
 		PrincipalDisplay: displayRepo,
-		Logger:           logger,
-		Metrics:          metricsObj,
+		HiddenAuth:       hiddenSvc,
+		// DevInsecureHiddenCookies enables the dev cookie name and omits
+		// the Secure flag. Only ever true when the operator has explicitly
+		// set http.dev_insecure_cookies in the config — never sniffed from
+		// the listen address.
+		DevInsecureHiddenCookies: cfg.HTTP.DevInsecureCookies,
+		Logger:                   logger,
+		Metrics:                  metricsObj,
 		// RequestIDHeader is only honored in header mode. In stub mode
 		// the config defaulting still populates the field, but stub
 		// identity does not enroll a trusted upstream proxy, so a
@@ -354,6 +367,22 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			runFlashJanitor(sigCtx, flashCache, opts.stderr)
 		})
 	}
+
+	// Hidden session sweeper: expires old sessions and purges stale
+	// failure-log rows every 5 minutes. The interval is overridable via
+	// FOTOBANK_TEST_HIDDEN_SWEEP_INTERVAL so e2e tests can observe sweeps
+	// without waiting 5 minutes.
+	hiddenSweepInterval := 5 * time.Minute
+	if raw := os.Getenv("FOTOBANK_TEST_HIDDEN_SWEEP_INTERVAL"); raw != "" {
+		if dur, err := time.ParseDuration(raw); err == nil && dur > 0 {
+			hiddenSweepInterval = dur
+		} else if err != nil {
+			fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_HIDDEN_SWEEP_INTERVAL parse error: %v\n", err)
+		}
+	}
+	bgWG.Go(func() {
+		runHiddenSweeper(sigCtx, hiddenSvc, hiddenSweepInterval, opts.stderr)
+	})
 
 	thumbWorker := thumb.NewWorker(thumbQueue, storeLayer, thumb.Config{
 		WorkerConcurrency: cfg.Thumbs.WorkerConcurrency,
@@ -725,6 +754,30 @@ func runFlashJanitor(ctx context.Context, fc *storage.FlashCache, stderr io.Writ
 		case <-ticker.C:
 			if err := fc.Evict(ctx); err != nil {
 				fmt.Fprintln(stderr, "flash eviction failed:", err)
+			}
+		}
+	}
+}
+
+// runHiddenSweeper calls Sweep on the hidden service every interval
+// until ctx is cancelled. Sweep errors are logged to stderr but do not
+// crash the server — a transient DB hiccup should not block the auth
+// surface; expired sessions are harmless until the next sweep succeeds.
+func runHiddenSweeper(
+	ctx context.Context,
+	svc *hidden.Service,
+	interval time.Duration,
+	stderr io.Writer,
+) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := svc.Sweep(ctx); err != nil {
+				fmt.Fprintln(stderr, "hidden sweep failed:", err)
 			}
 		}
 	}

@@ -105,14 +105,17 @@ func (s *MediaService) UpdateGPS(
 // GetSidecars returns the sidecars of the primary identified by
 // primaryID. The owner check goes through Get, which returns
 // errs.ErrNotFound on caller mismatch — so a caller that does not own
-// the primary cannot enumerate its sidecars. Returns an empty slice
-// (not an error) when the primary has no sidecars.
+// the primary cannot enumerate its sidecars. The optional includeHidden
+// variadic matches Get's convention so callers with the unlock claim can
+// retrieve sidecars of hidden primaries. Returns an empty slice (not an
+// error) when the primary has no sidecars.
 func (s *MediaService) GetSidecars(
 	ctx context.Context,
 	primaryID string,
 	caller owners.Principal,
+	includeHidden ...bool,
 ) ([]media.Media, error) {
-	if _, err := s.Get(ctx, primaryID, caller); err != nil {
+	if _, err := s.Get(ctx, primaryID, caller, includeHidden...); err != nil {
 		return nil, err
 	}
 	return s.repo.GetSidecars(ctx, primaryID)

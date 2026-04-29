@@ -195,6 +195,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/hidden/media": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List hidden media for the caller (requires unlock cookie) */
+        get: operations["list-hidden-media"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -223,6 +240,40 @@ export interface paths {
         get: operations["list-media"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media/hidden:bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bulk-hide media (requires hidden privacy to be configured; no unlock cookie needed) */
+        post: operations["hide-media-bulk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media/unhide:bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bulk-unhide media (requires unlock cookie) */
+        post: operations["unhide-media-bulk"];
         delete?: never;
         options?: never;
         head?: never;
@@ -596,6 +647,30 @@ export interface components {
             new_passcode: string;
             old_passcode: string;
         };
+        HiddenMediaBulkFailureDTO: {
+            code: string;
+            id: string;
+        };
+        HiddenMediaBulkInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/HiddenMediaBulkInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description IDs of primary or standalone rows to hide/unhide. */
+            media_ids: string[] | null;
+        };
+        HiddenMediaBulkOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/HiddenMediaBulkOutputBody.json
+             */
+            readonly $schema?: string;
+            failed: components["schemas"]["HiddenMediaBulkFailureDTO"][] | null;
+            succeeded: string[] | null;
+        };
         HiddenPasscodeInputBody: {
             /**
              * Format: uri
@@ -637,6 +712,17 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["AlbumDTO"][] | null;
+            /** Format: int64 */
+            next_offset?: number;
+        };
+        ListHiddenMediaOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ListHiddenMediaOutputBody.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["MediaDTO"][] | null;
             /** Format: int64 */
             next_offset?: number;
         };
@@ -691,6 +777,8 @@ export interface components {
             gps_at?: string;
             /** Format: int64 */
             height?: number;
+            /** Format: date-time */
+            hidden_at?: string;
             id: string;
             /** Format: date-time */
             imported_at: string;
@@ -1424,6 +1512,40 @@ export interface operations {
             };
         };
     };
+    "list-hidden-media": {
+        parameters: {
+            query?: {
+                /** @description max rows to return (default 100, cap 1000) */
+                limit?: number;
+                /** @description pagination offset */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListHiddenMediaOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     me: {
         parameters: {
             query?: never;
@@ -1478,6 +1600,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListMediaOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "hide-media-bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HiddenMediaBulkInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HiddenMediaBulkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "unhide-media-bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HiddenMediaBulkInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HiddenMediaBulkOutputBody"];
                 };
             };
             /** @description Error */
