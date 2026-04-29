@@ -9,6 +9,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/wesm/fotobank/internal/album"
+	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/service"
 	"github.com/wesm/fotobank/internal/share"
@@ -49,21 +50,23 @@ type coverDTO struct {
 }
 
 type albumDTO struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	ItemCount int       `json:"item_count"`
-	Cover     *coverDTO `json:"cover,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	ItemCount   int       `json:"item_count"`
+	HiddenCount int       `json:"hidden_count"`
+	Cover       *coverDTO `json:"cover,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 func toAlbumDTO(it album.AlbumListItem) albumDTO {
 	out := albumDTO{
-		ID:        it.ID,
-		Name:      it.Name,
-		ItemCount: it.ItemCount,
-		CreatedAt: it.CreatedAt,
-		UpdatedAt: it.UpdatedAt,
+		ID:          it.ID,
+		Name:        it.Name,
+		ItemCount:   it.ItemCount,
+		HiddenCount: it.HiddenCount,
+		CreatedAt:   it.CreatedAt,
+		UpdatedAt:   it.UpdatedAt,
 	}
 	if it.Cover != nil {
 		out.Cover = &coverDTO{MediaID: it.Cover.MediaID, ThumbVersion: it.Cover.ThumbVersion}
@@ -371,7 +374,12 @@ func registerAddAlbumMedia(api huma.API, svc *service.AlbumService) {
 		if !ok {
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
 		}
-		added, already, err := svc.AddMedia(ctx, in.AlbumID, in.Body.MediaIDs, id.Principal.OwnersPrincipal())
+		caller := id.Principal.OwnersPrincipal()
+		var opts []service.AddMediaOption
+		if claim, hasClaim := hidden.UnlockClaimFromContext(ctx); hasClaim && claim.Principal == caller {
+			opts = append(opts, service.WithHiddenMediaAllowed())
+		}
+		added, already, err := svc.AddMedia(ctx, in.AlbumID, in.Body.MediaIDs, caller, opts...)
 		if err != nil {
 			return nil, translateAlbumError(err)
 		}

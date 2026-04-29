@@ -74,6 +74,10 @@
             "format": "date-time",
             "type": "string"
           },
+          "hidden_count": {
+            "format": "int64",
+            "type": "integer"
+          },
           "id": {
             "type": "string"
           },
@@ -93,6 +97,7 @@
           "id",
           "name",
           "item_count",
+          "hidden_count",
           "created_at",
           "updated_at"
         ],

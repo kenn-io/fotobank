@@ -544,6 +544,8 @@ export interface components {
             cover?: components["schemas"]["CoverDTO"];
             /** Format: date-time */
             created_at: string;
+            /** Format: int64 */
+            hidden_count: number;
             id: string;
             /** Format: int64 */
             item_count: number;
