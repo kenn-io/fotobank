@@ -7,6 +7,7 @@ export type Album = {
   created_at: string;
   updated_at: string;
   item_count: number;
+  hidden_count: number;
 };
 
 export type AlbumSort = "taken" | "added";
@@ -72,6 +73,7 @@ export class AlbumDetailStore {
       created_at: a.created_at,
       updated_at: a.updated_at,
       item_count: a.item_count,
+      hidden_count: a.hidden_count ?? 0,
     };
 
     await this.loadMore();
@@ -125,6 +127,27 @@ export class AlbumDetailStore {
     // its response instead of polluting the new sort's pages.
     ++this.loadToken;
     await this.loadMore();
+  }
+
+  // refreshMeta refetches the album header (name, item_count, hidden_count,
+  // cover) without resetting the in-memory itemIds / membership map. Use
+  // after a hide/unhide to update header counts without a full reload.
+  async refreshMeta(): Promise<void> {
+    if (!this.albumId) return;
+    const res = await this.client.GET("/api/v1/albums/{id}", {
+      params: { path: { id: this.albumId } } as never,
+    });
+    if (res.error || !res.data) return;
+    const a = res.data as Album;
+    if (this.album) {
+      this.album = {
+        ...this.album,
+        name: a.name,
+        updated_at: a.updated_at,
+        item_count: a.item_count,
+        hidden_count: a.hidden_count ?? 0,
+      };
+    }
   }
 
   async removeMany(ids: string[]): Promise<{ succeeded: string[]; failed: string[] }> {
@@ -194,6 +217,7 @@ export class AlbumDetailStore {
       this.album = {
         ...this.album,
         item_count: this.album.item_count - ids.length,
+        hidden_count: (this.album.hidden_count ?? 0) + ids.length,
       };
     }
   }

@@ -88,10 +88,57 @@ describe("AlbumDetailStore.hasInAlbum", () => {
   });
 });
 
+describe("AlbumDetailStore parses hidden_count", () => {
+  it("loads hidden_count from album metadata into store.album", async () => {
+    const client = fakeClient([
+      { data: { id: "a1", name: "Italy", item_count: 95, hidden_count: 5, cover: null, created_at: "x", updated_at: "x" } },
+      { data: { items: [], next_offset: null } },
+    ]);
+    const ms = new MediaStore(client as any);
+    const store = new AlbumDetailStore(client as any, ms);
+    await store.load("a1");
+    expect(store.album?.hidden_count).toBe(5);
+  });
+});
+
+describe("AlbumDetailStore.refreshMeta", () => {
+  it("refetches album header and updates counts without resetting itemIds", async () => {
+    const client = fakeClient([
+      // initial load: meta + items
+      { data: { id: "a1", name: "X", item_count: 3, hidden_count: 0, cover: null, created_at: "x", updated_at: "x" } },
+      { data: { items: [fakeMedia("m1"), fakeMedia("m2"), fakeMedia("m3")], next_offset: null } },
+      // refreshMeta: updated meta only
+      { data: { id: "a1", name: "X", item_count: 2, hidden_count: 1, cover: null, created_at: "x", updated_at: "x" } },
+    ]);
+    const ms = new MediaStore(client as any);
+    const store = new AlbumDetailStore(client as any, ms);
+    await store.load("a1");
+    expect(store.itemIds).toEqual(["m1", "m2", "m3"]);
+
+    await store.refreshMeta();
+
+    // header updated
+    expect(store.album?.item_count).toBe(2);
+    expect(store.album?.hidden_count).toBe(1);
+    // itemIds NOT reset
+    expect(store.itemIds).toEqual(["m1", "m2", "m3"]);
+    // membership NOT reset
+    expect(store.hasInAlbum("m1")).toBe(true);
+  });
+
+  it("is a no-op when no albumId is set", async () => {
+    const client = fakeClient([]);
+    const ms = new MediaStore(client as any);
+    const store = new AlbumDetailStore(client as any, ms);
+    await store.refreshMeta(); // should not throw
+    expect(client.calls.length).toBe(0);
+  });
+});
+
 describe("AlbumDetailStore.pruneHidden", () => {
   it("removes ids from itemIds and membership without calling DELETE", async () => {
     const client = fakeClient([
-      { data: { id: "a1", name: "X", item_count: 3, cover: null, created_at: "x", updated_at: "x" } },
+      { data: { id: "a1", name: "X", item_count: 3, hidden_count: 0, cover: null, created_at: "x", updated_at: "x" } },
       { data: { items: [fakeMedia("m1"), fakeMedia("m2"), fakeMedia("m3")], next_offset: null } },
     ]);
     const ms = new MediaStore(client as any);
@@ -112,7 +159,7 @@ describe("AlbumDetailStore.pruneHidden", () => {
 
   it("decrements item_count by the number of pruned ids", async () => {
     const client = fakeClient([
-      { data: { id: "a1", name: "X", item_count: 3, cover: null, created_at: "x", updated_at: "x" } },
+      { data: { id: "a1", name: "X", item_count: 3, hidden_count: 0, cover: null, created_at: "x", updated_at: "x" } },
       { data: { items: [fakeMedia("m1"), fakeMedia("m2"), fakeMedia("m3")], next_offset: null } },
     ]);
     const ms = new MediaStore(client as any);
@@ -123,9 +170,22 @@ describe("AlbumDetailStore.pruneHidden", () => {
     expect(store.album?.item_count).toBe(1);
   });
 
+  it("increments hidden_count by the number of pruned ids", async () => {
+    const client = fakeClient([
+      { data: { id: "a1", name: "X", item_count: 3, hidden_count: 2, cover: null, created_at: "x", updated_at: "x" } },
+      { data: { items: [fakeMedia("m1"), fakeMedia("m2"), fakeMedia("m3")], next_offset: null } },
+    ]);
+    const ms = new MediaStore(client as any);
+    const store = new AlbumDetailStore(client as any, ms);
+    await store.load("a1");
+
+    store.pruneHidden(["m1"]);
+    expect(store.album?.hidden_count).toBe(3);
+  });
+
   it("is a no-op when ids is empty", async () => {
     const client = fakeClient([
-      { data: { id: "a1", name: "X", item_count: 2, cover: null, created_at: "x", updated_at: "x" } },
+      { data: { id: "a1", name: "X", item_count: 2, hidden_count: 0, cover: null, created_at: "x", updated_at: "x" } },
       { data: { items: [fakeMedia("m1"), fakeMedia("m2")], next_offset: null } },
     ]);
     const ms = new MediaStore(client as any);

@@ -6,6 +6,7 @@ export type AlbumListItem = {
   created_at: string;
   updated_at: string;
   item_count: number;
+  hidden_count?: number;
   cover?: { media_id: string; thumb_version: number };
 };
 
@@ -23,6 +24,11 @@ export class AlbumsStore {
   // capture the token and check it before mutating state, so a slower
   // earlier refresh can't overwrite a newer one's result.
   private initialToken = 0;
+  // Stale flag: set by markStale() after a hide/unhide operation. Cleared
+  // by refreshIfStale() after the refetch completes. AlbumsIndex calls
+  // refreshIfStale() at mount, so the refetch is deferred until the user
+  // navigates to the albums view rather than firing eagerly from any route.
+  private stale = false;
 
   constructor(private client: Pick<Client, "GET" | "POST" | "PATCH" | "DELETE">) {}
 
@@ -83,6 +89,22 @@ export class AlbumsStore {
   async retry(): Promise<void> {
     this.loadError = false;
     this.exhausted = false;
+    await this.loadInitial();
+  }
+
+  // markStale flags the cached list as out-of-date. Call after a hide or
+  // unhide operation so the album grid refreshes on next mount rather than
+  // immediately. refreshIfStale() is the paired consumer.
+  markStale(): void {
+    this.stale = true;
+  }
+
+  // refreshIfStale refetches /api/v1/albums when the stale flag is set.
+  // No-op otherwise. Clears the flag after a successful reload so repeated
+  // calls without intervening markStale() are cheap.
+  async refreshIfStale(): Promise<void> {
+    if (!this.stale) return;
+    this.stale = false;
     await this.loadInitial();
   }
 

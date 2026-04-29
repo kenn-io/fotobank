@@ -296,3 +296,63 @@ describe("AlbumsStore.dropLocal", () => {
     expect((store as any).nextOffset).toBe(100);
   });
 });
+
+describe("AlbumsStore.loadInitial parses hidden_count", () => {
+  it("surfaces hidden_count from the API response on each album", async () => {
+    const client = fakeClient([
+      {
+        data: {
+          items: [
+            { id: "a1", name: "Italy", item_count: 95, hidden_count: 5, created_at: "x", updated_at: "x" },
+            { id: "a2", name: "Family", item_count: 0, hidden_count: 0, created_at: "x", updated_at: "x" },
+          ],
+          next_offset: null,
+        },
+      },
+    ]);
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    expect(store.albums[0]?.hidden_count).toBe(5);
+    expect(store.albums[1]?.hidden_count).toBe(0);
+  });
+});
+
+describe("AlbumsStore.markStale / refreshIfStale", () => {
+  it("refreshIfStale is a no-op when not stale", async () => {
+    const client = fakeClient([
+      { data: { items: [{ id: "a1", name: "A", item_count: 0, created_at: "x", updated_at: "x" }], next_offset: null } },
+    ]);
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    const callsBefore = client.calls.length;
+    await store.refreshIfStale();
+    expect(client.calls.length).toBe(callsBefore);
+  });
+
+  it("markStale causes refreshIfStale to refetch", async () => {
+    const client = fakeClient([
+      { data: { items: [{ id: "a1", name: "A", item_count: 0, created_at: "x", updated_at: "x" }], next_offset: null } },
+      { data: { items: [{ id: "a1", name: "A-fresh", item_count: 1, created_at: "x", updated_at: "x" }], next_offset: null } },
+    ]);
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    store.markStale();
+    await store.refreshIfStale();
+    expect(store.albums[0]?.name).toBe("A-fresh");
+  });
+
+  it("refreshIfStale clears the stale flag after refetch", async () => {
+    const client = fakeClient([
+      { data: { items: [], next_offset: null } },
+      { data: { items: [], next_offset: null } },
+    ]);
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    store.markStale();
+    await store.refreshIfStale();
+    const callsAfterFirstRefresh = client.calls.length;
+    // second refreshIfStale should be a no-op — stale was cleared
+    await store.refreshIfStale();
+    expect(client.calls.length).toBe(callsAfterFirstRefresh);
+  });
+});
