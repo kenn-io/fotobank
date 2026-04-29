@@ -120,5 +120,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newAlbumsCmd())
 	root.AddCommand(newSharesCmd())
 	root.AddCommand(newBackupCmd())
+	root.AddCommand(newHiddenCmd())
+	root.AddCommand(newAdminCmd())
 	return root
 }
