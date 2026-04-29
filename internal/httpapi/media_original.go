@@ -50,12 +50,26 @@ func registerMediaOriginal(mux *http.ServeMux, svc *service.MediaService) {
 			return
 		}
 
-		etag := `"` + m.Checksum + `"`
 		h := w.Header()
+		h.Set("Content-Type", m.MimeType)
+
+		// Hidden bytes must never be stored in any cache. Once a
+		// session expires the browser must re-validate via the server
+		// (which will 401/404) rather than serving stale hidden bytes
+		// from its own disk cache.
+		if m.HiddenAt != nil {
+			h.Set("Cache-Control", "no-store")
+			writeOriginalResponse(w, r, m, func(off, length int64) (io.ReadCloser, error) {
+				rc, _, err := svc.OpenOriginal(r.Context(), id, caller, off, length, includeHidden)
+				return rc, err
+			})
+			return
+		}
+
+		etag := `"` + m.Checksum + `"`
 		h.Set("ETag", etag)
 		h.Set("Last-Modified", m.ImportedAt.UTC().Format(http.TimeFormat))
 		h.Set("Cache-Control", "private, max-age=31536000, immutable")
-		h.Set("Content-Type", m.MimeType)
 		// Set Accept-Ranges before the If-None-Match early return so
 		// 304 responses continue to advertise range support, matching
 		// the pre-helper owner contract.

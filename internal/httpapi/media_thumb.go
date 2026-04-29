@@ -86,14 +86,27 @@ func registerMediaThumb(mux *http.ServeMux, svc *service.ThumbService) {
 			return
 		}
 
-		etag := `"` + m.ID + "-" + string(size) + "-v" + strconv.Itoa(m.ThumbVersion) + `"`
 		h := w.Header()
+		h.Set("Content-Type", "image/jpeg")
+
+		// Hidden bytes must never be stored in any cache. Once a
+		// session expires the browser must re-validate via the server
+		// (which will 401/404) rather than serving stale hidden bytes
+		// from its own disk cache.
+		if m.HiddenAt != nil {
+			h.Set("Cache-Control", "no-store")
+			writeThumbResponse(w, r, func() (io.ReadCloser, error) {
+				return rc, nil
+			})
+			return
+		}
+
+		etag := `"` + m.ID + "-" + string(size) + "-v" + strconv.Itoa(m.ThumbVersion) + `"`
 		h.Set("ETag", etag)
 		if m.ThumbUpdatedAt != nil {
 			h.Set("Last-Modified", m.ThumbUpdatedAt.UTC().Format(http.TimeFormat))
 		}
 		h.Set("Cache-Control", "private, max-age=31536000, immutable")
-		h.Set("Content-Type", "image/jpeg")
 
 		if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" && etagMatches(ifNoneMatch, etag) {
 			_ = rc.Close()
