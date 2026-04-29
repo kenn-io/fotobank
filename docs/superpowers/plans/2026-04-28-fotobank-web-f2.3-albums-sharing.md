@@ -2243,13 +2243,20 @@ Create `frontend/src/routes/AlbumsIndex.svelte`:
 
   let modalOpen = $state(false);
 
-  // Guard on `exhausted` (set when next_offset is null) instead of
-  // `albums.length === 0`. An owner with no albums has length 0 forever
-  // — guarding on length alone re-runs loadInitial each time `loading`
-  // toggles, looping. exhausted flips true after the first response
-  // regardless of row count.
+  // The mount effect needs both guards. `albums.length === 0` ensures
+  // we don't re-run loadInitial after a successful first fetch (without
+  // it, a second response with `next_offset` set leaves `exhausted=false`
+  // and the effect retriggers when loading flips back to false). And
+  // `!exhausted` ensures an account with truly zero albums doesn't loop
+  // (length stays 0; exhausted=true after the first response, gating
+  // the effect). Both guards together cover the populated-paginated AND
+  // empty-account cases without an extra "hasLoadedInitial" flag.
   $effect(() => {
-    if (!albumsStore.loading && !albumsStore.exhausted) {
+    if (
+      albumsStore.albums.length === 0 &&
+      !albumsStore.loading &&
+      !albumsStore.exhausted
+    ) {
       albumsStore.loadInitial();
     }
   });
@@ -3275,11 +3282,15 @@ Create `frontend/src/lib/components/AddToAlbumModal.svelte`:
   let error = $state<string | null>(null);
 
   // Users may open Add-to-album before ever visiting /albums, so the
-  // store may not yet be hydrated. Trigger loadInitial on mount when
-  // it isn't already loading and hasn't been exhausted (matches the
-  // AlbumsIndex / SharesPage guards).
+  // store may not yet be hydrated. Same dual-guard pattern as
+  // AlbumsIndex / SharesPage: empty-list AND not-loading AND not-
+  // exhausted is the only state that warrants a loadInitial.
   $effect(() => {
-    if (!albumsStore.loading && !albumsStore.exhausted) {
+    if (
+      albumsStore.albums.length === 0 &&
+      !albumsStore.loading &&
+      !albumsStore.exhausted
+    ) {
       albumsStore.loadInitial();
     }
   });
@@ -4709,10 +4720,17 @@ export class SharesStore {
     // current scopes. Older rows update on the next user-driven
     // loadMore (acceptable: settled rows don't change state, and
     // pending rows are almost always recent).
+    //
+    // include_settled is true regardless of the user's filter: a row
+    // transitioning revoking → revoked must be observable so polling
+    // can stop. If we honored showRevoked here, a revoked row would
+    // drop out of the response and the local copy would stay stuck at
+    // "revoking" forever, polling indefinitely. The user-facing filter
+    // is applied in the route view, not at the polling boundary.
     const query: Record<string, unknown> = {
       limit: 200,
       offset: 0,
-      include_settled: this.showRevoked,
+      include_settled: true,
     };
     if (this.albumIDFilter) query.album_id = this.albumIDFilter;
     const res = await this.client.GET("/api/v1/shares", { params: { query } as never });
@@ -5003,11 +5021,16 @@ Create `frontend/src/routes/SharesPage.svelte`:
 
   let revokingUuid = $state<string | null>(null);
 
-  // Guard on `exhausted` (see same pattern in AlbumsIndex). An empty
-  // shares list with `scopes.length === 0` would otherwise re-trigger
-  // loadInitial whenever loading toggles, looping.
+  // Same dual-guard pattern as AlbumsIndex: `scopes.length === 0`
+  // prevents re-runs after a successful paginated first fetch,
+  // `!exhausted` covers the truly-zero-shares case, both together avoid
+  // the loadInitial loop.
   $effect(() => {
-    if (!sharesStore.loading && !sharesStore.exhausted) {
+    if (
+      sharesStore.scopes.length === 0 &&
+      !sharesStore.loading &&
+      !sharesStore.exhausted
+    ) {
       sharesStore.loadInitial();
     }
   });

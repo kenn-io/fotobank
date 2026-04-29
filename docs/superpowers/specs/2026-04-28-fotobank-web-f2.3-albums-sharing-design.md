@@ -712,10 +712,14 @@ already-attempted publish; nothing new is exposed). On click:
 
 `SharesStore.startPolling()` fires every 5s while at least one row is
 `pending` or `revoking`. Each tick refetches `limit=200` rows from
-offset 0 and merges status updates by `uuid` into the current `scopes`
-list (no list replacement, no pagination reset). When all visible rows
-settle, polling stops automatically. Polling resumes on Create /
-Revoke / Retry.
+offset 0 with `include_settled=true` and merges status updates by
+`uuid` into the current `scopes` list (no list replacement, no
+pagination reset). `include_settled` is forced on regardless of the
+user's `showRevoked` filter so a row transitioning `revoking → revoked`
+is observable and polling can stop — without it, the row would drop
+out of the response, the local copy would stay stuck at `"revoking"`,
+and polling would never settle. When all visible rows settle, polling
+stops automatically. Polling resumes on Create / Revoke / Retry.
 
 The interval is hardcoded at 5s. No exponential backoff — the worker
 is local; the broker is the bottleneck. If polling becomes load-
