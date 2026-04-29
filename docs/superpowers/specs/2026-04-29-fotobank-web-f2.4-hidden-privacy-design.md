@@ -642,21 +642,26 @@ The existing `MediaStore` uses two indexes: `byId` (id → monthKey) and `byMedi
 F2.4 adds:
 
 - **`mergeRaw` is hidden-aware:**
-  - Hidden rows (`hidden_at != null`) are stored in `byMediaId` only; not inserted into
-    `byMonth`, `byId`, or visible `months`.
-  - A previously-visible row re-merged with `hidden_at != null` is removed from `byMonth` /
-    `byId` / `months`; its `byMediaId` entry is updated in place (not deleted), so a subsequent
-    unlocked direct-detail fetch can short-circuit on the cache.
-  - A previously-hidden by-id-cached row re-merged with `hidden_at == null` is inserted into
-    `byMonth` / `byId` and the appropriate visible month bucket.
+  - Hidden rows (`hidden_at != null`) are NOT stored anywhere in `MediaStore`. If the incoming
+    payload is hidden, `mergeRaw` skips it entirely. Hidden direct-detail responses are routed
+    through `HiddenMediaStore` (route-scoped, gated by the unlock cookie), never through the
+    shared cache.
+  - A previously-visible row re-merged with `hidden_at != null` is removed from `byMonth`,
+    `byId`, `byMediaId`, and visible `months` in one pass.
+  - A direct-detail fetch that returns a now-visible row (after unhide) flows through the
+    normal merge path.
 - **`removeMany(ids: string[], hiddenAt: string = new Date().toISOString())`:**
-  - Removes ids from `byMonth`, `byId`, and visible `months`.
-  - Updates `byMediaId[id].hidden_at = hiddenAt` in place. Does NOT delete `byMediaId` entries;
-    eviction is governed by the existing cache policy elsewhere.
+  - Removes ids from `byMonth`, `byId`, `byMediaId`, and visible `months`. Entries are
+    evicted, not retained as hidden tombstones.
+  - The `hiddenAt` argument is forwarded on the `media:hidden` event payload so subscribers
+    (album store, toasts) can sequence their UI; it is not stored on the row.
 
-The invariant: `mediaStore.months` only ever contains rows where `hidden_at IS NULL`. This is the
-single backstop preventing leaks from direct-detail fetches that return a hidden row under a
-valid unlock cookie.
+The invariant: every entry across all four `MediaStore` indexes (`byMonth`, `byId`,
+`byMediaId`, `months`) was visible at its last refresh. There is no need to gate `byMediaId`
+reads on the unlock cookie because the cache is visible-only. A direct-detail navigation to a
+hidden id always round-trips to the API (under cookie gate) via `HiddenMediaStore`, which has
+its own route-scoped by-id map; the API enforces the cookie, so a stale tab without the cookie
+gets 404.
 
 ---
 

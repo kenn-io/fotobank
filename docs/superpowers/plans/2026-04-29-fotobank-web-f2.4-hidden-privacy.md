@@ -697,10 +697,21 @@ git commit -m "feat(hidden): add auth HTTP routes"
 - Modify: `internal/media/media.go`
 - Modify: `internal/media/repo.go`
 - Modify: `internal/media/repo_test.go`
+- Modify: `internal/album/repo.go`
+- Modify: `internal/album/repo_test.go`
+
+> **Why album_media here:** Task 7 enables the `/hide` endpoint, so by the
+> time Task 7 lands every list path that surfaces media must already
+> filter `hidden_at IS NULL`. The `media` repo filter alone is not enough
+> because `internal/album/repo.go::ListMedia` joins `media` directly with
+> its own SQL (no `IncludeHidden` knob), so without that filter `GET
+> /albums/{id}/media` would expose hidden rows between Tasks 7 and 10.
+> Task 10 still owns the `hidden_count` UI work — only the predicate
+> moves up.
 
 - [ ] **Step 1: Write failing repo tests**
 
-Cover:
+Cover (in `internal/media`):
 
 - `List` excludes hidden by default
 - `List` includes hidden only with `IncludeHidden`
@@ -709,6 +720,11 @@ Cover:
 - `ClearHiddenCascade` clears primaries and sidecars in one transaction
 - `ClearAllHiddenForOwner` clears all hidden rows for that owner only
 - `ListHidden` returns primary/standalone hidden rows only, sorted by `timestamp IS NULL ASC, timestamp DESC, imported_at DESC, id DESC`
+
+Cover (in `internal/album`):
+
+- `Repo.ListMedia` excludes hidden rows by default — even when the album
+  contains album_media rows whose underlying media has `hidden_at != null`
 
 - [ ] **Step 2: Run tests and confirm failure**
 
@@ -753,10 +769,16 @@ UPDATE media
    AND (id IN (...) OR paired_with_id IN (...))
 ```
 
+In `internal/album/repo.go::ListMedia`, append `AND m.hidden_at IS NULL`
+to the SQL `WHERE` clause unconditionally. There is no `IncludeHidden`
+knob on the album surface — hidden carve-out for `AddMedia` arrives in
+Task 10 and operates against the media repo with `IncludeHidden=true`,
+not against this list path.
+
 - [ ] **Step 4: Run tests**
 
 ```bash
-go test ./internal/media
+go test ./internal/media ./internal/album
 ```
 
 Expected: pass.
@@ -764,8 +786,8 @@ Expected: pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/media
-git commit -m "feat(hidden): add media hidden filtering"
+git add internal/media internal/album
+git commit -m "feat(hidden): filter hidden in media and album list paths"
 ```
 
 ---
@@ -1285,9 +1307,24 @@ Pattern:
 Add:
 
 ```ts
+// Track entries pushed by navigate() so back() only steps back when the
+// previous entry is known to be in-app. window.history.length is unreliable:
+// a tab opened straight to /hidden has length > 1 (about:blank, then us),
+// so a naive history.back() would land off-site instead of using fallback.
+private appHistoryDepth = 0;
+
+navigate(path: string, opts?: { replace?: boolean }) {
+  // ...existing logic...
+  if (!opts?.replace) this.appHistoryDepth += 1;
+}
+
 back(fallback: string) {
-  if (window.history.length > 1) window.history.back();
-  else this.navigate(fallback);
+  if (this.appHistoryDepth > 0) {
+    this.appHistoryDepth -= 1;
+    window.history.back();
+  } else {
+    this.navigate(fallback);
+  }
 }
 ```
 
@@ -1524,6 +1561,13 @@ git commit -m "feat(hidden): show album hidden counts"
 - Create: `frontend/tests/e2e/hidden.spec.ts`
 - Modify: `frontend/playwright.config.ts` if needed
 
+> **Cookie note:** the e2e server runs over `http://127.0.0.1`, where the
+> `__Host-` prefix and `Secure` flag prevent the unlock cookie from
+> round-tripping. The fixture config must set `[http] dev_insecure_cookies = true`
+> so the dev cookie name (`fotobank-hidden`) is issued without `Secure` —
+> add this to whichever config builder `cmd/e2e-server/main.go` uses to
+> construct its TOML (alongside the other `[http]` overrides).
+
 - [ ] **Step 1: Write failing Playwright tests**
 
 Create `frontend/tests/e2e/hidden.spec.ts` covering the 15 scenarios in spec §3.11:
@@ -1562,6 +1606,13 @@ In `cmd/e2e-server/main.go::seedFixtures`:
 - seed `hidden-target-1` with `hidden_at = NULL`
 - reuse pair fixtures and Italy album for cascade/chip tests
 - support `FOTOBANK_E2E_LOCKOUT_WINDOW=5s`
+
+In the same `cmd/e2e-server/main.go`, when the e2e server writes its TOML
+config, set `[http] dev_insecure_cookies = true` so unlock cookies issued
+by the server use the dev cookie name (`fotobank-hidden`, no `Secure`
+flag) and round-trip over plain HTTP at `http://127.0.0.1:18080`. Without
+this the browser drops the cookie on every response and `/unlock` will
+appear to succeed but no cookie will arrive on subsequent requests.
 
 - [ ] **Step 4: Run e2e**
 
