@@ -38,20 +38,24 @@ export class SelectionStore {
   }
 
   addAll(ids: Iterable<string>): void {
+    const next = new Set(this.ids);
     let last: string | undefined;
     for (const id of ids) {
-      this.ids.add(id);
+      next.add(id);
       last = id;
     }
+    this.ids = next;
     if (last !== undefined) {
       this.lastAnchor = last;
     }
   }
 
   removeAll(ids: Iterable<string>): void {
+    const next = new Set(this.ids);
     for (const id of ids) {
-      this.ids.delete(id);
+      next.delete(id);
     }
+    this.ids = next;
     // lastAnchor intentionally untouched — deselecting a group should
     // not move the range-select anchor (§13.4).
   }

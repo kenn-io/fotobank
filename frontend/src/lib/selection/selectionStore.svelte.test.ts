@@ -1,5 +1,6 @@
-// frontend/src/lib/selection/selectionStore.test.ts
+// frontend/src/lib/selection/selectionStore.svelte.test.ts
 import { describe, it, expect, beforeEach } from "vitest";
+import { flushSync } from "svelte";
 import { SelectionStore } from "./selectionStore.svelte";
 
 describe("SelectionStore", () => {
@@ -93,5 +94,33 @@ describe("SelectionStore.hasAll", () => {
 
   it("returns false for empty input (so empty chunks don't render Deselect)", () => {
     expect(s.hasAll([])).toBe(false);
+  });
+});
+
+describe("SelectionStore reactivity (regression for direct-mutation bug)", () => {
+  it("$derived(hasAll(...)) updates after addAll and removeAll", () => {
+    // Svelte 5's $state does not auto-proxy built-in Map/Set, so direct
+    // .add()/.delete() on this.ids would not trigger $derived updates.
+    // addAll/removeAll must reassign this.ids to a fresh Set; this test
+    // exercises the $derived path that components like GroupSelectButton
+    // depend on (design §13.2).
+    const s = new SelectionStore();
+    let observed: boolean | undefined;
+    const cleanup = $effect.root(() => {
+      const v = $derived(s.hasAll(["a", "b"]));
+      $effect(() => { observed = v; });
+    });
+    flushSync();
+    expect(observed).toBe(false);
+
+    s.addAll(["a", "b"]);
+    flushSync();
+    expect(observed).toBe(true);
+
+    s.removeAll(["a"]);
+    flushSync();
+    expect(observed).toBe(false);
+
+    cleanup();
   });
 });
