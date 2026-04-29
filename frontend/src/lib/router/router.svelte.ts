@@ -8,6 +8,7 @@ export type RouteMatch =
   | { route: "albums.detail"; id: string }
   | { route: "shares"; album_id?: string; show_revoked?: boolean }
   | { route: "media"; id: string }
+  | { route: "hidden" }
   | { route: "notfound"; path: string };
 
 // Anchored patterns. Order doesn't matter — each regex tests in
@@ -35,14 +36,35 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
     };
   } },
   { re: /^\/media\/([^/]+)$/, build: (m) => ({ route: "media", id: m[1]! }) },
+  { re: /^\/hidden\/?$/, build: () => ({ route: "hidden" as const }) },
 ];
 
 export class RouterStore {
   current = $state<RouteMatch>(this.match(window.location.pathname));
 
-  navigate(path: string) {
-    history.pushState({}, "", path);
+  // Track entries pushed by navigate() so back() only steps back when the
+  // previous entry is known to be in-app. window.history.length is unreliable:
+  // a tab opened straight to /hidden has length > 1 (about:blank, then us),
+  // so a naive history.back() would land off-site instead of using fallback.
+  private appHistoryDepth = 0;
+
+  navigate(path: string, opts?: { replace?: boolean }) {
+    if (opts?.replace) {
+      history.replaceState({}, "", path);
+    } else {
+      history.pushState({}, "", path);
+      this.appHistoryDepth += 1;
+    }
     this.syncFromLocation();
+  }
+
+  back(fallback: string) {
+    if (this.appHistoryDepth > 0) {
+      this.appHistoryDepth -= 1;
+      window.history.back();
+    } else {
+      this.navigate(fallback);
+    }
   }
 
   syncFromLocation() {

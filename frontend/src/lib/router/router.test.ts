@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { RouterStore, handleInternalLinkClick } from "./router.svelte";
 
 function setLocation(pathname: string) {
@@ -100,6 +100,24 @@ describe("RouterStore.match", () => {
     const r = new RouterStore();
     expect(r.current).toEqual({ route: "shares", album_id: "abc", show_revoked: true });
   });
+
+  it("matches /hidden to the hidden route", () => {
+    setLocation("/hidden");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "hidden" });
+  });
+
+  it("matches /hidden/ (trailing slash) to the hidden route", () => {
+    setLocation("/hidden/");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "hidden" });
+  });
+
+  it("returns notfound for /hidden/extra (anchored regex)", () => {
+    setLocation("/hidden/extra");
+    const r = new RouterStore();
+    expect(r.current.route).toBe("notfound");
+  });
 });
 
 describe("RouterStore.navigate", () => {
@@ -117,6 +135,70 @@ describe("RouterStore.navigate", () => {
     setLocation("/library");
     r.syncFromLocation();
     expect(r.current.route).toBe("library");
+  });
+
+  it("increments appHistoryDepth on each non-replace navigate", () => {
+    const r = new RouterStore();
+    r.navigate("/library");
+    r.navigate("/sessions");
+    r.navigate("/hidden");
+    // depth is private — test it indirectly via back() calling history.back
+    const backSpy = vi.spyOn(window.history, "back").mockReturnValue(undefined);
+    r.back("/library");
+    expect(backSpy).toHaveBeenCalled();
+    backSpy.mockRestore();
+  });
+
+  it("replace:true does not increment appHistoryDepth", () => {
+    const r = new RouterStore();
+    r.navigate("/library", { replace: true });
+    const backSpy = vi.spyOn(window.history, "back").mockReturnValue(undefined);
+    // depth is still 0 so back() should navigate to fallback, not call history.back
+    r.back("/sessions");
+    expect(backSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/sessions");
+    backSpy.mockRestore();
+  });
+});
+
+describe("RouterStore.back", () => {
+  beforeEach(() => setLocation("/"));
+  afterEach(() => vi.restoreAllMocks());
+
+  it("calls history.back when appHistoryDepth > 0", () => {
+    const r = new RouterStore();
+    r.navigate("/sessions");
+    const backSpy = vi.spyOn(window.history, "back").mockReturnValue(undefined);
+    r.back("/library");
+    expect(backSpy).toHaveBeenCalledOnce();
+  });
+
+  it("navigates to fallback when appHistoryDepth === 0", () => {
+    setLocation("/hidden");
+    const r = new RouterStore();
+    // No in-app navigate calls → depth stays 0.
+    const backSpy = vi.spyOn(window.history, "back").mockReturnValue(undefined);
+    r.back("/library");
+    expect(backSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/library");
+    expect(r.current.route).toBe("library");
+  });
+
+  it("decrements depth after each back call", () => {
+    const r = new RouterStore();
+    r.navigate("/library");
+    r.navigate("/sessions");
+    const backSpy = vi.spyOn(window.history, "back").mockReturnValue(undefined);
+    r.back("/library");
+    expect(backSpy).toHaveBeenCalledOnce();
+    backSpy.mockClear();
+    // depth now 1 → still calls history.back
+    r.back("/library");
+    expect(backSpy).toHaveBeenCalledOnce();
+    backSpy.mockClear();
+    // depth now 0 → fallback
+    r.back("/library");
+    expect(backSpy).not.toHaveBeenCalled();
   });
 });
 
