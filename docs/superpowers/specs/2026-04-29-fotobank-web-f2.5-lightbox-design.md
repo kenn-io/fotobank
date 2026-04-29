@@ -84,15 +84,26 @@ Source routes call `lightboxSession.open({...})` **before** pushing `/media/:id?
 
 **Router change:** parse query params on the `/media/:id` match; expose `from` (and other query params) on `RouteMatch`. Current router ignores query params except special cases like `/shares`.
 
-**Hidden rule (scoped to lightbox mode only):** if `from != hidden` and the fetched media has `hidden_at != null`, lightbox mode is **disabled for this render** — no prev/next, no source actions. The page may still render direct-detail behavior if F2.4 allows (i.e., valid unlock cookie). The F2.4 direct-detail page itself is unchanged.
+**Direct-detail fallback contract:** Extract the existing direct-detail UI from `MediaDetail.svelte` into a shared `DirectMediaDetail.svelte` component (no behavior change for non-lightbox routing). `MediaDetail.svelte` becomes a thin dispatcher:
+
+- `from` absent → render `<DirectMediaDetail>` directly (existing F2.4 behavior, unchanged).
+- `from` present → render `<Lightbox>`.
+
+`Lightbox` itself can render `<DirectMediaDetail>` in place of its frame for any fallback path (reconstruction failure, hidden cross-context, "not found"). The lightbox does **not** unmount/remount across the fallback boundary; it just delegates rendering for the active id. `LightboxSession` is left intact, so navigating to a different id under the same `from` resumes lightbox mode naturally if the conditions are right.
+
+**Hidden rule (scoped to lightbox mode only):** if `from != hidden` and the fetched media has `hidden_at != null`, lightbox mode is **disabled for this render** — no prev/next, no source actions. `Lightbox` delegates to `<DirectMediaDetail>`, which applies F2.4 cookie rules (200 if unlocked, "not found" otherwise). The F2.4 direct-detail flow itself is unchanged; the only refactor is splitting the component out of `MediaDetail.svelte`.
 
 **Router/history state (extended shape):** `history.state = { depth, sourceScroll? }`. F2.3 router already tracks `depth`; F2.5 adds the optional `sourceScroll` field for reload-survivability of scroll restoration.
 
 **Scroll restoration contract:**
 
+Route-local source stores (`AlbumDetailStore`, `HiddenMediaStore`) reload after remount, so the document's `scrollHeight` is typically near 0 at the moment the source route mounts. Restoring scroll on the next animation frame would clamp to top. Source routes therefore restore in a guarded loop:
+
 - **On open:** source route captures `scrollY` into `LightboxSession.scrollY` and into the lightbox entry's `history.state.sourceScroll` (belt + suspenders for reload survivability).
-- **On close/back:** source route remounts; reads `LightboxSession.scrollY` (preferred — survives full SPA back) or falls back to `history.state.sourceScroll`.
-- **After restore:** clear the saved scroll (`lightboxSession.clearScroll()` and remove from history state) so subsequent navigation is sticky-free.
+- **On close/back — pending restore:** on mount, if `LightboxSession.scrollY > 0` or `history.state.sourceScroll > 0`, mark a restore as pending. Do **not** scroll yet.
+- **Restore attempt:** retried on each load completion (initial fetch, paginated load, virtualized row mount). Succeeds when **either** `[data-media-id="<returnFocusMediaId>"]` exists **or** `document.body.scrollHeight >= scrollY + window.innerHeight`. On success: `window.scrollTo(0, scrollY)`, then on next animation frame attempt focus restore.
+- **Retry cap:** ~10 attempts or up to 5 paginated loads. Beyond that, restore to whatever Y is currently achievable (`min(scrollY, scrollHeight - innerHeight)`) and focus the route container.
+- **After restore (or cap):** clear `LightboxSession.scrollY` and remove `sourceScroll` from history state so subsequent navigation is sticky-free. Clear `returnFocusMediaId` after the focus attempt.
 
 **Navigation history:**
 
@@ -100,7 +111,7 @@ Source routes call `lightboxSession.open({...})` **before** pushing `/media/:id?
 - Prev/next inside lightbox: `router.navigate(url, { replace: true })` (single browser back closes lightbox).
 - Closing lightbox: `history.back()` if `depth > 0`; else `router.navigate(returnHref, { replace: true })`.
 
-**Modal stacking:** central `modalStack` (ordered list of open modal entries). Esc handler fires top-down — topmost modal closes first; lightbox is on the stack; existing `App.svelte` selection-clear Esc handler becomes the **default** entry, fires only when stack is empty. Add-to-album / Share modals push above lightbox. Migration scope (F2.5): `Lightbox`, `AddToAlbumModal`, `ShareModal`, `ConfirmModal`, `RenameAlbumModal`. Out: `ShareDrawer`, `AlbumsIndex` new-album modal.
+**Modal stacking:** central `modalStack` (ordered list of open modal entries). Esc handler fires top-down — topmost modal closes first; lightbox is on the stack. Selection-clear is **not** a stack entry; it is the App-level fallback that runs only when `modalStack.dispatchEscape()` returns false (i.e., stack is empty). Add-to-album / Share modals push above lightbox. Migration scope (F2.5): `Lightbox`, `AddToAlbumModal`, `ShareModal`, `ConfirmModal`, `RenameAlbumModal`. Out: `ShareDrawer`, `AlbumsIndex` new-album modal.
 
 **Mobile info panel:** new reusable `BottomSheet.svelte` (drag handle, snap points: peek/full, swipe-down dismiss, Esc dismiss via modalStack). Used by lightbox info on viewports below the existing mobile breakpoint; desktop continues using the side drawer.
 
@@ -113,6 +124,7 @@ frontend/src/lib/lightbox/
   lightboxSession.svelte.ts        — app-level store; open/close/clearScroll/clearReturnFocus/removeIds; durable snapshot
   lightboxNav.svelte.ts            — derives current index, prev/next ids, hasPrev/hasNext from session + activeId
   lightboxLoader.ts                — URL selection (grid/preview/large); progressive image load; prefetch + cancel handles. Browser-side async (Image() / decode()); tests mock those.
+  scrollRestore.svelte.ts          — guarded restore helper used by source routes on remount; retries on load completions until target element or scrollHeight satisfies, capped; clears state on success/cap.
   modalStack.svelte.ts             — central store: ordered open-modal entries; topmost-first Esc dispatch; pause/resume of focus traps on stack changes.
 
 frontend/src/lib/components/lightbox/
@@ -135,10 +147,13 @@ frontend/src/lib/components/AddToAlbumModal.svelte    — MODIFY: drop local sve
 frontend/src/lib/components/ShareModal.svelte         — MODIFY: same change as AddToAlbumModal.
 frontend/src/lib/components/ConfirmModal.svelte       — MODIFY: same migration to modalStack.
 frontend/src/lib/components/RenameAlbumModal.svelte   — MODIFY: same migration to modalStack.
-frontend/src/App.svelte                               — MODIFY: existing selection-clear Escape becomes the default handler at the bottom of the stack (fires only when modalStack is empty). Pre-empts via dispatchEscape() with preventDefault/stopPropagation.
+frontend/src/App.svelte                               — MODIFY: global Escape handler calls modalStack.dispatchEscape() first; if it returns true, preventDefault/stopPropagation and return. Existing selection-clear Escape behavior runs only when modalStack is empty (dispatchEscape returns false). Selection-clear is NOT a stack entry.
 
 frontend/src/routes/
-  MediaDetail.svelte               — MODIFY: branch on ?from=. With from → mount Lightbox. Without from → existing direct-detail path (unchanged, including F2.4 hidden-with-cookie).
+  MediaDetail.svelte               — MODIFY: thin dispatcher. With from → render <Lightbox>. Without from → render <DirectMediaDetail>.
+
+frontend/src/lib/components/
+  DirectMediaDetail.svelte         — NEW (extracted from existing MediaDetail.svelte): the existing direct-detail UI, including F2.4 hidden-with-cookie behavior. Renders for both the from-absent route and the lightbox fallback paths. No behavioral change vs. F2.4.
 
 frontend/src/lib/router/
   router.svelte.ts                 — MODIFY: parse query params on the /media/:id match; expose `from` on RouteMatch; widen history.state typing for { depth, sourceScroll? }.
@@ -200,25 +215,25 @@ frontend/src/routes/Library.svelte, Sessions.svelte, AlbumDetail.svelte, HiddenL
 1. Esc pressed → `modalStack.dispatchEscape()` calls the topmost entry's `onEscape`. If lightbox is topmost → `Lightbox.close()`.
 2. `close()`: if `history.state.depth > 0` → `history.back()`; else `router.navigate(session.returnHref, { replace: true })`.
 3. Router unmounts `MediaDetail`, mounts source route.
-4. Source route on mount reads `lightboxSession.scrollY` (preferred) or `history.state.sourceScroll` (fallback), restores via `window.scrollTo(0, y)`, then calls `lightboxSession.clearScroll()` and clears `sourceScroll` from state.
-5. Focus return: `el = querySelector('[data-media-id="' + returnFocusMediaId + '"]')`. If found, `el.focus()`. If not (virtualized off-screen, not yet rendered), focus the route container; `lightboxSession.clearReturnFocus()`.
+4. Source route reads `lightboxSession.scrollY` (preferred) or `history.state.sourceScroll` (fallback) on mount, marks restore pending, and retries the guarded restore (target element exists OR `scrollHeight >= y + innerHeight`) on each load completion until satisfied or the cap is hit (see §2 Scroll restoration contract).
+5. Focus return runs after scroll restore: `el = querySelector('[data-media-id="' + returnFocusMediaId + '"]')`. If found, `el.focus()`. If not (still virtualized off-screen after the cap), focus the route container. Then `lightboxSession.clearScroll()`, `lightboxSession.clearReturnFocus()`, and clear `sourceScroll` from history state.
 
 ### Direct entry / reload with `from`
 
 1. URL `/media/:id?from=album:abc123` loaded fresh; no `lightboxSession` in memory.
 2. `MediaDetail` mounts `Lightbox`; reconstruction path runs.
-3. Reconstruction by source kind, with the contract: **load until active id is found or source is exhausted, capped at a reasonable page count (~20 pages × page size)**. If active id not found within cap, fall back to direct-detail mode.
+3. Reconstruction by source kind, with the contract: **load until active id is found or source is exhausted, capped at a reasonable page count (~20 pages × page size)**. If active id not found within cap, delegate rendering to `<DirectMediaDetail>` (no prev/next chrome).
    - `library` / `sessions`: ensure `mediaStore.loadInitial()`; if active id not yet in store, page until found or exhausted.
    - `album:<id>`: fetch `/api/v1/albums/:id` + paginate items until active id present or exhausted.
    - `hidden`: paged fetch of `/api/v1/hidden/media`. On 403 → redirect to `/hidden`. On success: `navIds = hiddenIds`.
-4. If reconstruction throws (album 404, network) **or** active id not found within cap, fall back to direct-detail mode.
+4. If reconstruction throws (album 404, network) **or** active id not found within cap, lightbox delegates to `<DirectMediaDetail>`. Lightbox stays mounted; only the inner content swaps.
 5. `selected` is always false on reconstruction; selection snapshot is not recoverable across reload — acceptable.
 
 ### Hidden cross-context fallback
 
 1. URL is `/media/:id?from=library` but API returns `hidden_at != null`.
 2. `Lightbox` detects `from != hidden && hidden_at != null` → disables lightbox mode for this render.
-3. Falls through to direct-detail logic in `MediaDetail.svelte`. F2.4 cookie rules apply (200 if unlocked, 404-style "not found" otherwise).
+3. Lightbox delegates to `<DirectMediaDetail>` for the active id. F2.4 cookie rules apply (200 if unlocked, "not found" otherwise). Lightbox stays mounted around the delegate so the user can still close back to the source via Esc / X / browser back.
 
 ### Source-aware actions (LightboxActions) — durable mutations only
 
@@ -310,7 +325,7 @@ function handleKeydown(e: KeyboardEvent) {
 - On open: `Lightbox` installs a focus trap on its frame; initial focus lands on the close button.
 - On stacked modal push: lightbox's trap pauses; layered modal's trap activates.
 - On stacked modal pop: lightbox's trap resumes.
-- On close (lightbox unmount): source route remounts, **first restores scroll**, then on next animation frame attempts `el = querySelector('[data-media-id="' + returnFocusMediaId + '"]')`. If found, `el.focus()`. If not, focus the route container element. `lightboxSession.clearReturnFocus()` after.
+- On close (lightbox unmount): source route remounts and runs the guarded restore loop (see §2). Once scroll restore satisfies, focus follows: `el = querySelector('[data-media-id="' + returnFocusMediaId + '"]')`. If found, `el.focus()`. If not (still virtualized after the cap), focus the route container. `lightboxSession.clearReturnFocus()` after.
 
 ### Scroll lock
 
@@ -387,6 +402,7 @@ Prefetch queue caps to 2 concurrent. v1 ships immediate prev/next only — no se
 | `modalStack.svelte.ts` | push/pop/isTopmost/top/dispatchEscape; idempotent pop; pause/resume of trap on push/pop; dispatchEscape returns false on empty stack; does NOT auto-pop |
 | `BottomSheet.svelte` | snap points (peek/full); drag transitions; swipe-down dismiss; backdrop click dismiss; Esc dismiss via modalStack |
 | reconstruction helpers | finds active id within page cap; bails out at cap; bails out on fetch error |
+| `scrollRestore.svelte.ts` | succeeds when target `[data-media-id]` exists; succeeds when `scrollHeight >= y + innerHeight`; retries after each load completion; bails to partial Y after cap; clears `LightboxSession.scrollY` and `history.state.sourceScroll` on success/cap |
 
 ### Integration tests (Vitest + @testing-library/svelte)
 
@@ -423,6 +439,8 @@ Required scenarios:
 17. **Hidden 403 mid-session (action path).** Use `POST /api/v1/auth/hidden/lock` to clear cookie mid-flow; trigger an unhide → server returns 403; verify redirect to `/hidden`.
 18. **Image source verification.** Initial `<img src>` is `size=grid&v=N`; subsequent network requests include `size=preview` and then `size=large`; no `/original` request fires before clicking the explicit Download action. (Don't assert the grid request fires, it may already be cached.)
 19. **Modal migration regression.** AddToAlbum, Share, Confirm, RenameAlbum: each opens, Esc closes, no double-close on rapid Esc.
+20. **Paginated source scroll restore.** In an album with N≥30 items spanning multiple paginated loads, scroll past the first page and click a tile on a later page; close lightbox; verify the originating tile is visible and focused, and `scrollY` matches the captured value within tolerance. Asserts the guarded restore loop tolerates content arriving after the source remounts.
+21. **Direct entry → fallback delegation.** Open `/media/:id?from=album:bogus` where `bogus` 404s; verify the page renders DirectMediaDetail content (no lightbox chrome, no prev/next), close still navigates back to source via Esc/X.
 
 ### Running
 
