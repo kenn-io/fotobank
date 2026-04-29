@@ -9,11 +9,13 @@
   import MediaDetail from "./routes/MediaDetail.svelte";
   import AlbumsIndex from "./routes/AlbumsIndex.svelte";
   import AlbumDetail from "./routes/AlbumDetail.svelte";
+  import SharesPage from "./routes/SharesPage.svelte";
   import NotFound from "./routes/NotFound.svelte";
   import { ThemeStore } from "./lib/theme/themeStore.svelte";
   import { EventsStore } from "./lib/events/eventsStore.svelte";
   import { MediaStore } from "./lib/media/mediaStore.svelte";
   import { AlbumsStore } from "./lib/albums/albumsStore.svelte";
+  import { SharesStore } from "./lib/shares/sharesStore.svelte";
   import { selection } from "./lib/selection/selectionStore.svelte";
   import { router, type RouteMatch } from "./lib/router/router.svelte";
   import { isEditableTarget } from "./lib/dom/editable";
@@ -30,6 +32,7 @@
   const mediaStore = new MediaStore(api);
   mediaStore.loadInitial();
   const albumsStore = new AlbumsStore(api);
+  const sharesStore = new SharesStore(api);
 
   $effect(() => {
     const onPop = () => router.syncFromLocation();
@@ -56,6 +59,7 @@
     if (route.route === "sessions") return "sessions";
     if (route.route === "settings") return "settings";
     if (route.route === "albums" || route.route === "albums.detail") return "albums";
+    if (route.route === "shares") return "shares";
     // notfound returns "" so the sidebar highlights nothing — landing
     // on a 404 shouldn't make Library look like the active section.
     if (route.route === "notfound") return "";
@@ -81,6 +85,8 @@
       <AlbumsIndex {albumsStore} />
     {:else if router.current.route === "albums.detail"}
       <AlbumDetail id={router.current.id} {mediaStore} {albumsStore} />
+    {:else if router.current.route === "shares"}
+      <SharesPage {sharesStore} />
     {:else if router.current.route === "settings"}
       <div style="padding:20px">Settings (placeholder; theme = {themeStore.theme})</div>
     {:else}

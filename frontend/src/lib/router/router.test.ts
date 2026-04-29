@@ -70,6 +70,18 @@ describe("RouterStore.match", () => {
     const r = new RouterStore();
     expect(r.current.route).toBe("notfound");
   });
+
+  it("matches /shares to the shares route", () => {
+    setLocation("/shares");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "shares" });
+  });
+
+  it("matches /shares/ (trailing slash) to the shares route", () => {
+    setLocation("/shares/");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "shares" });
+  });
 });
 
 describe("RouterStore.navigate", () => {

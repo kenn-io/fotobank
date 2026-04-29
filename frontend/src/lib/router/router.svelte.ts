@@ -6,6 +6,7 @@ export type RouteMatch =
   | { route: "settings" }
   | { route: "albums" }
   | { route: "albums.detail"; id: string }
+  | { route: "shares" }
   | { route: "media"; id: string }
   | { route: "notfound"; path: string };
 
@@ -19,6 +20,7 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
   { re: /^\/settings$/,   build: () => ({ route: "settings" }) },
   { re: /^\/albums\/?$/,  build: () => ({ route: "albums" }) },
   { re: /^\/albums\/([^/]+)\/?$/, build: (m) => ({ route: "albums.detail", id: m[1]! }) },
+  { re: /^\/shares\/?$/,  build: () => ({ route: "shares" }) },
   { re: /^\/media\/([^/]+)$/, build: (m) => ({ route: "media", id: m[1]! }) },
 ];
 
