@@ -147,7 +147,12 @@ unrevoked rows.
 
 - `SetHiddenCascade(ctx, owner, ids, at)` — single transaction, owner-scoped, sidecar cascade in
   SQL via `WHERE id IN (?…) OR paired_with_id IN (?…)`.
-- `ClearHiddenCascade(ctx, owner, ids)` — same shape.
+- `ClearHiddenCascade(ctx, owner, ids)` — same shape. Both cascade methods take only primary
+  ids; sidecar mutation happens via the cascade clause.
+- `ClearAllHiddenForOwner(ctx, owner)` — single statement that clears `hidden_at` on every row
+  the owner owns where `hidden_at IS NOT NULL`. Used by `Disable`. This is intentionally
+  separate from `ClearHiddenCascade` because Disable doesn't have an id list to validate
+  (sidecars and primaries are both flipped together by the WHERE clause).
 - Existing list/get queries gain an `IncludeHidden bool`; when false, queries match the partial
   `media_visible_idx`.
 
@@ -162,7 +167,8 @@ methods are the only mutators of `media.hidden_at`, and they always cascade.
 - `Change(ctx, principal, oldPasscode, newPasscode)` — verifies old; revokes all sessions on
   success.
 - `Disable(ctx, principal, passcode)` — atomic: delete credential + clear all hidden flags for
-  principal (via `ClearHiddenCascade`) + revoke all sessions.
+  principal (via `ClearAllHiddenForOwner`, which flips both primaries and sidecars in one
+  statement) + revoke all sessions.
 - `Unlock(ctx, principal, passcode) (token, expiresAt)` — generates token, inserts session.
 - `Lock(ctx, tokenSHA)` — best-effort, idempotent (no error if token unknown or already revoked).
 - `AdminReset(ctx, principal)` — used by `fotobank admin reset-hidden-passcode`.
@@ -181,11 +187,15 @@ config knobs in F2.4. Pathological slowness is a design escalation, not a quiet 
 2. Attempt the operation.
 3. On failure: INSERT into `auth_hidden_failure`; SELECT count over last 60s; if count ≥ 5 AND no
    active lockout, UPSERT `auth_hidden_lockout` with `locked_until = now + 5min`.
-4. On success: leave the lockout row alone; the failure rows age out via the background purge.
+4. On success: DELETE all `auth_hidden_failure` rows for the principal AND DELETE any
+   `auth_hidden_lockout` row for the principal. A correct passcode resets both the sliding-window
+   count and any expired-but-unpurged lockout, so an authenticated user can't be tripped by
+   stale failures from a previous typo run.
 
 The failure-event table records attempts for sliding-window counting; `auth_hidden_lockout`
 stores the active lockout decision so a process restart, transient DB blip, or rapid retry can't
-reset the lockout.
+reset an *active* lockout. The reset-on-success rule above is what prevents stale failures from
+catching a legitimate user who already proved possession of the passcode.
 
 **`internal/media/service.Hide/Unhide(ctx, caller, ids)`:**
 
@@ -327,7 +337,7 @@ run TLS; the server assumes the connection at the cookie boundary is HTTPS-equiv
 
 | Surface | Behavior |
 |---|---|
-| `/library`, `/albums`, `/albums/{id}/media` (lists) | always filter `hidden_at IS NOT NULL`; cookie irrelevant |
+| `/library`, `/albums`, `/albums/{id}/media` (lists) | always apply `hidden_at IS NULL` predicate (exclude hidden); cookie irrelevant |
 | `GET /media/{id}` / `/thumb` / `/original` — visible id | 200 |
 | Same — hidden id, valid unlock cookie | 200 |
 | Same — hidden id, no/expired cookie | 404 |
@@ -482,10 +492,13 @@ the album-add carve-out (§2.4) accepts hidden ids when a valid unlock cookie is
 - **`/hidden`:** select → Unhide (no confirm; reversible) →
   `hiddenMediaStore.removeMany(succeeded)` prunes the hidden grid → album refresh hooks → toast
   on partial failure.
-- **MediaDetail (hidden row, cookie present):** Unhide → flip route-local `media.hidden_at` to
-  null → `mediaStore.mergeRaw([updatedRaw])` (which inserts into the appropriate visible month
-  bucket per 3.14 invariant) → no `hiddenMediaStore` call (that store is route-local to `/hidden`
-  and may not exist) → no auto-navigation.
+- **MediaDetail (hidden row, cookie present):** Unhide → on 200 from `/api/v1/media:unhide`,
+  build `updatedRaw` locally by cloning the route-local `media` object and setting
+  `hidden_at = null` (no refetch — the unhide response carries `{succeeded, failed}` only, and
+  no other fields changed since the page is the only thing mutating this row in this turn) →
+  re-render the page from the new local state → `mediaStore.mergeRaw([updatedRaw])` (which
+  inserts into the appropriate visible month bucket per §3.14 invariant) → no `hiddenMediaStore`
+  call (that store is route-local to `/hidden` and may not exist) → no auto-navigation.
 
 ### 3.7 Album hidden_count chip + DTO additions + refresh hooks
 
@@ -697,7 +710,7 @@ valid unlock cookie.
 | 3. hidden auth service | (3) Setup/Change/Disable/Unlock/Lock/AdminReset; (4) Argon2id helper + 1..1024-byte enforcement; (5) sliding-window lockout with persisted `auth_hidden_lockout`. |
 | 4. hidden auth HTTP | (6) huma routes `/setup`, `/change`, `/disable`, `/unlock` (Set-Cookie), `/lock` (idempotent), `/state`; (6a) `make api-generate`; (6b) regenerate frontend TS bindings. |
 | 5. CLI | (7) `fotobank hidden setup/change/disable` with stub-mode guard; (8) `fotobank admin reset-hidden-passcode [--owner hub:user]`. |
-| 6. media repo | (9) `SetHiddenCascade` / `ClearHiddenCascade` (one txn, owner-scoped, sidecar cascade in SQL); (10) `IncludeHidden` flag threaded through existing list/get queries. |
+| 6. media repo | (9) `SetHiddenCascade` / `ClearHiddenCascade` / `ClearAllHiddenForOwner` (one txn, owner-scoped, sidecar cascade in SQL); (10) `IncludeHidden` flag threaded through existing list/get queries. |
 | 7. media service + HTTP | (11) `media.service.Hide/Unhide` with sidecar input rejection; (12) `POST /media:hidden` (409 if not configured), `POST /media:unhide`, `GET /hidden/media` (sidecars excluded, locked sort); (12a) regenerate openapi + TS bindings. |
 | 8. Shared filter | (13) `SharedReadService.*` applies `hidden_at IS NULL`; tests assert filter at every method. |
 | 9. Album integration | (14) `hidden_count` on `AlbumSummary` / `AlbumDetail`; `item_count` becomes visible-only; (15) album-add accepts hidden ids when unlock cookie present; (15a) regenerate openapi + TS bindings. |
