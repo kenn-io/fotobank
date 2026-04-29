@@ -1,5 +1,5 @@
 // frontend/src/lib/selection/selectionStore.test.ts
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { SelectionStore } from "./selectionStore.svelte";
 
 describe("SelectionStore", () => {
@@ -22,5 +22,76 @@ describe("SelectionStore", () => {
     s.toggle("a"); s.toggle("b");
     s.clear();
     expect(s.ids.size).toBe(0);
+  });
+});
+
+describe("SelectionStore.addAll", () => {
+  let s: SelectionStore;
+  beforeEach(() => { s = new SelectionStore(); });
+
+  it("adds every id and sets lastAnchor to the last id in the iterable", () => {
+    s.addAll(["a", "b", "c"]);
+    expect(s.ids.has("a")).toBe(true);
+    expect(s.ids.has("b")).toBe(true);
+    expect(s.ids.has("c")).toBe(true);
+    expect(s.ids.size).toBe(3);
+    expect(s.lastAnchor).toBe("c");
+  });
+
+  it("is a no-op for an empty iterable; lastAnchor unchanged", () => {
+    s.toggle("seed");
+    s.addAll([]);
+    expect(s.lastAnchor).toBe("seed");
+    expect(s.ids.size).toBe(1);
+  });
+
+  it("merges with existing selection without duplicates", () => {
+    s.addAll(["a", "b"]);
+    s.addAll(["b", "c"]);
+    expect(s.ids.size).toBe(3);
+  });
+});
+
+describe("SelectionStore.removeAll", () => {
+  let s: SelectionStore;
+  beforeEach(() => {
+    s = new SelectionStore();
+    s.addAll(["a", "b", "c", "d"]);
+  });
+
+  it("removes every id and leaves lastAnchor untouched", () => {
+    const anchor = s.lastAnchor;
+    s.removeAll(["b", "c"]);
+    expect(s.ids.has("a")).toBe(true);
+    expect(s.ids.has("b")).toBe(false);
+    expect(s.ids.has("c")).toBe(false);
+    expect(s.ids.has("d")).toBe(true);
+    expect(s.lastAnchor).toBe(anchor);
+  });
+
+  it("is tolerant of unknown ids", () => {
+    s.removeAll(["z"]);
+    expect(s.ids.size).toBe(4);
+  });
+});
+
+describe("SelectionStore.hasAll", () => {
+  let s: SelectionStore;
+  beforeEach(() => {
+    s = new SelectionStore();
+    s.addAll(["a", "b", "c"]);
+  });
+
+  it("returns true when every id is present", () => {
+    expect(s.hasAll(["a", "b"])).toBe(true);
+    expect(s.hasAll(["a", "b", "c"])).toBe(true);
+  });
+
+  it("returns false when any id is missing", () => {
+    expect(s.hasAll(["a", "z"])).toBe(false);
+  });
+
+  it("returns false for empty input (so empty chunks don't render Deselect)", () => {
+    expect(s.hasAll([])).toBe(false);
   });
 });
