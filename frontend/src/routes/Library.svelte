@@ -11,7 +11,7 @@
   import ShareModal from "../lib/components/ShareModal.svelte";
   import { selection } from "../lib/selection/selectionStore.svelte";
   import { lightboxSession } from "../lib/lightbox/lightboxSession.svelte";
-  import { ScrollRestore } from "../lib/lightbox/scrollRestore.svelte";
+  import { ScrollRestore, captureMainScrollY } from "../lib/lightbox/scrollRestore.svelte";
   import { flattenLibraryIds } from "../lib/lightbox/sessionsFlatten";
   import { router } from "../lib/router/router.svelte";
   import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
@@ -59,21 +59,20 @@
   // before navigating to /media/:id?from=library. If the user has a
   // multi-selection that includes the clicked id, narrow navIds to the
   // selection so prev/next walks only the selected set; otherwise walk
-  // the full flattened library. The actual scroll container is `.main`
-  // (overflow:auto in ThreeColumnLayout) — capture from that element so
-  // ScrollRestore (which reads `.main` by default) can restore it.
+  // the full flattened library. The scroll container is `.main`
+  // (overflow:auto in ThreeColumnLayout); captureMainScrollY reads from
+  // there so ScrollRestore (which targets `.main` by default) can
+  // restore the same Y on remount.
   function openMedia(id: string) {
     const all = flattenLibraryIds(mediaStore.months);
     const sel = selection.ids;
     const useSelection = sel.size > 1 && sel.has(id);
     const navIds = useSelection ? all.filter((x) => sel.has(x)) : all;
-    const mainEl = document.querySelector<HTMLElement>(".main");
-    const scrollY = mainEl?.scrollTop ?? 0;
     lightboxSession.open({
       source: { kind: "library" },
       navIds,
       selected: useSelection,
-      scrollY,
+      scrollY: captureMainScrollY(),
       returnFocusMediaId: id,
       returnHref: "/library",
     });

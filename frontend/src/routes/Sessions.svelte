@@ -10,7 +10,7 @@
   import { router } from "../lib/router/router.svelte";
   import { selection } from "../lib/selection/selectionStore.svelte";
   import { lightboxSession } from "../lib/lightbox/lightboxSession.svelte";
-  import { ScrollRestore } from "../lib/lightbox/scrollRestore.svelte";
+  import { ScrollRestore, captureMainScrollY } from "../lib/lightbox/scrollRestore.svelte";
   import { flattenSessionIds } from "../lib/lightbox/sessionsFlatten";
   import GroupSelectButton from "../lib/components/GroupSelectButton.svelte";
   import ActionBar from "../lib/components/ActionBar.svelte";
@@ -63,20 +63,19 @@
   // openMedia captures source state into lightboxSession before
   // navigating to /media/:id?from=sessions. If a multi-selection covers
   // the clicked id, navIds narrows to it; otherwise it walks the full
-  // session-flattened list. Capture from `.main` (the overflow:auto
-  // scroller in ThreeColumnLayout) so ScrollRestore can restore it.
+  // session-flattened list. captureMainScrollY reads from `.main` (the
+  // overflow:auto scroller in ThreeColumnLayout) so ScrollRestore can
+  // restore the same Y on remount.
   function openMedia(id: string) {
     const all = flattenSessionIds(mediaStore.months);
     const sel = selection.ids;
     const useSelection = sel.size > 1 && sel.has(id);
     const navIds = useSelection ? all.filter((x) => sel.has(x)) : all;
-    const mainEl = document.querySelector<HTMLElement>(".main");
-    const scrollY = mainEl?.scrollTop ?? 0;
     lightboxSession.open({
       source: { kind: "sessions" },
       navIds,
       selected: useSelection,
-      scrollY,
+      scrollY: captureMainScrollY(),
       returnFocusMediaId: id,
       returnHref: "/sessions",
     });

@@ -96,3 +96,16 @@ function cssEscape(s: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(s);
   return s.replace(/["\\]/g, "\\$&");
 }
+
+/**
+ * Read scrollTop from the source-route scroll container at lightbox-open
+ * time. Centralizes the `.main` lookup so source routes (Library,
+ * Sessions, AlbumDetail, HiddenLibrary) all capture the same Y that
+ * ScrollRestore later reads back. Returns 0 when the document is
+ * unavailable (SSR-style harnesses) or the container hasn't mounted.
+ */
+export function captureMainScrollY(selector = ".main"): number {
+  if (typeof document === "undefined") return 0;
+  const el = document.querySelector<HTMLElement>(selector);
+  return el?.scrollTop ?? 0;
+}
