@@ -135,10 +135,14 @@ describe("Lightbox (snapshot path)", () => {
       returnFocusMediaId: "m1",
       returnHref: "/library",
     });
+    // Stub the navigate body so the positive-case dispatch doesn't
+    // actually mutate window.history / router state — otherwise later
+    // tests in this file (or other Lightbox specs run in the same
+    // process) inherit the polluted depth and current route.
     const navigateSpy = vi.spyOn(
       await import("../../router/router.svelte").then((m) => m.router),
       "navigate",
-    );
+    ).mockImplementation(() => undefined);
     navigateSpy.mockClear();
     render(Lightbox, {
       props: {
