@@ -50,7 +50,7 @@ export class ScrollRestore {
       ? document.querySelector(`[data-media-id="${cssEscape(p.mediaId)}"]`)
       : null;
     const enoughContent = document.body.scrollHeight >= p.scrollY + window.innerHeight;
-    const capHit = this.attempts > this.maxAttempts;
+    const capHit = this.attempts >= this.maxAttempts;
 
     if (targetEl !== null || enoughContent) {
       window.scrollTo(0, p.scrollY);
@@ -67,10 +67,9 @@ export class ScrollRestore {
   }
 }
 
-// CSS.escape may be missing in older test environments; provide a
-// minimal fallback that handles ids commonly produced by the backend
-// (UUIDs, lowercase alnum + hyphens). Real ids never contain quotes
-// or backslashes, but escape defensively for the CSS selector.
+// Fallback only — modern browsers and jsdom both provide CSS.escape.
+// Real ids never contain quotes or backslashes, but escape defensively
+// for the CSS selector.
 function cssEscape(s: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(s);
   return s.replace(/["\\]/g, "\\$&");

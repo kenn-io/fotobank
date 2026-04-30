@@ -64,11 +64,20 @@ describe("ScrollRestore", () => {
     const sr = new ScrollRestore({ maxAttempts: 3 });
     sr.markPending({ scrollY: 5000, mediaId: "missing" });
     setBody(1000);
-    sr.attemptRestore();
-    sr.attemptRestore();
-    sr.attemptRestore();
-    const ok = sr.attemptRestore();
+    sr.attemptRestore(); // attempt 1: not yet capped
+    sr.attemptRestore(); // attempt 2: not yet capped
+    const ok = sr.attemptRestore(); // attempt 3: cap hit → bails to partial Y
     expect(ok).toBe(true);
     expect(window.scrollTo).toHaveBeenCalledWith(0, 200); // 1000 - 800
+  });
+
+  it("isPending reflects markPending / clear", () => {
+    const sr = new ScrollRestore();
+    expect(sr.isPending()).toBe(false);
+    sr.markPending({ scrollY: 100, mediaId: null });
+    expect(sr.isPending()).toBe(true);
+    setBody(1000); // make scrollHeight satisfy
+    sr.attemptRestore();
+    expect(sr.isPending()).toBe(false);
   });
 });
