@@ -28,4 +28,28 @@ describe("flattenLibraryIds / flattenSessionIds", () => {
     expect(flattenLibraryIds([])).toEqual([]);
     expect(flattenSessionIds([])).toEqual([]);
   });
+
+  it("session-clusters items in chronological order within each cluster", () => {
+    // Three items inside the same 4-hour cluster, plus one days later.
+    // Library order is descending (the user sees newest first), but
+    // within a session the visible Sessions grid renders ascending —
+    // flattenSessionIds must match that grid order so the lightbox
+    // prev/next walks the same sequence the user clicks.
+    const dense: Month[] = [
+      {
+        key: "2026-04",
+        items: [
+          { id: "later",  timestamp: "", aspect: 1, thumbUrl: "", taken: new Date("2026-04-22T12:00:00Z"), thumbVersion: 0 },
+          { id: "third",  timestamp: "", aspect: 1, thumbUrl: "", taken: new Date("2026-04-20T13:00:00Z"), thumbVersion: 0 },
+          { id: "second", timestamp: "", aspect: 1, thumbUrl: "", taken: new Date("2026-04-20T12:30:00Z"), thumbVersion: 0 },
+          { id: "first",  timestamp: "", aspect: 1, thumbUrl: "", taken: new Date("2026-04-20T12:00:00Z"), thumbVersion: 0 },
+        ],
+      },
+    ];
+    // Library ignores grouping → walks declared (descending) order.
+    expect(flattenLibraryIds(dense)).toEqual(["later", "third", "second", "first"]);
+    // Sessions reorders: newest session first ([later]), then the
+    // earlier cluster ([first, second, third]) ascending within.
+    expect(flattenSessionIds(dense)).toEqual(["later", "first", "second", "third"]);
+  });
 });
