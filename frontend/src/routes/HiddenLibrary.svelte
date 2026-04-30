@@ -11,10 +11,13 @@
   import MediaActions from "../lib/components/MediaActions.svelte";
   import AddToAlbumModal from "../lib/components/AddToAlbumModal.svelte";
   import { selection } from "../lib/selection/selectionStore.svelte";
+  import { lightboxSession } from "../lib/lightbox/lightboxSession.svelte";
+  import { ScrollRestore, captureMainScrollY } from "../lib/lightbox/scrollRestore.svelte";
   import type { HiddenStore } from "../lib/hidden/hiddenStore.svelte";
   import { HiddenMediaStore } from "../lib/hidden/hiddenMediaStore.svelte";
   import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
   import type { ToastStore } from "../lib/toasts/toastStore.svelte";
+  import { router } from "../lib/router/router.svelte";
   import { api } from "../lib/api/client";
 
   let {
@@ -51,6 +54,50 @@
       void hiddenStore.lock();
     }
   });
+
+  // Scroll restoration mirrors Library/Sessions: when this route remounts
+  // after a lightbox close on a hidden snapshot, consume scrollY/focus
+  // and clear them, then attempt restore on each months change so
+  // paginated reloads can land the saved Y once enough content exists.
+  const restore = new ScrollRestore();
+
+  $effect(() => {
+    const snap = lightboxSession.snapshot;
+    if (snap !== null && snap.source.kind === "hidden") {
+      restore.markPending({ scrollY: snap.scrollY, mediaId: snap.returnFocusMediaId });
+      lightboxSession.clearScroll();
+      lightboxSession.clearReturnFocus();
+    }
+  });
+  $effect(() => {
+    void hiddenMediaStore.months;
+    if (restore.isPending()) restore.attemptRestore();
+  });
+
+  // openMedia captures the hidden source state into lightboxSession
+  // before navigating to /media/:id?from=hidden. The flat id list comes
+  // from hiddenMediaStore.months — months are sorted DESC and items
+  // within each month are sorted DESC by taken time, so the resulting
+  // navIds order matches what the user sees on screen. Selection
+  // narrowing matches Library/Sessions/AlbumDetail.
+  function openMedia(mid: string) {
+    const all: string[] = [];
+    for (const m of hiddenMediaStore.months) {
+      for (const it of m.items) all.push(it.id);
+    }
+    const sel = selection.ids;
+    const useSelection = sel.size > 1 && sel.has(mid);
+    const navIds = useSelection ? all.filter((x) => sel.has(x)) : all;
+    lightboxSession.open({
+      source: { kind: "hidden" },
+      navIds,
+      selected: useSelection,
+      scrollY: captureMainScrollY(),
+      returnFocusMediaId: mid,
+      returnHref: "/hidden",
+    });
+    router.navigate(`/media/${mid}?from=hidden`);
+  }
 
   // Filter the global selection to IDs that are actually present in the
   // hidden store — the global selection is shared across routes and may
@@ -118,11 +165,10 @@
       {/snippet}
     </ActionBar>
 
-    <!-- TODO(F2.5): pass disableNavigation=false once hidden-aware lightbox lands -->
     <VirtualGrid
       months={hiddenMediaStore.months}
       onLoadMore={() => hiddenMediaStore.loadMore()}
-      disableNavigation={true}
+      onOpenMedia={openMedia}
     />
 
     {#if hiddenMediaStore.loading}

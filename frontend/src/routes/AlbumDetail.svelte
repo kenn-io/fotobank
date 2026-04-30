@@ -10,6 +10,8 @@
   import AddToAlbumModal from "../lib/components/AddToAlbumModal.svelte";
   import ShareModal from "../lib/components/ShareModal.svelte";
   import { selection } from "../lib/selection/selectionStore.svelte";
+  import { lightboxSession } from "../lib/lightbox/lightboxSession.svelte";
+  import { ScrollRestore, captureMainScrollY } from "../lib/lightbox/scrollRestore.svelte";
   import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
   import type { HiddenStore } from "../lib/hidden/hiddenStore.svelte";
   import type { ToastStore } from "../lib/toasts/toastStore.svelte";
@@ -35,6 +37,47 @@
   $effect(() => {
     detail.load(id);
   });
+
+  // Scroll restoration mirrors Library/Sessions, but the snapshot match
+  // also keys off albumId so navigating to a different album doesn't
+  // consume the prior album's snapshot. Retry attempts run on every
+  // detail.itemIds change, so paginated loads after the initial mount
+  // get a chance to surface the target row before the cap is hit.
+  const restore = new ScrollRestore();
+
+  $effect(() => {
+    const snap = lightboxSession.snapshot;
+    if (snap !== null && snap.source.kind === "album" && snap.source.albumId === id) {
+      restore.markPending({ scrollY: snap.scrollY, mediaId: snap.returnFocusMediaId });
+      lightboxSession.clearScroll();
+      lightboxSession.clearReturnFocus();
+    }
+  });
+  $effect(() => {
+    void detail.itemIds;
+    if (restore.isPending()) restore.attemptRestore();
+  });
+
+  // openMedia captures the album-scoped source state into lightboxSession
+  // before navigating to /media/:id?from=album:<id>. Selection narrowing
+  // matches Library/Sessions: a multi-selection that includes the clicked
+  // id walks just the selected set; otherwise navIds is the full album
+  // listing in current sort order.
+  function openMedia(mid: string) {
+    const all = detail.itemIds;
+    const sel = selection.ids;
+    const useSelection = sel.size > 1 && sel.has(mid);
+    const navIds = useSelection ? all.filter((x) => sel.has(x)) : [...all];
+    lightboxSession.open({
+      source: { kind: "album", albumId: id },
+      navIds,
+      selected: useSelection,
+      scrollY: captureMainScrollY(),
+      returnFocusMediaId: mid,
+      returnHref: `/albums/${id}`,
+    });
+    router.navigate(`/media/${mid}?from=album:${id}`);
+  }
 
   // Synthetic single-month feed for VirtualGrid timelineChrome=false.
   // mediaStore.get(...) reads from a non-reactive Map, so we touch
@@ -290,6 +333,7 @@
     onLoadMore={loadMore}
     targetRowHeight={200}
     timelineChrome={false}
+    onOpenMedia={openMedia}
   />
 {:else if !detail.loading && detail.album}
   <div class="empty">
