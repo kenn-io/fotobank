@@ -377,3 +377,83 @@ CREATE TABLE auth_hidden_lockout (
     FOREIGN KEY (principal_hub, principal_user_id)
         REFERENCES owners(hub, user_id) ON DELETE CASCADE
 );
+
+-- ============================================================
+-- AI: tag and caption pipeline.
+-- See docs/superpowers/specs/2026-04-30-fotobank-ai-tag-caption-design.md.
+-- ============================================================
+
+-- One row per task run (or in-flight insert that gets staled on retry).
+CREATE TABLE ai_results (
+    id              UUID PRIMARY KEY,
+    media_id        UUID NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    task            TEXT NOT NULL CHECK (task IN ('tag','caption')),
+    model_id        TEXT NOT NULL,
+    prompt_version  TEXT NOT NULL,
+    prompt_hash     TEXT NOT NULL,
+    input_profile   TEXT NOT NULL,
+    status          TEXT NOT NULL CHECK (status IN ('active','stale')),
+    generated_at    TIMESTAMP NOT NULL
+);
+CREATE UNIQUE INDEX ai_results_active_one_per
+    ON ai_results(media_id, task) WHERE status = 'active';
+CREATE INDEX ai_results_media_task_idx
+    ON ai_results(media_id, task, status);
+
+CREATE TABLE media_tags (
+    result_id  UUID NOT NULL REFERENCES ai_results(id) ON DELETE CASCADE,
+    tag_key    TEXT NOT NULL,
+    tag_label  TEXT NOT NULL,
+    rank       INTEGER NOT NULL,
+    PRIMARY KEY (result_id, tag_key)
+);
+CREATE INDEX media_tags_key_idx ON media_tags(tag_key);
+
+CREATE TABLE media_captions (
+    result_id  UUID PRIMARY KEY REFERENCES ai_results(id) ON DELETE CASCADE,
+    text       TEXT NOT NULL
+);
+
+CREATE TABLE ai_jobs (
+    id              UUID PRIMARY KEY,
+    media_id        UUID NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    task            TEXT NOT NULL CHECK (task IN ('tag','caption')),
+    fingerprint     TEXT NOT NULL,
+    status          TEXT NOT NULL CHECK (
+                      status IN ('pending','working','blocked','done','failed','superseded')),
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    last_error_kind TEXT,
+    claimed_at      TIMESTAMP,
+    enqueued_at     TIMESTAMP NOT NULL,
+    completed_at    TIMESTAMP
+);
+CREATE UNIQUE INDEX ai_jobs_active_idx
+    ON ai_jobs(media_id, task) WHERE status IN ('pending','working','blocked');
+CREATE INDEX ai_jobs_pending_idx
+    ON ai_jobs(task, status, claimed_at) WHERE status IN ('pending','working','blocked');
+CREATE INDEX ai_jobs_terminal_idx
+    ON ai_jobs(task, status, completed_at) WHERE status IN ('done','failed','superseded');
+
+CREATE TABLE ai_failures (
+    media_id        UUID NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    task            TEXT NOT NULL CHECK (task IN ('tag','caption')),
+    model_id        TEXT NOT NULL,
+    prompt_version  TEXT NOT NULL,
+    input_profile   TEXT NOT NULL,
+    last_error      TEXT NOT NULL,
+    last_error_kind TEXT NOT NULL,
+    attempt_count   INTEGER NOT NULL,
+    failed_at       TIMESTAMP NOT NULL,
+    PRIMARY KEY (media_id, task, model_id, prompt_version, input_profile)
+);
+CREATE INDEX ai_failures_active_idx
+    ON ai_failures(task, model_id, prompt_version, input_profile, failed_at DESC);
+
+CREATE TABLE ai_skipped (
+    media_id     UUID NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    task         TEXT NOT NULL CHECK (task IN ('tag','caption')),
+    reason       TEXT NOT NULL,
+    recorded_at  TIMESTAMP NOT NULL,
+    PRIMARY KEY (media_id, task)
+);
