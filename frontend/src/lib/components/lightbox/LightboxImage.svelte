@@ -8,6 +8,13 @@
   imperative APIs, so we hand a `LightboxImageApi` to the parent on
   mount. The parent stashes the api and calls e.g. api.zoomIn() from
   keyboard handlers (`+`, `-`, `0`, space).
+
+  Lifecycle contract: `onReady` fires once per component mount. The
+  Lightbox parent re-keys this component on activeId change, so a
+  fresh api object arrives with each navigation. The parent must
+  always use the most-recent api — closures over a stale api will
+  silently no-op (api methods guard `pz`/`container`, both null'd
+  by onDestroy).
 -->
 <script lang="ts" module>
   export type LightboxImageApi = {
@@ -56,7 +63,7 @@
         if ((pz?.getTransform().scale ?? 1) <= 1) return true;
         return undefined;
       },
-      beforeWheel: () => undefined,
+      // beforeWheel default = allow zoom; no override needed.
     });
     imgEl.addEventListener("dblclick", onDblClick);
     onReady?.({ zoomIn, zoomOut, resetZoom, toggleZoom });
@@ -67,10 +74,21 @@
     imgEl?.removeEventListener("dblclick", onDblClick);
   });
 
+  // Reset to scale 1 with the image re-centered. zoomAbs(_, _, 1)
+  // alone keeps the existing translation, so a previously-panned image
+  // would land off-center after reset; pairing with moveTo(0, 0)
+  // returns the transform to its initial state and lets the
+  // container's flex centering re-take over.
+  function resetTransform(): void {
+    if (!pz) return;
+    pz.moveTo(0, 0);
+    pz.zoomAbs(0, 0, 1);
+  }
+
   function onDblClick(e: MouseEvent) {
     if (!pz) return;
     const cur = pz.getTransform().scale;
-    if (cur > 1.5) pz.zoomAbs(0, 0, 1);
+    if (cur > 1.5) resetTransform();
     else pz.zoomTo(e.clientX, e.clientY, 2);
   }
 
@@ -87,12 +105,12 @@
     pz.zoomTo(cx, cy, 1 / 1.25);
   }
   function resetZoom(): void {
-    pz?.zoomAbs(0, 0, 1);
+    resetTransform();
   }
   function toggleZoom(): void {
     if (!pz || !container) return;
     const cur = pz.getTransform().scale;
-    if (cur > 1.5) pz.zoomAbs(0, 0, 1);
+    if (cur > 1.5) resetTransform();
     else pz.zoomTo(container.clientWidth / 2, container.clientHeight / 2, 2);
   }
 </script>
