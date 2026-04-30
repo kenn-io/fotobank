@@ -65,7 +65,7 @@ Background workers (e.g. `internal/thumb/worker.go`) follow the same rule: they'
 
 - Errors: sentinels in `internal/errs/errs.go` (ErrNotFound, ErrOwnerMismatch, ErrPermissionDenied, ErrAlreadyExists, ErrInvalidArgument, ErrConcurrentImport, ErrIdentityMissing, ErrBrokerUnavailable, ErrDirectAccessBlocked). HTTP mapping in `internal/httpapi/errors.go::Translate`. Wrap with `fmt.Errorf("doing X: %w", err)`.
 - Tests use `testify/require`. `testutil.OpenTestDB(t)` spins a fresh migrated SQLite DB per test.
-- Migrations: every `NNNNNN_name.up.sql` has a matching `.down.sql`. Never edit a migration that's already on main (prek hook enforces this).
+- Migrations: pre-alpha policy — there is one migration, `000001_initial_schema.{up,down}.sql`, and you edit it directly for any schema change. No new numbered migrations until fotobank ships to real users. Both files (up + down) move together on every change.
 - HTTP: JSON routes use huma. Byte-streaming routes (`/original`, `/thumb`) use raw `http.HandlerFunc` on the same mux.
 - Identity: phase 1 is stub mode — one principal per config, set via `identity.mode = "stub"`. Other modes are rejected by the CLI tooling that mutates DB state.
 - Runtime: pure Go, no CGO. SQLite via `modernc.org/sqlite`.
@@ -90,7 +90,7 @@ Design docs live in `docs/superpowers/specs/`, plans in `docs/superpowers/plans/
 - Never amend commits — always create a new commit for fixes.
 - Never bypass pre-commit hooks (no `--no-verify`). If a hook fails, fix the underlying issue and create a new commit.
 - Never push or pull unless explicitly asked.
-- When adding a migration, always add the down pair.
+- Schema changes go in-place into `000001_initial_schema.{up,down}.sql` (pre-alpha policy). Keep up and down in sync.
 - When touching HTTP routes, run `make api-generate` (the prek hook does this automatically on commit).
 - Prefer `require.ErrorIs` for sentinel checks; raw `==` comparison misses wrapped errors.
 - The existing `httpapi.Translate` maps `errs.ErrOwnerMismatch → 403`, which matches the scopes/sharing surface but not the albums surface. If a surface needs a different mapping, write a local translator that overrides the sentinels it cares about and delegates the rest to `Translate`.
