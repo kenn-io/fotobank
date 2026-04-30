@@ -17,7 +17,8 @@
     "test:e2e": "playwright test --config=playwright-e2e.config.ts"
   },
   "dependencies": {
-    "openapi-fetch": "^0.17.0"
+    "openapi-fetch": "^0.17.0",
+    "panzoom": "^9.4.4"
   },
   "devDependencies": {
     "@playwright/test": "1.55.1",
