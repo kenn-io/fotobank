@@ -9,6 +9,9 @@
   import MediaCell from "../lib/grid/MediaCell.svelte";
   import { router } from "../lib/router/router.svelte";
   import { selection } from "../lib/selection/selectionStore.svelte";
+  import { lightboxSession } from "../lib/lightbox/lightboxSession.svelte";
+  import { ScrollRestore } from "../lib/lightbox/scrollRestore.svelte";
+  import { flattenSessionIds } from "../lib/lightbox/sessionsFlatten";
   import GroupSelectButton from "../lib/components/GroupSelectButton.svelte";
   import ActionBar from "../lib/components/ActionBar.svelte";
   import MediaActions from "../lib/components/MediaActions.svelte";
@@ -39,11 +42,52 @@
     sessions.flatMap((s) => s.items.map((it) => it.id)),
   );
 
+  // Scroll restoration mirrors Library.svelte: on remount after a
+  // lightbox close, consume the snapshot's scrollY/focus and clear
+  // them, then attempt restore on each months change.
+  const restore = new ScrollRestore();
+
+  $effect(() => {
+    const snap = lightboxSession.snapshot;
+    if (snap !== null && snap.source.kind === "sessions") {
+      restore.markPending({ scrollY: snap.scrollY, mediaId: snap.returnFocusMediaId });
+      lightboxSession.clearScroll();
+      lightboxSession.clearReturnFocus();
+    }
+  });
+  $effect(() => {
+    void mediaStore.months;
+    if (restore.isPending()) restore.attemptRestore();
+  });
+
+  // openMedia captures source state into lightboxSession before
+  // navigating to /media/:id?from=sessions. If a multi-selection covers
+  // the clicked id, navIds narrows to it; otherwise it walks the full
+  // session-flattened list. Capture from `.main` (the overflow:auto
+  // scroller in ThreeColumnLayout) so ScrollRestore can restore it.
+  function openMedia(id: string) {
+    const all = flattenSessionIds(mediaStore.months);
+    const sel = selection.ids;
+    const useSelection = sel.size > 1 && sel.has(id);
+    const navIds = useSelection ? all.filter((x) => sel.has(x)) : all;
+    const mainEl = document.querySelector<HTMLElement>(".main");
+    const scrollY = mainEl?.scrollTop ?? 0;
+    lightboxSession.open({
+      source: { kind: "sessions" },
+      navIds,
+      selected: useSelection,
+      scrollY,
+      returnFocusMediaId: id,
+      returnHref: "/sessions",
+    });
+    router.navigate(`/media/${id}?from=sessions`);
+  }
+
   // Click policy mirrors VirtualGrid.handleCellClick so /library and
   // /sessions feel identical: button-0 only, modifier branches each
-  // preventDefault before mutating selection, plain click SPA-routes.
-  // If you change one site, change the other (or extract a shared
-  // helper once a third site lands in F2.4).
+  // preventDefault before mutating selection, plain click opens the
+  // lightbox. If you change one site, change the other (or extract a
+  // shared helper once a third site lands).
   function handleCellClick(e: MouseEvent, id: string) {
     if (e.button !== 0) return;
     if (e.shiftKey) {
@@ -57,7 +101,7 @@
       return;
     }
     e.preventDefault();
-    router.navigate(`/media/${id}`);
+    openMedia(id);
   }
 
   let containerEl: HTMLDivElement | null = $state(null);

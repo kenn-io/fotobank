@@ -10,6 +10,10 @@
   import AddToAlbumModal from "../lib/components/AddToAlbumModal.svelte";
   import ShareModal from "../lib/components/ShareModal.svelte";
   import { selection } from "../lib/selection/selectionStore.svelte";
+  import { lightboxSession } from "../lib/lightbox/lightboxSession.svelte";
+  import { ScrollRestore } from "../lib/lightbox/scrollRestore.svelte";
+  import { flattenLibraryIds } from "../lib/lightbox/sessionsFlatten";
+  import { router } from "../lib/router/router.svelte";
   import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
   import type { HiddenStore } from "../lib/hidden/hiddenStore.svelte";
   import type { ToastStore } from "../lib/toasts/toastStore.svelte";
@@ -30,6 +34,51 @@
 
   const density = new DensityStore(api, "library");
   density.load();
+
+  // Scroll restoration: when this route remounts after a lightbox close,
+  // pull scrollY + focus media id off the snapshot, mark restore pending,
+  // and clear the snapshot so the next remount doesn't re-trigger. The
+  // restore retries on every months change until either the target cell
+  // exists or scrollHeight covers the saved Y (see ScrollRestore).
+  const restore = new ScrollRestore();
+
+  $effect(() => {
+    const snap = lightboxSession.snapshot;
+    if (snap !== null && snap.source.kind === "library") {
+      restore.markPending({ scrollY: snap.scrollY, mediaId: snap.returnFocusMediaId });
+      lightboxSession.clearScroll();
+      lightboxSession.clearReturnFocus();
+    }
+  });
+  $effect(() => {
+    void mediaStore.months;
+    if (restore.isPending()) restore.attemptRestore();
+  });
+
+  // openMedia captures the current source state into lightboxSession
+  // before navigating to /media/:id?from=library. If the user has a
+  // multi-selection that includes the clicked id, narrow navIds to the
+  // selection so prev/next walks only the selected set; otherwise walk
+  // the full flattened library. The actual scroll container is `.main`
+  // (overflow:auto in ThreeColumnLayout) — capture from that element so
+  // ScrollRestore (which reads `.main` by default) can restore it.
+  function openMedia(id: string) {
+    const all = flattenLibraryIds(mediaStore.months);
+    const sel = selection.ids;
+    const useSelection = sel.size > 1 && sel.has(id);
+    const navIds = useSelection ? all.filter((x) => sel.has(x)) : all;
+    const mainEl = document.querySelector<HTMLElement>(".main");
+    const scrollY = mainEl?.scrollTop ?? 0;
+    lightboxSession.open({
+      source: { kind: "library" },
+      navIds,
+      selected: useSelection,
+      scrollY,
+      returnFocusMediaId: id,
+      returnHref: "/library",
+    });
+    router.navigate(`/media/${id}?from=library`);
+  }
 
   let addOpen = $state(false);
   let shareOpen = $state(false);
@@ -104,6 +153,7 @@
   months={mediaStore.months}
   onLoadMore={() => mediaStore.loadMore()}
   targetRowHeight={density.targetRowHeight}
+  onOpenMedia={openMedia}
 >
   {#snippet headerAction(month)}
     <GroupSelectButton
