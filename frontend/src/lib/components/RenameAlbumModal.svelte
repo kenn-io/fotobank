@@ -22,7 +22,15 @@
   const valid = $derived(trimmed.length >= 1 && trimmed.length <= 200 && trimmed !== initialName.trim());
 
   const modalId = `rename-${Math.random().toString(36).slice(2)}`;
-  onMount(() => modalStack.push({ id: modalId, onEscape: () => { if (!pending) onCancel(); } }));
+  // onEscape returns false while pending so a later Esc can still
+  // cancel the modal once the in-flight rename settles.
+  onMount(() => modalStack.push({
+    id: modalId,
+    onEscape: () => {
+      if (pending) return false;
+      onCancel();
+    },
+  }));
   onDestroy(() => modalStack.pop(modalId));
 
   async function submit(e: Event) {

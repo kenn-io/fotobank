@@ -10,7 +10,10 @@
 export type ThumbSize = "grid" | "preview" | "large";
 
 export function thumbUrl(id: string, size: ThumbSize, version: number): string {
-  return `/api/v1/media/${id}/thumb?size=${size}&v=${version}`;
+  // encodeURIComponent so ids that happen to contain reserved URL
+  // characters (`/`, `?`, `#`) don't break the path or sneak extra
+  // query params into the request.
+  return `/api/v1/media/${encodeURIComponent(id)}/thumb?size=${size}&v=${version}`;
 }
 
 export type LoadOpts = {
@@ -99,14 +102,19 @@ function notNull<T>(x: T | null): x is T {
 
 async function loadAndDecode(url: string): Promise<void> {
   const img = new Image();
-  img.src = url;
   if (typeof img.decode === "function") {
+    img.src = url;
     await img.decode();
     return;
   }
+  // Install handlers BEFORE assigning src — a cached or
+  // synchronously-completing image fires load/error during the
+  // src= assignment, and any handler attached later would miss
+  // the event and leave this Promise pending forever.
   await new Promise<void>((resolve, reject) => {
     img.onload = (): void => resolve();
     img.onerror = (): void => reject(new Error("image load failed"));
+    img.src = url;
   });
 }
 

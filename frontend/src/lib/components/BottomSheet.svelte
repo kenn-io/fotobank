@@ -18,12 +18,22 @@
 
   let dragStart: number | null = null;
   let dragDelta = $state(0);
+  let sheetEl: HTMLDivElement | null = $state(null);
+  let prevFocus: Element | null = null;
 
   onMount(() => {
     modalStack.push({ id, onEscape: onClose });
+    // Move focus into the sheet so keyboard users land inside the
+    // dialog (sheet has tabindex="-1" for this). Capture the prior
+    // focus owner so onDestroy can restore it. A full focus trap is
+    // a project-wide initiative — see ConfirmModal/AddToAlbumModal,
+    // which currently share the same gap; tracked separately.
+    prevFocus = document.activeElement;
+    sheetEl?.focus();
   });
   onDestroy(() => {
     modalStack.pop(id);
+    if (prevFocus instanceof HTMLElement) prevFocus.focus();
   });
 
   function onPointerDown(e: PointerEvent) {
@@ -62,6 +72,7 @@
     role="dialog"
     aria-modal="true"
     tabindex="-1"
+    bind:this={sheetEl}
     style:transform={`translateY(${dragDelta}px)`}
     onclick={(e) => e.stopPropagation()}
   >

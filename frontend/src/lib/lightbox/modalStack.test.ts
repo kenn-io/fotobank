@@ -88,4 +88,28 @@ describe("ModalStack", () => {
     s.dispatchEscape();
     expect(onA).toHaveBeenCalledTimes(2);
   });
+
+  it("onEscape returning false leaves the entry escapable for a later dispatch", () => {
+    const s = new ModalStack();
+    let pending = true;
+    const onA = vi.fn(() => {
+      if (pending) return false;
+      // accepted: a real modal would unmount + pop here.
+    });
+    s.push({ id: "a", onEscape: onA });
+    // First Esc while pending — handler runs but rejects.
+    expect(s.dispatchEscape()).toBe(true);
+    expect(onA).toHaveBeenCalledTimes(1);
+    // Second Esc still pending — must run again, not be suppressed.
+    expect(s.dispatchEscape()).toBe(true);
+    expect(onA).toHaveBeenCalledTimes(2);
+    // Operation finishes; Esc now accepted, handler runs once more.
+    pending = false;
+    expect(s.dispatchEscape()).toBe(true);
+    expect(onA).toHaveBeenCalledTimes(3);
+    // After the accepted dispatch the entry is marked closing, so a
+    // subsequent Esc before unmount/pop does NOT re-invoke.
+    expect(s.dispatchEscape()).toBe(true);
+    expect(onA).toHaveBeenCalledTimes(3);
+  });
 });

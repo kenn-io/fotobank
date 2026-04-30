@@ -21,9 +21,14 @@
   let error = $state<string | null>(null);
 
   const modalId = `share-${Math.random().toString(36).slice(2)}`;
+  // onEscape returns false while pending so a later Esc can still
+  // close the modal once the in-flight share request settles.
   onMount(() => modalStack.push({
     id: modalId,
-    onEscape: () => { if (!pending) onClose(); },
+    onEscape: () => {
+      if (pending) return false;
+      onClose();
+    },
   }));
   onDestroy(() => modalStack.pop(modalId));
 

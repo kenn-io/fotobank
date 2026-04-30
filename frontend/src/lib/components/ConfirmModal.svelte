@@ -23,7 +23,15 @@
   let pending = $state(false);
 
   const modalId = `confirm-${Math.random().toString(36).slice(2)}`;
-  onMount(() => modalStack.push({ id: modalId, onEscape: () => { if (!pending) onCancel(); } }));
+  // onEscape returns false while pending so a later Esc can still
+  // cancel the modal once the in-flight confirm settles.
+  onMount(() => modalStack.push({
+    id: modalId,
+    onEscape: () => {
+      if (pending) return false;
+      onCancel();
+    },
+  }));
   onDestroy(() => modalStack.pop(modalId));
 
   async function confirm() {

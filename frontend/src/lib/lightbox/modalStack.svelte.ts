@@ -8,6 +8,11 @@
 // (which leads to unmount → pop). dispatchEscape() does NOT auto-pop,
 // but it marks the top entry as "closing" so a second rapid Esc
 // before unmount doesn't run the handler twice.
+//
+// onEscape may return `false` to reject the Esc (e.g. a modal with a
+// pending in-flight save). A rejected dispatch leaves `closing`
+// unset, so a later Esc after the operation finishes can still close
+// the modal. Returning `true` or `void` is treated as accepted.
 
 export type FocusTrapHandle = {
   pause(): void;
@@ -17,7 +22,7 @@ export type FocusTrapHandle = {
 
 export type ModalEntry = {
   id: string;
-  onEscape: () => void;
+  onEscape: () => boolean | void;
   trap?: FocusTrapHandle;
 };
 
@@ -56,17 +61,21 @@ export class ModalStack {
 
   /**
    * Fire the topmost entry's onEscape handler exactly once until the
-   * entry unmounts (and pops). Subsequent dispatchEscape calls while
-   * the same top entry is still on the stack return true (handled)
-   * but do NOT re-invoke the handler. Returns false only when the
-   * stack is empty.
+   * entry unmounts (and pops) — unless onEscape returns `false`, in
+   * which case the dispatch is treated as rejected and a later Esc
+   * can still fire the handler again. Subsequent dispatchEscape
+   * calls while the same top entry is still on the stack and was
+   * accepted return true (handled) without re-invoking the handler.
+   * Returns false only when the stack is empty.
    */
   dispatchEscape(): boolean {
     const t = this.topInternal();
     if (t === null) return false;
     if (t.closing) return true;
-    t.closing = true;
-    t.onEscape();
+    const result = t.onEscape();
+    // Treat void/undefined/true as accepted. Only an explicit `false`
+    // marks the dispatch as rejected so the entry stays escapable.
+    if (result !== false) t.closing = true;
     return true;
   }
 
