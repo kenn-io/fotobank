@@ -48,11 +48,27 @@
     if (succeeded.length > 0) {
       // 1. Snapshot mutation
       lightboxSession.removeIds(succeeded);
-      // 2. Durable state per source kind
-      if (source.kind === "library" || source.kind === "sessions") {
-        mediaStore.removeMany(succeeded);
-      } else if (source.kind === "album") {
-        albumsStore.markStale();
+      // 2. Durable state per source kind. Exhaustive switch over
+      // LightboxSource so a future kind addition trips the type
+      // checker via the `never`-defaulted else.
+      switch (source.kind) {
+        case "library":
+        case "sessions":
+          mediaStore.removeMany(succeeded);
+          break;
+        case "album":
+          albumsStore.markStale();
+          break;
+        case "hidden":
+          // Hide button is suppressed via isUnhideContext when source
+          // is hidden; this branch is unreachable today. Kept here so
+          // the switch is exhaustive — if the gating ever changes the
+          // code stays correct without silently no-op'ing durable state.
+          break;
+        default: {
+          const _exhaustive: never = source;
+          void _exhaustive;
+        }
       }
       onDone("hide", succeeded);
     }
