@@ -190,6 +190,7 @@
       return;
     }
     reconstructionState = "running";
+    reconstructed = null;
     let cancelled = false;
     (async () => {
       try {
