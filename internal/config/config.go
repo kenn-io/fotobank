@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/errs"
 )
 
@@ -65,6 +66,7 @@ type Config struct {
 	Broker        Broker        `toml:"broker"`
 	Backup        Backup        `toml:"backup"`
 	Observability Observability `toml:"observability"`
+	AI            ai.Config     `toml:"ai"`
 }
 
 type Flash struct {
@@ -449,6 +451,7 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	if c.Observability.Logging.Level == "" {
 		c.Observability.Logging.Level = "info"
 	}
+	c.AI.ApplyDefaults()
 }
 
 func defaultFlashRoot() string {
