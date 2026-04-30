@@ -34,6 +34,7 @@
 
 <a
   href={`/media/${media.id}`}
+  data-media-id={media.id}
   aria-label={`Photo ${media.id}`}
   class:selected
   onclick={onCellClick}

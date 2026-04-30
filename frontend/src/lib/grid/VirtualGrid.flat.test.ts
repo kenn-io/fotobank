@@ -1,8 +1,9 @@
-import { render } from "@testing-library/svelte";
+import { render, fireEvent } from "@testing-library/svelte";
 import { describe, it, expect, beforeAll, vi } from "vitest";
 import VirtualGrid from "./VirtualGrid.svelte";
 import VirtualGridHeaderActionFixture from "./VirtualGridHeaderActionFixture.svelte";
 import type { Month } from "../media/mediaStore.svelte";
+import { router } from "../router/router.svelte";
 
 // VirtualGrid wires ResizeObserver + IntersectionObserver in $effect
 // blocks. jsdom doesn't ship either, so we stub no-op implementations
@@ -107,5 +108,33 @@ describe("VirtualGrid headerAction forwarding", () => {
       props: { months, onLoadMore: () => {}, targetRowHeight: 200 },
     });
     expect(container.querySelector("button.ha")).toBeNull();
+  });
+});
+
+describe("VirtualGrid onOpenMedia", () => {
+  it("invokes onOpenMedia(id) instead of router.navigate when prop is provided", async () => {
+    const onOpenMedia = vi.fn();
+    const navSpy = vi.spyOn(router, "navigate").mockImplementation(() => {});
+    const { container } = render(VirtualGrid, {
+      props: { months, onLoadMore: () => {}, targetRowHeight: 200, onOpenMedia },
+    });
+    const link = container.querySelector<HTMLAnchorElement>('a[data-media-id="m1"]');
+    expect(link).not.toBeNull();
+    await fireEvent.click(link!);
+    expect(onOpenMedia).toHaveBeenCalledWith("m1");
+    expect(navSpy).not.toHaveBeenCalled();
+    navSpy.mockRestore();
+  });
+
+  it("falls back to router.navigate(/media/:id) when onOpenMedia is not provided", async () => {
+    const navSpy = vi.spyOn(router, "navigate").mockImplementation(() => {});
+    const { container } = render(VirtualGrid, {
+      props: { months, onLoadMore: () => {}, targetRowHeight: 200 },
+    });
+    const link = container.querySelector<HTMLAnchorElement>('a[data-media-id="m1"]');
+    expect(link).not.toBeNull();
+    await fireEvent.click(link!);
+    expect(navSpy).toHaveBeenCalledWith("/media/m1");
+    navSpy.mockRestore();
   });
 });

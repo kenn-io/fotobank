@@ -18,13 +18,17 @@
   // call so clicks only select (shift/ctrl-click) — used by HiddenLibrary
   // where the hidden-detail flow is deferred to F2.5. TODO(F2.5): remove
   // once a hidden-aware detail lightbox is implemented.
-  let { months, onLoadMore, targetRowHeight = 200, timelineChrome = true, headerAction, disableNavigation = false }: {
+  let {
+    months, onLoadMore, targetRowHeight = 200, timelineChrome = true,
+    headerAction, disableNavigation = false, onOpenMedia,
+  }: {
     months: Month[];
     onLoadMore?: () => void;
     targetRowHeight?: number;
     timelineChrome?: boolean;
     headerAction?: Snippet<[Month]>;
     disableNavigation?: boolean;
+    onOpenMedia?: (id: string) => void;
   } = $props();
 
   let containerEl: HTMLDivElement | null = $state(null);
@@ -124,12 +128,17 @@
       selection.toggle(id);
       return;
     }
-    // Plain click: SPA-route via the router instead of the anchor's
-    // default full-page navigation. Skipped when disableNavigation is
-    // set (e.g. HiddenLibrary where detail view is deferred to F2.5).
+    // Plain click. Default: SPA-route to /media/:id. Source routes that
+    // want lightbox behavior pass onOpenMedia which captures the
+    // LightboxSession snapshot and navigates with ?from=...; the default
+    // path is unchanged for any caller without the prop.
     if (disableNavigation) return;
     e.preventDefault();
-    router.navigate(`/media/${id}`);
+    if (onOpenMedia !== undefined) {
+      onOpenMedia(id);
+    } else {
+      router.navigate(`/media/${id}`);
+    }
   }
 </script>
 
