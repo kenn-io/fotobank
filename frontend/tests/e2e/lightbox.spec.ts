@@ -19,6 +19,28 @@ async function setMainScrollTop(page: Page, y: number): Promise<void> {
   }, y);
 }
 
+// ---------------------------------------------------------------------------
+// Hidden unlock helper — tolerates leftover lockouts from a prior spec.
+// hidden.spec.ts ends with the auth in a "Too many attempts" lockout state;
+// playwright-e2e.config.ts shrinks the lockout window so it expires between
+// specs, but we belt-and-braces by waiting for the lockout banner to clear
+// before submitting the correct passcode.
+// ---------------------------------------------------------------------------
+async function unlockHidden(page: Page): Promise<void> {
+  await page.goto("/hidden");
+  // If the gate shows "Too many attempts", wait for it to clear before
+  // typing — submitting during a lockout would just re-display the banner.
+  const lockoutBanner = page.getByText(/Too many attempts/);
+  if (await lockoutBanner.isVisible().catch(() => false)) {
+    await expect(lockoutBanner).toBeHidden({ timeout: 10_000 });
+  }
+  await page.getByPlaceholder("Passcode").fill("e2e-passcode");
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await expect(
+    page.locator("[role=status]", { hasText: "Hidden unlocked" }),
+  ).toBeVisible();
+}
+
 test.describe("F2.5 lightbox", () => {
   // -------------------------------------------------------------------------
   // Scenario 1: open from /library → walk → close → URL round-trip
@@ -146,6 +168,13 @@ test.describe("F2.5 lightbox", () => {
 
     await page.goto("/library");
     await expect(page.getByLabel("Photo gps-fixture-1")).toBeVisible();
+    // Reset the request log AFTER the grid hydrates so the assertion
+    // measures lightbox loader requests only — the grid's own preview
+    // requests would otherwise satisfy size=preview before the user
+    // even opens the lightbox. Every subsequent /thumb request is
+    // either the active loader.load() or a prefetched neighbour, both
+    // of which prove the loader is doing its job.
+    requested.length = 0;
     await page.locator("[data-media-id]").first().click();
     await expect(page).toHaveURL(/\/media\/.+\?from=library/);
 
@@ -347,12 +376,7 @@ test.describe("F2.5 lightbox", () => {
   test("hidden: walk → unhide → close → row visible in library", async ({
     page,
   }) => {
-    await page.goto("/hidden");
-    await page.getByPlaceholder("Passcode").fill("e2e-passcode");
-    await page.getByRole("button", { name: "Unlock" }).click();
-    await expect(
-      page.locator("[role=status]", { hasText: "Hidden unlocked" }),
-    ).toBeVisible();
+    await unlockHidden(page);
 
     await expect(
       page.locator(`[data-media-id="lightbox-hidden-2-id-001"]`),
@@ -366,8 +390,13 @@ test.describe("F2.5 lightbox", () => {
     );
 
     await page.getByRole("button", { name: /^Unhide$/i }).click();
-    // After unhide the lightbox advances or closes; either way Esc
-    // returns to /hidden.
+    // After unhide, lightbox-hidden-2 still has id-002 left, so the
+    // viewer must advance to it — closing instead would mask a
+    // regression of the order-sensitive nav fix in LightboxActions.
+    await expect(page).toHaveURL(
+      /\/media\/lightbox-hidden-2-id-002\?from=hidden/,
+    );
+
     await page.keyboard.press("Escape");
     await expect(page).toHaveURL(/\/hidden$/);
 
@@ -391,12 +420,7 @@ test.describe("F2.5 lightbox", () => {
     // Start from the unlocked state so the cookie exists, then call the
     // lock endpoint to clear it. page.request shares the browser
     // context's cookie jar, so the subsequent page.goto runs locked.
-    await page.goto("/hidden");
-    await page.getByPlaceholder("Passcode").fill("e2e-passcode");
-    await page.getByRole("button", { name: "Unlock" }).click();
-    await expect(
-      page.locator("[role=status]", { hasText: "Hidden unlocked" }),
-    ).toBeVisible();
+    await unlockHidden(page);
     await page.request.post("/api/v1/auth/hidden/lock");
 
     await page.goto("/media/lightbox-hidden-2-id-001?from=hidden");
@@ -419,15 +443,15 @@ test.describe("F2.5 lightbox", () => {
     page,
   }) => {
     // Unlock so /api/v1/media/:id returns the hidden row body.
-    await page.goto("/hidden");
-    await page.getByPlaceholder("Passcode").fill("e2e-passcode");
-    await page.getByRole("button", { name: "Unlock" }).click();
-    await expect(
-      page.locator("[role=status]", { hasText: "Hidden unlocked" }),
-    ).toBeVisible();
+    await unlockHidden(page);
 
     await page.goto("/media/lightbox-hidden-2-id-002?from=library");
-    await expect(page.locator(".lb-backdrop")).toBeVisible();
+    // Wait for the fallback-specific signal (LightboxFrame applies the
+    // .fallback class only when mode === "fallback"). Otherwise the
+    // generic .lb-backdrop and absent prev/next can match the
+    // reconstruction-loading state too, masking a regression where
+    // fallback never engages.
+    await expect(page.locator(".lb-backdrop.fallback")).toBeVisible();
     await expect(page.locator(".lb-prev")).toHaveCount(0);
     await expect(page.locator(".lb-next")).toHaveCount(0);
   });
@@ -478,6 +502,11 @@ test.describe("F2.5 lightbox", () => {
     await page.getByRole("button", { name: /add to album/i }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.keyboard.press("ArrowRight");
+    // Wait through any potential async navigation window, then confirm
+    // the URL is still stable. An immediate read could pass before an
+    // unintended ArrowRight-driven navigation has had a chance to
+    // commit.
+    await page.waitForTimeout(200);
     expect(page.url()).toBe(startUrl);
   });
 
@@ -493,7 +522,10 @@ test.describe("F2.5 lightbox", () => {
     page,
   }) => {
     await page.goto("/media/lightbox-select-5-id-001?from=album:bogus");
-    await expect(page.locator(".lb-backdrop")).toBeVisible();
+    // Wait for fallback mode specifically — the reconstruction-loading
+    // state also lacks prev/next, so .lb-backdrop alone would pass too
+    // early and miss a regression where reconstruction never resolves.
+    await expect(page.locator(".lb-backdrop.fallback")).toBeVisible();
     await expect(page.locator(".lb-prev")).toHaveCount(0);
     await expect(page.locator(".lb-next")).toHaveCount(0);
     // Esc closes; router.back falls back to /library when history is

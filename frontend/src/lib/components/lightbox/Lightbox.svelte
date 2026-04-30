@@ -30,6 +30,10 @@
   import { modalStack } from "../../lightbox/modalStack.svelte";
   import { computeNav } from "../../lightbox/lightboxNav.svelte";
   import { LightboxLoader, thumbUrl } from "../../lightbox/lightboxLoader";
+  import {
+    flattenLibraryIds,
+    flattenSessionIds,
+  } from "../../lightbox/sessionsFlatten";
   import LightboxFrame from "./LightboxFrame.svelte";
   import LightboxToolbar from "./LightboxToolbar.svelte";
   import LightboxNavButtons from "./LightboxNavButtons.svelte";
@@ -76,12 +80,16 @@
   // ---- Source / session resolution -------------------------------
   // The snapshot is the source of truth for navIds and returnHref.
   // `from` (the route query param) must agree with the snapshot's
-  // source — if not, the reconstruction effect below tries to
-  // rebuild navIds by paging the source; only after that fails do
-  // we fall through to the DirectMediaDetail fallback.
+  // source AND the active id must be in session.navIds — otherwise
+  // a stale snapshot from a prior lightbox session would be reused
+  // for a fresh direct entry on the same source kind, yielding
+  // wrong prev/next. When that check fails, the reconstruction
+  // effect below rebuilds navIds by paging the source; only after
+  // that fails do we fall through to the DirectMediaDetail fallback.
   const session = $derived(lightboxSession.snapshot);
   const fromMatchesSession = $derived.by(() => {
     if (session === null) return false;
+    if (!session.navIds.includes(id)) return false;
     const src = session.source;
     switch (src.kind) {
       case "library":
@@ -210,10 +218,14 @@
             reconstructionState = "failed";
             return;
           }
-          const all: string[] = [];
-          for (const m of mediaStore.months) {
-            for (const it of m.items) all.push(it.id);
-          }
+          // Order matters: Sessions groups items by session in the
+          // displayed grid, while Library walks DESC library order.
+          // Using the wrong helper would produce prev/next that don't
+          // match the source route's ordering.
+          const all =
+            from === "library"
+              ? flattenLibraryIds(mediaStore.months)
+              : flattenSessionIds(mediaStore.months);
           reconstructed = {
             navIds: all,
             returnHref: from === "library" ? "/library" : "/sessions",

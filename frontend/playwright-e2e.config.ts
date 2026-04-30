@@ -25,11 +25,16 @@ export default defineConfig({
     command: "../tmp/e2e-server",
     env: {
       FOTOBANK_E2E_PORT: String(port),
-      // Shrink the hidden-auth lockout window so the lockout test in
-      // hidden.spec.ts resolves quickly. Without this, the 5-failure
-      // lockout persists for 300s and blocks every later test that
-      // needs to unlock (e.g., lightbox.spec.ts hidden scenarios).
-      FOTOBANK_E2E_LOCKOUT_WINDOW: "1s",
+      // Shrink the hidden-auth lockout window/duration so the lockout
+      // test in hidden.spec.ts resolves quickly AND the lockout state
+      // doesn't leak into later specs (workers=1 runs them sequentially).
+      // 2s is the smallest value that reliably accommodates 5 wrong-
+      // passcode submissions on chromium (each fill+click+error-copy
+      // round-trip stays under 400ms locally and on CI) while still
+      // letting the lockout expire between specs. Subsequent unlock
+      // attempts in lightbox.spec.ts also retry through any leftover
+      // lockout (see the unlockHidden helper there) for belt-and-braces.
+      FOTOBANK_E2E_LOCKOUT_WINDOW: "2s",
     },
     port,
     reuseExistingServer: false,
