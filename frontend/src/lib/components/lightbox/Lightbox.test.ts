@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
-import { render } from "@testing-library/svelte";
+import { render, waitFor } from "@testing-library/svelte";
 import Lightbox from "./Lightbox.svelte";
 import { lightboxSession } from "../../lightbox/lightboxSession.svelte";
 
@@ -54,6 +54,53 @@ function fakeMediaStore() {
     removeMany: vi.fn(),
   } as never;
 }
+
+describe("Lightbox reconstruction", () => {
+  it("falls back to direct-detail shell when reconstruction can't find active id", async () => {
+    lightboxSession.close();
+    const fakeFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.startsWith("/api/v1/media/x")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              id: "x",
+              thumb_version: 0,
+              width: 1,
+              height: 1,
+              timestamp: "2026-04-20T00:00:00Z",
+            }),
+        });
+      }
+      if (url.includes("/albums/")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ items: [], next_offset: null }),
+        });
+      }
+      return Promise.resolve({ ok: false, status: 404 });
+    });
+    vi.stubGlobal("fetch", fakeFetch);
+    const { container } = render(Lightbox, {
+      props: {
+        id: "x",
+        from: "album:bogus",
+        mediaStore: fakeMediaStore(),
+        albumsStore: { markStale: vi.fn() } as never,
+        hiddenStore: { configured: true } as never,
+        toastStore: { push: vi.fn() } as never,
+      } as never,
+    });
+    // Wait for the reconstruction effect to drain: fetch resolves with
+    // an empty page → state flips to "failed" → fallback shell renders.
+    await waitFor(() => {
+      expect(container.querySelector(".lb-backdrop.fallback")).toBeTruthy();
+    });
+    expect(container.querySelector(".lb-prev")).toBeNull();
+    expect(container.querySelector(".lb-next")).toBeNull();
+    vi.unstubAllGlobals();
+  });
+});
 
 describe("Lightbox (snapshot path)", () => {
   it("renders the active image when session matches", () => {

@@ -1,17 +1,17 @@
 <!-- frontend/src/lib/components/lightbox/Lightbox.svelte -->
 <!--
-  Top-level lightbox shell. Snapshot-driven happy path (T16):
+  Top-level lightbox shell.
 
   - Reads the open snapshot from lightboxSession; verifies the route
     `from` query param agrees with the snapshot's source.
-  - Renders the active media's progressive image, prev/next buttons,
-    toolbar, and (optionally) info drawer/sheet.
-  - On session miss / hidden cross-context / fetch failure, falls back
-    to a chrome-wrapped DirectMediaDetail (or a 404 message).
-  - Reconstruction (the `idle → running → ok | failed` flow when no
-    snapshot is present) is added in T17. For T16 reconstructionState
-    is "ok" if the snapshot matches and "idle" otherwise — the
-    fallback path covers the latter.
+  - When the snapshot matches, renders the active media's progressive
+    image, prev/next buttons, toolbar, and (optionally) info drawer/sheet.
+  - When the snapshot is missing or mismatched (direct entry), the
+    reconstruction effect pages through the source until the active
+    id is found (capped at 20 pages). Hidden 403 redirects to /hidden.
+    On reconstruction success the full viewer renders with the
+    reconstructed navIds; on failure it falls back to a chrome-wrapped
+    DirectMediaDetail (or a 404 message).
 
   Exposes nothing imperative. Modal stack registration is per-instance
   via a random `modalId` so multiple Lightboxes never clash.
@@ -76,8 +76,9 @@
   // ---- Source / session resolution -------------------------------
   // The snapshot is the source of truth for navIds and returnHref.
   // `from` (the route query param) must agree with the snapshot's
-  // source — if not, we treat this as a reconstruction case (T17) and
-  // for T16 fall through to the DirectMediaDetail fallback.
+  // source — if not, the reconstruction effect below tries to
+  // rebuild navIds by paging the source; only after that fails do
+  // we fall through to the DirectMediaDetail fallback.
   const session = $derived(lightboxSession.snapshot);
   const fromMatchesSession = $derived.by(() => {
     if (session === null) return false;
@@ -98,11 +99,6 @@
       }
     }
   });
-  const navIds = $derived(
-    fromMatchesSession && session !== null ? session.navIds : [],
-  );
-  const nav = $derived(computeNav(navIds, id));
-  const returnHref = $derived(session?.returnHref ?? "/library");
 
   // ---- Media data ------------------------------------------------
   // Mirrors DirectMediaDetail's derive-from-store-with-fallback
@@ -160,34 +156,195 @@
   // `from` — render via DirectMediaDetail so the unhide flow runs in
   // the standalone surface (Lightbox is library-shaped, not hidden).
   const hiddenCrossContext = $derived(isHidden && from !== "hidden");
-  // Tri-state reconstruction. For T16 the value is "ok" when the
-  // snapshot matches and "idle" otherwise — and for T16 the mismatched
-  // case is routed to the DirectMediaDetail fallback (see fallbackMode
-  // below). T17 widens this into a real state machine: it flips
-  // "idle" → "running" → "ok" | "failed" via a reconstruction effect,
-  // and at that point fallbackMode's `!fromMatchesSession` clause is
-  // narrowed to `reconstructionState === "failed"`.
+
+  // Tri-state reconstruction. The effect below runs on mount and
+  // synchronously sets this to "ok" (snapshot matches), "running"
+  // (reconstruction kicked off), or eventually "failed" / "ok" once
+  // the async pagination resolves. The "idle" seed is rewritten
+  // before any user-visible render.
   type RecState = "idle" | "running" | "ok" | "failed";
-  const reconstructionState = $derived<RecState>(
-    fromMatchesSession ? "ok" : "idle",
+  let reconstructionState = $state<RecState>("idle");
+
+  // ---- Reconstruction effect ------------------------------------
+  // When `from` doesn't agree with the snapshot, page through the
+  // source until the active id appears. Capped at PAGE_CAP iterations.
+  // On success, fill `reconstructed` with navIds + source so the full
+  // viewer can render. On failure, flip to "failed" and the fallback
+  // path takes over.
+  const PAGE_CAP = 20;
+  let reconstructed = $state<{
+    navIds: string[];
+    returnHref: string;
+    source: LightboxSource;
+  } | null>(null);
+
+  type AlbumPage = {
+    items?: Array<{ id: string }>;
+    next_offset?: number | null;
+  };
+
+  $effect(() => {
+    if (fromMatchesSession) {
+      reconstructed = null;
+      reconstructionState = "ok";
+      return;
+    }
+    reconstructionState = "running";
+    let cancelled = false;
+    (async () => {
+      try {
+        if (from === "library" || from === "sessions") {
+          let attempts = 0;
+          while (
+            !cancelled &&
+            !mediaStore.get(id) &&
+            !mediaStore.exhausted &&
+            attempts < PAGE_CAP
+          ) {
+            await mediaStore.loadMore();
+            attempts += 1;
+          }
+          if (cancelled) return;
+          if (!mediaStore.get(id)) {
+            reconstructionState = "failed";
+            return;
+          }
+          const all: string[] = [];
+          for (const m of mediaStore.months) {
+            for (const it of m.items) all.push(it.id);
+          }
+          reconstructed = {
+            navIds: all,
+            returnHref: from === "library" ? "/library" : "/sessions",
+            source: { kind: from === "library" ? "library" : "sessions" },
+          };
+          reconstructionState = "ok";
+        } else if (from.startsWith("album:")) {
+          const albumId = from.slice("album:".length);
+          const ids: string[] = [];
+          let offset = 0;
+          let pages = 0;
+          let exhausted = false;
+          while (
+            !cancelled &&
+            !ids.includes(id) &&
+            !exhausted &&
+            pages < PAGE_CAP
+          ) {
+            const resp = await fetch(
+              `/api/v1/albums/${albumId}/media?offset=${offset}&limit=200`,
+            );
+            if (cancelled) return;
+            if (!resp.ok) {
+              reconstructionState = "failed";
+              return;
+            }
+            const data = (await resp.json()) as AlbumPage;
+            const items = data.items ?? [];
+            for (const it of items) ids.push(it.id);
+            const next = data.next_offset ?? null;
+            if (next === null) {
+              exhausted = true;
+            } else {
+              offset = next;
+            }
+            pages += 1;
+          }
+          if (cancelled) return;
+          if (!ids.includes(id)) {
+            reconstructionState = "failed";
+            return;
+          }
+          reconstructed = {
+            navIds: ids,
+            returnHref: `/albums/${albumId}`,
+            source: { kind: "album", albumId },
+          };
+          reconstructionState = "ok";
+        } else if (from === "hidden") {
+          const ids: string[] = [];
+          let offset = 0;
+          let pages = 0;
+          let exhausted = false;
+          while (
+            !cancelled &&
+            !ids.includes(id) &&
+            !exhausted &&
+            pages < PAGE_CAP
+          ) {
+            const resp = await fetch(
+              `/api/v1/hidden/media?offset=${offset}&limit=200`,
+            );
+            if (cancelled) return;
+            if (resp.status === 403) {
+              router.navigate("/hidden", { replace: true });
+              return;
+            }
+            if (!resp.ok) {
+              reconstructionState = "failed";
+              return;
+            }
+            const data = (await resp.json()) as AlbumPage;
+            const items = data.items ?? [];
+            for (const it of items) ids.push(it.id);
+            const next = data.next_offset ?? null;
+            if (next === null) {
+              exhausted = true;
+            } else {
+              offset = next;
+            }
+            pages += 1;
+          }
+          if (cancelled) return;
+          if (!ids.includes(id)) {
+            reconstructionState = "failed";
+            return;
+          }
+          reconstructed = {
+            navIds: ids,
+            returnHref: "/hidden",
+            source: { kind: "hidden" },
+          };
+          reconstructionState = "ok";
+        } else {
+          reconstructionState = "failed";
+        }
+      } catch {
+        if (cancelled) return;
+        reconstructionState = "failed";
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  // ---- Effective navIds / source / returnHref --------------------
+  // Prefer the snapshot when it matches; otherwise read from the
+  // reconstruction result. Falls back to safe defaults so the chrome
+  // shell always has something to render.
+  const defaultSource: LightboxSource = { kind: "library" };
+  const navIds = $derived(
+    fromMatchesSession && session !== null
+      ? session.navIds
+      : (reconstructed?.navIds ?? []),
   );
-  // Only "running" counts as in-flight in T16 — the mismatched-snapshot
-  // case falls through to the DirectMediaDetail fallback rather than
-  // hanging on a spinner. T17 widens this to also cover the running
-  // window once the reconstruction effect is wired up.
+  const nav = $derived(computeNav(navIds, id));
+  const returnHref = $derived(
+    fromMatchesSession && session !== null
+      ? session.returnHref
+      : (reconstructed?.returnHref ?? "/library"),
+  );
+  const effectiveSource = $derived<LightboxSource>(
+    fromMatchesSession && session !== null
+      ? session.source
+      : (reconstructed?.source ?? defaultSource),
+  );
+
   const reconstructionInFlight = $derived(reconstructionState === "running");
-  const reconstructionFailed = $derived(
-    !fromMatchesSession && reconstructionState === "failed",
-  );
-  // In T16, mismatched-snapshot is itself a fallback case. T17 will
-  // narrow `!fromMatchesSession` to `reconstructionState === "failed"`
-  // once reconstruction is wired (the running window is then handled
-  // by `reconstructionInFlight` above).
+  const reconstructionFailed = $derived(reconstructionState === "failed");
   const fallbackMode = $derived(
-    !fromMatchesSession ||
-      loadError !== null ||
-      hiddenCrossContext ||
-      reconstructionFailed,
+    loadError !== null || hiddenCrossContext || reconstructionFailed,
   );
   const notFoundMode = $derived(loadError !== null);
 
@@ -338,14 +495,6 @@
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   });
-
-  // Derived source for the toolbar's actions slot. Defaults to
-  // "library" when there's no snapshot — the actions wrapper only
-  // renders when `media` is present, so this default is rarely seen.
-  const defaultSource: LightboxSource = { kind: "library" };
-  const lightboxSource = $derived<LightboxSource>(
-    session?.source ?? defaultSource,
-  );
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -358,7 +507,7 @@
       {#snippet actions()}
         {#if media}
           <LightboxActions
-            source={lightboxSource}
+            source={effectiveSource}
             {media}
             rawMedia={lastRaw}
             {mediaStore}
