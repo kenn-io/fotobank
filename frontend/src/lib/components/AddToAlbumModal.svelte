@@ -24,7 +24,10 @@
   let error = $state<string | null>(null);
 
   const modalId = `add-to-album-${Math.random().toString(36).slice(2)}`;
-  onMount(() => modalStack.push({ id: modalId, onEscape: () => { if (!pending) onClose(); } }));
+  onMount(() => modalStack.push({
+    id: modalId,
+    onEscape: () => { if (!pending) onClose(); },
+  }));
   onDestroy(() => modalStack.pop(modalId));
 
   // Users may open Add-to-album before ever visiting /albums, so the
