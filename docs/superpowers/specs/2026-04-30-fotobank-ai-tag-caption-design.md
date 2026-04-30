@@ -60,7 +60,7 @@ worker_concurrency = 1
 
 ## 5. Database schema
 
-Schema lands in a **new numbered migration pair** — `internal/db/migrations/000004_ai_tag_caption.{up,down}.sql`. The pre-commit hook prohibits edits to migrations already on `main`, and the pre-prod squash-into-`000001` policy from the web-frontend design has already been superseded in practice by `000002_album_indexes` and `000003_scopes_backoff` landing as separate numbered files. AI follows that newer convention.
+Pre-alpha schema policy (per `CLAUDE.md`): there is one migration, `internal/db/migrations/000001_initial_schema.{up,down}.sql`, and it is edited in place for any schema change. AI's tables, indexes, and triggers are appended to `000001_initial_schema.up.sql`; the matching `000001_initial_schema.down.sql` already drops the whole schema, so no down-side additions are required.
 
 ID storage matches the existing schema: `media.id` is `UUID PRIMARY KEY`, `media.owner_*` and album / scope foreign keys all use `UUID` and `TEXT`. AI tables follow the same conventions — no new `BLOB` primary-key shape introduced.
 
@@ -155,7 +155,7 @@ CREATE TABLE ai_skipped (
 );
 ```
 
-The matching `000004_ai_tag_caption.down.sql` drops the new tables and indexes in reverse dependency order: `ai_skipped`, `ai_failures` (and its index), `ai_jobs` (and its indexes), `media_captions`, `media_tags` (and its index), `ai_results` (and its indexes).
+No down-file additions: `000001_initial_schema.down.sql` is a wholesale teardown of the schema and continues to be valid as new tables are appended to the up file.
 
 **Acknowledgement storage.** Hidden-processing acknowledgement is stored in the existing `user_settings` table (per the web-frontend design) under key `ai.hidden_processing_acknowledged_at`, value the ISO-8601 timestamp of acknowledgement. Per-principal; no new table. `user_settings` already exists, so no migration touch needed for it.
 
@@ -447,7 +447,7 @@ fotobank ai acknowledge --hidden-processing
 ```
 
 - All commands use the in-process `service.AI` directly. They do **not** require the HTTP listener to be up. Endpoint reachability is still live-checked when the command needs it.
-- `--force` on `backfill` deletes existing `active` `ai_results` rows for the targeted media+task before enqueueing — the only path that re-runs under the same fingerprint.
+- `--force` on `backfill` widens the predicate to include media that already have an active result for the current fingerprint, so re-runs under the same fingerprint are enqueued. Prior `active` results are **not** deleted upfront — they are staled and the new is promoted atomically on success (per §3 and §7.4); on failure the prior `active` stays.
 - No per-photo retry CLI. That's a lightbox affordance.
 
 ## 17. Observability (Prometheus)
