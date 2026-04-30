@@ -298,15 +298,14 @@ test.describe("F2.5 lightbox", () => {
   // CURRENT BUG: Lightbox.onActionDone reads `nav.nextId` AFTER
   // lightboxSession.removeIds prunes the active id. Because `nav` is a
   // $derived(computeNav(navIds, id)) and `id` is no longer in navIds,
-  // computeNav returns -1 with both prev/next null. advanceTo resolves
-  // to null and close() runs unconditionally — the lightbox returns to
-  // the album route instead of advancing.
+  // computeNav returns -1 with both prev/next null. advanceTo would
+  // resolve to null and close() would run unconditionally.
   //
-  // The fix would capture nav.nextId/prevId BEFORE the removeIds call
-  // (or pass the OLD list into computeNav). Keeping this test as a
-  // regression marker; flip from fixme to active once the bug is fixed.
+  // Fixed by reordering LightboxActions to call onDone BEFORE pruning
+  // navIds; onActionDone captures advanceTo while nav still reflects
+  // pre-mutation state, then performs the navigation.
   // -------------------------------------------------------------------------
-  test.fixme("album: hide active item advances to next visible", async ({
+  test("album: hide active item advances to next visible", async ({
     page,
   }) => {
     await page.goto("/albums/lightbox-album-30");
@@ -327,9 +326,12 @@ test.describe("F2.5 lightbox", () => {
 
     await page.getByRole("button", { name: /^Hide$/i }).click();
     // After hide: lightbox should advance to the next album member.
+    // navTo() runs the `from` value through encodeURIComponent, so the
+    // colon between "album" and the album id arrives as %3A. Match
+    // either form so the test doesn't drift if the encoding changes.
     await expect(page).not.toHaveURL(/\/media\/lightbox-album-30-id-001/);
     await expect(page).toHaveURL(
-      /\/media\/.+\?from=album:lightbox-album-30/,
+      /\/media\/.+\?from=album(?::|%3A)lightbox-album-30/,
     );
   });
 

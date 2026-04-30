@@ -407,11 +407,13 @@
   }
   function onActionDone(_op: "hide" | "unhide", succeeded: string[]) {
     if (succeeded.length === 0) return;
-    // Snapshot path: LightboxActions calls lightboxSession.removeIds, which
-    // prunes session.navIds — `navIds` updates via the snapshot derivation.
-    // Reconstructed path: `navIds` derives from `reconstructed.navIds`, so
-    // we must prune that local state directly or the active id stays in
-    // navIds and neither the advance nor the close branch triggers.
+    // LightboxActions calls onDone BEFORE pruning navIds, so `nav` still
+    // reflects pre-mutation state here — capture the advance target
+    // first. Reading nav.nextId AFTER the prune would always be null
+    // because the active id would no longer be in navIds.
+    const advanceTo = nav.nextId ?? nav.prevId;
+    // Reconstructed path: prune local state. Snapshot path: LightboxActions
+    // prunes lightboxSession.navIds after this callback returns.
     if (reconstructed !== null) {
       const drop = new Set(succeeded);
       reconstructed = {
@@ -419,14 +421,10 @@
         navIds: reconstructed.navIds.filter((nid) => !drop.has(nid)),
       };
     }
-    if (navIds.length === 0) {
+    if (advanceTo !== null) {
+      navTo(advanceTo);
+    } else {
       close();
-      return;
-    }
-    if (!navIds.includes(id)) {
-      const advanceTo = nav.nextId ?? nav.prevId;
-      if (advanceTo !== null) navTo(advanceTo);
-      else close();
     }
   }
 

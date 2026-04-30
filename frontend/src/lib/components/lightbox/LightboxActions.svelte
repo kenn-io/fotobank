@@ -46,9 +46,17 @@
     }
     const succeeded = result.succeeded ?? [];
     if (succeeded.length > 0) {
-      // 1. Snapshot mutation
+      // Notify the parent FIRST so its onActionDone can capture the
+      // advance target while `nav` still reflects pre-mutation state.
+      // If we pruned navIds first, nav.nextId/prevId would resolve to
+      // null (active id no longer in navIds) and the lightbox would
+      // close instead of advancing.
+      onDone("hide", succeeded);
+      // Snapshot mutation — safe to run after navigation; LightboxActions
+      // is unmounted/remounted with the new active media by then, but
+      // removeIds operates on the underlying store, not on us.
       lightboxSession.removeIds(succeeded);
-      // 2. Durable state per source kind. Exhaustive switch over
+      // Durable state per source kind. Exhaustive switch over
       // LightboxSource so a future kind addition trips the type
       // checker via the `never`-defaulted else.
       switch (source.kind) {
@@ -70,7 +78,6 @@
           void _exhaustive;
         }
       }
-      onDone("hide", succeeded);
     }
     const failed = result.failed ?? [];
     if (failed.length > 0) {
@@ -93,14 +100,17 @@
     }
     const succeeded = result.succeeded ?? [];
     if (succeeded.length > 0) {
-      // 1. Snapshot mutation (removes from hidden navIds)
+      // Notify the parent FIRST so its onActionDone can capture the
+      // advance target before navIds is pruned. See onHide for the
+      // detailed rationale.
+      onDone("unhide", succeeded);
+      // Snapshot mutation (removes from hidden navIds)
       lightboxSession.removeIds(succeeded);
-      // 2. Re-introduce the row to visible mediaStore so /library shows it.
+      // Re-introduce the row to visible mediaStore so /library shows it.
       const raw = rawMedia ?? { id: media.id, thumb_version: media.thumbVersion, width: 1, height: 1 };
       mediaStore.mergeRaw([{ ...raw, hidden_at: null }]);
-      // 3. Albums stale (counts may shift)
+      // Albums stale (counts may shift)
       albumsStore.markStale();
-      onDone("unhide", succeeded);
     }
     const failed = result.failed ?? [];
     if (failed.length > 0) {
