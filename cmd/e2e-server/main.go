@@ -395,5 +395,126 @@ func seedFixtures(dbPath string) error {
 		}
 	}
 
+	if err := seedF2_5Fixtures(ctx, d, repo, albumRepo, albumSvc, owner); err != nil {
+		return fmt.Errorf("seed f2.5 fixtures: %w", err)
+	}
+
+	return nil
+}
+
+// seedF2_5Fixtures inserts scenario-dedicated rows for the F2.5 lightbox
+// Playwright suites. The IDs are deterministic so the specs reference
+// them verbatim:
+//
+//   - lightbox-album-30: an album with 30 visible photos. Used by
+//     paginated scroll-restore (#3), deep scroll (#4), and paginated
+//     source restore (#20). The album row uses a fixed ID
+//     ("lightbox-album-30") inserted directly via the repo because
+//     albumSvc.Create generates a UUID; tests need a stable URL path.
+//   - lightbox-hidden-2: two hidden photos for hidden-grid walk +
+//     unhide scenarios (#7).
+//   - lightbox-select-5: five visible photos for selection-walk
+//     scenarios (#5, #6) and the direct-entry tests in T21 which
+//     reference lightbox-select-5-id-002.
+//
+// Timestamps walk backwards from a fixed base date in 1-hour increments
+// so ordering is stable across runs.
+func seedF2_5Fixtures(
+	ctx context.Context,
+	d *db.DB,
+	mediaRepo *media.Repo,
+	albumRepo *album.Repo,
+	albumSvc *service.AlbumService,
+	owner owners.Principal,
+) error {
+	base := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+
+	// Album: 30 visible photos. Insert media first, then add to the
+	// fixed-ID album in one batch.
+	const albumID = "lightbox-album-30"
+	const albumCount = 30
+	albumIDs := make([]string, 0, albumCount)
+	for i := 1; i <= albumCount; i++ {
+		id := fmt.Sprintf("lightbox-album-30-id-%03d", i)
+		row := media.Media{
+			ID:          id,
+			Owner:       owner,
+			Type:        media.TypePhoto,
+			MimeType:    "image/jpeg",
+			Path:        id + ".jpg",
+			ImportedAt:  base.Add(-time.Duration(i) * time.Hour),
+			Size:        1,
+			Checksum:    "checksum-" + id,
+			ThumbStatus: "pending",
+		}
+		if err := mediaRepo.Insert(ctx, row); err != nil {
+			return fmt.Errorf("seed %s: %w", id, err)
+		}
+		albumIDs = append(albumIDs, id)
+	}
+	deepAlbum := album.Album{
+		ID:        albumID,
+		Owner:     owner,
+		Name:      "Lightbox Deep Album",
+		CreatedAt: base,
+		UpdatedAt: base,
+	}
+	if err := albumRepo.Insert(ctx, deepAlbum); err != nil {
+		return fmt.Errorf("seed lightbox-album-30: %w", err)
+	}
+	if _, _, err := albumSvc.AddMedia(ctx, albumID, albumIDs, owner); err != nil {
+		return fmt.Errorf("seed lightbox-album-30 members: %w", err)
+	}
+
+	// Hidden: two photos inserted visible, then marked hidden via direct
+	// SQL — same pattern as hidden-prehidden-1.
+	const hiddenCount = 2
+	for i := 1; i <= hiddenCount; i++ {
+		id := fmt.Sprintf("lightbox-hidden-2-id-%03d", i)
+		row := media.Media{
+			ID:          id,
+			Owner:       owner,
+			Type:        media.TypePhoto,
+			MimeType:    "image/jpeg",
+			Path:        id + ".jpg",
+			ImportedAt:  base.Add(-time.Duration(albumCount+i) * time.Hour),
+			Size:        1,
+			Checksum:    "checksum-" + id,
+			ThumbStatus: "pending",
+		}
+		if err := mediaRepo.Insert(ctx, row); err != nil {
+			return fmt.Errorf("seed %s: %w", id, err)
+		}
+		if _, err := d.WriteDB().ExecContext(ctx,
+			`UPDATE media SET hidden_at = ? WHERE id = ?`,
+			row.ImportedAt, id,
+		); err != nil {
+			return fmt.Errorf("seed %s hidden_at: %w", id, err)
+		}
+	}
+
+	// Selection: five visible rows. The "non-contiguous ids" requirement
+	// is satisfied by the prefix — these ids don't collide with the
+	// album/hidden series in the visible library, so selection walks
+	// against this fixture set are isolated.
+	const selectCount = 5
+	for i := 1; i <= selectCount; i++ {
+		id := fmt.Sprintf("lightbox-select-5-id-%03d", i)
+		row := media.Media{
+			ID:          id,
+			Owner:       owner,
+			Type:        media.TypePhoto,
+			MimeType:    "image/jpeg",
+			Path:        id + ".jpg",
+			ImportedAt:  base.Add(-time.Duration(albumCount+hiddenCount+i) * time.Hour),
+			Size:        1,
+			Checksum:    "checksum-" + id,
+			ThumbStatus: "pending",
+		}
+		if err := mediaRepo.Insert(ctx, row); err != nil {
+			return fmt.Errorf("seed %s: %w", id, err)
+		}
+	}
+
 	return nil
 }
