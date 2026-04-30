@@ -1,0 +1,103 @@
+<!-- frontend/src/lib/components/BottomSheet.svelte -->
+<script lang="ts">
+  import type { Snippet } from "svelte";
+  import { onMount, onDestroy } from "svelte";
+  import { modalStack } from "../lightbox/modalStack.svelte";
+
+  let {
+    id,
+    onClose,
+    snap = "peek",
+    children,
+  }: {
+    id: string;
+    onClose: () => void;
+    snap?: "peek" | "full";
+    children: Snippet;
+  } = $props();
+
+  let dragStart: number | null = null;
+  let dragDelta = $state(0);
+
+  onMount(() => {
+    modalStack.push({ id, onEscape: onClose });
+  });
+  onDestroy(() => {
+    modalStack.pop(id);
+  });
+
+  function onPointerDown(e: PointerEvent) {
+    dragStart = e.clientY;
+    dragDelta = 0;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+  function onPointerMove(e: PointerEvent) {
+    if (dragStart === null) return;
+    dragDelta = Math.max(0, e.clientY - dragStart);
+  }
+  function onPointerUp(e: PointerEvent) {
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    if (dragDelta > 80) onClose();
+    dragStart = null;
+    dragDelta = 0;
+  }
+
+  function onBackdropClick(e: MouseEvent) {
+    if (e.target === e.currentTarget) onClose();
+  }
+</script>
+
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="bs-backdrop" role="presentation" onclick={onBackdropClick}>
+  <div
+    class="bs-sheet"
+    class:full={snap === "full"}
+    role="dialog"
+    aria-modal="true"
+    tabindex="-1"
+    style:transform={`translateY(${dragDelta}px)`}
+    onclick={(e) => e.stopPropagation()}
+  >
+    <button
+      type="button"
+      class="bs-handle"
+      aria-label="Drag handle"
+      onpointerdown={onPointerDown}
+      onpointermove={onPointerMove}
+      onpointerup={onPointerUp}
+      onpointercancel={onPointerUp}
+    ></button>
+    <div class="bs-body">{@render children()}</div>
+  </div>
+</div>
+
+<style>
+  .bs-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 200;
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  .bs-sheet {
+    background: var(--bg-elevated);
+    border-radius: 16px 16px 0 0;
+    width: 100%;
+    max-height: 50vh;
+    display: flex; flex-direction: column;
+    transition: transform 120ms ease-out, max-height 200ms ease-out;
+  }
+  .bs-sheet.full { max-height: 90vh; }
+  .bs-handle {
+    align-self: center;
+    width: 40px; height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    margin: 8px 0 12px;
+    border: none;
+    padding: 0;
+    touch-action: none;
+    cursor: grab;
+  }
+  .bs-body { overflow: auto; padding: 0 16px 16px; }
+</style>
