@@ -36,8 +36,14 @@
     dragDelta = Math.max(0, e.clientY - dragStart);
   }
   function onPointerUp(e: PointerEvent) {
-    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    if (dragDelta > 80) onClose();
+    const el = e.currentTarget as HTMLElement;
+    // releasePointerCapture throws InvalidStateError if capture is
+    // already released (browser-driven, e.g. on pointercancel).
+    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    // pointercancel = system-driven abort (context menu, app switch).
+    // Don't dismiss in that case — only a deliberate pointerup past the
+    // threshold counts as a swipe-down close.
+    if (e.type !== "pointercancel" && dragDelta > 80) onClose();
     dragStart = null;
     dragDelta = 0;
   }

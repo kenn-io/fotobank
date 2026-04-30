@@ -36,4 +36,29 @@ describe("BottomSheet", () => {
     await fireEvent.click(sheet);
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  it("pointercancel mid-drag does not close even past the threshold", async () => {
+    const onClose = vi.fn();
+    const { container } = render(BottomSheet, {
+      props: { id: "bs1", onClose, snap: "peek", children: textSnippet("x") },
+    });
+    const handle = container.querySelector(".bs-handle") as HTMLElement;
+    expect(handle).toBeTruthy();
+    // jsdom doesn't implement pointer capture; stub the methods so the
+    // component's calls don't throw and we can assert capture lifecycle.
+    let captured = false;
+    handle.setPointerCapture = (_id: number) => {
+      captured = true;
+    };
+    handle.hasPointerCapture = (_id: number) => captured;
+    handle.releasePointerCapture = (_id: number) => {
+      captured = false;
+    };
+    await fireEvent.pointerDown(handle, { pointerId: 1, clientY: 0 });
+    await fireEvent.pointerMove(handle, { pointerId: 1, clientY: 200 });
+    await fireEvent.pointerCancel(handle, { pointerId: 1, clientY: 200 });
+    expect(onClose).not.toHaveBeenCalled();
+    // capture should be released by pointercancel handling
+    expect(captured).toBe(false);
+  });
 });
