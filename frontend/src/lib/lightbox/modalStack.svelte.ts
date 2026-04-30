@@ -5,7 +5,9 @@
 // RenameAlbumModal, BottomSheet-as-modal) registers itself on mount
 // and pops on unmount. Esc events fire the topmost entry's handler;
 // the handler is responsible for triggering its own close path
-// (which leads to unmount → pop). dispatchEscape() does NOT auto-pop.
+// (which leads to unmount → pop). dispatchEscape() does NOT auto-pop,
+// but it marks the top entry as "closing" so a second rapid Esc
+// before unmount doesn't run the handler twice.
 
 export type FocusTrapHandle = {
   pause(): void;
@@ -19,35 +21,57 @@ export type ModalEntry = {
   trap?: FocusTrapHandle;
 };
 
+type InternalEntry = ModalEntry & { closing: boolean };
+
 export class ModalStack {
-  private entries: ModalEntry[] = $state([]);
+  private entries: InternalEntry[] = $state([]);
 
   push(entry: ModalEntry): void {
-    const prev = this.top();
-    this.entries = [...this.entries, entry];
+    const prev = this.topInternal();
+    this.entries = [...this.entries, { ...entry, closing: false }];
     prev?.trap?.pause();
   }
 
   pop(id: string): void {
     const idx = this.entries.findIndex((e) => e.id === id);
     if (idx < 0) return;
+    const wasTopmost = idx === this.entries.length - 1;
     this.entries = [...this.entries.slice(0, idx), ...this.entries.slice(idx + 1)];
-    this.top()?.trap?.resume();
+    // Only resume the new top's trap if we removed the topmost entry.
+    // Out-of-order unmounts (a non-top modal leaves first) must NOT
+    // resume the current top — its trap is already active.
+    if (wasTopmost) this.topInternal()?.trap?.resume();
   }
 
   isTopmost(id: string): boolean {
-    return this.top()?.id === id;
+    return this.topInternal()?.id === id;
   }
 
   top(): ModalEntry | null {
-    return this.entries.length > 0 ? this.entries[this.entries.length - 1]! : null;
+    const t = this.topInternal();
+    if (t === null) return null;
+    const { closing: _closing, ...rest } = t;
+    return rest;
   }
 
+  /**
+   * Fire the topmost entry's onEscape handler exactly once until the
+   * entry unmounts (and pops). Subsequent dispatchEscape calls while
+   * the same top entry is still on the stack return true (handled)
+   * but do NOT re-invoke the handler. Returns false only when the
+   * stack is empty.
+   */
   dispatchEscape(): boolean {
-    const t = this.top();
+    const t = this.topInternal();
     if (t === null) return false;
+    if (t.closing) return true;
+    t.closing = true;
     t.onEscape();
     return true;
+  }
+
+  private topInternal(): InternalEntry | null {
+    return this.entries.length > 0 ? this.entries[this.entries.length - 1]! : null;
   }
 }
 

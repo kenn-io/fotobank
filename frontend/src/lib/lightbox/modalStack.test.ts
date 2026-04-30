@@ -62,15 +62,30 @@ describe("ModalStack", () => {
     expect(trapA.resume).toHaveBeenCalledOnce();
   });
 
-  it("pop is idempotent across rapid Esc + unmount", () => {
+  it("does NOT resume trap when a non-topmost entry is popped", () => {
+    const s = new ModalStack();
+    const trapA = { pause: vi.fn(), resume: vi.fn(), release: vi.fn() };
+    const trapB = { pause: vi.fn(), resume: vi.fn(), release: vi.fn() };
+    s.push({ id: "a", onEscape: vi.fn(), trap: trapA });
+    s.push({ id: "b", onEscape: vi.fn(), trap: trapB });
+    // Out-of-order unmount: bottom pops while top is still mounted.
+    // Top's trap is already active, so resume() must NOT fire.
+    s.pop("a");
+    expect(trapB.resume).not.toHaveBeenCalled();
+  });
+
+  it("rapid Esc only invokes the top handler once until that entry pops", () => {
     const s = new ModalStack();
     const onA = vi.fn();
     s.push({ id: "a", onEscape: onA });
-    s.dispatchEscape();
+    expect(s.dispatchEscape()).toBe(true);
+    expect(s.dispatchEscape()).toBe(true);
+    expect(s.dispatchEscape()).toBe(true);
+    expect(onA).toHaveBeenCalledTimes(1);
+    // After unmount/pop and re-push (a fresh modal), Esc fires again.
+    s.pop("a");
+    s.push({ id: "a", onEscape: onA });
     s.dispatchEscape();
     expect(onA).toHaveBeenCalledTimes(2);
-    s.pop("a");
-    s.pop("a");
-    expect(s.top()).toBeNull();
   });
 });

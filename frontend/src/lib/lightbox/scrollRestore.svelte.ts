@@ -1,12 +1,19 @@
 // frontend/src/lib/lightbox/scrollRestore.svelte.ts
 //
 // Guarded scroll restoration helper. Source routes (Library, Sessions,
-// AlbumDetail, HiddenLibrary) reload after lightbox close. The document
+// AlbumDetail, HiddenLibrary) reload after lightbox close. The container's
 // scrollHeight is typically 0 at remount; scrolling immediately would
 // clamp to top. markPending() stores the saved Y and target media id;
 // attemptRestore() retries on each load completion until either the
 // target element exists or scrollHeight is large enough, capped at
 // maxAttempts (~10) to handle infinite-scroll edge cases.
+//
+// The scroll happens inside the ThreeColumnLayout `.main` element
+// (overflow: auto) — NOT the document/window. Source routes capture
+// `mainEl.scrollTop` at lightbox-open time; this helper restores into
+// the same element. If the container is missing on a given attempt
+// (route hasn't remounted yet), the call counts as a retry; if it
+// never appears within the cap, the pending state is cleared.
 
 export type Pending = {
   scrollY: number;
@@ -15,15 +22,18 @@ export type Pending = {
 
 export type ScrollRestoreOptions = {
   maxAttempts?: number; // default 10
+  containerSelector?: string; // default ".main"
 };
 
 export class ScrollRestore {
   private pending: Pending | null = null;
   private attempts = 0;
   private readonly maxAttempts: number;
+  private readonly containerSelector: string;
 
   constructor(opts: ScrollRestoreOptions = {}) {
     this.maxAttempts = opts.maxAttempts ?? 10;
+    this.containerSelector = opts.containerSelector ?? ".main";
   }
 
   markPending(p: Pending): void {
@@ -46,20 +56,32 @@ export class ScrollRestore {
     if (p === null) return false;
     this.attempts += 1;
 
+    const container = document.querySelector<HTMLElement>(this.containerSelector);
+    // Source route hasn't remounted yet — count the call as a retry.
+    // Keep pending so a later attempt can still succeed; bail only
+    // when the cap is reached so the helper never gets stuck.
+    if (container === null) {
+      if (this.attempts >= this.maxAttempts) {
+        this.pending = null;
+        return true;
+      }
+      return false;
+    }
+
     const targetEl = p.mediaId !== null
-      ? document.querySelector(`[data-media-id="${cssEscape(p.mediaId)}"]`)
+      ? container.querySelector(`[data-media-id="${cssEscape(p.mediaId)}"]`)
       : null;
-    const enoughContent = document.body.scrollHeight >= p.scrollY + window.innerHeight;
+    const enoughContent = container.scrollHeight >= p.scrollY + container.clientHeight;
     const capHit = this.attempts >= this.maxAttempts;
 
     if (targetEl !== null || enoughContent) {
-      window.scrollTo(0, p.scrollY);
+      container.scrollTo(0, p.scrollY);
       this.pending = null;
       return true;
     }
     if (capHit) {
-      const partial = Math.max(0, document.body.scrollHeight - window.innerHeight);
-      window.scrollTo(0, Math.min(p.scrollY, partial));
+      const partial = Math.max(0, container.scrollHeight - container.clientHeight);
+      container.scrollTo(0, Math.min(p.scrollY, partial));
       this.pending = null;
       return true;
     }

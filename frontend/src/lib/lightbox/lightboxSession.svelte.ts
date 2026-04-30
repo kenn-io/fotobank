@@ -25,7 +25,12 @@ export class LightboxSessionStore {
   snapshot = $state<LightboxSnapshot | null>(null);
 
   open(s: LightboxSnapshot): void {
-    this.snapshot = s;
+    // Defensive copy: callers (source routes) build the snapshot from
+    // their own derived state and may continue to mutate that array
+    // after handoff (e.g. infinite-scroll appends, hide/unhide).
+    // Capture by value so the snapshot is a true point-in-time
+    // record, immune to source-side mutation.
+    this.snapshot = { ...s, navIds: [...s.navIds] };
   }
 
   close(): void {

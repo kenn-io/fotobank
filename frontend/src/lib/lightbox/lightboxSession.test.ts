@@ -94,4 +94,27 @@ describe("LightboxSessionStore", () => {
     s.removeIds([]);
     expect(s.snapshot?.navIds).toEqual(["a", "b"]);
   });
+
+  it("open() copies navIds — mutating the source array does not affect the snapshot", () => {
+    const s = new LightboxSessionStore();
+    const navIds = ["a", "b", "c"];
+    const input = {
+      source: lib,
+      navIds,
+      selected: false,
+      scrollY: 0,
+      returnFocusMediaId: null,
+      returnHref: "/library",
+    };
+    s.open(input);
+    // Source-side mutation after handoff — e.g. infinite scroll
+    // appends, hide/unhide rebuilds the array — must not leak into
+    // the snapshot.
+    navIds.push("d");
+    navIds[0] = "X";
+    expect(s.snapshot?.navIds).toEqual(["a", "b", "c"]);
+    // The whole input object is also captured by value, not reference.
+    expect(s.snapshot).not.toBe(input);
+    expect(s.snapshot?.navIds).not.toBe(navIds);
+  });
 });
