@@ -44,11 +44,15 @@
 
   $effect(() => {
     const snap = lightboxSession.snapshot;
-    if (snap !== null && snap.source.kind === "library") {
-      restore.markPending({ scrollY: snap.scrollY, mediaId: snap.returnFocusMediaId });
-      lightboxSession.clearScroll();
-      lightboxSession.clearReturnFocus();
-    }
+    if (snap === null || snap.source.kind !== "library") return;
+    // Skip when there's nothing to restore. clearScroll/clearReturnFocus
+    // re-trigger this effect by reassigning the snapshot; without this
+    // guard the second run would overwrite the pending restore data with
+    // scrollY=0/mediaId=null and the actual position would be lost.
+    if (snap.scrollY === 0 && snap.returnFocusMediaId === null) return;
+    restore.markPending({ scrollY: snap.scrollY, mediaId: snap.returnFocusMediaId });
+    lightboxSession.clearScroll();
+    lightboxSession.clearReturnFocus();
   });
   $effect(() => {
     void mediaStore.months;

@@ -392,8 +392,12 @@
     });
   }
   function close() {
+    // Don't clear lightboxSession here: SPA navigation is async, and the
+    // source route's restore $effect needs to read scrollY/focus from the
+    // snapshot after it remounts. clearScroll/clearReturnFocus there will
+    // null out those fields once consumed; lightboxSession.open() replaces
+    // the whole snapshot when the next lightbox session begins.
     router.back(returnHref);
-    lightboxSession.close();
   }
   function onPrev() {
     if (nav.prevId !== null) navTo(nav.prevId);
@@ -403,6 +407,18 @@
   }
   function onActionDone(_op: "hide" | "unhide", succeeded: string[]) {
     if (succeeded.length === 0) return;
+    // Snapshot path: LightboxActions calls lightboxSession.removeIds, which
+    // prunes session.navIds — `navIds` updates via the snapshot derivation.
+    // Reconstructed path: `navIds` derives from `reconstructed.navIds`, so
+    // we must prune that local state directly or the active id stays in
+    // navIds and neither the advance nor the close branch triggers.
+    if (reconstructed !== null) {
+      const drop = new Set(succeeded);
+      reconstructed = {
+        ...reconstructed,
+        navIds: reconstructed.navIds.filter((nid) => !drop.has(nid)),
+      };
+    }
     if (navIds.length === 0) {
       close();
       return;

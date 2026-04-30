@@ -63,11 +63,12 @@
 
   $effect(() => {
     const snap = lightboxSession.snapshot;
-    if (snap !== null && snap.source.kind === "hidden") {
-      restore.markPending({ scrollY: snap.scrollY, mediaId: snap.returnFocusMediaId });
-      lightboxSession.clearScroll();
-      lightboxSession.clearReturnFocus();
-    }
+    if (snap === null || snap.source.kind !== "hidden") return;
+    // Skip when there's nothing to restore — same guard as Library.svelte.
+    if (snap.scrollY === 0 && snap.returnFocusMediaId === null) return;
+    restore.markPending({ scrollY: snap.scrollY, mediaId: snap.returnFocusMediaId });
+    lightboxSession.clearScroll();
+    lightboxSession.clearReturnFocus();
   });
   $effect(() => {
     void hiddenMediaStore.months;
