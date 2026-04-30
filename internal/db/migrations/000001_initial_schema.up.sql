@@ -158,6 +158,9 @@ CREATE TABLE albums (
 );
 
 CREATE INDEX albums_owner_idx ON albums(owner_hub, owner_user_id, name);
+-- Covers ListByOwner's ORDER BY updated_at DESC, id after owner filter.
+CREATE INDEX albums_owner_updated_idx
+    ON albums(owner_hub, owner_user_id, updated_at DESC, id);
 
 CREATE TABLE album_media (
     album_id         UUID NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
@@ -166,6 +169,10 @@ CREATE TABLE album_media (
     position         INTEGER,
     PRIMARY KEY (album_id, media_id)
 );
+-- Covers the cover subquery and ListMedia sort_by=added
+-- (most-recent-added-first per album).
+CREATE INDEX album_media_album_added_idx
+    ON album_media(album_id, added_at DESC);
 
 -- Per-user, non-secret UI preferences.
 -- Keys are dotted strings (e.g. "theme", "density.library"); values are JSON.
@@ -228,6 +235,8 @@ CREATE TABLE scopes (
     broker_revoked_at    TIMESTAMP,
     broker_last_error    TEXT,
     broker_attempts      INTEGER NOT NULL DEFAULT 0,
+    -- Earliest moment the share worker should re-poll this row. NULL = poll immediately.
+    broker_next_attempt_at TIMESTAMP,
 
     FOREIGN KEY (owner_hub, owner_user_id) REFERENCES owners(hub, user_id),
     CHECK (
@@ -242,6 +251,12 @@ CREATE INDEX scopes_owner_idx          ON scopes(owner_hub, owner_user_id) WHERE
 -- terminal state awaiting Retry; including it would keep the worker
 -- polling rows that should be inert until operator intervention.
 CREATE INDEX scopes_broker_pending_idx ON scopes(broker_status, broker_attempts)
+    WHERE broker_status IN ('pending', 'revoking');
+-- Worker poll ordering index. Partial to keep it tiny: only rows the
+-- worker might act on (pending or revoking). Ordered by
+-- broker_next_attempt_at so SELECT ... LIMIT N returns due rows first.
+CREATE INDEX scopes_broker_ready_idx
+    ON scopes(broker_next_attempt_at)
     WHERE broker_status IN ('pending', 'revoking');
 
 CREATE TABLE scope_media (
