@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
-import MediaDetail from "./MediaDetail.svelte";
-import { MediaStore } from "../lib/media/mediaStore.svelte";
-import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
-import type { HiddenStore } from "../lib/hidden/hiddenStore.svelte";
-import type { ToastStore } from "../lib/toasts/toastStore.svelte";
+import DirectMediaDetail from "./DirectMediaDetail.svelte";
+import { MediaStore } from "../media/mediaStore.svelte";
+import type { AlbumsStore } from "../albums/albumsStore.svelte";
+import type { HiddenStore } from "../hidden/hiddenStore.svelte";
+import type { ToastStore } from "../toasts/toastStore.svelte";
 
 function storeWith(raw: Record<string, unknown>): MediaStore {
   const s = new MediaStore({ GET: vi.fn() } as never);
@@ -12,7 +12,7 @@ function storeWith(raw: Record<string, unknown>): MediaStore {
   return s;
 }
 
-// Minimal AlbumsStore stub: MediaDetail only forwards the prop into
+// Minimal AlbumsStore stub: DirectMediaDetail only forwards the prop into
 // AddToAlbumModal, which isn't mounted unless the user opens the modal.
 // Tests in this file don't open it, so a frozen empty-list stub is enough.
 function makeAlbumsStore(): AlbumsStore {
@@ -58,7 +58,7 @@ function makeToastStore(): ToastStore {
   } as unknown as ToastStore;
 }
 
-describe("MediaDetail", () => {
+describe("DirectMediaDetail", () => {
   const baseRaw = {
     id: "abc-123",
     timestamp: "2024-06-15T14:30:22Z",
@@ -74,7 +74,7 @@ describe("MediaDetail", () => {
       longitude: 2.3522,
       location_label: "Paris, Île-de-France, France",
     });
-    const { getByText } = render(MediaDetail, {
+    const { getByText } = render(DirectMediaDetail, {
       props: {
         id: "abc-123",
         mediaStore: store,
@@ -90,7 +90,7 @@ describe("MediaDetail", () => {
 
   it("renders coords-only when label is absent", () => {
     const store = storeWith({ ...baseRaw, latitude: 48.8566, longitude: 2.3522 });
-    const { getByText, queryByText } = render(MediaDetail, {
+    const { getByText, queryByText } = render(DirectMediaDetail, {
       props: {
         id: "abc-123",
         mediaStore: store,
@@ -106,7 +106,7 @@ describe("MediaDetail", () => {
 
   it("renders no Location row when neither label nor coords", () => {
     const store = storeWith(baseRaw);
-    const { queryByText } = render(MediaDetail, {
+    const { queryByText } = render(DirectMediaDetail, {
       props: {
         id: "abc-123",
         mediaStore: store,
@@ -150,7 +150,7 @@ describe("MediaDetail", () => {
     const hiddenStore = makeHiddenStore();
     const toastStore = makeToastStore();
     // First nav: id=first, no cached row → triggers fetch.
-    const first = render(MediaDetail, {
+    const first = render(DirectMediaDetail, {
       props: { id: "first", mediaStore: store, albumsStore, hiddenStore, toastStore },
     });
     // Wait for the first fetch to settle.
@@ -168,7 +168,7 @@ describe("MediaDetail", () => {
 
   it("visible media shows Hide button when hiddenConfigured=true", () => {
     const store = storeWith(baseRaw);
-    const { getByRole } = render(MediaDetail, {
+    const { getByRole } = render(DirectMediaDetail, {
       props: {
         id: "abc-123",
         mediaStore: store,
@@ -182,7 +182,7 @@ describe("MediaDetail", () => {
 
   it("visible media shows no Unhide when hiddenConfigured=true", () => {
     const store = storeWith(baseRaw);
-    const { queryByRole } = render(MediaDetail, {
+    const { queryByRole } = render(DirectMediaDetail, {
       props: {
         id: "abc-123",
         mediaStore: store,
@@ -197,7 +197,7 @@ describe("MediaDetail", () => {
   it("visible hide calls hiddenStore.hide and navigates to /library", async () => {
     const store = storeWith(baseRaw);
     const hide = vi.fn().mockResolvedValue({ succeeded: ["abc-123"], failed: [] });
-    const { getByRole } = render(MediaDetail, {
+    const { getByRole } = render(DirectMediaDetail, {
       props: {
         id: "abc-123",
         mediaStore: store,
@@ -213,7 +213,7 @@ describe("MediaDetail", () => {
     vi.unstubAllGlobals();
   });
 
-  it("MediaDetail hidden→unhide clones raw with hidden_at=null and calls mergeRaw", async () => {
+  it("DirectMediaDetail hidden→unhide clones raw with hidden_at=null and calls mergeRaw", async () => {
     // Build a store WITHOUT the item (simulates hidden: store skips it).
     const store = new MediaStore({ GET: vi.fn() } as never);
     const mergeRawSpy = vi.spyOn(store, "mergeRaw");
@@ -234,7 +234,7 @@ describe("MediaDetail", () => {
       ),
     );
 
-    const { getByRole } = render(MediaDetail, {
+    const { getByRole } = render(DirectMediaDetail, {
       props: {
         id: "h1",
         mediaStore: store,
