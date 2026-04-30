@@ -64,8 +64,12 @@
 </dl>
 
 <style>
-  .lb-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; color: white; }
+  /* Inherit color from parent so this content reads correctly on
+     either the dark drawer or the theme-aware bottom sheet. The
+     drawer applies a white override; the sheet relies on the
+     theme's default text color. */
+  .lb-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; }
   .lb-meta dt { font-weight: 600; opacity: 0.7; }
-  .lb-meta a { color: white; }
+  .lb-meta a { color: inherit; }
   .coord { display: block; opacity: 0.7; font-size: 0.85em; }
 </style>

@@ -71,6 +71,7 @@
 
   onDestroy(() => {
     pz?.dispose();
+    pz = null;
     imgEl?.removeEventListener("dblclick", onDblClick);
   });
 
@@ -92,26 +93,36 @@
     else pz.zoomTo(e.clientX, e.clientY, 2);
   }
 
+  // panzoom.zoomTo expects client/viewport coordinates as the
+  // interaction point. clientWidth/Height give the container's size,
+  // not its viewport position — without the bounding-rect offset the
+  // zoom would center on the wrong point whenever the lightbox
+  // doesn't sit at the viewport origin.
+  function containerCenter(): { cx: number; cy: number } | null {
+    if (!container) return null;
+    const rect = container.getBoundingClientRect();
+    return { cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2 };
+  }
+
   function zoomIn(): void {
-    if (!pz || !container) return;
-    const cx = container.clientWidth / 2;
-    const cy = container.clientHeight / 2;
-    pz.zoomTo(cx, cy, 1.25);
+    const c = containerCenter();
+    if (!pz || !c) return;
+    pz.zoomTo(c.cx, c.cy, 1.25);
   }
   function zoomOut(): void {
-    if (!pz || !container) return;
-    const cx = container.clientWidth / 2;
-    const cy = container.clientHeight / 2;
-    pz.zoomTo(cx, cy, 1 / 1.25);
+    const c = containerCenter();
+    if (!pz || !c) return;
+    pz.zoomTo(c.cx, c.cy, 1 / 1.25);
   }
   function resetZoom(): void {
     resetTransform();
   }
   function toggleZoom(): void {
-    if (!pz || !container) return;
+    const c = containerCenter();
+    if (!pz || !c) return;
     const cur = pz.getTransform().scale;
     if (cur > 1.5) resetTransform();
-    else pz.zoomTo(container.clientWidth / 2, container.clientHeight / 2, 2);
+    else pz.zoomTo(c.cx, c.cy, 2);
   }
 </script>
 

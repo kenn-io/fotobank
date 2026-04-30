@@ -31,5 +31,9 @@
   .lb-drawer-head button {
     background: transparent; color: white; border: none; font-size: 18px; cursor: pointer;
   }
-  .lb-drawer-body { padding: 16px; overflow: auto; }
+  /* Drawer is dark; force white text + links for the metadata
+     content it wraps. The sheet variant inherits theme colors
+     instead. */
+  .lb-drawer-body { padding: 16px; overflow: auto; color: white; }
+  .lb-drawer-body :global(a) { color: white; }
 </style>
