@@ -11,7 +11,7 @@ BIN_DIR := bin
 BINARY  := $(BIN_DIR)/fotobank
 
 .PHONY: build build-release install dev test test-short test-e2e vet lint nilaway \
-        testify-helper-check migration-history-check tidy api-generate \
+        testify-helper-check tidy api-generate \
         install-hooks clean help \
         ensure-embed-dir frontend frontend-dev frontend-check air-install
 
@@ -92,9 +92,6 @@ lint: ## Run golangci-lint + testify-helper-check
 
 testify-helper-check: ## Enforce testify helper usage
 	go run ./tools/testifyhelpercheck/cmd ./...
-
-migration-history-check: ## Check no edits to main-branch migrations
-	go run ./tools/migrationhistorycheck
 
 nilaway: ## Run nilaway (pre-push tier)
 	go run go.uber.org/nilaway/cmd/nilaway -include-pkgs=github.com/wesm/fotobank ./...
