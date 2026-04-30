@@ -92,6 +92,7 @@ describe("Lightbox (snapshot path)", () => {
       await import("../../router/router.svelte").then((m) => m.router),
       "navigate",
     );
+    navigateSpy.mockClear();
     render(Lightbox, {
       props: {
         id: "m1",
@@ -105,11 +106,24 @@ describe("Lightbox (snapshot path)", () => {
     const ta = document.createElement("textarea");
     document.body.appendChild(ta);
     ta.focus();
-    const ev = new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true });
-    Object.defineProperty(ev, "target", { value: ta });
-    window.dispatchEvent(ev);
-    const calls = navigateSpy.mock.calls.map((c) => c[0] as string);
-    expect(calls.some((u) => u.includes("/media/m2"))).toBe(false);
+    const blockedEv = new KeyboardEvent("keydown", {
+      key: "ArrowRight",
+      bubbles: true,
+    });
+    Object.defineProperty(blockedEv, "target", { value: ta });
+    window.dispatchEvent(blockedEv);
+    const blockedCalls = navigateSpy.mock.calls.map((c) => c[0] as string);
+    expect(blockedCalls.some((u) => u.includes("/media/m2"))).toBe(false);
     document.body.removeChild(ta);
+
+    // Paired positive: same key from a non-editable target advances.
+    const allowedEv = new KeyboardEvent("keydown", {
+      key: "ArrowRight",
+      bubbles: true,
+    });
+    Object.defineProperty(allowedEv, "target", { value: document.body });
+    window.dispatchEvent(allowedEv);
+    const allowedCalls = navigateSpy.mock.calls.map((c) => c[0] as string);
+    expect(allowedCalls.some((u) => u.includes("/media/m2"))).toBe(true);
   });
 });

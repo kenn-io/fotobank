@@ -62,13 +62,15 @@
 
   // ---- Modal stack registration ----------------------------------
   const modalId = `lightbox-${Math.random().toString(36).slice(2)}`;
+  let prevBodyOverflow = "";
   onMount(() => {
     modalStack.push({ id: modalId, onEscape: close });
+    prevBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
   });
   onDestroy(() => {
     modalStack.pop(modalId);
-    document.body.style.overflow = "";
+    document.body.style.overflow = prevBodyOverflow;
   });
 
   // ---- Source / session resolution -------------------------------
@@ -159,22 +161,33 @@
   // the standalone surface (Lightbox is library-shaped, not hidden).
   const hiddenCrossContext = $derived(isHidden && from !== "hidden");
   // Tri-state reconstruction. For T16 the value is "ok" when the
-  // snapshot matches and "idle" otherwise — the latter falls into
-  // fallback. T17 will widen this with "running" / "failed" for the
-  // direct-entry / no-snapshot case.
+  // snapshot matches and "idle" otherwise — and for T16 the mismatched
+  // case is routed to the DirectMediaDetail fallback (see fallbackMode
+  // below). T17 widens this into a real state machine: it flips
+  // "idle" → "running" → "ok" | "failed" via a reconstruction effect,
+  // and at that point fallbackMode's `!fromMatchesSession` clause is
+  // narrowed to `reconstructionState === "failed"`.
   type RecState = "idle" | "running" | "ok" | "failed";
   const reconstructionState = $derived<RecState>(
     fromMatchesSession ? "ok" : "idle",
   );
-  const reconstructionInFlight = $derived(
-    !fromMatchesSession &&
-      (reconstructionState === "idle" || reconstructionState === "running"),
-  );
+  // Only "running" counts as in-flight in T16 — the mismatched-snapshot
+  // case falls through to the DirectMediaDetail fallback rather than
+  // hanging on a spinner. T17 widens this to also cover the running
+  // window once the reconstruction effect is wired up.
+  const reconstructionInFlight = $derived(reconstructionState === "running");
   const reconstructionFailed = $derived(
     !fromMatchesSession && reconstructionState === "failed",
   );
+  // In T16, mismatched-snapshot is itself a fallback case. T17 will
+  // narrow `!fromMatchesSession` to `reconstructionState === "failed"`
+  // once reconstruction is wired (the running window is then handled
+  // by `reconstructionInFlight` above).
   const fallbackMode = $derived(
-    loadError !== null || hiddenCrossContext || reconstructionFailed,
+    !fromMatchesSession ||
+      loadError !== null ||
+      hiddenCrossContext ||
+      reconstructionFailed,
   );
   const notFoundMode = $derived(loadError !== null);
 
@@ -364,7 +377,7 @@
   {#if reconstructionInFlight}
     <div class="lb-loading"><p>Loading…</p></div>
   {:else if fallbackMode}
-    {#if notFoundMode && loadError !== null}
+    {#if notFoundMode}
       <div class="lb-not-found">
         <p>Photo not found.</p>
       </div>
