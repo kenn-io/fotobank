@@ -60,13 +60,15 @@ worker_concurrency = 1
 
 ## 5. Database schema
 
-Per the project's pre-prod schema policy (web-frontend design §12.1), all changes fold into `internal/db/migrations/000001_initial_schema.{up,down}.sql`. No new migration files until first prod deployment.
+Schema lands in a **new numbered migration pair** — `internal/db/migrations/000004_ai_tag_caption.{up,down}.sql`. The pre-commit hook prohibits edits to migrations already on `main`, and the pre-prod squash-into-`000001` policy from the web-frontend design has already been superseded in practice by `000002_album_indexes` and `000003_scopes_backoff` landing as separate numbered files. AI follows that newer convention.
+
+ID storage matches the existing schema: `media.id` is `UUID PRIMARY KEY`, `media.owner_*` and album / scope foreign keys all use `UUID` and `TEXT`. AI tables follow the same conventions — no new `BLOB` primary-key shape introduced.
 
 ```sql
 -- One row per successful AI task run (or in-flight insert that gets staled on retry).
 CREATE TABLE ai_results (
-    id              BLOB PRIMARY KEY,                                    -- UUIDv7
-    media_id        BLOB NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    id              UUID PRIMARY KEY,
+    media_id        UUID NOT NULL REFERENCES media(id) ON DELETE CASCADE,
     task            TEXT NOT NULL,                                       -- 'tag' | 'caption'
     model_id        TEXT NOT NULL,                                       -- e.g. 'qwen2.5-vl:3b'
     prompt_version  TEXT NOT NULL,                                       -- e.g. 'tags-v1'
@@ -82,7 +84,7 @@ CREATE INDEX ai_results_media_task_idx
 
 -- Tag rows belong to a result; one row per tag, ranked.
 CREATE TABLE media_tags (
-    result_id  BLOB NOT NULL REFERENCES ai_results(id) ON DELETE CASCADE,
+    result_id  UUID NOT NULL REFERENCES ai_results(id) ON DELETE CASCADE,
     tag_key    TEXT NOT NULL,                                            -- normalized for matching
     tag_label  TEXT NOT NULL,                                            -- model's exact output for display
     rank       INTEGER NOT NULL,                                         -- 1-based emission order
@@ -92,40 +94,43 @@ CREATE INDEX media_tags_key_idx ON media_tags(tag_key);
 
 -- Caption is one row per result.
 CREATE TABLE media_captions (
-    result_id  BLOB PRIMARY KEY REFERENCES ai_results(id) ON DELETE CASCADE,
+    result_id  UUID PRIMARY KEY REFERENCES ai_results(id) ON DELETE CASCADE,
     text       TEXT NOT NULL
 );
 
 -- Job queue. Mirrors thumb's claim/lease pattern, but task-keyed in its own table
 -- because there are multiple AI task types per photo (thumb has one).
 CREATE TABLE ai_jobs (
-    id            BLOB PRIMARY KEY,                                      -- UUIDv7
-    media_id      BLOB NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    id            UUID PRIMARY KEY,
+    media_id      UUID NOT NULL REFERENCES media(id) ON DELETE CASCADE,
     task          TEXT NOT NULL,
     fingerprint   TEXT NOT NULL,                                         -- '{model}|{prompt_version}|{input_profile}' at enqueue
     status        TEXT NOT NULL CHECK (
-                    status IN ('pending','working','blocked','done','failed')),
+                    status IN ('pending','working','blocked','done','failed','superseded')),
     attempts      INTEGER NOT NULL DEFAULT 0,                            -- counts executions reaching provider/parser boundary
     last_error    TEXT,
-    last_error_kind TEXT,                                                -- 'provider_4xx' | 'malformed' | 'transient' | 'thumb_blocked' | ...
+    last_error_kind TEXT,                                                -- 'provider_4xx' | 'malformed' | 'transient' | 'thumb_blocked' | 'superseded' | ...
     claimed_at    TIMESTAMP,                                             -- lease anchor for crash recovery
     enqueued_at   TIMESTAMP NOT NULL,
     completed_at  TIMESTAMP                                              -- non-NULL for terminal status
 );
 -- Idempotency for importer / gap-scanner enqueues: at most one in-flight job per (media, task).
+-- A new-fingerprint enqueue against an in-flight old-fingerprint job is handled by §6.5
+-- (supersession) — the enqueue path transitions the old row to terminal `superseded` first,
+-- then inserts the new pending row, so the partial unique index is honored without ambiguity.
 CREATE UNIQUE INDEX ai_jobs_active_idx
     ON ai_jobs(media_id, task) WHERE status IN ('pending','working','blocked');
 -- Claim ordering and panel counters.
 CREATE INDEX ai_jobs_pending_idx
     ON ai_jobs(task, status, claimed_at) WHERE status IN ('pending','working','blocked');
 CREATE INDEX ai_jobs_terminal_idx
-    ON ai_jobs(task, status, completed_at) WHERE status IN ('done','failed');
+    ON ai_jobs(task, status, completed_at) WHERE status IN ('done','failed','superseded');
 
 -- Current unresolved failures, keyed by full fingerprint.
 -- Successful retry deletes the matching row; old-fingerprint rows remain
 -- until naturally stale-cleaned, but are ignored by current-fingerprint queries.
 CREATE TABLE ai_failures (
-    media_id        BLOB NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    media_id        UUID NOT NULL REFERENCES media(id) ON DELETE CASCADE,
     task            TEXT NOT NULL,
     model_id        TEXT NOT NULL,
     prompt_version  TEXT NOT NULL,
@@ -142,7 +147,7 @@ CREATE INDEX ai_failures_active_idx
 -- Provenance for media that won't be queued (videos) or were skipped after claim
 -- (no_preview thumb state, etc.). Keyed by (media, task) so reason updates in place.
 CREATE TABLE ai_skipped (
-    media_id     BLOB NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    media_id     UUID NOT NULL REFERENCES media(id) ON DELETE CASCADE,
     task         TEXT NOT NULL,
     reason       TEXT NOT NULL,                                          -- 'video' | 'no_preview' | ...
     recorded_at  TIMESTAMP NOT NULL,
@@ -150,7 +155,9 @@ CREATE TABLE ai_skipped (
 );
 ```
 
-**Acknowledgement storage.** Hidden-processing acknowledgement is stored in the existing `user_settings` table (per the web-frontend design) under key `ai.hidden_processing_acknowledged_at`, value the ISO-8601 timestamp of acknowledgement. Per-principal; no new table.
+The matching `000004_ai_tag_caption.down.sql` drops the new tables and indexes in reverse dependency order: `ai_skipped`, `ai_failures` (and its index), `ai_jobs` (and its indexes), `media_captions`, `media_tags` (and its index), `ai_results` (and its indexes).
+
+**Acknowledgement storage.** Hidden-processing acknowledgement is stored in the existing `user_settings` table (per the web-frontend design) under key `ai.hidden_processing_acknowledged_at`, value the ISO-8601 timestamp of acknowledgement. Per-principal; no new table. `user_settings` already exists, so no migration touch needed for it.
 
 **Owner consistency.** Owner identity flows from `media.owner_*` — `ai_results`, `ai_jobs`, `ai_failures`, `ai_skipped` do not denormalize owner columns. Every owner check joins through `media`.
 
@@ -163,6 +170,7 @@ CREATE TABLE ai_skipped (
 - `blocked` — upstream not ready (thumb pipeline pending/working/failed). Periodic recheck promotes back to `pending`. `attempts` does not change while `blocked`.
 - `done` — terminal success. `ai_results` row written, child rows written, prior active staled. Retained for counters; pruned by age (default 30 d) in a maintenance pass.
 - `failed` — terminal permanent failure. Retained (default 90 d). Each terminal `failed` writes/refreshes the matching `ai_failures` row.
+- `superseded` — terminal abandonment. Set by the enqueue path when a new-fingerprint job arrives for a `(media, task)` that has an old-fingerprint job in flight (§6.5). Retained for counters; pruned alongside `done` (default 30 d). Does not write an `ai_failures` row.
 
 `skipped` is **not** a job state. Skips are recorded in `ai_skipped` either at importer time (videos) or by a worker that claimed a job and discovered an `no_preview` thumb state (after which the worker deletes the job).
 
@@ -189,6 +197,17 @@ CREATE TABLE ai_skipped (
 
 A periodic lease-expiry sweep (every minute) resets `working` rows whose `claimed_at` is older than 10 min back to `pending`. The worker that died gets its work redone without bumping `attempts`. Importer crashes between media insert and job enqueue are repaired by the gap scanner — no atomic-with-media-insert requirement.
 
+### 6.5 Supersession on fingerprint change
+
+The partial unique index `WHERE status IN ('pending','working','blocked')` enforces "at most one in-flight job per `(media, task)`." When a new-fingerprint enqueue (importer, gap scanner, or `--force` backfill) targets a `(media, task)` that already has an in-flight job under a different fingerprint, the enqueue path runs in a single transaction:
+
+1. Transition the old row to terminal `superseded` (`completed_at = now()`, `last_error_kind = 'superseded'`, `last_error = 'fingerprint changed'`).
+2. Insert the new `pending` row with the current fingerprint.
+
+Workers handle the race where their claim is superseded mid-call via the existing claim-token pattern (mirrors `internal/thumb`'s `ErrClaimLost`): the result-write SQL filters on `WHERE id = ? AND claimed_at = ? AND status = 'working'`. If the row is now `superseded`, zero rows match; the worker logs and discards its provider response cleanly. Cost of a wasted provider call after a fingerprint flip is accepted as a rare edge case, not engineered around.
+
+`superseded` jobs do not increment `attempts`, do not write `ai_failures`, and are filtered out of all "current-fingerprint" panel queries. They exist purely so the unique index stays honest.
+
 ## 7. Triggering, gap scanning, backfill
 
 ### 7.1 Auto-enqueue on import
@@ -210,9 +229,9 @@ Processed alongside everything else. Outputs are owner-only and only surface in 
 
 ### 7.4 Model / prompt swap behavior
 
-Bumping `model`, `prompt_version`, or `input_profile` does **not** auto-trigger re-run. It changes the active fingerprint; existing rows under the old fingerprint remain `active` until the gap scanner / explicit backfill encounters them missing for the new fingerprint and enqueues new jobs. On success of those new jobs, the old `active` row is staled atomically.
+Bumping `model`, `prompt_version`, or `input_profile` does **not** auto-trigger re-run. It changes the active fingerprint; existing rows under the old fingerprint remain `active` until the gap scanner / explicit backfill encounters them missing for the new fingerprint and enqueues new jobs. On success of those new jobs, the old `active` row is staled and the new is promoted in one transaction (per §3 result-set invariant).
 
-Force-rerun under the same fingerprint is supported via `fotobank ai backfill --force --task=…`, which deletes existing `active` results before enqueueing.
+Force-rerun under the same fingerprint is supported via `fotobank ai backfill --force --task=…`. `--force` does **not** delete existing `active` results upfront — that would leave the photo with no AI output if the rerun fails. Instead, `--force` widens the gap-scanner predicate to include media that already have an active result for the current fingerprint, enqueueing jobs for them anyway. On success, the prior `active` is staled and the new is promoted atomically (same path as §3). On failure, the prior `active` stays — same as any other run.
 
 ## 8. Input profile
 
@@ -388,14 +407,16 @@ All routes go through `internal/service/ai`, which enforces caller-principal sco
 }
 ```
 
-The shell-strip dot color is derived from this payload:
+The shell-strip dot state is derived from this payload, evaluated top-down (first match wins). Per the web-frontend design's a11y rule (color + icon + `aria-label`, never color alone), each state pairs a color with a distinct icon and label so colors aren't load-bearing on their own:
 
-- `paused_reason != ""` or `vision.reachable = false` → `unreachable` (red).
-- `failed_active > threshold` (default 10) → `failing` (orange).
-- `pending > threshold` (default 1000) → `backlog` (yellow).
-- Otherwise → `idle` (green).
+- `paused_reason == "config_disabled"` → dot **hidden entirely** (AI is off; nothing to surface).
+- `paused_reason == "acknowledgement_required"` → `paused` — yellow, pause-icon, label `"AI paused — acknowledgement required"`.
+- `vision.reachable == false` → `unreachable` — red, plug-disconnected icon, label `"AI endpoint unreachable"`.
+- `tag.failed_active + caption.failed_active > threshold` (default 10) → `failing` — orange, alert icon, label `"AI failures need attention"`.
+- `tag.pending + caption.pending > threshold` (default 1000) → `backlog` — yellow, queue icon, label `"AI backlog"`.
+- Otherwise → `idle` — green, check icon, label `"AI healthy"`.
 
-The threshold defaults are not yet exposed in config — added if real use shows the need.
+Note that `paused` and `backlog` share a yellow color but are distinguished by icon and `aria-label`, satisfying the never-color-alone rule. The threshold defaults are not yet exposed in config — added if real use shows the need.
 
 ## 15. SSE events
 
