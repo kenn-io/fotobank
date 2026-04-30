@@ -7,7 +7,7 @@ export type RouteMatch =
   | { route: "albums" }
   | { route: "albums.detail"; id: string }
   | { route: "shares"; album_id?: string; show_revoked?: boolean }
-  | { route: "media"; id: string }
+  | { route: "media"; id: string; from?: string }
   | { route: "hidden" }
   | { route: "notfound"; path: string };
 
@@ -35,9 +35,29 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
       ...(showRevoked ? { show_revoked: true } : {}),
     };
   } },
-  { re: /^\/media\/([^/]+)$/, build: (m) => ({ route: "media", id: m[1]! }) },
+  { re: /^\/media\/([^/]+)$/, build: (m) => {
+    const sp = new URLSearchParams(window.location.search);
+    const fromRaw = sp.get("from");
+    const from = parseFrom(fromRaw);
+    return {
+      route: "media" as const,
+      id: m[1]!,
+      ...(from !== null ? { from } : {}),
+    };
+  } },
   { re: /^\/hidden\/?$/, build: () => ({ route: "hidden" as const }) },
 ];
+
+// parseFrom narrows the ?from= query param to one of the four known
+// source kinds plus the album:<id> form. Unknown values fall through
+// to undefined so /media/:id?from=garbage behaves the same as no
+// from at all (the lightbox treats absent from as direct-detail).
+function parseFrom(raw: string | null): string | null {
+  if (raw === null) return null;
+  if (raw === "library" || raw === "sessions" || raw === "hidden") return raw;
+  if (raw.startsWith("album:") && raw.length > "album:".length) return raw;
+  return null;
+}
 
 // State key stored in history.state so the depth survives back/forward
 // navigation. Each pushState embed the depth so popstate restores it.

@@ -32,6 +32,39 @@ describe("RouterStore.match", () => {
     expect(r.current).toEqual({ route: "media", id: "abc" });
   });
 
+  it("parses ?from=library on /media/:id", () => {
+    setLocation("/media/abc?from=library");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "media", id: "abc", from: "library" });
+  });
+
+  it("parses ?from=sessions / ?from=hidden on /media/:id", () => {
+    setLocation("/media/x?from=sessions");
+    let r = new RouterStore();
+    expect(r.current).toEqual({ route: "media", id: "x", from: "sessions" });
+    setLocation("/media/y?from=hidden");
+    r = new RouterStore();
+    expect(r.current).toEqual({ route: "media", id: "y", from: "hidden" });
+  });
+
+  it("parses ?from=album:abc on /media/:id", () => {
+    setLocation("/media/abc?from=album:my-album-123");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "media", id: "abc", from: "album:my-album-123" });
+  });
+
+  it("/media/:id without ?from has no from field", () => {
+    setLocation("/media/abc");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "media", id: "abc" });
+  });
+
+  it("ignores unknown ?from values (treats as absent)", () => {
+    setLocation("/media/abc?from=nope");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "media", id: "abc" });
+  });
+
   it("returns notfound for unknown pathnames (with or without query)", () => {
     setLocation("/foo");
     let r = new RouterStore();
