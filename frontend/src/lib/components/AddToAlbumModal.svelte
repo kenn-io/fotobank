@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { onMount, onDestroy } from "svelte";
   import type { AlbumsStore, AlbumListItem } from "../albums/albumsStore.svelte";
   import { normalizeForSearch } from "../format/normalizeForSearch";
+  import { modalStack } from "../lightbox/modalStack.svelte";
   import NewAlbumForm from "./NewAlbumForm.svelte";
 
   let {
@@ -20,6 +22,10 @@
   let selectedId = $state<string | null>(null);
   let pending = $state(false);
   let error = $state<string | null>(null);
+
+  const modalId = `add-to-album-${Math.random().toString(36).slice(2)}`;
+  onMount(() => modalStack.push({ id: modalId, onEscape: () => { if (!pending) onClose(); } }));
+  onDestroy(() => modalStack.pop(modalId));
 
   // Users may open Add-to-album before ever visiting /albums, so the
   // store may not yet be hydrated. Same guard pattern as AlbumsIndex:
@@ -76,8 +82,6 @@
     }
   }
 </script>
-
-<svelte:window onkeydown={(e) => { if (e.key === "Escape" && !pending) onClose(); }} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->

@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { onMount, onDestroy } from "svelte";
+  import { modalStack } from "../lightbox/modalStack.svelte";
+
   let {
     initialName,
     onSave,
@@ -18,6 +21,10 @@
   const trimmed = $derived(name.trim());
   const valid = $derived(trimmed.length >= 1 && trimmed.length <= 200 && trimmed !== initialName.trim());
 
+  const modalId = `rename-${Math.random().toString(36).slice(2)}`;
+  onMount(() => modalStack.push({ id: modalId, onEscape: () => { if (!pending) onCancel(); } }));
+  onDestroy(() => modalStack.pop(modalId));
+
   async function submit(e: Event) {
     e.preventDefault();
     if (!valid || pending) return;
@@ -35,8 +42,6 @@
     }
   }
 </script>
-
-<svelte:window onkeydown={(e) => { if (e.key === "Escape" && !pending) onCancel(); }} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->

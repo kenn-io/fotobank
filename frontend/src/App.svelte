@@ -24,6 +24,7 @@
   import { selection } from "./lib/selection/selectionStore.svelte";
   import { router, type RouteMatch } from "./lib/router/router.svelte";
   import { isEditableTarget } from "./lib/dom/editable";
+  import { modalStack } from "./lib/lightbox/modalStack.svelte";
   import { api } from "./lib/api/client";
 
   const themeStore = new ThemeStore(api);
@@ -65,8 +66,14 @@
   $effect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      // No-op when nothing is selected so we don't shadow other Esc
-      // handlers (modals, popovers) that future tasks will introduce.
+      // Topmost modal first. dispatchEscape returns true if a stack
+      // entry handled the event; we then preventDefault/stopPropagation
+      // so selection-clear and any browser default don't fire.
+      if (modalStack.dispatchEscape()) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (selection.ids.size === 0) return;
       // Don't steal Escape from text inputs — Esc there usually means
       // "dismiss the dropdown / cancel the edit", not "clear selection".
