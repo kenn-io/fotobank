@@ -48,6 +48,11 @@ export class MediaStore {
   loading = $state(false);
   exhausted = $state(false);
   private nextOffset: number | null = 0;
+  // Active loadMore() promise. Re-entrant callers (e.g. the Lightbox
+  // reconstruction loop racing the route's initial load) return this so
+  // `await loadMore()` waits for the in-flight load to settle instead of
+  // resolving immediately and burning the caller's retry cap.
+  private inflight: Promise<void> | null = null;
 
   // byMonth: monthKey → (id → Media). Long-lived; survives across
   // merge() calls. byId: id → current monthKey, used to relocate a
@@ -88,30 +93,39 @@ export class MediaStore {
 
   async loadInitial() { await this.loadMore(); }
 
-  async loadMore() {
-    if (this.loading || this.exhausted) return;
-    // Synchronous before any await — required as the re-entry guard.
+  loadMore(): Promise<void> {
+    if (this.exhausted) return Promise.resolve();
+    // Re-entry: hand back the in-flight promise so `await loadMore()` only
+    // resolves once the original load completes. Returning `Promise.resolve()`
+    // here would let the caller's loop spin against `loading=true` and
+    // exhaust its attempt cap before the network even returns.
+    if (this.inflight !== null) return this.inflight;
     this.loading = true;
-    try {
-      const res = await this.client.GET("/api/v1/media", {
-        // sort_desc: true so the library opens at the most-recent
-        // capture (the backend defaults to ascending). Pagination then
-        // walks backwards in time as the user scrolls down.
-        params: {
-          query: { limit: 200, offset: this.nextOffset ?? 0, sort_desc: true },
-        } as never,
-      });
-      if (res.error || !res.data) return;
-      const items = ((res.data as { items?: Array<Record<string, unknown>> }).items ?? [])
-        .map(toMedia)
-        .filter((m): m is Media => m !== null);
-      this.merge(items);
-      const next = (res.data as { next_offset?: number | null }).next_offset ?? null;
-      this.nextOffset = next;
-      if (next === null) this.exhausted = true;
-    } finally {
-      this.loading = false;
-    }
+    const p = (async () => {
+      try {
+        const res = await this.client.GET("/api/v1/media", {
+          // sort_desc: true so the library opens at the most-recent
+          // capture (the backend defaults to ascending). Pagination then
+          // walks backwards in time as the user scrolls down.
+          params: {
+            query: { limit: 200, offset: this.nextOffset ?? 0, sort_desc: true },
+          } as never,
+        });
+        if (res.error || !res.data) return;
+        const items = ((res.data as { items?: Array<Record<string, unknown>> }).items ?? [])
+          .map(toMedia)
+          .filter((m): m is Media => m !== null);
+        this.merge(items);
+        const next = (res.data as { next_offset?: number | null }).next_offset ?? null;
+        this.nextOffset = next;
+        if (next === null) this.exhausted = true;
+      } finally {
+        this.loading = false;
+        this.inflight = null;
+      }
+    })();
+    this.inflight = p;
+    return p;
   }
 
   // Public adapter for the on-miss fetch path (e.g. MediaDetail loads
