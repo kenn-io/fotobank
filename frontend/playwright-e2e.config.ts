@@ -23,7 +23,14 @@ export default defineConfig({
   ],
   webServer: {
     command: "../tmp/e2e-server",
-    env: { FOTOBANK_E2E_PORT: String(port) },
+    env: {
+      FOTOBANK_E2E_PORT: String(port),
+      // Shrink the hidden-auth lockout window so the lockout test in
+      // hidden.spec.ts resolves quickly. Without this, the 5-failure
+      // lockout persists for 300s and blocks every later test that
+      // needs to unlock (e.g., lightbox.spec.ts hidden scenarios).
+      FOTOBANK_E2E_LOCKOUT_WINDOW: "1s",
+    },
     port,
     reuseExistingServer: false,
     timeout: 60_000,
