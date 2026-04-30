@@ -33,7 +33,13 @@
   });
   onDestroy(() => {
     modalStack.pop(id);
-    if (prevFocus instanceof HTMLElement) prevFocus.focus();
+    // Guard the HTMLElement global so onDestroy doesn't ReferenceError
+    // in any SSR pass (Svelte 5 lifecycle can run server-side).
+    if (
+      prevFocus !== null
+      && typeof HTMLElement !== "undefined"
+      && prevFocus instanceof HTMLElement
+    ) prevFocus.focus();
   });
 
   function onPointerDown(e: PointerEvent) {
