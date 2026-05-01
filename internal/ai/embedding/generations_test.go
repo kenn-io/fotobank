@@ -3,6 +3,7 @@ package embedding_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -124,4 +125,47 @@ func TestGenerations_RetireTransitionsToRetired(t *testing.T) {
 	active, err := g.FindActive(ctx)
 	r.NoError(err)
 	r.Nil(active)
+}
+
+// TestGenerations_FindOrCreateBuilding_ConcurrentSafety confirms the
+// idempotency contract under a fan-out of N goroutines all racing to
+// create the same fingerprint. The contention model relies on the rw
+// pool's MaxOpenConns=1: BeginTx physically queues on one connection,
+// so the loser's tx cannot start until the winner's Commit returns the
+// connection — at which point the loser's re-check inside the tx sees
+// the just-committed row and short-circuits without retrying the
+// INSERT (which would fail the fingerprint_hash UNIQUE constraint).
+func TestGenerations_FindOrCreateBuilding_ConcurrentSafety(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	fp := ai.Fingerprint{ModelID: "siglip2", InputProfile: "p"}
+
+	const N = 8
+	ids := make([]int64, N)
+	errs := make([]error, N)
+	var wg sync.WaitGroup
+	wg.Add(N)
+	for i := range N {
+		go func() {
+			defer wg.Done()
+			row, err := g.FindOrCreateBuilding(ctx, fp, 768)
+			ids[i], errs[i] = row.ID, err
+		}()
+	}
+	wg.Wait()
+
+	for i, e := range errs {
+		r.NoError(e, "goroutine %d", i)
+	}
+	for i := 1; i < N; i++ {
+		r.Equal(ids[0], ids[i], "goroutine %d returned a different id", i)
+	}
+
+	// Sanity-check the registry: exactly one row exists for this fingerprint.
+	rows, err := g.List(ctx, "building")
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.Equal(ids[0], rows[0].ID)
 }
