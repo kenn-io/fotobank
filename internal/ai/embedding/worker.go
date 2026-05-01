@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wesm/fotobank/internal/ai"
+	"github.com/wesm/fotobank/internal/ai/failures"
 	"github.com/wesm/fotobank/internal/ai/imginput/encode"
 	"github.com/wesm/fotobank/internal/ai/jobs"
 	"github.com/wesm/fotobank/internal/ai/skipped"
@@ -67,6 +68,12 @@ type WorkerDeps struct {
 	Events   EventEmitter
 	DB       *sql.DB // writer pool — used to bundle per-batch writes in one tx.
 	Skipped  *skipped.Repo
+	// Failures records terminal failure rows alongside MarkFailed so the
+	// AI panel and gap-scan repair queries can see persistent embed
+	// failures keyed by (media, task, fingerprint). On a successful
+	// embed the worker clears any prior row in the same tx that writes
+	// the mapping. Mirrors the chat worker's failure surface.
+	Failures *failures.Repo
 }
 
 // Worker batches pending TaskEmbed jobs into one /v1/embeddings call
@@ -229,9 +236,11 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 	if err != nil {
 		// Defensive: a malformed fp on a working row is an invariant
 		// violation, but we still mark every claim in the group failed
-		// so the queue drains rather than re-claiming forever.
+		// so the queue drains rather than re-claiming forever. The
+		// failure row is keyed on the canonical fp the claim carried,
+		// so the panel still surfaces it under the original triple.
 		for _, e := range group {
-			_ = w.d.Q.MarkFailed(ctx, e.claim.JobID, e.claim.ClaimedAt, ai.ErrKindMalformed, "parse fingerprint: "+err.Error())
+			w.recordTerminalFailure(ctx, e.claim, fp, ai.ErrKindMalformed, "parse fingerprint: "+err.Error())
 		}
 		return nil
 	}
@@ -256,8 +265,7 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 		// because the request body is the same for all of them.
 		kind := classifyEmbedErr(callErr)
 		for _, e := range group {
-			_ = w.d.Q.MarkFailed(ctx, e.claim.JobID, e.claim.ClaimedAt, kind, callErr.Error())
-			w.d.Events.EmitAIEmbedFailed(e.claim.MediaID, fpStr)
+			w.recordTerminalFailure(ctx, e.claim, fp, kind, callErr.Error())
 		}
 		return nil
 	}
@@ -269,10 +277,9 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 	// (transient) and let the next sweep re-claim them as singles.
 	// F2 will replace this with per-index attribution.
 	if len(vectors) != len(group) {
+		msg := fmt.Sprintf("partial response: got %d vectors, want %d", len(vectors), len(group))
 		for _, e := range group {
-			_ = w.d.Q.MarkFailed(ctx, e.claim.JobID, e.claim.ClaimedAt, ai.ErrKindTransient,
-				fmt.Sprintf("partial response: got %d vectors, want %d", len(vectors), len(group)))
-			w.d.Events.EmitAIEmbedFailed(e.claim.MediaID, fpStr)
+			w.recordTerminalFailure(ctx, e.claim, fp, ai.ErrKindTransient, msg)
 		}
 		return nil
 	}
@@ -281,8 +288,10 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 	// the WriteVectorTx and the MarkDone never leaves a mapping without
 	// a 'done' job (or vice versa). embedded_count is bumped by the
 	// net-new delta inside the same tx — replacements contribute zero,
-	// matching Mapping.WriteVectorTx's contract.
-	if err := w.commitBatch(ctx, gen, group, vectors); err != nil {
+	// matching Mapping.WriteVectorTx's contract. The same tx also
+	// clears any prior ai_failures row for each successful (media, fp)
+	// so a transient retry can't leave a stale failure visible.
+	if err := w.commitBatch(ctx, gen, fp, group, vectors); err != nil {
 		// commitBatch's failures all leave the rows in 'working' so
 		// the next claim sweep recovers them. Don't double-mark.
 		return fmt.Errorf("commit batch: %w", err)
@@ -295,6 +304,21 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 		w.d.Events.EmitAIEmbedCompleted(e.claim.MediaID, fpStr)
 	}
 	return nil
+}
+
+// recordTerminalFailure marks the claim failed and records an
+// ai_failures row in lockstep with the chat worker's surface. The
+// failure event fires regardless of whether either side errored — the
+// emitter is async-best-effort and the queue is the source of truth
+// for the claim's terminal state.
+func (w *Worker) recordTerminalFailure(ctx context.Context, c jobs.Claim, fp ai.Fingerprint, kind ai.LastErrorKind, msg string) {
+	_ = w.d.Q.MarkFailed(ctx, c.JobID, c.ClaimedAt, kind, msg)
+	if w.d.Failures != nil {
+		// attempt_count includes the just-failed run; mirrors
+		// internal/ai/worker/worker.go's markFailed.
+		_ = w.d.Failures.Record(ctx, c.MediaID, ai.TaskEmbed, fp, kind, msg, c.Attempts+1)
+	}
+	w.d.Events.EmitAIEmbedFailed(c.MediaID, fp.String())
 }
 
 // resolveAll fans out one ResolvePreviewJPEG goroutine per claim and
@@ -318,6 +342,12 @@ func (w *Worker) resolveAll(ctx context.Context, batch []jobs.Claim) []prepared 
 // table, returning the subset of claims that survived to the encode
 // step. Side-effecting branches (skipped, blocked, failed) finalise
 // the claim inline so the caller does not need to revisit them.
+//
+// Failure branches in this function call recordTerminalFailure so the
+// ai_failures row is written in lockstep with the MarkFailed UPDATE.
+// MarkFailed errors there are swallowed (the chat worker does the same):
+// a transient SQL hiccup on the failure side leaves the row in 'working'
+// for the lease sweep to recover, which is the correct fallback.
 func (w *Worker) classify(ctx context.Context, out []prepared) ([]encoded, error) {
 	var ready []encoded
 	for _, p := range out {
@@ -327,11 +357,8 @@ func (w *Worker) classify(ctx context.Context, out []prepared) ([]encoded, error
 			// missing or the storage read failing. MissingAIInput is
 			// the established kind for "the worker couldn't get the
 			// bytes it needed".
-			if err := w.d.Q.MarkFailed(ctx, p.claim.JobID, p.claim.ClaimedAt,
-				ai.ErrKindMissingAIInput, p.err.Error()); err != nil {
-				return nil, fmt.Errorf("mark failed (resolver): %w", err)
-			}
-			w.d.Events.EmitAIEmbedFailed(p.claim.MediaID, p.claim.Fingerprint)
+			fp, _ := parseFingerprint(p.claim.Fingerprint)
+			w.recordTerminalFailure(ctx, p.claim, fp, ai.ErrKindMissingAIInput, p.err.Error())
 		case p.status == "no_preview":
 			// The thumb pipeline determined this media has no usable
 			// preview (typically a video). Record the skip and mark
@@ -356,11 +383,9 @@ func (w *Worker) classify(ctx context.Context, out []prepared) ([]encoded, error
 			// probe; cfg.InputEdge is the validated value.
 			body, err := encode.EncodeEmbed(p.jpeg, w.d.Cfg.InputEdge)
 			if err != nil {
-				if mfErr := w.d.Q.MarkFailed(ctx, p.claim.JobID, p.claim.ClaimedAt,
-					ai.ErrKindMalformed, "encode embed input: "+err.Error()); mfErr != nil {
-					return nil, fmt.Errorf("mark failed (encode): %w", mfErr)
-				}
-				w.d.Events.EmitAIEmbedFailed(p.claim.MediaID, p.claim.Fingerprint)
+				fp, _ := parseFingerprint(p.claim.Fingerprint)
+				w.recordTerminalFailure(ctx, p.claim, fp, ai.ErrKindMalformed,
+					"encode embed input: "+err.Error())
 				continue
 			}
 			ready = append(ready, encoded{claim: p.claim, body: body})
@@ -368,21 +393,25 @@ func (w *Worker) classify(ctx context.Context, out []prepared) ([]encoded, error
 			// Unknown thumb_status — treat as missing input rather than
 			// silently dropping the job. The chat worker handles this
 			// the same way.
-			if err := w.d.Q.MarkFailed(ctx, p.claim.JobID, p.claim.ClaimedAt,
-				ai.ErrKindMissingAIInput, "unknown thumb_status: "+p.status); err != nil {
-				return nil, fmt.Errorf("mark failed (unknown status): %w", err)
-			}
-			w.d.Events.EmitAIEmbedFailed(p.claim.MediaID, p.claim.Fingerprint)
+			fp, _ := parseFingerprint(p.claim.Fingerprint)
+			w.recordTerminalFailure(ctx, p.claim, fp, ai.ErrKindMissingAIInput,
+				"unknown thumb_status: "+p.status)
 		}
 	}
 	return ready, nil
 }
 
 // commitBatch writes every (mediaID, vector) mapping, marks every
-// claim done, and bumps embedded_count by the net-new delta — all in
-// one transaction. A rollback unwinds the mappings and leaves the
-// rows in 'working' for the lease sweep to recover.
-func (w *Worker) commitBatch(ctx context.Context, gen Row, ready []encoded, vectors [][]float32) error {
+// claim done, clears any prior ai_failures row for (media, fp), and
+// bumps embedded_count by the net-new delta — all in one transaction.
+// A rollback unwinds every change and leaves the rows in 'working' for
+// the lease sweep to recover.
+//
+// Clearing ai_failures inside the same tx that writes the mapping
+// keeps the panel's view of "still failing" honest: a successful retry
+// can never leave a stale failure visible, even if the process crashes
+// between the mapping write and the cleanup.
+func (w *Worker) commitBatch(ctx context.Context, gen Row, fp ai.Fingerprint, ready []encoded, vectors [][]float32) error {
 	tx, err := w.d.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
@@ -398,6 +427,11 @@ func (w *Worker) commitBatch(ctx context.Context, gen Row, ready []encoded, vect
 		totalDelta += delta
 		if merr := markDoneTx(ctx, tx, e.claim.JobID, e.claim.ClaimedAt); merr != nil {
 			return fmt.Errorf("mark done %s: %w", e.claim.JobID, merr)
+		}
+		if w.d.Failures != nil {
+			if ferr := w.d.Failures.DeleteTx(ctx, tx, e.claim.MediaID, ai.TaskEmbed, fp); ferr != nil {
+				return fmt.Errorf("clear failure %s: %w", e.claim.MediaID, ferr)
+			}
 		}
 	}
 	if totalDelta > 0 {

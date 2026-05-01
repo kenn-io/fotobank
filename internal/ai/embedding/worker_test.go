@@ -16,6 +16,7 @@ import (
 
 	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/ai/embedding"
+	"github.com/wesm/fotobank/internal/ai/failures"
 	"github.com/wesm/fotobank/internal/ai/jobs"
 	"github.com/wesm/fotobank/internal/ai/skipped"
 	"github.com/wesm/fotobank/internal/db"
@@ -165,19 +166,21 @@ func embeddedCount(t *testing.T, d *db.DB, genID int64) int {
 
 // newTestWorker assembles a worker against a fresh test DB. Callers
 // supply the resolver/client/emitter so per-test variation is local;
-// queue, generations, mapping, skipped repo, and config are constant.
+// queue, generations, mapping, skipped repo, failures repo, and config
+// are constant.
 func newTestWorker(
 	t *testing.T,
 	d *db.DB,
 	resolver embedding.PreviewResolver,
 	client embedding.ClientIface,
 	emitter embedding.EventEmitter,
-) (*embedding.Worker, *jobs.Queue, *embedding.Generations) {
+) (*embedding.Worker, *jobs.Queue, *embedding.Generations, *failures.Repo) {
 	t.Helper()
 	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
 	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
 	mapping := embedding.NewMapping(d.WriteDB())
 	skipR := skipped.NewRepo(d.WriteDB(), d.ReadDB())
+	failR := failures.NewRepo(d.WriteDB(), d.ReadDB())
 	w := embedding.NewWorker(embedding.WorkerDeps{
 		Q:        q,
 		Gens:     gens,
@@ -188,8 +191,9 @@ func newTestWorker(
 		Events:   emitter,
 		DB:       d.WriteDB(),
 		Skipped:  skipR,
+		Failures: failR,
 	})
-	return w, q, gens
+	return w, q, gens, failR
 }
 
 func TestWorker_ProcessesBatchEndToEnd(t *testing.T) {
@@ -205,7 +209,7 @@ func TestWorker_ProcessesBatchEndToEnd(t *testing.T) {
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 	client := &fakeEmbedClient{vectors: dim768N(3), vectorsToReturn: -1}
 	emitter := &recordingEmitter{}
-	w, q, gens := newTestWorker(t, d, resolver, client, emitter)
+	w, q, gens, _ := newTestWorker(t, d, resolver, client, emitter)
 
 	fp := embedFP()
 	for _, m := range mids {
@@ -243,7 +247,7 @@ func TestWorker_ReplacementIsZeroDelta(t *testing.T) {
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
-	w, q, gens := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+	w, q, gens, _ := newTestWorker(t, d, resolver, client, &recordingEmitter{})
 
 	fp := embedFP()
 	r.NoError(q.Enqueue(ctx, mid, ai.TaskEmbed, fp))
@@ -277,7 +281,7 @@ func TestWorker_NoPreviewSkips(t *testing.T) {
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultStatus: "no_preview"}
 	client := &fakeEmbedClient{vectors: dim768N(1)}
-	w, q, _ := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+	w, q, _, _ := newTestWorker(t, d, resolver, client, &recordingEmitter{})
 
 	fp := embedFP()
 	r.NoError(q.Enqueue(ctx, mid, ai.TaskEmbed, fp))
@@ -304,7 +308,7 @@ func TestWorker_PendingThumbBlocks(t *testing.T) {
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultStatus: "pending"}
 	client := &fakeEmbedClient{vectors: dim768N(1)}
-	w, q, _ := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+	w, q, _, _ := newTestWorker(t, d, resolver, client, &recordingEmitter{})
 
 	fp := embedFP()
 	r.NoError(q.Enqueue(ctx, mid, ai.TaskEmbed, fp))
@@ -337,7 +341,7 @@ func TestWorker_PartialFailureRerunsSingles(t *testing.T) {
 	// Server returns only 2 vectors when 3 were requested. The worker
 	// detects the mismatch and falls back to MarkFailed-all (F1 policy).
 	client := &fakeEmbedClient{vectors: dim768N(3), vectorsToReturn: 2}
-	w, q, gens := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+	w, q, gens, _ := newTestWorker(t, d, resolver, client, &recordingEmitter{})
 
 	fp := embedFP()
 	for _, m := range mids {
@@ -370,7 +374,7 @@ func TestWorker_RunDrainsQueueAndExitsOnCancel(t *testing.T) {
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
-	w, q, gens := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+	w, q, gens, _ := newTestWorker(t, d, resolver, client, &recordingEmitter{})
 
 	fp := embedFP()
 	r.NoError(q.Enqueue(ctx, mid, ai.TaskEmbed, fp))
@@ -412,7 +416,7 @@ func TestWorker_RunPromotesThumbReadyBlocked(t *testing.T) {
 	// First pass: thumb_status='pending' so the worker parks the job.
 	resolver := &fakeResolver{defaultStatus: "pending"}
 	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
-	w, queue, gens := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+	w, queue, gens, _ := newTestWorker(t, d, resolver, client, &recordingEmitter{})
 
 	fp := embedFP()
 	r.NoError(queue.Enqueue(ctx, mid, ai.TaskEmbed, fp))
@@ -511,7 +515,7 @@ func TestWorker_BatchWithMixedFingerprintsRoutesToCorrectGenerations(t *testing.
 	client := &perCallEmbedClient{
 		perCall: [][][]float32{dim768N(2), dim768N(2)},
 	}
-	w, q, gens := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+	w, q, gens, _ := newTestWorker(t, d, resolver, client, &recordingEmitter{})
 
 	// Pre-create the v1 generation and promote it to 'active' so v2's
 	// building row can coexist with it (the schema's
@@ -562,6 +566,102 @@ func TestWorker_BatchWithMixedFingerprintsRoutesToCorrectGenerations(t *testing.
 	}
 }
 
+// TestWorker_TerminalFailureRecordsAIFailureRow asserts the worker
+// upserts an ai_failures row alongside MarkFailed when the embeddings
+// endpoint reports a terminal failure. The row is keyed on the claim's
+// fingerprint so the panel and gap-scan repair queries see it under
+// the active fingerprint triple.
+func TestWorker_TerminalFailureRecordsAIFailureRow(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
+	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
+	client := &fakeEmbedClient{err: errors.New("HTTP 500: boom")}
+	w, q, _, failR := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+
+	fp := embedFP()
+	r.NoError(q.Enqueue(ctx, mid, ai.TaskEmbed, fp))
+	r.NoError(w.RunOnce(ctx))
+
+	// ai_jobs row is failed AND a matching ai_failures row exists.
+	r.Equal("failed", jobStatus(t, d, mid, ai.TaskEmbed))
+	cnt, err := failR.CountForFingerprint(ctx, ai.TaskEmbed, fp)
+	r.NoError(err)
+	r.Equal(1, cnt, "ai_failures must carry one row for (mid, embed, fp)")
+
+	row, found, err := failR.GetForFingerprint(ctx, mid, ai.TaskEmbed, fp)
+	r.NoError(err)
+	r.True(found)
+	r.Equal(ai.ErrKindTransient, row.LastErrorKind)
+	r.Contains(row.LastError, "boom")
+	r.Equal(1, row.AttemptCount, "attempt_count includes the just-failed run")
+}
+
+// TestWorker_SuccessfulRetryClearsPriorFailureRow confirms the
+// worker's success path deletes the ai_failures row for (media, fp) in
+// the same tx that writes the mapping. Without this, a transient that
+// later succeeds would leave a stale failure visible to the panel.
+func TestWorker_SuccessfulRetryClearsPriorFailureRow(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
+	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
+
+	// First run: transient error → MarkFailed + ai_failures row written.
+	failingClient := &fakeEmbedClient{err: errors.New("HTTP 500: first")}
+	w, q, gens, failR := newTestWorker(t, d, resolver, failingClient, &recordingEmitter{})
+
+	fp := embedFP()
+	r.NoError(q.Enqueue(ctx, mid, ai.TaskEmbed, fp))
+	r.NoError(w.RunOnce(ctx))
+	cnt, err := failR.CountForFingerprint(ctx, ai.TaskEmbed, fp)
+	r.NoError(err)
+	r.Equal(1, cnt, "first run must have recorded a failure row")
+
+	// Second run with a successful client. Re-enqueue (the failed job
+	// is terminal) and swap the worker's client to one that returns
+	// vectors.
+	r.NoError(q.Enqueue(ctx, mid, ai.TaskEmbed, fp))
+
+	successClient := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
+	w2 := embedding.NewWorker(embedding.WorkerDeps{
+		Q:        jobs.NewQueue(d.WriteDB(), d.ReadDB()),
+		Gens:     gens,
+		Mapping:  embedding.NewMapping(d.WriteDB()),
+		Client:   successClient,
+		Resolver: resolver,
+		Cfg:      embedCfg(),
+		Events:   &recordingEmitter{},
+		DB:       d.WriteDB(),
+		Skipped:  skipped.NewRepo(d.WriteDB(), d.ReadDB()),
+		Failures: failR,
+	})
+	r.NoError(w2.RunOnce(ctx))
+
+	// Mapping written, retried job marked done, failure row cleared.
+	// The original failed row is still in ai_jobs (terminal state, not
+	// re-claimed); the retried row is a separate insert. Count-by-status
+	// keeps the assertion robust to that split.
+	gen, err := gens.FindOrCreateBuilding(ctx, fp, embedCfg().Dimension)
+	r.NoError(err)
+	r.True(mappingExists(t, d, gen.ID, mid), "successful retry must write mapping")
+
+	var doneCount int
+	r.NoError(d.ReadDB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ai_jobs WHERE media_id=? AND task=? AND status='done'`,
+		mid, string(ai.TaskEmbed),
+	).Scan(&doneCount))
+	r.Equal(1, doneCount, "exactly one done row for the retried claim")
+
+	cnt, err = failR.CountForFingerprint(ctx, ai.TaskEmbed, fp)
+	r.NoError(err)
+	r.Equal(0, cnt, "successful retry must clear the prior ai_failures row")
+}
+
 // TestWorker_TransientErrorMarksAllFailed exercises the full-batch
 // failure path: the embeddings endpoint returns a transient error, so
 // every claim in the batch is marked failed with the transient kind
@@ -574,7 +674,7 @@ func TestWorker_TransientErrorMarksAllFailed(t *testing.T) {
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 	client := &fakeEmbedClient{err: errors.New("HTTP 500: boom")}
-	w, q, gens := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+	w, q, gens, _ := newTestWorker(t, d, resolver, client, &recordingEmitter{})
 
 	fp := embedFP()
 	r.NoError(q.Enqueue(ctx, mid, ai.TaskEmbed, fp))
