@@ -600,6 +600,8 @@ pprof_enabled = true
 }
 
 func TestValidateRejectsEnabledAIWithoutEndpoint(t *testing.T) {
+	// Endpoint is required only when a vision-using task is enabled;
+	// turn tag on so the missing endpoint actually fails validation.
 	tmp := t.TempDir()
 	p := filepath.Join(tmp, "c.toml")
 	require.NoError(t, os.WriteFile(p, []byte(`
@@ -607,6 +609,9 @@ func TestValidateRejectsEnabledAIWithoutEndpoint(t *testing.T) {
 root = "/tmp/nas"
 [ai]
 enabled = true
+[ai.tag]
+enabled = true
+model = "m"
 `), 0o600))
 	_, err := config.Load(p)
 	require.ErrorIs(t, err, errs.ErrBadConfiguration)

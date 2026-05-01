@@ -26,7 +26,12 @@ func TestConfigValidate_disabledNoEndpoint(t *testing.T) {
 }
 
 func TestConfigValidate_enabledRequiresEndpoint(t *testing.T) {
-	c := ai.Config{Enabled: true}
+	// Vision endpoint is required only when a vision-using task is on.
+	// Enable tag so the endpoint check fires.
+	c := ai.Config{
+		Enabled: true,
+		Tag:     ai.TaskConfig{Enabled: true, Model: "m"},
+	}
 	c.ApplyDefaults()
 	err := c.Validate()
 	require.Error(t, err)
@@ -71,4 +76,45 @@ func TestConfig_EmbedDefaultsApply(t *testing.T) {
 	r.Equal(32, c.Embed.BatchSize)
 	r.Equal(1, c.Embed.MaxRetries)
 	r.Equal(10*time.Second, c.Embed.Timeout)
+}
+
+// TestConfig_EmbedOnlyConfigDoesNotRequireVisionEndpoint covers the
+// embed-only deployment shape: ai.enabled=true with both tag and caption
+// disabled. A vision endpoint shouldn't be required because no vision
+// path will ever fire.
+func TestConfig_EmbedOnlyConfigDoesNotRequireVisionEndpoint(t *testing.T) {
+	r := require.New(t)
+	c := &ai.Config{
+		Enabled: true,
+		Tag:     ai.TaskConfig{Enabled: false},
+		Caption: ai.TaskConfig{Enabled: false},
+		Vision:  ai.VisionConfig{Endpoint: "" /* explicitly empty */},
+		Embed: ai.EmbedConfig{
+			Enabled:   true,
+			Model:     "siglip2",
+			Endpoint:  "http://x",
+			Dimension: 768,
+		},
+	}
+	c.ApplyDefaults()
+	r.NoError(c.Validate())
+}
+
+// TestConfig_EmbedValidatesIndependentOfAIEnabled ensures embed config
+// is checked even when the top-level [ai].enabled is false — the embed
+// pipeline is independent of vision and an operator who turned vision
+// off but left embed on should still see misconfiguration surfaced.
+func TestConfig_EmbedValidatesIndependentOfAIEnabled(t *testing.T) {
+	r := require.New(t)
+	c := &ai.Config{
+		Enabled: false,
+		Embed: ai.EmbedConfig{
+			Enabled: true,
+			// Model intentionally empty.
+			Endpoint:  "http://x",
+			Dimension: 768,
+		},
+	}
+	c.ApplyDefaults()
+	r.ErrorContains(c.Validate(), "ai.embed.model")
 }

@@ -111,24 +111,36 @@ func (c *Config) ApplyDefaults() {
 	}
 }
 
-// Validate is invoked at boot. Disabled configs are not checked.
+// Validate is invoked at boot. Embed validation is independent of the
+// top-level Enabled flag because the embed pipeline can be enabled
+// without the vision pipeline (search v1 indexing only). The vision
+// endpoint is required only when a vision-using task (tag or caption)
+// is enabled — an embed-only deployment may leave it unset.
 func (c *Config) Validate() error {
-	if !c.Enabled {
-		return nil
+	if c.Enabled {
+		// Vision endpoint is only required when at least one
+		// vision-using task is enabled. An operator running embed-only
+		// (search indexing without VLM tagging/captioning) doesn't
+		// need to configure a chat endpoint at all.
+		if c.Tag.Enabled || c.Caption.Enabled {
+			if c.Vision.Endpoint == "" {
+				return fmt.Errorf("ai.vision.endpoint: required when ai.tag.enabled or ai.caption.enabled is true")
+			}
+			u, err := url.Parse(c.Vision.Endpoint)
+			if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+				return fmt.Errorf("ai.vision.endpoint: must be http(s) URL with host (got %q)", c.Vision.Endpoint)
+			}
+		}
+		if c.Tag.Enabled && c.Tag.Model == "" {
+			return fmt.Errorf("ai.tag.model: required when ai.tag.enabled=true")
+		}
+		if c.Caption.Enabled && c.Caption.Model == "" {
+			return fmt.Errorf("ai.caption.model: required when ai.caption.enabled=true")
+		}
 	}
-	if c.Vision.Endpoint == "" {
-		return fmt.Errorf("ai.vision.endpoint: required when ai.enabled=true")
-	}
-	u, err := url.Parse(c.Vision.Endpoint)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return fmt.Errorf("ai.vision.endpoint: must be http(s) URL with host (got %q)", c.Vision.Endpoint)
-	}
-	if c.Tag.Enabled && c.Tag.Model == "" {
-		return fmt.Errorf("ai.tag.model: required when ai.tag.enabled=true")
-	}
-	if c.Caption.Enabled && c.Caption.Model == "" {
-		return fmt.Errorf("ai.caption.model: required when ai.caption.enabled=true")
-	}
+	// Embed validation runs independently of c.Enabled so an operator
+	// running search v1 indexing without the VLM pipeline still gets
+	// their embed config validated.
 	if c.Embed.Enabled {
 		if c.Embed.Model == "" {
 			return fmt.Errorf("ai.embed.model: required when ai.embed.enabled=true")
