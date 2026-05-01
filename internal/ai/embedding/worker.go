@@ -170,10 +170,9 @@ type encoded struct {
 //
 //  1. Resolve preview JPEGs in parallel.
 //  2. Classify per the §6.4 step-2 table (skip/block/encode/error).
-//  3. Resolve the target generation by fingerprint.
-//  4. Issue one batched /v1/embeddings call.
-//  5. On partial failure, fall back to MarkFailed-all (F2 will refine).
-//  6. Persist mappings + ai_jobs status updates in one tx.
+//  3. Partition the encoded claims by fingerprint and process each
+//     fingerprint group separately (resolve generation → issue
+//     /v1/embeddings → commit batch).
 //
 // Errors raised here are limited to infrastructure failures — per-claim
 // outcomes (skipped, blocked, failed) are surfaced via ai_jobs / ai_skipped
@@ -192,20 +191,46 @@ func (w *Worker) process(ctx context.Context, batch []jobs.Claim) error {
 		return nil
 	}
 
-	// Step 3: resolve the target generation. All claims in a batch
-	// share a fingerprint because Enqueue supersedes any in-flight job
-	// when fp changes (queue.go:Enqueue's tx) and ClaimBatch only
-	// returns task='embed' rows that survived that supersession. The
-	// fingerprint comes from the claim row itself (queue persisted it
-	// at Enqueue time), not from cfg — so a stale cfg can't poison the
-	// generation registry.
-	fpStr := ready[0].claim.Fingerprint
+	// Step 3: partition by fingerprint. Each ai_jobs row carries its
+	// own fingerprint; in steady state all claims in one batch share
+	// one (Enqueue's tx supersedes prior in-flight jobs on fp change),
+	// but a queue with two active fingerprints — e.g. mid-rollout when
+	// an operator just changed cfg.AI.Embed.Model — will hand back a
+	// mixed batch. Each group must be routed to its own generation row,
+	// and each becomes its own /v1/embeddings call so vectors are
+	// validated against the right input set.
+	groups := partitionByFingerprint(ready)
+	for fpStr, group := range groups {
+		if perr := w.processGroup(ctx, fpStr, group); perr != nil {
+			return perr
+		}
+	}
+	return nil
+}
+
+// partitionByFingerprint groups encoded claims by ai_jobs.fingerprint.
+// Iteration order over the returned map is non-deterministic — the
+// caller must not depend on group ordering.
+func partitionByFingerprint(ready []encoded) map[string][]encoded {
+	groups := make(map[string][]encoded)
+	for _, e := range ready {
+		groups[e.claim.Fingerprint] = append(groups[e.claim.Fingerprint], e)
+	}
+	return groups
+}
+
+// processGroup runs the per-fingerprint pipeline tail: parse the fp,
+// resolve the building generation, issue one batched embeddings call,
+// and commit mappings + status in a single tx. Returns only on
+// infrastructure failures — per-claim outcomes are surfaced via
+// ai_jobs / ai_skipped rows.
+func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded) error {
 	fp, err := parseFingerprint(fpStr)
 	if err != nil {
 		// Defensive: a malformed fp on a working row is an invariant
-		// violation, but we still mark every claim failed so the queue
-		// drains rather than re-claiming forever.
-		for _, e := range ready {
+		// violation, but we still mark every claim in the group failed
+		// so the queue drains rather than re-claiming forever.
+		for _, e := range group {
 			_ = w.d.Q.MarkFailed(ctx, e.claim.JobID, e.claim.ClaimedAt, ai.ErrKindMalformed, "parse fingerprint: "+err.Error())
 		}
 		return nil
@@ -219,9 +244,9 @@ func (w *Worker) process(ctx context.Context, batch []jobs.Claim) error {
 		return fmt.Errorf("resolve generation: %w", err)
 	}
 
-	// Step 4: issue one batched /v1/embeddings call.
-	jpegs := make([][]byte, len(ready))
-	for i, e := range ready {
+	// Issue one batched /v1/embeddings call for this fingerprint group.
+	jpegs := make([][]byte, len(group))
+	for i, e := range group {
 		jpegs[i] = e.body
 	}
 	vectors, callErr := w.d.Client.EmbedImages(ctx, jpegs)
@@ -230,43 +255,43 @@ func (w *Worker) process(ctx context.Context, batch []jobs.Claim) error {
 		// with the same kind. Per-claim attribution is not meaningful
 		// because the request body is the same for all of them.
 		kind := classifyEmbedErr(callErr)
-		for _, e := range ready {
+		for _, e := range group {
 			_ = w.d.Q.MarkFailed(ctx, e.claim.JobID, e.claim.ClaimedAt, kind, callErr.Error())
 			w.d.Events.EmitAIEmbedFailed(e.claim.MediaID, fpStr)
 		}
 		return nil
 	}
 
-	// Step 5: partial failure shortcut — F1 simplification. The client
+	// Partial failure shortcut — F1 simplification. The client
 	// validates response length before returning, so this is mostly a
 	// belt-and-braces guard, but if a future client backend returns
 	// fewer vectors than requested we mark all of them failed
 	// (transient) and let the next sweep re-claim them as singles.
 	// F2 will replace this with per-index attribution.
-	if len(vectors) != len(ready) {
-		for _, e := range ready {
+	if len(vectors) != len(group) {
+		for _, e := range group {
 			_ = w.d.Q.MarkFailed(ctx, e.claim.JobID, e.claim.ClaimedAt, ai.ErrKindTransient,
-				fmt.Sprintf("partial response: got %d vectors, want %d", len(vectors), len(ready)))
+				fmt.Sprintf("partial response: got %d vectors, want %d", len(vectors), len(group)))
 			w.d.Events.EmitAIEmbedFailed(e.claim.MediaID, fpStr)
 		}
 		return nil
 	}
 
-	// Step 6: persist mappings + status updates in one tx so a crash
-	// between the WriteVectorTx and the MarkDone never leaves a
-	// mapping without a 'done' job (or vice versa). embedded_count is
-	// bumped by the net-new delta inside the same tx — replacements
-	// contribute zero, matching Mapping.WriteVectorTx's contract.
-	if err := w.commitBatch(ctx, gen, ready, vectors); err != nil {
+	// Persist mappings + status updates in one tx so a crash between
+	// the WriteVectorTx and the MarkDone never leaves a mapping without
+	// a 'done' job (or vice versa). embedded_count is bumped by the
+	// net-new delta inside the same tx — replacements contribute zero,
+	// matching Mapping.WriteVectorTx's contract.
+	if err := w.commitBatch(ctx, gen, group, vectors); err != nil {
 		// commitBatch's failures all leave the rows in 'working' so
 		// the next claim sweep recovers them. Don't double-mark.
 		return fmt.Errorf("commit batch: %w", err)
 	}
 
-	// Step 7: emit one completion event per successful claim. The
-	// event bus is async-best-effort; emitting after Commit means a
-	// listener sees a row that already exists in the DB.
-	for _, e := range ready {
+	// Emit one completion event per successful claim. The event bus is
+	// async-best-effort; emitting after Commit means a listener sees a
+	// row that already exists in the DB.
+	for _, e := range group {
 		w.d.Events.EmitAIEmbedCompleted(e.claim.MediaID, fpStr)
 	}
 	return nil

@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -447,6 +448,117 @@ func TestWorker_RunPromotesThumbReadyBlocked(t *testing.T) {
 		r.NoError(err)
 	case <-time.After(2 * time.Second):
 		r.Fail("Run did not return after cancel within 2s")
+	}
+}
+
+// perCallEmbedClient returns a fresh slice of vectors per call,
+// indexed by call number. Used by tests where the worker is expected
+// to issue more than one EmbedImages call per RunOnce — e.g. one call
+// per fingerprint group.
+type perCallEmbedClient struct {
+	mu          sync.Mutex
+	calls       atomic.Int32
+	perCall     [][][]float32 // perCall[i] is the slice for the i-th call
+	inputCounts []int         // recorded len(jpegs) per call, in call order
+}
+
+func (f *perCallEmbedClient) EmbedImages(_ context.Context, jpegs [][]byte) ([][]float32, error) {
+	idx := int(f.calls.Add(1)) - 1
+	f.mu.Lock()
+	f.inputCounts = append(f.inputCounts, len(jpegs))
+	f.mu.Unlock()
+	if idx >= len(f.perCall) {
+		idx = len(f.perCall) - 1
+	}
+	return f.perCall[idx], nil
+}
+
+// TestWorker_BatchWithMixedFingerprintsRoutesToCorrectGenerations
+// exercises the per-fingerprint partitioning in process. The realistic
+// trigger is a mid-rollout window: fpV1 was the prior fingerprint and
+// has been promoted to 'active'; fpV2 is the new fingerprint whose
+// 'building' row is in flight. While that window is open, ClaimBatch
+// can hand back rows for both fingerprints in a single call.
+//
+// Per the spec, every ai_jobs row carries its own fingerprint and the
+// worker must route each to its own generation. The test enqueues two
+// jobs under each fingerprint and asserts: one EmbedImages call fires
+// per group, each fingerprint resolves to its own generation row, and
+// every media's mapping lands in the generation matching its claim's
+// fingerprint.
+func TestWorker_BatchWithMixedFingerprintsRoutesToCorrectGenerations(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+
+	fpV1 := ai.Fingerprint{ModelID: "siglip2", InputProfile: "embed-v1"}
+	fpV2 := ai.Fingerprint{ModelID: "siglip2", InputProfile: "embed-v2"}
+
+	v1Mids := []string{
+		testutil.SeedPhoto(t, d.WriteDB(), owner, "v1-a"),
+		testutil.SeedPhoto(t, d.WriteDB(), owner, "v1-b"),
+	}
+	v2Mids := []string{
+		testutil.SeedPhoto(t, d.WriteDB(), owner, "v2-a"),
+		testutil.SeedPhoto(t, d.WriteDB(), owner, "v2-b"),
+	}
+
+	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
+	// The worker issues one EmbedImages call per fingerprint group; the
+	// per-call client returns 2 vectors per call so each group gets a
+	// matching response length.
+	client := &perCallEmbedClient{
+		perCall: [][][]float32{dim768N(2), dim768N(2)},
+	}
+	w, q, gens := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+
+	// Pre-create the v1 generation and promote it to 'active' so v2's
+	// building row can coexist with it (the schema's
+	// embedding_generations_one_building partial index allows at most
+	// one building row at a time but does not constrain active ones).
+	v1Gen, err := gens.FindOrCreateBuilding(ctx, fpV1, embedCfg().Dimension)
+	r.NoError(err)
+	r.NoError(gens.Promote(ctx, v1Gen.ID))
+
+	for _, m := range v1Mids {
+		r.NoError(q.Enqueue(ctx, m, ai.TaskEmbed, fpV1))
+	}
+	for _, m := range v2Mids {
+		r.NoError(q.Enqueue(ctx, m, ai.TaskEmbed, fpV2))
+	}
+
+	r.NoError(w.RunOnce(ctx))
+
+	// One EmbedImages call per fingerprint group, two inputs each.
+	r.EqualValues(2, client.calls.Load(), "one call per fingerprint group")
+	client.mu.Lock()
+	r.Equal([]int{2, 2}, client.inputCounts, "each call carries exactly its group's inputs")
+	client.mu.Unlock()
+
+	// v1 stayed active (worker writes mappings to it without changing
+	// its state); v2 is the building row created by the worker.
+	active, err := gens.FindActive(ctx)
+	r.NoError(err)
+	r.NotNil(active)
+	r.Equal(v1Gen.ID, active.ID)
+
+	v2Gen, err := gens.FindOrCreateBuilding(ctx, fpV2, embedCfg().Dimension)
+	r.NoError(err)
+	r.NotEqual(v1Gen.ID, v2Gen.ID, "fingerprints must resolve to distinct generations")
+	r.Equal(2, embeddedCount(t, d, v1Gen.ID), "v1 generation count")
+	r.Equal(2, embeddedCount(t, d, v2Gen.ID), "v2 generation count")
+
+	// Mapping rows route to the correct generation per claim's fingerprint.
+	for _, m := range v1Mids {
+		r.True(mappingExists(t, d, v1Gen.ID, m), "v1 media %s missing in v1 generation", m)
+		r.False(mappingExists(t, d, v2Gen.ID, m), "v1 media %s leaked into v2 generation", m)
+		r.Equal("done", jobStatus(t, d, m, ai.TaskEmbed))
+	}
+	for _, m := range v2Mids {
+		r.True(mappingExists(t, d, v2Gen.ID, m), "v2 media %s missing in v2 generation", m)
+		r.False(mappingExists(t, d, v1Gen.ID, m), "v2 media %s leaked into v1 generation", m)
+		r.Equal("done", jobStatus(t, d, m, ai.TaskEmbed))
 	}
 }
 
