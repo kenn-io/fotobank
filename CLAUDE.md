@@ -7,7 +7,7 @@ This is a **Go project**. An earlier Python prototype was deleted at 2026-04-23;
 ## Quick reference
 
 ```bash
-make build            # debug binary → bin/fotobank
+make build            # debug binary → bin/fotobank (requires a C compiler; CGO)
 make build-release    # release binary
 make install          # copy to ~/.local/bin or $GOBIN
 make dev              # live-reload via air (runs `server`)
@@ -68,7 +68,8 @@ Background workers (e.g. `internal/thumb/worker.go`) follow the same rule: they'
 - Migrations: pre-alpha policy — there is one migration, `000001_initial_schema.{up,down}.sql`, and you edit it directly for any schema change. No new numbered migrations until fotobank ships to real users. Both files (up + down) move together on every change.
 - HTTP: JSON routes use huma. Byte-streaming routes (`/original`, `/thumb`) use raw `http.HandlerFunc` on the same mux.
 - Identity: phase 1 is stub mode — one principal per config, set via `identity.mode = "stub"`. Other modes are rejected by the CLI tooling that mutates DB state.
-- Runtime: pure Go, no CGO. SQLite via `modernc.org/sqlite`.
+- Runtime: SQLite via `mattn/go-sqlite3` with the `sqlite-vec` auto-extension. CGO is enabled. One driver registration across the app — see `internal/db/sqlitevec.go`.
+- Cross-build (e.g. macOS host → Linux deploy): set `CC` to a cross-compiler (`zig cc -target x86_64-linux-musl`, `musl-cross`, or equivalent). Plain `GOOS=linux GOARCH=amd64 go build` without a cross `CC` will fail at link time.
 
 ## Plans
 
