@@ -22,11 +22,27 @@ async function ackHiddenProcessing(page: Page): Promise<void> {
   expect(res.status()).toBe(200);
 }
 
+// isAcked returns true if the server has already recorded the
+// hidden-processing acknowledgement. The ack-gate test relies on this to
+// short-circuit on a CI retry, where the previous attempt already
+// flipped paused_reason.
+async function isAcked(page: Page): Promise<boolean> {
+  const res = await page.request.get("/api/v1/ai/health");
+  expect(res.status()).toBe(200);
+  const body = (await res.json()) as { paused_reason?: string };
+  return body.paused_reason !== "acknowledgement_required";
+}
+
 test.describe("F4 AI", () => {
   // -------------------------------------------------------------------------
   // Acknowledgement gate — only meaningful when the server starts unacked.
   // FOTOBANK_E2E_AI_PRE_ACK=1 skips this branch because the ack row is
   // already present and SettingsAI never renders the dialog.
+  //
+  // The ack click mutates server state, so a CI retry after a partial
+  // failure would land on an already-acked server. We probe /ai/health
+  // first and skip with a clear message if the precondition is gone —
+  // that lets retries succeed instead of failing on the missing modal.
   // -------------------------------------------------------------------------
   test("acknowledgement gate parks workers; ack reveals task cards", async ({
     page,
@@ -34,6 +50,10 @@ test.describe("F4 AI", () => {
     test.skip(
       AI_PRE_ACKED,
       "ack modal only renders when the server is started unacked",
+    );
+    test.skip(
+      await isAcked(page),
+      "server already acked (likely a retry of a previous attempt)",
     );
 
     await page.goto("/settings/ai");
@@ -108,10 +128,11 @@ test.describe("F4 AI", () => {
 
   // -------------------------------------------------------------------------
   // Lightbox failure path: seeded ai-fixture-failed-1 has a caption
-  // failure row. The retry button must POST /api/v1/ai/retry-photo. We
-  // assert on the request shape via waitForResponse rather than waiting
-  // for the worker to round-trip through the mock VLM and update the DB
-  // — that path is timing-dependent in e2e.
+  // failure row. The retry button must POST /api/v1/ai/retry-photo with
+  // the failed (media_id, task) tuple. We capture the outbound request
+  // and assert the body shape; we don't wait for the worker to round-
+  // trip through the mock VLM and update the DB because that path is
+  // timing-dependent in e2e.
   // -------------------------------------------------------------------------
   test("lightbox shows caption failure with retry button", async ({ page }) => {
     if (!AI_PRE_ACKED) {
@@ -127,10 +148,20 @@ test.describe("F4 AI", () => {
     const retryBtn = page.getByRole("button", { name: /Retry/ });
     await expect(retryBtn).toBeVisible();
 
+    // Capture the outbound request so we can verify the body shape, not
+    // just the status — the contract with the backend is that the click
+    // POSTs { media_id, task: "caption" } to /api/v1/ai/retry-photo.
+    const requestPromise = page.waitForRequest((req) =>
+      req.url().includes("/api/v1/ai/retry-photo") && req.method() === "POST",
+    );
     const responsePromise = page.waitForResponse((resp) =>
       resp.url().includes("/api/v1/ai/retry-photo"),
     );
     await retryBtn.click();
+    const req = await requestPromise;
+    const body = req.postDataJSON() as { media_id?: string; task?: string };
+    expect(body.media_id).toBe("ai-fixture-failed-1");
+    expect(body.task).toBe("caption");
     const resp = await responsePromise;
     expect(resp.status()).toBe(200);
   });
