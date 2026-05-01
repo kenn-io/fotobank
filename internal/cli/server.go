@@ -171,13 +171,21 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	hiddenSvc := hidden.NewService(hiddenRepo, mediaSvc)
 	// FOTOBANK_E2E_LOCKOUT_WINDOW shrinks the lockout window and duration
 	// so Playwright tests can exercise the rate limiter without real waits.
-	// Only honoured when the env var is set; production ignores this path.
+	// We require FOTOBANK_E2E_MODE=1 alongside it so a production or
+	// staging deployment that happens to inherit FOTOBANK_E2E_LOCKOUT_WINDOW
+	// from a shared shell profile can never weaken its hidden-auth
+	// rate limit. The e2e-server sets both at startup.
 	if raw := os.Getenv("FOTOBANK_E2E_LOCKOUT_WINDOW"); raw != "" {
-		if d, parseErr := time.ParseDuration(raw); parseErr == nil {
-			hiddenSvc.SetLockoutForTest(d, d, 5)
-		} else {
+		if os.Getenv("FOTOBANK_E2E_MODE") != "1" {
+			logger.Warn("FOTOBANK_E2E_LOCKOUT_WINDOW ignored — FOTOBANK_E2E_MODE=1 not set")
+		} else if d, parseErr := time.ParseDuration(raw); parseErr != nil {
 			logger.Warn("FOTOBANK_E2E_LOCKOUT_WINDOW ignored — invalid duration",
 				"raw", raw, "err", parseErr)
+		} else if d <= 0 {
+			logger.Warn("FOTOBANK_E2E_LOCKOUT_WINDOW ignored — duration must be positive",
+				"raw", raw)
+		} else {
+			hiddenSvc.SetLockoutForTest(d, d, 5)
 		}
 	}
 

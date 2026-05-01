@@ -17,7 +17,9 @@
 //   - FOTOBANK_E2E_LOCKOUT_WINDOW: duration string (e.g. "5s") to override
 //     the hidden-auth lockout window and duration (default 300s production).
 //     The threshold stays at 5 failures; only the window and lockout duration
-//     shrink so the lockout test can complete without real wait.
+//     shrink so the lockout test can complete without real wait. The override
+//     is gated on FOTOBANK_E2E_MODE=1 (set by this command) so an inherited
+//     environment variable cannot weaken a production deployment.
 package main
 
 import (
@@ -54,6 +56,13 @@ func main() {
 }
 
 func run() error {
+	// Mark this process as the e2e server so internal/cli/server.go will
+	// honor FOTOBANK_E2E_LOCKOUT_WINDOW. A bare production process with
+	// FOTOBANK_E2E_LOCKOUT_WINDOW inherited from the shell silently
+	// ignores the override.
+	if err := os.Setenv("FOTOBANK_E2E_MODE", "1"); err != nil {
+		return fmt.Errorf("set FOTOBANK_E2E_MODE: %w", err)
+	}
 	tmp, err := os.MkdirTemp("", "fotobank-e2e-")
 	if err != nil {
 		return fmt.Errorf("creating temp dir: %w", err)
