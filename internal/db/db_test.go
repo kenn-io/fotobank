@@ -141,6 +141,16 @@ func TestOpen_RoundTripNullableTime(t *testing.T) {
 // exists to assert the driver doesn't drop the offset or sub-second
 // component during write+read.
 //
+// Two distinct assertions:
+//
+//   - time.Time.Equal: the Unix instant survives the round-trip (this
+//     would still pass if the driver rewrote a non-UTC value as its
+//     UTC equivalent).
+//   - Zone offset equality: the FixedZone offset survives literally,
+//     so a regression that strips the offset (e.g. mattn returning UTC
+//     for a value written in a non-UTC zone) is caught even though the
+//     instant would still match.
+//
 // Read happens via ReadDB() (mode=ro pool) so both pools are
 // exercised by the time-scan regression suite.
 func TestOpen_RoundTripTZ(t *testing.T) {
@@ -154,8 +164,8 @@ func TestOpen_RoundTripTZ(t *testing.T) {
 
 	// Fixed-offset PDT-equivalent zone. forbidigo bans tz construction
 	// in production paths but explicitly carves out tests; this is the
-	// test-only use the lint message refers to. The assertion below
-	// only cares about the Unix instant round-trip.
+	// test-only use the lint message refers to. The assertions below
+	// cover both the Unix instant and the zone offset round-trip.
 	loc := time.FixedZone("PDT", -7*60*60) //nolint:forbidigo // test-only TZ round-trip; see comment above
 	// 123.456ms — within mattn's microsecond storage resolution; the
 	// trailing zeros below the microsecond boundary keep the value
@@ -169,6 +179,14 @@ func TestOpen_RoundTripTZ(t *testing.T) {
 	var got time.Time
 	r.NoError(ro.QueryRow(`SELECT ts FROM t_tz WHERE id=1`).Scan(&got))
 	r.True(got.Equal(want), "Unix instant + sub-second must round-trip; want %v got %v", want, got)
+
+	// Zone offset must round-trip literally. time.Time.Equal returns
+	// true for the same instant regardless of zone, so without this
+	// assertion a regression that returned UTC ("offset 0") for a
+	// non-UTC write would still pass the Equal check.
+	_, gotOffset := got.Zone()
+	_, wantOffset := want.Zone()
+	r.Equal(wantOffset, gotOffset, "TZ offset must round-trip; want %d got %d", wantOffset, gotOffset)
 }
 
 // TestOpen_ConcurrentWriters proves busy_timeout is actually engaged
