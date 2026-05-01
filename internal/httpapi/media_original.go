@@ -69,10 +69,11 @@ func registerMediaOriginal(mux *http.ServeMux, svc *service.MediaService) {
 		etag := `"` + m.Checksum + `"`
 		h.Set("ETag", etag)
 		h.Set("Last-Modified", m.ImportedAt.UTC().Format(http.TimeFormat))
-		// must-revalidate instead of immutable: if a visible item is later
-		// hidden, the browser re-checks the ETag on the next access rather
-		// than serving a stale cached response indefinitely.
-		h.Set("Cache-Control", "private, max-age=31536000, must-revalidate")
+		// no-cache forces a conditional ETag revalidation on every reuse.
+		// max-age + must-revalidate would still let the browser serve a
+		// fresh entry without contacting us, so a photo hidden after view
+		// could come back from the private cache.
+		h.Set("Cache-Control", "private, no-cache")
 		// Set Accept-Ranges before the If-None-Match early return so
 		// 304 responses continue to advertise range support, matching
 		// the pre-helper owner contract.

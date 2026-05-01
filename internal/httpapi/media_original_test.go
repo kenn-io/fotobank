@@ -94,7 +94,7 @@ func TestGetMediaOriginalReturnsFullBodyAndHeaders(t *testing.T) {
 	r.Equal(`"cs-hello"`, resp.Header.Get("ETag"))
 	r.Equal("image/jpeg", resp.Header.Get("Content-Type"))
 	r.Equal("5", resp.Header.Get("Content-Length"))
-	r.Equal("private, max-age=31536000, must-revalidate", resp.Header.Get("Cache-Control"))
+	r.Equal("private, no-cache", resp.Header.Get("Cache-Control"))
 	r.Equal("bytes", resp.Header.Get("Accept-Ranges"))
 	r.Equal(m.ImportedAt.UTC().Format(http.TimeFormat), resp.Header.Get("Last-Modified"))
 }

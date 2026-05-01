@@ -16,10 +16,10 @@ import (
 // registerMediaThumb wires GET /api/v1/media/{id}/thumb onto mux. The
 // handler enforces owner visibility via svc, defaults ?size= to "grid",
 // requires a non-negative integer ?v= that matches the row's
-// thumb_version, and streams the bytes with a strong ETag +
-// immutable cache directive (URL identity via ?v= is what makes
-// "immutable" safe — a regenerate bumps the version and therefore the
-// URL). Callers that don't need the thumb route (OpenAPI dumper, tests)
+// thumb_version, and streams the bytes with a strong ETag and
+// `private, no-cache` so each reuse goes through ETag revalidation.
+// Versioned ?v= URLs still bust the cache instantly on regenerate.
+// Callers that don't need the thumb route (OpenAPI dumper, tests)
 // pass a Deps without a ThumbService; this function then returns
 // without registering anything.
 //
@@ -106,11 +106,11 @@ func registerMediaThumb(mux *http.ServeMux, svc *service.ThumbService) {
 		if m.ThumbUpdatedAt != nil {
 			h.Set("Last-Modified", m.ThumbUpdatedAt.UTC().Format(http.TimeFormat))
 		}
-		// must-revalidate instead of immutable: if a visible item is later
-		// hidden, the browser re-checks the ETag on the next access rather
-		// than serving a stale cached response indefinitely. The versioned
-		// ?v= URL still ensures instant cache-busting on thumb regeneration.
-		h.Set("Cache-Control", "private, max-age=31536000, must-revalidate")
+		// no-cache forces a conditional ETag revalidation on every reuse.
+		// The ?v= URL still cache-busts after thumb regeneration; this
+		// header is what stops a hidden thumbnail from being served from
+		// the private cache after visibility changes.
+		h.Set("Cache-Control", "private, no-cache")
 
 		if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" && etagMatches(ifNoneMatch, etag) {
 			_ = rc.Close()

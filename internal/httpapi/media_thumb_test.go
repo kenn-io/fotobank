@@ -83,7 +83,7 @@ func TestThumbRouteReturnsBytesOnMatchingVersion(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	r.Equal(http.StatusOK, resp.StatusCode)
 	r.Equal(`"`+m.ID+`-grid-v7"`, resp.Header.Get("ETag"))
-	r.Contains(resp.Header.Get("Cache-Control"), "must-revalidate")
+	r.Equal("private, no-cache", resp.Header.Get("Cache-Control"))
 	r.Equal("image/jpeg", resp.Header.Get("Content-Type"))
 	body, err := io.ReadAll(resp.Body)
 	r.NoError(err)

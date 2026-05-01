@@ -232,14 +232,15 @@ admin_listen = "127.0.0.1:0"
 	}
 	r.Len(photos, 2, "expected two photo rows")
 
-	// 8. Fetch grid thumb for each photo; assert 200, ETag, must-revalidate cache.
+	// 8. Fetch grid thumb for each photo; assert 200, ETag, no-cache so
+	// every reuse must revalidate against the server.
 	for _, p := range photos {
 		url := base + "/api/v1/media/" + p.ID + "/thumb?size=grid&v=" + strconv.Itoa(p.Version)
 		resp, err := client.Get(url)
 		r.NoError(err)
 		r.Equalf(http.StatusOK, resp.StatusCode, "url=%s", url)
 		r.Equal(`"`+p.ID+`-grid-v`+strconv.Itoa(p.Version)+`"`, resp.Header.Get("ETag"))
-		r.Contains(resp.Header.Get("Cache-Control"), "must-revalidate")
+		r.Equal("private, no-cache", resp.Header.Get("Cache-Control"))
 		body, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		r.NoError(err)
