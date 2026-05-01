@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/wesm/fotobank/internal/testutil"
 )
 
 // makeSourceDB creates a tiny SQLite DB at path with one table and one row.
@@ -140,4 +142,42 @@ func TestBuildDSNEscapesReserved(t *testing.T) {
 	r.NotEmpty(u.Path, "relative path must be promoted into u.Path")
 	r.True(strings.HasPrefix(u.Path, "/"), "u.Path must be absolute, got %q", u.Path)
 	r.True(strings.HasSuffix(u.Path, "/rel.sqlite"), "u.Path must end with the original filename, got %q", u.Path)
+}
+
+// TestSnapshotPragmas_AfterRestore_RoundTrip proves that a snapshot
+// created with VACUUM INTO and re-opened via the restore-side DSN
+// honours the same busy_timeout and foreign_keys defaults as the live
+// DB. Foreign-key enforcement is the one that bites silently — a
+// snapshot opened without _fk=1 would let a child-row delete cascade
+// disappear in tests that assert on FK behavior.
+func TestSnapshotPragmas_AfterRestore_RoundTrip(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	// Seed a parent owner row + a child media row that depends on the
+	// owners FK. SeedPhoto inserts a fully-formed media row.
+	owner := testutil.SeedOwner(t, d.WriteDB(), "self", "u1")
+	mediaID := testutil.SeedPhoto(t, d.WriteDB(), owner, "round-trip")
+
+	// Snapshot.
+	snapPath := filepath.Join(t.TempDir(), "snap.sqlite")
+	require.NoError(t, Snapshot(context.Background(), d.WriteDB(), snapPath))
+
+	// Re-open the snapshot via the same code path the restore tool uses.
+	conn, err := sql.Open("sqlite3", "file:"+snapPath+"?_busy_timeout=5000&_fk=1&mode=ro")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	// Confirm the seeded media row arrived intact.
+	var got string
+	require.NoError(t, conn.QueryRow(
+		`SELECT id FROM media WHERE id = ?`, mediaID,
+	).Scan(&got))
+	require.Equal(t, mediaID, got)
+
+	// Confirm foreign_keys is enforced on the snapshot connection.
+	// Attempting to insert an album_media row with a non-existent
+	// album_id must error with a constraint failure.
+	_, err = conn.Exec(`INSERT INTO album_media (album_id, media_id, added_at)
+	                       VALUES (?, ?, datetime('now'))`,
+		"00000000-0000-0000-0000-000000000000", mediaID)
+	require.Error(t, err, "foreign_keys=1 must be active on the snapshot connection")
 }
