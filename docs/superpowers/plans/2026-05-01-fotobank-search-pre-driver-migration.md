@@ -41,7 +41,7 @@ Test plan (the verification surface for this migration):
 |---|---|
 | `internal/db/db_test.go::TestOpen_RoundTripNullableTime` | Mattn round-trips `*time.Time` (nil and non-nil) without losing TZ |
 | `internal/db/db_test.go::TestOpen_RoundTripCoalescedTime` | A `COALESCE(ts1, ts2)` expression scans into `time.Time` directly (the modernc-specific reason `parseSQLiteTimeString` existed is gone) |
-| `internal/db/db_test.go::TestOpen_ConcurrentWriters` | Two raw *sql.DB handles + h1 BEGIN IMMEDIATE held for a known window; h2 INSERT must wait at least that long (deterministic) |
+| `internal/db/db_test.go::TestOpen_ConcurrentWriters` | Two raw *sql.DB handles + h1 BEGIN IMMEDIATE; probe asserts h2 INSERT is BLOCKED while h1 holds the lock and SUCCEEDS once h1 commits |
 | `internal/db/sqlitevec_test.go::TestRegistered` | `vec_version()` returns a non-empty string after `RegisterSqliteVec()` |
 | `internal/backup/restore_test.go::TestRestore_RoundTrip` | `VACUUM INTO` snapshot + restore re-open path works under mattn's connection lifecycle |
 | `internal/share/repo_test.go::TestListByOwner_*` | The previously-COALESCE'd time path scans cleanly without `parseSQLiteTimeString` |
@@ -707,31 +707,30 @@ git commit -m "test(testutil): register sqlite-vec in OpenTestDB"
 
 **Context.** The spec calls for "exercise the import + AI worker concurrent-write paths under a stress test before declaring the migration done." The goal is a deterministic test that proves busy_timeout actually engages under SQLite-level write contention.
 
-**Critical pitfalls (both caught in review).**
+**Critical pitfalls (caught across multiple review rounds).**
 
 - *Pitfall 1 — pool serialization (caught reviewing `7db55c33`).* `testutil.OpenTestDB(t)` returns a `*db.DB` whose RW pool is pinned to `MaxOpenConns(1)`. Goroutines through `d.WriteDB()` therefore queue at the Go `database/sql` layer and never reach SQLite concurrently — the test passes even on a driver with NO busy-retry logic. To exercise busy_timeout you must open TWO separate raw `*sql.DB` handles to the same file with default (unlimited) `MaxOpenConns` so two SQLite connections genuinely race for the file write lock.
-- *Pitfall 2 — timing-based heuristic (caught reviewing `2e7bea58`).* Asserting `maxExec > 1ms` is a heuristic, not proof. A single fsync or scheduler stall can blow past 1ms even when no busy-retry happened, so the assertion can pass when busy_timeout is broken. The fix is a deterministic contention window: hold a `BEGIN IMMEDIATE` transaction on h1 for a known duration; assert h2's competing INSERT waits at least that long.
+- *Pitfall 2 — elapsed-time heuristics (caught and re-caught across `2e7bea58`, `ef636f8`, `dbe4d93`, `651360a`, `8bb084a`).* Multiple iterations tried to make an "elapsed must exceed N" assertion deterministic via channel handshakes, increased hold windows, and time-capture ordering. Each iteration plugged one race only to expose another (false negatives from scheduler stalls before time capture; false positives from stalls counted as elapsed time after time capture). The genuinely-deterministic redesign abandons elapsed-time entirely.
 
-**Step 1: Write the test.**
-
-The test must:
+**Test design — probe-based, no elapsed measurement.**
 
 1. Skip under `-short`.
-2. Call `db.RegisterSqliteVec()` defensively (registration is sync.Once-guarded; harmless).
+2. `db.RegisterSqliteVec()` defensively.
 3. Create a scratch DB file in `t.TempDir()`.
 4. Open TWO raw `*sql.DB` handles via `sql.Open("sqlite3", path+"?_busy_timeout=5000&_fk=1")`. Default `MaxOpenConns`. Defer `Close` on both.
 5. Set WAL mode and CREATE TABLE through `h1` BEFORE the contention phase.
-6. Bound the test with `ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)` so a regression cannot wedge the suite.
-7. Pin a `*sql.Conn` from `h1` (`h1.Conn(ctx)`) and `BEGIN IMMEDIATE` on it. The pinned conn is required — `h1.Exec("BEGIN IMMEDIATE")` would land on a pooled conn and the next call could land elsewhere, so `BEGIN` and `COMMIT` must use the same pinned conn.
-8. In a goroutine: capture `start := time.Now()` FIRST, then `close(started)` channel, THEN run `h2.ExecContext(ctx, "INSERT INTO stress …")`. The `start`-before-`close` ordering matters: any scheduler stall between the goroutine being scheduled and `ExecContext` reaching SQLite is folded into `elapsed`. If you flip the order (close first, capture second), a stall would subtract from `elapsed` and could cause spurious failures even when busy_timeout is working.
-9. Wait on `<-started`, sleep ~10ms (so h2 has a chance to actually enter `ExecContext` and reach SQLite), then sleep `holdWindow` (default **500ms** — see below for sizing). The `started` handshake plus the post-handshake sleep close the goroutine-start race window to microseconds in practice; a generous holdWindow provides the rest of the safety margin without resorting to invasive SQLite-internal lock-state polling.
-10. `COMMIT` on h1's pinned conn.
-11. Receive h2's result via a `select` on `resCh` and `ctx.Done()`. If `ctx.Done()` fires first, fail with a clear message (the busy-retry never released, or the test wedged).
-12. Assert h2's `INSERT` succeeded (no error).
-13. Assert h2's elapsed time is `>= holdWindow - slack` (use ~5ms slack for clock granularity). If h2 returned faster than that, busy_timeout did not actually wait — h2 raced through a brief lock-free window or the busy-retry didn't engage.
-14. Assert the row count is exactly 1.
+6. Bound the test with `ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)`.
+7. Pin a `*sql.Conn` from `h1` (`h1.Conn(ctx)`) and `BEGIN IMMEDIATE` on it. The pinned conn is required because `BEGIN` and `COMMIT` must run on the same connection.
+8. In a goroutine: `close(started)` channel, then run `h2.ExecContext(ctx, "INSERT INTO stress …")`, then send the error to `resCh`. No timing capture.
+9. Wait on `<-started`, then sleep `probeWindow` (default **200ms**). 200ms is enormous on any realistic runner — easily enough for h2 to reach `ExecContext` and have it block on the lock.
+10. **Probe `resCh` non-blockingly.** If `resCh` is non-empty at this point, h2 completed while h1 still holds the lock — `busy_timeout` failed to block the writer. Fail with a clear error message including h2's returned error.
+11. If `resCh` was empty, COMMIT on h1's pinned conn.
+12. Wait on `resCh` with `ctx.Done()` as the safety net. Assert no error.
+13. Assert the row count is exactly 1.
 
-**Sizing the holdWindow.** Use **500ms**, not 100ms. The reason is empirical: a too-short hold window combined with a started-channel handshake (which only proves the goroutine has been scheduled, not that `ExecContext` has reached SQLite) still has a microseconds-to-milliseconds race window. 500ms gives a ~10× safety factor over even severe (~50ms) scheduler stalls. The test runtime cost is minimal (~580ms vs ~120ms) and well within `-short` skip semantics anyway. Earlier iterations used 100ms and got bitten in code review by a goroutine-start race finding (Job 65) and a residual handshake-doesn't-prove-SQLite-arrival finding (Job 72) — the 500ms hold window is the pragmatic resolution that closes both without needing SQLite-internal observation.
+**What this catches.** A regression that breaks the "block until the lock is released" contract — i.e. busy_timeout=0, missing retry logic, or any path that lets h2 fail-fast with `database is locked`. The probe window assumption is "200ms is enough for h2 to reach ExecContext"; if a runner is so loaded that it can't schedule a goroutine in 200ms, the entire test infrastructure is broken anyway.
+
+**What this does NOT do.** The test does not measure elapsed time and does not try to assert "h2 waited at least N milliseconds." That measurement is unreliable in the presence of scheduler stalls in either direction (Pitfall 2 above). The probe-based design replaces elapsed-time-measurement-as-proof with active-state-observation-as-proof, which is what the property requires.
 
 This is genuinely deterministic: if `busy_timeout=0` or the driver lacks retry support, h2's `INSERT` errors immediately with `SQLITE_BUSY` (assertion 11 fails). If busy_timeout works, h2 blocks for `holdWindow` then succeeds (assertions 11-13 pass).
 
@@ -750,7 +749,7 @@ The doc-comment must explicitly call out:
 go test ./internal/db/ -run "TestOpen_ConcurrentWriters" -count=1 -v
 ```
 
-Expected: PASS in ~580ms. The test should log `h2 Exec waited NNNms for the write lock` where NNN ≈ 510-580ms (above the 495ms threshold).
+Expected: PASS in ~210-260ms. The test does not log elapsed time (it doesn't measure it).
 
 **Step 3: Run with `-race`.**
 
@@ -772,10 +771,10 @@ Expected: SKIP.
 
 ```bash
 git add internal/db/db_test.go
-git commit -m "test(db): deterministic concurrent-writer test via BEGIN IMMEDIATE"
+git commit -m "test(db): probe-based busy_timeout test"
 ```
 
-The reference implementation evolved through several commits as code review surfaced finer races: `ef636f8` (initial deterministic version), `dbe4d93` (started-channel handshake for Job 65), `651360a` (500ms holdWindow widening for Job 72), `8bb084a` (capture `start` BEFORE `close(started)` for Job 73). The current state captures all four. The combination of (a) `start` captured before the handshake, (b) the started-channel handshake, (c) a 10ms post-handshake sleep, and (d) a 500ms holdWindow with 5ms slack provides a pragmatic flake reduction strong enough that the empirical elapsed sits ~70ms above threshold under normal load (~565ms vs 495ms threshold across three runs).
+The reference implementation evolved through five commits before converging on the probe-based design: `ef636f8` (initial deterministic with elapsed-time), `dbe4d93` (handshake for Job 65), `651360a` (500ms hold for Job 72), `8bb084a` (start-before-close for Job 73), then `2c82bb0` (probe-based, no elapsed measurement, for Job 75). The probe-based version is the canonical one; the elapsed-time iterations are listed only so future readers see the convergence path and don't reintroduce the heuristic.
 
 ---
 
