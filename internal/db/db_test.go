@@ -101,12 +101,18 @@ func TestScopesBackoffMigration(t *testing.T) {
 
 // TestOpen_RoundTripNullableTime asserts that *time.Time scans round-trip
 // nil and non-nil values cleanly under mattn. The test creates a tiny
-// scratch table, writes (nullable_ts = NULL) and (nullable_ts = utcNow),
-// then reads them back into *time.Time pointers and compares.
+// scratch table, writes (nullable_ts = NULL) and (nullable_ts = utcNow)
+// through the WRITE pool, then reads them back through the READ pool
+// into *time.Time pointers and compares.
+//
+// Reading via ReadDB() (not WriteDB()) is deliberate: the two pools
+// open with different DSNs (read-only with mode=ro), and the prior
+// test exercised only the writer pool. This version covers both.
 func TestOpen_RoundTripNullableTime(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	rw := d.WriteDB()
+	ro := d.ReadDB()
 
 	_, err := rw.Exec(`CREATE TABLE t_time_test (
 		id INTEGER PRIMARY KEY,
@@ -119,24 +125,29 @@ func TestOpen_RoundTripNullableTime(t *testing.T) {
 	r.NoError(err)
 
 	var got1 *time.Time
-	r.NoError(rw.QueryRow(`SELECT ts FROM t_time_test WHERE id=1`).Scan(&got1))
+	r.NoError(ro.QueryRow(`SELECT ts FROM t_time_test WHERE id=1`).Scan(&got1))
 	r.NotNil(got1)
 	r.True(got1.Equal(now), "want %v got %v", now, *got1)
 
 	var got2 *time.Time
-	r.NoError(rw.QueryRow(`SELECT ts FROM t_time_test WHERE id=2`).Scan(&got2))
+	r.NoError(ro.QueryRow(`SELECT ts FROM t_time_test WHERE id=2`).Scan(&got2))
 	r.Nil(got2, "NULL TIMESTAMP must Scan into nil *time.Time")
 }
 
 // TestOpen_RoundTripTZ asserts that a TIMESTAMP column written as a
-// non-UTC time round-trips with the same Unix instant. (Fotobank
-// stores everything as UTC; the test exists to assert the driver
-// doesn't drop sub-second precision or offset its understanding of
-// the wall-clock value.)
+// non-UTC time round-trips with the same Unix instant AND preserves
+// sub-second precision (mattn stores at microsecond resolution via
+// the .999999999 layout). Fotobank stores everything as UTC; the test
+// exists to assert the driver doesn't drop the offset or sub-second
+// component during write+read.
+//
+// Read happens via ReadDB() (mode=ro pool) so both pools are
+// exercised by the time-scan regression suite.
 func TestOpen_RoundTripTZ(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	rw := d.WriteDB()
+	ro := d.ReadDB()
 
 	_, err := rw.Exec(`CREATE TABLE t_tz (id INTEGER PRIMARY KEY, ts TIMESTAMP)`)
 	r.NoError(err)
@@ -146,13 +157,18 @@ func TestOpen_RoundTripTZ(t *testing.T) {
 	// test-only use the lint message refers to. The assertion below
 	// only cares about the Unix instant round-trip.
 	loc := time.FixedZone("PDT", -7*60*60) //nolint:forbidigo // test-only TZ round-trip; see comment above
-	want := time.Date(2026, 5, 1, 9, 30, 0, 0, loc)
+	// 123.456ms — within mattn's microsecond storage resolution; the
+	// trailing zeros below the microsecond boundary keep the value
+	// representable so a successful round-trip really does mean
+	// sub-second precision survived (not just that we lucked into
+	// 0ns and the assertion was vacuous).
+	want := time.Date(2026, 5, 1, 9, 30, 0, 123456000, loc)
 	_, err = rw.Exec(`INSERT INTO t_tz (id, ts) VALUES (1, ?)`, want)
 	r.NoError(err)
 
 	var got time.Time
-	r.NoError(rw.QueryRow(`SELECT ts FROM t_tz WHERE id=1`).Scan(&got))
-	r.True(got.Equal(want), "Unix instant must round-trip")
+	r.NoError(ro.QueryRow(`SELECT ts FROM t_tz WHERE id=1`).Scan(&got))
+	r.True(got.Equal(want), "Unix instant + sub-second must round-trip; want %v got %v", want, got)
 }
 
 // TestOpen_ConcurrentWriters proves busy_timeout is actually engaged
