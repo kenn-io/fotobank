@@ -64,30 +64,32 @@ func (s *Service) Health(ctx context.Context, caller owners.Principal, in Health
 	}
 	now := time.Now().UTC()
 	h.Vision.LastCheckAt = now
-	if err := in.Probe.Probe(ctx); err == nil {
+	if in.Probe == nil {
+		h.Vision.LastError = "probe not configured"
+	} else if err := in.Probe.Probe(ctx); err == nil {
 		h.Vision.Reachable = true
 	} else {
 		h.Vision.LastError = err.Error()
 	}
-	h.Tag = s.taskHealth(ctx, ai.TaskTag, s.deps.ConfigFingerprints.Tag)
-	h.Caption = s.taskHealth(ctx, ai.TaskCaption, s.deps.ConfigFingerprints.Caption)
+	h.Tag = s.taskHealth(ctx, caller, ai.TaskTag, s.deps.ConfigFingerprints.Tag)
+	h.Caption = s.taskHealth(ctx, caller, ai.TaskCaption, s.deps.ConfigFingerprints.Caption)
 	return h
 }
 
-func (s *Service) taskHealth(ctx context.Context, t ai.Task, fp ai.Fingerprint) TaskPart {
+func (s *Service) taskHealth(ctx context.Context, caller owners.Principal, t ai.Task, fp ai.Fingerprint) TaskPart {
 	tp := TaskPart{ActiveFingerprint: fp.String()}
-	if c, err := s.deps.Queue.Counters(ctx, t); err == nil {
+	if c, err := s.deps.Queue.CountersByOwner(ctx, t, caller.Hub, caller.UserID); err == nil {
 		tp.Pending = c.Pending
 		tp.Working = c.Working
 		tp.Blocked = c.Blocked
 	}
-	if n, err := s.deps.Failures.CountForFingerprint(ctx, t, fp); err == nil {
+	if n, err := s.deps.Failures.CountForFingerprintByOwner(ctx, t, fp, caller.Hub, caller.UserID); err == nil {
 		tp.FailedActive = n
 	}
-	if n, err := s.deps.Skipped.Count(ctx, t); err == nil {
+	if n, err := s.deps.Skipped.CountByOwner(ctx, t, caller.Hub, caller.UserID); err == nil {
 		tp.Skipped = n
 	}
-	if n, err := s.deps.Results.DoneCount(ctx, t, fp); err == nil {
+	if n, err := s.deps.Results.DoneCountByOwner(ctx, t, fp, caller.Hub, caller.UserID); err == nil {
 		tp.Done = n
 	}
 	return tp

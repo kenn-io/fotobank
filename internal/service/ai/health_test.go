@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/owners"
 	aiservice "github.com/wesm/fotobank/internal/service/ai"
 	"github.com/wesm/fotobank/internal/testutil"
@@ -59,4 +60,44 @@ func TestHealthUnreachable(t *testing.T) {
 	})
 	r.False(h.Vision.Reachable)
 	r.Equal("connection refused", h.Vision.LastError)
+}
+
+func TestHealthCountersScopedToCaller(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	svc, rw := makeServiceWithDB(t)
+	alice := testutil.SeedOwner(t, rw, "local", "alice")
+	bob := testutil.SeedOwner(t, rw, "local", "bob")
+	r.NoError(svc.Acknowledge(ctx, alice))
+	r.NoError(svc.Acknowledge(ctx, bob))
+
+	tagFP := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	// Two pending tag jobs for bob; none for alice.
+	for _, label := range []string{"bob-1", "bob-2"} {
+		mid := testutil.SeedPhoto(t, rw, bob, label)
+		_, err := rw.ExecContext(ctx,
+			`INSERT INTO ai_jobs(id, media_id, task, fingerprint, status, attempts, enqueued_at)
+			 VALUES (?,?,?,?, 'pending', 0, datetime('now'))`,
+			mid+"-job", mid, "tag", tagFP.String())
+		r.NoError(err)
+	}
+
+	hAlice := svc.Health(ctx, alice, aiservice.HealthInput{Enabled: true, Probe: stubProbe{}})
+	r.Equal(0, hAlice.Tag.Pending, "alice must not see bob's pending jobs")
+
+	hBob := svc.Health(ctx, bob, aiservice.HealthInput{Enabled: true, Probe: stubProbe{}})
+	r.Equal(2, hBob.Tag.Pending, "bob sees his own pending jobs")
+}
+
+func TestHealthNilProbeDoesNotPanic(t *testing.T) {
+	r := require.New(t)
+	svc, rw := makeServiceWithDB(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	r.NoError(svc.Acknowledge(context.Background(), owner))
+
+	h := svc.Health(context.Background(), owner, aiservice.HealthInput{
+		Enabled: true, Probe: nil,
+	})
+	r.False(h.Vision.Reachable)
+	r.Equal("probe not configured", h.Vision.LastError)
 }

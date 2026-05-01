@@ -149,6 +149,23 @@ func (r *Repo) DoneCount(ctx context.Context, task ai.Task, fp ai.Fingerprint) (
 	return n, nil
 }
 
+// DoneCountByOwner is the owner-scoped variant used by the per-caller
+// health surface.
+func (r *Repo) DoneCountByOwner(ctx context.Context, task ai.Task, fp ai.Fingerprint, hub, userID string) (int, error) {
+	row := r.ro.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM ai_results r
+		  JOIN media m ON m.id = r.media_id
+		 WHERE r.task=? AND r.status='active'
+		   AND r.model_id=? AND r.prompt_version=? AND r.input_profile=?
+		   AND m.owner_hub=? AND m.owner_user_id=?`,
+		string(task), fp.ModelID, fp.PromptVersion, fp.InputProfile, hub, userID)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("count by owner: %w", err)
+	}
+	return n, nil
+}
+
 // HasActiveForFingerprint is used by the gap scanner to skip rows that
 // already have a current-fingerprint active result.
 func (r *Repo) HasActiveForFingerprint(ctx context.Context, mediaID string, task ai.Task, fp ai.Fingerprint) (bool, error) {

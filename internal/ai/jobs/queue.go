@@ -268,6 +268,26 @@ func (q *Queue) Counters(ctx context.Context, task ai.Task) (Counters, error) {
 	if err != nil {
 		return Counters{}, fmt.Errorf("counters: %w", err)
 	}
+	return scanCounters(rows)
+}
+
+// CountersByOwner is the owner-scoped variant used by the per-caller
+// health surface. Joins through media so other principals' depth is
+// not exposed.
+func (q *Queue) CountersByOwner(ctx context.Context, task ai.Task, hub, userID string) (Counters, error) {
+	rows, err := q.ro.QueryContext(ctx,
+		`SELECT j.status, COUNT(*) FROM ai_jobs j
+		   JOIN media m ON m.id = j.media_id
+		  WHERE j.task=? AND j.status IN ('pending','working','blocked')
+		    AND m.owner_hub=? AND m.owner_user_id=?
+		  GROUP BY j.status`, string(task), hub, userID)
+	if err != nil {
+		return Counters{}, fmt.Errorf("counters by owner: %w", err)
+	}
+	return scanCounters(rows)
+}
+
+func scanCounters(rows *sql.Rows) (Counters, error) {
 	defer func() { _ = rows.Close() }()
 	var c Counters
 	for rows.Next() {

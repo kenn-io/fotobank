@@ -130,3 +130,19 @@ func (r *Repo) CountForFingerprint(ctx context.Context, task ai.Task, fp ai.Fing
 	}
 	return n, nil
 }
+
+// CountForFingerprintByOwner is the owner-scoped variant used by the
+// per-caller health surface.
+func (r *Repo) CountForFingerprintByOwner(ctx context.Context, task ai.Task, fp ai.Fingerprint, hub, userID string) (int, error) {
+	row := r.ro.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM ai_failures f
+		  JOIN media m ON m.id = f.media_id
+		 WHERE f.task=? AND f.model_id=? AND f.prompt_version=? AND f.input_profile=?
+		   AND m.owner_hub=? AND m.owner_user_id=?`,
+		string(task), fp.ModelID, fp.PromptVersion, fp.InputProfile, hub, userID)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("count by owner: %w", err)
+	}
+	return n, nil
+}

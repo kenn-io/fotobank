@@ -61,3 +61,18 @@ func (r *Repo) Count(ctx context.Context, task ai.Task) (int, error) {
 	}
 	return n, nil
 }
+
+// CountByOwner is the owner-scoped variant used by the per-caller
+// health surface.
+func (r *Repo) CountByOwner(ctx context.Context, task ai.Task, hub, userID string) (int, error) {
+	row := r.ro.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM ai_skipped s
+		  JOIN media m ON m.id = s.media_id
+		 WHERE s.task=? AND m.owner_hub=? AND m.owner_user_id=?`,
+		string(task), hub, userID)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("scan by owner: %w", err)
+	}
+	return n, nil
+}
