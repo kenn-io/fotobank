@@ -16,6 +16,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/errs"
+	"github.com/wesm/fotobank/internal/search"
 )
 
 //go:embed config.example.toml
@@ -67,6 +68,7 @@ type Config struct {
 	Backup        Backup        `toml:"backup"`
 	Observability Observability `toml:"observability"`
 	AI            ai.Config     `toml:"ai"`
+	Search        search.Config `toml:"search"`
 }
 
 type Flash struct {
@@ -455,6 +457,7 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 		c.Observability.Logging.Level = "info"
 	}
 	c.AI.ApplyDefaults()
+	c.Search.ApplyDefaults()
 }
 
 func defaultFlashRoot() string {
