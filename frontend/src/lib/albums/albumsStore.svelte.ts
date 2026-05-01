@@ -11,13 +11,22 @@ export type AlbumListItem = {
 };
 
 // sortByUpdatedAtDesc mirrors the backend album ordering
-// (`ORDER BY updated_at DESC, id ASC`). Used after rename so the cache
-// stays in the same order the next /albums refetch would return.
+// (`ORDER BY updated_at DESC, id ASC`). Compares parsed instants
+// rather than raw RFC3339 strings — fractional seconds and varying
+// timezone offsets break lexicographic comparison (e.g.
+// "...00.1Z" sorts before "...00Z" lexically even though it is
+// strictly later). Date.parse falls back to NaN for invalid input;
+// we treat that as the epoch so a malformed value sorts to the
+// bottom rather than poisoning the entire comparator.
 function sortByUpdatedAtDesc(items: AlbumListItem[]): AlbumListItem[] {
+  const ts = (s: string): number => {
+    const t = Date.parse(s);
+    return Number.isNaN(t) ? 0 : t;
+  };
   return [...items].sort((a, b) => {
-    if (a.updated_at !== b.updated_at) {
-      return a.updated_at < b.updated_at ? 1 : -1;
-    }
+    const ta = ts(a.updated_at);
+    const tb = ts(b.updated_at);
+    if (ta !== tb) return tb - ta;
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
 }

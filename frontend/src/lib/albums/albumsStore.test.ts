@@ -255,6 +255,29 @@ describe("AlbumsStore.applyRename", () => {
     expect(store.albums[0]?.id).toBe("a1");
     expect(store.albums[0]?.name).toBe("A");
   });
+
+  it("orders fractional-second timestamps numerically, not lexically", async () => {
+    // "2026-04-30T12:00:00.100Z" is later than "2026-04-30T12:00:00Z"
+    // chronologically, but lexicographic comparison puts ".100Z" BEFORE
+    // "Z" so a string sort would invert them. The applied rename must
+    // bubble the fractional row to the top.
+    const client = fakeClient([
+      {
+        data: {
+          items: [
+            { id: "a1", name: "Older", item_count: 0, created_at: "x", updated_at: "2026-04-30T12:00:00Z" },
+            { id: "a2", name: "Newer", item_count: 0, created_at: "x", updated_at: "2026-04-29T00:00:00Z" },
+          ],
+          next_offset: null,
+        },
+      },
+    ]);
+    const store = new AlbumsStore(client as any);
+    await store.loadInitial();
+    store.applyRename("a2", { name: "Renamed", updated_at: "2026-04-30T12:00:00.100Z" });
+    expect(store.albums[0]?.id).toBe("a2");
+    expect(store.albums[1]?.id).toBe("a1");
+  });
 });
 
 describe("AlbumsStore.dropLocal", () => {
