@@ -462,8 +462,11 @@ Response:
   "has_more":    true,
   "total":       142,                    // present only on filter-only or date-sorted queries
   "effective_sort":                "newest",  // echoes the sort actually applied; differs from the
-                                         // request's `sort` only when the server coerced it
-                                         // (see §7.3 "q == '' && sort == 'relevance'")
+                                         // request's `sort` ONLY when the server coerced
+                                         // q == "" && sort == "relevance" → "newest" (§7.3 step 1).
+                                         // Semantic fallback (no active generation, query embed
+                                         // failed) does NOT change effective_sort — it surfaces
+                                         // through semantic_unavailable + semantic_unavailable_reason.
   "embedding_completeness": 0.97,        // active generation embedded/eligible — computed under
                                          // the same hidden predicate as the request
   "semantic_unavailable":          false,// true when no active generation OR query embedding failed
@@ -486,19 +489,25 @@ The result row embeds everything the existing justified-row grid needs to render
 
 ### 7.3 Hybrid engine
 
-Decision tree per request:
+Decision tree per request, structured **sort-first**: the top-level branch is the effective sort, with semantic-availability sub-cases nested inside each branch. This keeps the cursor shape and `semantic_unavailable_*` fields disjoint per branch and avoids one branch quietly overriding another.
 
-- **`q == "" && sort == "relevance"`** → coerced server-side to `sort = "newest"`; the response's `effective_sort` field reflects what was actually applied so the client can update its segmented control if needed. Relevance has no defined meaning without a query string; rather than 400 the request, the server picks the most useful default. The frontend defaults away from this combination on its own; the coercion is a defensive fallback for direct-API callers and bookmarked URLs.
-- **`q == "" && sort == "newest" | "oldest"`** → filter-only browse. Single SQL query against `media` with the structured filter; cursor is `(timestamp NULLS LAST, imported_at, id)`. No FTS5, no ANN, no scoring. Fast path; existing query patterns.
-- **`q != ""` and active generation present** → hybrid. Embed `q` once via the embedding client; build the FTS5 MATCH expression (§7.4); call `Backend.FusedSearch` (the sqlite-vec capability) with both signals + filter. Returns RRF-ordered hits. Cursor is `(rrf_score, media_id)`.
-- **`q != ""` and no active generation** → BM25-only. Same FTS5 MATCH expression, no vector signal. Response stamps `semantic_unavailable: true`, `semantic_unavailable_reason: "no_active_generation"`. Cursor is `(bm25_score, media_id)`.
-- **`q != ""`, active generation present, but `/v1/embeddings` fails for the query** (timeout, 5xx, network error) → degrade to BM25-only. Response stamps `semantic_unavailable: true`, `semantic_unavailable_reason: "query_embedding_failed"`. The whole request must not 500 just because the embedding endpoint is down — lexical results are still useful and arguably more deterministic. The error is logged once per request with the response code/body. The frontend banner copy distinguishes this from `no_active_generation`.
-- **`q != ""` and `sort != "relevance"`** → date-sorted candidate selection. The candidate pool depends on which signals are available, mirroring the relevance-sort decision branches:
-  - **active generation present, query embedding succeeds** → hybrid candidate selection (RRF top-K from BM25 + ANN, `KPerSignal * 2` per signal so the date sort has enough candidates to fill the page cleanly), then re-sort by `(timestamp NULLS LAST, imported_at, id)` for the page.
-  - **no active generation** → BM25-only candidate selection, then date-sort. Response stamps `semantic_unavailable: true`, `semantic_unavailable_reason: "no_active_generation"`.
-  - **active generation present but `/v1/embeddings` failed for the query** → BM25-only candidate selection, then date-sort. Response stamps `semantic_unavailable: true`, `semantic_unavailable_reason: "query_embedding_failed"`.
+**Step 1 — coerce relevance-without-query.** Before branching, the server coerces `q == "" && sort == "relevance"` to `sort = "newest"` and emits `effective_sort = "newest"` in the response (the only case where `effective_sort` differs from the request's `sort`). Relevance has no defined meaning without a query string; rather than 400 the request the server picks the most useful default. The frontend defaults away from this combination on its own; the coercion is a defensive fallback for direct-API callers and bookmarked URLs.
 
-  In all three sub-cases the cursor is the date-sort tuple `(timestamp NULLS LAST, imported_at, id)` (not the relevance-sort cursor) and `effective_sort` echoes back `"newest"` or `"oldest"` as requested.
+**Step 2 — branch on `(q, effective_sort)`:**
+
+- **`q == ""`** (effective_sort is always `"newest"` or `"oldest"` after step 1) → **filter-only browse.** Single SQL query against `media` with the structured filter, ordered by `(timestamp NULLS LAST, imported_at, id)`. No FTS5, no ANN, no scoring. `semantic_unavailable = false` (the field is moot when no semantic signal is requested). Cursor is `(timestamp_nulls_last, imported_at, id)`.
+
+- **`q != "" && effective_sort == "relevance"`** → **relevance-ranked.** Sub-cases:
+  - **active generation present, query embedding succeeds** → hybrid. Embed `q` once via the embedding client; build the FTS5 MATCH expression (§7.4); call `Backend.FusedSearch` (the sqlite-vec capability) with both signals + filter. Returns RRF-ordered hits. `semantic_unavailable = false`. Cursor is `(rrf_score, media_id)`.
+  - **no active generation** → BM25-only. Same FTS5 MATCH expression, no vector signal. `semantic_unavailable = true`, `semantic_unavailable_reason = "no_active_generation"`. Cursor is `(bm25_score, media_id)`.
+  - **active generation present but `/v1/embeddings` fails for the query** (timeout, 5xx, network error) → degrade to BM25-only. `semantic_unavailable = true`, `semantic_unavailable_reason = "query_embedding_failed"`. Cursor is `(bm25_score, media_id)`. The whole request must not 500 just because the embedding endpoint is down — lexical results are still useful and arguably more deterministic. The error is logged once per request with the response code/body. The frontend banner copy distinguishes this from `no_active_generation`.
+
+- **`q != "" && effective_sort != "relevance"`** → **date-sorted candidate selection.** The candidate pool depends on which signals are available, mirroring the relevance branch's sub-cases:
+  - **active generation present, query embedding succeeds** → hybrid candidate selection (RRF top-K from BM25 + ANN, `KPerSignal * 2` per signal so the date sort has enough candidates to fill the page cleanly), then re-sort by `(timestamp NULLS LAST, imported_at, id)` for the page. `semantic_unavailable = false`.
+  - **no active generation** → BM25-only candidate selection, then date-sort. `semantic_unavailable = true`, `semantic_unavailable_reason = "no_active_generation"`.
+  - **active generation present but `/v1/embeddings` failed for the query** → BM25-only candidate selection, then date-sort. `semantic_unavailable = true`, `semantic_unavailable_reason = "query_embedding_failed"`.
+
+  In all three sub-cases the cursor is the date-sort tuple `(timestamp_nulls_last, imported_at, id)` (not the relevance-sort cursor), and `effective_sort` echoes back `"newest"` or `"oldest"` as requested.
 
 `KPerSignal` (default 200), `RRFK` (default 60), and the per-signal limits are config-tunable under `[search]`.
 
