@@ -30,7 +30,8 @@ type Tag struct {
 const MaxTags = 10
 
 type tagsEnvelope struct {
-	Tags []string `json:"tags"`
+	// Pointer so we can distinguish "field missing or null" from "empty list".
+	Tags *[]string `json:"tags"`
 }
 
 var fencedJSON = regexp.MustCompile("(?s)^\\s*```(?:json)?\\s*(.*?)\\s*```\\s*$")
@@ -47,9 +48,12 @@ func Tags(raw string) ([]Tag, error) {
 	if err := json.Unmarshal([]byte(body), &env); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrMalformed, err)
 	}
+	if env.Tags == nil {
+		return nil, fmt.Errorf("%w: missing or null \"tags\" field", ErrMalformed)
+	}
 	out := make([]Tag, 0, MaxTags)
 	seen := map[string]int{} // key -> index in out
-	for _, raw := range env.Tags {
+	for _, raw := range *env.Tags {
 		key := normalizeKey(raw)
 		if key == "" {
 			continue
@@ -72,7 +76,7 @@ func Tags(raw string) ([]Tag, error) {
 //  3. Lowercase.
 //  4. Collapse internal whitespace runs to single space.
 //  5. Strip leading/trailing punctuation (non-alphanumeric, non-hyphen, non-apostrophe).
-//  6. Remove emoji and control chars.
+//  6. Remove emoji, emoji sequence joiners/variation selectors, and control chars.
 //  7. Reject empty post-normalization.
 //
 // Internal punctuation (hyphens, apostrophes, etc.) is preserved.
@@ -90,7 +94,11 @@ func normalizeKey(s string) string {
 		switch {
 		case unicode.IsControl(r):
 			continue
-		case unicode.Is(unicode.S, r): // symbols, including emoji
+		case unicode.Is(unicode.Cf, r): // format chars: ZWJ, BOM, etc.
+			continue
+		case isVariationSelector(r):
+			continue
+		case unicode.Is(unicode.S, r): // symbols, including emoji and skin-tone modifiers
 			continue
 		case unicode.IsSpace(r):
 			if !prevSpace && b.Len() > 0 {
@@ -112,4 +120,20 @@ func normalizeKey(s string) string {
 		return true
 	})
 	return out
+}
+
+// isVariationSelector reports whether r is a Unicode variation selector
+// (used to qualify emoji presentation, e.g. U+FE0F). These are category
+// Mn but functionally part of an emoji sequence, so we strip them
+// alongside Cf joiners.
+func isVariationSelector(r rune) bool {
+	switch {
+	case r >= 0xFE00 && r <= 0xFE0F:
+		return true
+	case r >= 0xE0100 && r <= 0xE01EF:
+		return true
+	case r >= 0x180B && r <= 0x180D:
+		return true
+	}
+	return false
 }

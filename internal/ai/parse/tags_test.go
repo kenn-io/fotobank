@@ -64,6 +64,53 @@ func TestParseTags_MalformedJSON(t *testing.T) {
 	require.ErrorIs(t, err, parse.ErrMalformed)
 }
 
+func TestParseTags_RejectsMissingTagsField(t *testing.T) {
+	_, err := parse.Tags(`{}`)
+	require.ErrorIs(t, err, parse.ErrMalformed)
+}
+
+func TestParseTags_RejectsNullTagsField(t *testing.T) {
+	_, err := parse.Tags(`{"tags":null}`)
+	require.ErrorIs(t, err, parse.ErrMalformed)
+}
+
+func TestParseTags_RejectsWrongFieldName(t *testing.T) {
+	_, err := parse.Tags(`{"labels":["dog"]}`)
+	require.ErrorIs(t, err, parse.ErrMalformed)
+}
+
+func TestParseTags_AcceptsExplicitEmptyList(t *testing.T) {
+	out, err := parse.Tags(`{"tags":[]}`)
+	require.NoError(t, err)
+	require.Empty(t, out)
+}
+
+func TestParseTags_StripsEmojiSequenceJoiners(t *testing.T) {
+	// "Beach‍️" — ZWJ + variation selector embedded next to text;
+	// should normalize to "beach", not leak the format chars into the key.
+	out, err := parse.Tags("{\"tags\":[\"Beach\\u200d\\ufe0f\"]}")
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, "beach", out[0].Key)
+}
+
+func TestParseTags_StripsEmojiInsideText(t *testing.T) {
+	// Emoji glyph + skin-tone modifier embedded inside the tag text.
+	out, err := parse.Tags("{\"tags\":[\"Beach \\ud83c\\udfd6\\ufe0f Sunset\"]}")
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, "beach sunset", out[0].Key)
+}
+
+func TestParseTags_DedupesAcrossEmojiNoise(t *testing.T) {
+	// Two tags that differ only by embedded emoji/format runes should
+	// collapse to a single key.
+	out, err := parse.Tags("{\"tags\":[\"Dog\",\"Dog\\ud83d\\udc36\"]}")
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, "dog", out[0].Key)
+}
+
 func TestParseTags_StripsCodefencedJSON(t *testing.T) {
 	// Some VLMs wrap JSON in ```json fences despite the prompt; tolerate.
 	out, err := parse.Tags("```json\n{\"tags\":[\"Dog\"]}\n```")
