@@ -723,12 +723,15 @@ The test must:
 5. Set WAL mode and CREATE TABLE through `h1` BEFORE the contention phase.
 6. Bound the test with `ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)` so a regression cannot wedge the suite.
 7. Pin a `*sql.Conn` from `h1` (`h1.Conn(ctx)`) and `BEGIN IMMEDIATE` on it. The pinned conn is required — `h1.Exec("BEGIN IMMEDIATE")` would land on a pooled conn and the next call could land elsewhere, so `BEGIN` and `COMMIT` must use the same pinned conn.
-8. In a goroutine, run `h2.ExecContext(ctx, "INSERT INTO stress …")`. Capture the wall-clock elapsed time and any error.
-9. Sleep `holdWindow` (default 100ms) on the test goroutine, then `COMMIT` on h1's pinned conn.
-10. Receive h2's result via a `select` on `resCh` and `ctx.Done()`. If `ctx.Done()` fires first, fail with a clear message (the busy-retry never released, or the test wedged).
-11. Assert h2's `INSERT` succeeded (no error).
-12. Assert h2's elapsed time is `>= holdWindow - slack` (use ~5ms slack for clock granularity). If h2 returned faster than that, busy_timeout did not actually wait — h2 raced through a brief lock-free window or the busy-retry didn't engage.
-13. Assert the row count is exactly 1.
+8. In a goroutine, `close(started)` channel and then run `h2.ExecContext(ctx, "INSERT INTO stress …")`. Capture the wall-clock elapsed time and any error.
+9. Wait on `<-started`, sleep ~10ms (so h2 has a chance to actually enter `ExecContext` and reach SQLite), then sleep `holdWindow` (default **500ms** — see below for sizing). The `started` handshake plus the post-handshake sleep close the goroutine-start race window to microseconds in practice; a generous holdWindow provides the rest of the safety margin without resorting to invasive SQLite-internal lock-state polling.
+10. `COMMIT` on h1's pinned conn.
+11. Receive h2's result via a `select` on `resCh` and `ctx.Done()`. If `ctx.Done()` fires first, fail with a clear message (the busy-retry never released, or the test wedged).
+12. Assert h2's `INSERT` succeeded (no error).
+13. Assert h2's elapsed time is `>= holdWindow - slack` (use ~5ms slack for clock granularity). If h2 returned faster than that, busy_timeout did not actually wait — h2 raced through a brief lock-free window or the busy-retry didn't engage.
+14. Assert the row count is exactly 1.
+
+**Sizing the holdWindow.** Use **500ms**, not 100ms. The reason is empirical: a too-short hold window combined with a started-channel handshake (which only proves the goroutine has been scheduled, not that `ExecContext` has reached SQLite) still has a microseconds-to-milliseconds race window. 500ms gives a ~10× safety factor over even severe (~50ms) scheduler stalls. The test runtime cost is minimal (~580ms vs ~120ms) and well within `-short` skip semantics anyway. Earlier iterations used 100ms and got bitten in code review by a goroutine-start race finding (Job 65) and a residual handshake-doesn't-prove-SQLite-arrival finding (Job 72) — the 500ms hold window is the pragmatic resolution that closes both without needing SQLite-internal observation.
 
 This is genuinely deterministic: if `busy_timeout=0` or the driver lacks retry support, h2's `INSERT` errors immediately with `SQLITE_BUSY` (assertion 11 fails). If busy_timeout works, h2 blocks for `holdWindow` then succeeds (assertions 11-13 pass).
 
@@ -747,7 +750,7 @@ The doc-comment must explicitly call out:
 go test ./internal/db/ -run "TestOpen_ConcurrentWriters" -count=1 -v
 ```
 
-Expected: PASS in ~120ms. The test should log `h2 Exec waited NNNms for the write lock` where NNN ≈ 100-110ms.
+Expected: PASS in ~580ms. The test should log `h2 Exec waited NNNms for the write lock` where NNN ≈ 510-580ms (above the 495ms threshold).
 
 **Step 3: Run with `-race`.**
 
@@ -772,7 +775,7 @@ git add internal/db/db_test.go
 git commit -m "test(db): deterministic concurrent-writer test via BEGIN IMMEDIATE"
 ```
 
-The reference implementation lives at commit `ef636f8` (the deterministic version that supersedes `2e7bea58`'s timing-based version).
+The reference implementation evolved through several commits as code review surfaced finer races: `ef636f8` (initial deterministic version), `dbe4d93` (started-channel handshake for Job 65), `651360a` (500ms holdWindow widening for Job 72). The current state captures all three.
 
 ---
 
