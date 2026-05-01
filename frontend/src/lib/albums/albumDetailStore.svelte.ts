@@ -149,11 +149,15 @@ export class AlbumDetailStore {
     if (res.error || !res.data) return;
     const a = res.data as Album;
     if (this.album) {
-      // Build the update object without cover first, then conditionally
-      // add cover. exactOptionalPropertyTypes rejects `cover: undefined`
-      // inline, so we spread it only when present.
+      // Strip the existing cover before applying the response so a
+      // server-reported cover removal (cover: null / absent) actually
+      // clears the stale cover instead of leaving it visible. The
+      // optional `cover` is then added back only if the API returned
+      // one (exactOptionalPropertyTypes rejects `cover: undefined`).
+      const { cover: _stale, ...rest } = this.album;
+      void _stale;
       const updated: Album = {
-        ...this.album,
+        ...rest,
         name: a.name,
         updated_at: a.updated_at,
         item_count: a.item_count,
@@ -243,20 +247,29 @@ export class AlbumDetailStore {
     return this.membership.has(id);
   }
 
-  async rename(name: string): Promise<void> {
-    if (!this.albumId) return;
+  async rename(name: string): Promise<{ id: string; name: string; updated_at: string } | null> {
+    if (!this.albumId) return null;
+    // Capture the target album id before the await. The component reuses
+    // this store across /albums/:id navigations, so by the time the PATCH
+    // resolves `this.albumId` may already point at a different album. The
+    // caller uses the returned id to update the cache for the *target*
+    // album, not whatever the store happens to be showing now.
+    const targetId = this.albumId;
     const trimmed = name.trim();
     if (trimmed.length === 0) throw new Error("Name is required");
     if (trimmed.length > 200) throw new Error("Name exceeds 200 characters");
     const res = await this.client.PATCH("/api/v1/albums/{id}", {
-      params: { path: { id: this.albumId } } as never,
+      params: { path: { id: targetId } } as never,
       body: { name: trimmed } as never,
     });
     if (res.error) throw res.error;
-    if (res.data && this.album) {
-      const a = res.data as Album;
+    const a = res.data as Album;
+    // Only mutate the in-place album state if the route is still pointed
+    // at the same target — otherwise we'd overwrite an unrelated album.
+    if (this.album && this.albumId === targetId) {
       this.album = { ...this.album, name: a.name, updated_at: a.updated_at };
     }
+    return { id: targetId, name: a.name, updated_at: a.updated_at };
   }
 
   async delete(): Promise<void> {

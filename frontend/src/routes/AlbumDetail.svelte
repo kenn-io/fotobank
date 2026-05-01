@@ -207,14 +207,15 @@
   }
 
   async function onRename(name: string) {
-    await detail.rename(name);
-    // Sync the AlbumsStore cache so navigating back to /albums shows the
-    // new name without forcing a refetch. detail.album reflects the
-    // PATCH response set inside AlbumDetailStore.rename.
-    if (detail.album) {
-      albumsStore.applyRename(detail.album.id, {
-        name: detail.album.name,
-        updated_at: detail.album.updated_at,
+    // detail.rename captures its own target id before awaiting and
+    // returns the DTO for that album, so even if the user has
+    // navigated to a different album while the PATCH was in flight
+    // we apply the cache update to the correct (captured) id.
+    const renamed = await detail.rename(name);
+    if (renamed) {
+      albumsStore.applyRename(renamed.id, {
+        name: renamed.name,
+        updated_at: renamed.updated_at,
       });
     }
     renaming = false;

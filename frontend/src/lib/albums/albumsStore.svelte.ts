@@ -10,6 +10,18 @@ export type AlbumListItem = {
   cover?: { media_id: string; thumb_version: number };
 };
 
+// sortByUpdatedAtDesc mirrors the backend album ordering
+// (`ORDER BY updated_at DESC, id ASC`). Used after rename so the cache
+// stays in the same order the next /albums refetch would return.
+function sortByUpdatedAtDesc(items: AlbumListItem[]): AlbumListItem[] {
+  return [...items].sort((a, b) => {
+    if (a.updated_at !== b.updated_at) {
+      return a.updated_at < b.updated_at ? 1 : -1;
+    }
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+}
+
 export class AlbumsStore {
   albums = $state<AlbumListItem[]>([]);
   loading = $state(false);
@@ -142,11 +154,9 @@ export class AlbumsStore {
     if (idx >= 0) {
       const existing = this.albums[idx];
       if (existing) {
-        this.albums = [
-          ...this.albums.slice(0, idx),
-          { ...existing, ...updated },
-          ...this.albums.slice(idx + 1),
-        ];
+        const next = [...this.albums];
+        next[idx] = { ...existing, ...updated };
+        this.albums = sortByUpdatedAtDesc(next);
       }
     }
   }
@@ -167,11 +177,13 @@ export class AlbumsStore {
     if (idx < 0) return;
     const existing = this.albums[idx];
     if (!existing) return;
-    this.albums = [
-      ...this.albums.slice(0, idx),
-      { ...existing, name: updates.name, updated_at: updates.updated_at },
-      ...this.albums.slice(idx + 1),
-    ];
+    // The backend orders albums by (updated_at DESC, id ASC); a rename
+    // bumps updated_at so the renamed row should pop to the top of the
+    // cached list. Without this re-sort the SPA would render a stale
+    // position until the next refetch.
+    const next = [...this.albums];
+    next[idx] = { ...existing, name: updates.name, updated_at: updates.updated_at };
+    this.albums = sortByUpdatedAtDesc(next);
   }
 
   dropLocal(id: string): void {
