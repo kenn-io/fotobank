@@ -214,6 +214,7 @@ func TestPromoteAckedBlocked(t *testing.T) {
 	r.NoError(q.Enqueue(ctx, mids[0], ai.TaskTag, fp))
 	claims, err := q.ClaimBatch(ctx, ai.TaskTag, 10)
 	r.NoError(err)
+	r.Len(claims, 1)
 	c := claims[0]
 	r.NoError(q.MarkBlocked(ctx, c.JobID, c.ClaimedAt, jobs.AckBlockedReason))
 
@@ -251,6 +252,7 @@ func TestPromoteThumbReadyBlocked(t *testing.T) {
 	r.NoError(q.Enqueue(ctx, mids[0], ai.TaskTag, fp))
 	claims, err := q.ClaimBatch(ctx, ai.TaskTag, 10)
 	r.NoError(err)
+	r.Len(claims, 1)
 	c := claims[0]
 	r.NoError(q.MarkBlocked(ctx, c.JobID, c.ClaimedAt, jobs.ThumbBlockedPending))
 

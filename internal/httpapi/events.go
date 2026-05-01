@@ -83,9 +83,14 @@ func NewEventBusWithSize(bufLen int) *EventBus {
 func (b *EventBus) Publish(p owners.Principal, ev Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	r := b.bufs[p]
+	if r == nil {
+		r = &ring{events: make([]Event, 0, b.bufLen)}
+		b.bufs[p] = r
+	}
 	b.publishLocked(p, ev)
-	if ev.ID > b.bufs[p].nextID {
-		b.bufs[p].nextID = ev.ID
+	if ev.ID > r.nextID {
+		r.nextID = ev.ID
 	}
 }
 

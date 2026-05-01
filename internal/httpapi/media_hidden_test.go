@@ -463,10 +463,11 @@ func TestUnhideMediaSucceedsWithCookie(t *testing.T) {
 	cookie := setupHiddenAndUnlock(t, fx)
 
 	body, _ := json.Marshal(map[string]any{"media_ids": []string{m.ID}})
-	req, _ := http.NewRequest(http.MethodPost,
+	req, err := http.NewRequest(http.MethodPost,
 		fx.srv.URL+"/api/v1/media/unhide:bulk",
 		bytes.NewReader(body),
 	)
+	r.NoError(err)
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(cookie)
 	resp, err := http.DefaultClient.Do(req)
