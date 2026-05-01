@@ -21,6 +21,7 @@ import (
 
 	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/ai/ack"
+	"github.com/wesm/fotobank/internal/ai/embedding"
 	"github.com/wesm/fotobank/internal/ai/failures"
 	"github.com/wesm/fotobank/internal/ai/gapscanner"
 	"github.com/wesm/fotobank/internal/ai/gateway"
@@ -527,6 +528,27 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			fmt.Fprintln(opts.stderr, "share worker exited:", err)
 		}
 	})
+
+	// Boot-time embed probe. When [ai.embed].enabled is true we send one
+	// image and one short text input to the configured embeddings
+	// endpoint and assert both come back at the configured dimension.
+	// Probe failure aborts startup with an actionable message — better
+	// than discovering a misconfigured endpoint hours later when the
+	// first real embed job claim fails. MaxRetries=0 inside Probe keeps
+	// the boot delay bounded by cfg.AI.Embed.Timeout. The probe is
+	// independent of [ai].enabled (vision) — embed is its own pipeline.
+	if cfg.AI.Embed.Enabled {
+		if err := embedding.Probe(sigCtx, embedding.Config{
+			Endpoint:   cfg.AI.Embed.Endpoint,
+			APIKey:     cfg.AI.Embed.APIKey(),
+			Model:      cfg.AI.Embed.Model,
+			Dimension:  cfg.AI.Embed.Dimension,
+			Timeout:    cfg.AI.Embed.Timeout,
+			MaxRetries: 0,
+		}); err != nil {
+			return fmt.Errorf("[ai.embed] probe failed: %w", err)
+		}
+	}
 
 	// AI workers + lease sweep + gap-scan tick. Only fires when
 	// [ai].enabled and at least one per-task .enabled flag is true. The
