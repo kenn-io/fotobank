@@ -438,4 +438,28 @@ test.describe("F2.4 hidden privacy (unconfigured server)", () => {
     // No Hide button when credential is not seeded.
     await expect(page.getByRole("button", { name: "Hide" })).toHaveCount(0);
   });
+
+  // /hidden CTA: when no credential is seeded the gate must render
+  // setup copy instead of the passcode form. Mirrors the
+  // configured-side scenario 2 (which asserts API state.configured=true
+  // for the seeded run); this asserts state.configured=false here AND
+  // verifies the visible UI shows the unconfigured CTA. Restored after
+  // the configured/unconfigured describe split — without it, regressions
+  // in the setup CTA would not be caught by either run.
+  test("CTA visible and API state reflects configured=false", async ({ page }) => {
+    const res = await page.request.get("/api/v1/auth/hidden/state");
+    expect(res.status()).toBe(200);
+    const body = (await res.json()) as { configured: boolean };
+    expect(body.configured).toBe(false);
+
+    await page.goto("/hidden");
+    // Passcode form must NOT be visible — credential is unconfigured.
+    await expect(page.getByPlaceholder("Passcode")).toHaveCount(0);
+    // Setup CTA copy is rendered by HiddenGate when configured=false.
+    // HiddenGate.svelte renders "Hidden privacy isn't set up." with a
+    // recipe to run `fotobank hidden setup`. Match that copy so a
+    // regression in the gate's CTA is caught by this run.
+    await expect(page.getByText(/Hidden privacy isn't set up\./)).toBeVisible();
+    await expect(page.getByText(/fotobank hidden setup/)).toBeVisible();
+  });
 });
