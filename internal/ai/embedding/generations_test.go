@@ -135,6 +135,12 @@ func TestGenerations_RetireTransitionsToRetired(t *testing.T) {
 // connection — at which point the loser's re-check inside the tx sees
 // the just-committed row and short-circuits without retrying the
 // INSERT (which would fail the fingerprint_hash UNIQUE constraint).
+//
+// `start` is closed only after every goroutine is spawned, so the
+// FindOrCreateBuilding calls all attempt to begin transactions at
+// roughly the same instant. Without the barrier, fast spawn-then-run
+// goroutines could naturally serialise (g0 finishes before g1 starts),
+// hiding any correctness regression in the rw-contention path.
 func TestGenerations_FindOrCreateBuilding_ConcurrentSafety(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
@@ -145,15 +151,18 @@ func TestGenerations_FindOrCreateBuilding_ConcurrentSafety(t *testing.T) {
 	const N = 8
 	ids := make([]int64, N)
 	errs := make([]error, N)
+	start := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(N)
 	for i := range N {
 		go func() {
 			defer wg.Done()
+			<-start // barrier — all goroutines released together
 			row, err := g.FindOrCreateBuilding(ctx, fp, 768)
 			ids[i], errs[i] = row.ID, err
 		}()
 	}
+	close(start) // release barrier
 	wg.Wait()
 
 	for i, e := range errs {
