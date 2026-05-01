@@ -189,6 +189,11 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 // otherwise pass integrity_check but produce a useless restore that
 // silently overwrites the live DB with an empty one.
 func ValidateSnapshot(ctx context.Context, path string) error {
+	// The snapshot DB may carry vec0 schema objects; register the
+	// sqlite-vec extension before opening so SQLite can resolve
+	// vec0 virtual tables when invoked from CLI tools that have not
+	// yet driven the live DB through db.Open.
+	db.RegisterSqliteVec()
 	info, err := os.Stat(path)
 	if err != nil {
 		return err

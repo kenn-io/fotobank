@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+
+	"github.com/wesm/fotobank/internal/db"
 )
 
 // Snapshot writes a defragmented self-contained copy of db's contents to
@@ -58,16 +60,21 @@ func Snapshot(ctx context.Context, db *sql.DB, dst string) error {
 // (without running migrations) and runs Snapshot. Used by the CLI when
 // the caller has only a path, not an existing pool.
 func SnapshotPath(ctx context.Context, srcDB, dst string) error {
+	// The source DB may carry vec0 schema objects; register the
+	// sqlite-vec extension before opening so SQLite can resolve
+	// vec0 virtual tables when CLI tools drive snapshots without
+	// going through db.Open first.
+	db.RegisterSqliteVec()
 	if _, err := os.Stat(srcDB); err != nil {
 		return fmt.Errorf("stat source DB: %w", err)
 	}
 	dsn := buildDSN(srcDB)
-	db, err := sql.Open("sqlite3", dsn)
+	conn, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return fmt.Errorf("open source DB: %w", err)
 	}
-	defer db.Close()
-	return Snapshot(ctx, db, dst)
+	defer conn.Close()
+	return Snapshot(ctx, conn, dst)
 }
 
 // buildDSN returns a writable file: URI for path with the project's
