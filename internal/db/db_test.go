@@ -295,23 +295,25 @@ func TestOpen_ConcurrentWriters(t *testing.T) {
 		elapsed time.Duration
 	}
 	resCh := make(chan result, 1)
-	// started closes immediately before h2's ExecContext is invoked.
-	// The main goroutine waits on it (plus a tiny sleep) so the hold
-	// window only starts ticking after we've observed h2 enter its
-	// blocking call. See the doc-comment above re: Job 65 race.
+	// `start` is captured BEFORE `close(started)` so any scheduler stall
+	// between the goroutine being scheduled and ExecContext reaching
+	// SQLite is included in `elapsed`. If we captured `start` after
+	// `close`, a sufficiently delayed goroutine could measure a too-low
+	// elapsed value and fail the busy_timeout assertion spuriously even
+	// when busy_timeout works correctly. See Job 73 race analysis.
 	started := make(chan struct{})
 	go func() {
-		close(started)
 		start := time.Now()
+		close(started)
 		_, err := h2.ExecContext(ctx, `INSERT INTO stress (v) VALUES (?)`, "from-h2")
 		resCh <- result{err: err, elapsed: time.Since(start)}
 	}()
 	<-started
-	// Closing `started` only proves the goroutine has been scheduled;
-	// it doesn't prove h2.ExecContext has actually reached SQLite and
-	// is blocked on the write lock. A brief sleep gives the goroutine
-	// time to do that. 10ms is much smaller than holdWindow (100ms)
-	// so it doesn't materially affect the elapsed assertion.
+	// `started` closing proves the goroutine has captured `start` and
+	// is about to call ExecContext. A brief sleep gives ExecContext
+	// time to actually reach SQLite and observe the lock. 10ms is much
+	// smaller than holdWindow (500ms) so doesn't materially affect the
+	// elapsed assertion.
 	time.Sleep(10 * time.Millisecond)
 
 	// Hold the write lock for a known window so h2 must wait that
