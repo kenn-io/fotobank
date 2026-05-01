@@ -38,11 +38,28 @@ func TestNewAIAcknowledgeRequiresFlag(t *testing.T) {
 
 func TestParseTaskList(t *testing.T) {
 	r := require.New(t)
-	r.Equal([]ai.Task{ai.TaskTag, ai.TaskCaption},
-		parseTaskList([]string{"tag,caption"}))
-	r.Equal([]ai.Task{ai.TaskTag, ai.TaskCaption},
-		parseTaskList([]string{"tag", "caption"}))
-	r.Equal([]ai.Task{ai.TaskTag}, parseTaskList([]string{" tag , bogus "}))
-	r.Empty(parseTaskList([]string{"bogus"}))
-	r.Empty(parseTaskList(nil))
+	got, err := parseTaskList([]string{"tag,caption"})
+	r.NoError(err)
+	r.Equal([]ai.Task{ai.TaskTag, ai.TaskCaption}, got)
+
+	got, err = parseTaskList([]string{"tag", "caption"})
+	r.NoError(err)
+	r.Equal([]ai.Task{ai.TaskTag, ai.TaskCaption}, got)
+
+	// Unknown tasks are now an error rather than silently dropped.
+	_, err = parseTaskList([]string{" tag , bogus "})
+	r.Error(err)
+	r.Contains(err.Error(), `"bogus"`)
+
+	_, err = parseTaskList([]string{"bogus"})
+	r.Error(err)
+
+	got, err = parseTaskList(nil)
+	r.NoError(err)
+	r.Empty(got)
+
+	// Duplicate tokens are deduplicated rather than running the op twice.
+	got, err = parseTaskList([]string{"tag", "tag"})
+	r.NoError(err)
+	r.Equal([]ai.Task{ai.TaskTag}, got)
 }

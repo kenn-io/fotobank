@@ -28,11 +28,13 @@ import (
 )
 
 // aiCtx bundles the dependencies every `fotobank ai` subcommand needs:
-// the auth-scoped service, the stub caller principal, and a teardown
-// callback that closes the underlying DB.
+// the auth-scoped service, the stub caller principal, the loaded
+// config (so `status` can honor [ai].enabled rather than hardcoding
+// true), and a teardown callback that closes the underlying DB.
 type aiCtx struct {
 	svc    *aiservice.Service
 	caller owners.Principal
+	cfg    *config.Config
 	close  func()
 }
 
@@ -91,6 +93,7 @@ func loadAICtx(cfgPath string) (*aiCtx, error) {
 			},
 		}),
 		caller: owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID},
+		cfg:    cfg,
 		close:  func() { _ = d.Close() },
 	}, nil
 }
@@ -114,12 +117,16 @@ func newAICmd() *cobra.Command {
 	return cmd
 }
 
-// noopProbe satisfies aiservice.Probe without contacting the gateway.
-// The CLI does not own a long-lived gateway client, so status falls
-// back to "reachable=true" with no live check.
-type noopProbe struct{}
+// unavailableProbe reports the gateway as unreachable with a short
+// rationale. The CLI does not own a long-lived gateway client, so
+// `fotobank ai status` cannot run a real reachability check —
+// reporting "unavailable" is the honest answer rather than claiming
+// reachable=true.
+type unavailableProbe struct{}
 
-func (noopProbe) Probe(_ context.Context) error { return nil }
+func (unavailableProbe) Probe(_ context.Context) error {
+	return errors.New("not probed by CLI; check the running server's /api/v1/ai/health")
+}
 
 func newAIStatusCmd() *cobra.Command {
 	var cfgPath string
@@ -142,8 +149,8 @@ func runAIStatus(ctx context.Context, cfgPath string, stdout io.Writer) error {
 	}
 	defer c.close()
 	h := c.svc.Health(ctx, c.caller, aiservice.HealthInput{
-		Enabled: true,
-		Probe:   noopProbe{},
+		Enabled: c.cfg.AI.Enabled,
+		Probe:   unavailableProbe{},
 	})
 	return json.NewEncoder(stdout).Encode(h)
 }
@@ -159,7 +166,10 @@ func newAIBackfillCmd() *cobra.Command {
 		Short: "Enqueue missing-fingerprint AI jobs",
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			tasks := parseTaskList(taskList)
+			tasks, err := parseTaskList(taskList)
+			if err != nil {
+				return err
+			}
 			if len(tasks) == 0 {
 				return newUsageError("--task is required (tag,caption)")
 			}
@@ -200,7 +210,10 @@ func newAIRetryFailedCmd() *cobra.Command {
 		Short: "Re-enqueue all current-fingerprint failures",
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			tasks := parseTaskList(taskList)
+			tasks, err := parseTaskList(taskList)
+			if err != nil {
+				return err
+			}
 			if len(tasks) == 0 {
 				return newUsageError("--task is required (tag,caption)")
 			}
@@ -256,17 +269,29 @@ func newAIAcknowledgeCmd() *cobra.Command {
 
 // parseTaskList accepts repeated --task values and comma-separated lists
 // (cobra's StringSliceVar already splits on commas, but we accept either
-// form defensively) and returns the unique, valid ai.Task values.
-func parseTaskList(in []string) []ai.Task {
+// form defensively) and returns the unique, valid ai.Task values. It
+// returns a usage error when an unknown task is supplied so a typo like
+// `--task tag,bogus` fails fast instead of silently running only `tag`.
+// Empty tokens are tolerated so --task=tag, doesn't error.
+func parseTaskList(in []string) ([]ai.Task, error) {
 	out := []ai.Task{}
+	seen := map[ai.Task]bool{}
 	for _, raw := range in {
 		for p := range strings.SplitSeq(raw, ",") {
 			p = strings.TrimSpace(p)
-			t := ai.Task(p)
-			if t.Valid() {
-				out = append(out, t)
+			if p == "" {
+				continue
 			}
+			t := ai.Task(p)
+			if !t.Valid() {
+				return nil, newUsageError("unknown task %q (expected tag or caption)", p)
+			}
+			if seen[t] {
+				continue
+			}
+			seen[t] = true
+			out = append(out, t)
 		}
 	}
-	return out
+	return out, nil
 }
