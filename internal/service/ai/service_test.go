@@ -15,6 +15,7 @@ import (
 	"github.com/wesm/fotobank/internal/ai/results"
 	"github.com/wesm/fotobank/internal/ai/skipped"
 	"github.com/wesm/fotobank/internal/errs"
+	"github.com/wesm/fotobank/internal/owners"
 	aiservice "github.com/wesm/fotobank/internal/service/ai"
 	"github.com/wesm/fotobank/internal/testutil"
 )
@@ -139,4 +140,22 @@ func TestListFailuresScopedToCaller(t *testing.T) {
 	r.NoError(err)
 	r.Len(rows, 1)
 	r.Equal(aMid, rows[0].MediaID)
+}
+
+func TestServiceRejectsZeroPrincipal(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	svc, _ := makeServiceWithDB(t)
+	zero := owners.Principal{}
+
+	_, err := svc.Backfill(ctx, zero, ai.TaskTag, false)
+	r.ErrorIs(err, errs.ErrPermissionDenied)
+	_, err = svc.RetryFailed(ctx, zero, ai.TaskTag)
+	r.ErrorIs(err, errs.ErrPermissionDenied)
+	r.ErrorIs(svc.RetryPhoto(ctx, zero, "mid", ai.TaskTag), errs.ErrPermissionDenied)
+	_, err = svc.ListFailures(ctx, zero, ai.TaskTag, 10)
+	r.ErrorIs(err, errs.ErrPermissionDenied)
+	_, err = svc.IsAcknowledged(ctx, zero)
+	r.ErrorIs(err, errs.ErrPermissionDenied)
+	r.ErrorIs(svc.Acknowledge(ctx, zero), errs.ErrPermissionDenied)
 }
