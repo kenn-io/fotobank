@@ -260,6 +260,81 @@ func TestSchema_MediaFTSPresentAndDeletable(t *testing.T) {
 	r.Equal(0, got, "media_fts row must be cleaned up by trigger")
 }
 
+// TestSchema_FullMigrationSmoke asserts the full search-v1 schema
+// migrates and the four key tables (media, embedding_generations,
+// media_embedding_ids, media_fts) accept inserts inside a single
+// transaction and persist together after Commit. The vec0 virtual
+// table itself isn't created here — that lands in F2; this smoke
+// only exercises the SQL-side bookkeeping (the id-mapping and FTS
+// rows that flank it). Inserts are inlined to match the surrounding
+// pre-alpha style.
+func TestSchema_FullMigrationSmoke(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	rw := d.WriteDB()
+
+	_, err := rw.Exec(
+		`INSERT INTO owners VALUES('h1','u1','k1','u1',datetime('now'))`,
+	)
+	r.NoError(err)
+
+	mediaID := uuid.NewString()
+	_, err = rw.Exec(
+		`INSERT INTO media (id,owner_hub,owner_user_id,media_type,mime_type,path,imported_at,size,checksum,thumb_status,thumb_version,thumb_updated_at)
+		 VALUES (?, 'h1','u1','photo','image/jpeg','a.jpg',datetime('now'),1,'cs','pending',1,datetime('now'))`,
+		mediaID,
+	)
+	r.NoError(err)
+
+	tx, err := rw.Begin()
+	r.NoError(err)
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.Exec(
+		`INSERT INTO embedding_generations
+		 (fingerprint, fingerprint_hash, model_id, input_profile, vec_table_name,
+		  dimension, state, created_at)
+		 VALUES (?, ?, ?, ?, ?, 768, 'building', datetime('now'))`,
+		"siglip|jpeg-384", "h", "siglip2", "jpeg-384", "media_embeddings_g1",
+	)
+	r.NoError(err)
+	gid, err := res.LastInsertId()
+	r.NoError(err)
+
+	_, err = tx.Exec(
+		`INSERT INTO media_embedding_ids (generation_id, media_id, vec_id) VALUES (?, ?, 1)`,
+		gid, mediaID,
+	)
+	r.NoError(err)
+
+	_, err = tx.Exec(
+		`INSERT INTO media_fts (media_id, caption_text, tag_label, filename, camera, lens, location_label)
+		 VALUES (?, '', '', '', '', '', '')`, mediaID,
+	)
+	r.NoError(err)
+
+	r.NoError(tx.Commit())
+
+	// Readback: confirm the three tx-side inserts persisted past Commit.
+	// One COUNT per table is enough to catch a regression where Commit
+	// silently swallows a row (e.g. a misnamed virtual-table column).
+	ro := d.ReadDB()
+	var n int
+	r.NoError(ro.QueryRow(
+		`SELECT COUNT(*) FROM embedding_generations WHERE id = ?`, gid,
+	).Scan(&n))
+	r.Equal(1, n, "embedding_generations row must persist after Commit")
+	r.NoError(ro.QueryRow(
+		`SELECT COUNT(*) FROM media_embedding_ids WHERE generation_id = ? AND media_id = ?`,
+		gid, mediaID,
+	).Scan(&n))
+	r.Equal(1, n, "media_embedding_ids row must persist after Commit")
+	r.NoError(ro.QueryRow(
+		`SELECT COUNT(*) FROM media_fts WHERE media_id = ?`, mediaID,
+	).Scan(&n))
+	r.Equal(1, n, "media_fts row must persist after Commit")
+}
+
 func TestScopesBackoffMigration(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
