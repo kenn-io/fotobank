@@ -399,6 +399,43 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	rootMux.Handle("/", web.Handler())
 	handler := http.Handler(rootMux)
 
+	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Build the broker client before spawning bgWG-tracked workers.
+	// An error here must short-circuit with a bare return, which only
+	// fires d.Close — there are no running goroutines to join yet.
+	brokerClient, err := newBrokerClient(cfg.Broker, logger.With("component", "broker"))
+	if err != nil {
+		return fmt.Errorf("broker init: %w", err)
+	}
+
+	// Boot-time embed probe. When [ai.embed].enabled is true we send one
+	// image and one short text input to the configured embeddings
+	// endpoint and assert both come back at the configured dimension.
+	// Probe failure aborts startup with an actionable message — better
+	// than discovering a misconfigured endpoint hours later when the
+	// first real embed job claim fails. MaxRetries=0 inside Probe keeps
+	// the boot delay bounded by cfg.AI.Embed.Timeout. The probe is
+	// independent of [ai].enabled (vision) — embed is its own pipeline.
+	//
+	// Runs BEFORE any listener binds (and therefore before any
+	// bgWG-tracked goroutine spawns) so a probe failure short-circuits
+	// with a bare return — no listeners to close, no workers to join,
+	// and the deferred d.Close cannot race a mid-flight DB caller.
+	if cfg.AI.Embed.Enabled {
+		if err := embedding.Probe(sigCtx, embedding.Config{
+			Endpoint:   cfg.AI.Embed.Endpoint,
+			APIKey:     cfg.AI.Embed.APIKey(),
+			Model:      cfg.AI.Embed.Model,
+			Dimension:  cfg.AI.Embed.Dimension,
+			Timeout:    cfg.AI.Embed.Timeout,
+			MaxRetries: 0,
+		}); err != nil {
+			return fmt.Errorf("[ai.embed] probe failed: %w", err)
+		}
+	}
+
 	ln, err := bindListener(cfg.HTTP.ListenAddress)
 	if err != nil {
 		return err
@@ -415,17 +452,6 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		ReadTimeout:  cfg.HTTP.RequestTimeout,
 		WriteTimeout: cfg.HTTP.WriteTimeout,
 	}
-
-	// Build the broker client before spawning bgWG-tracked workers.
-	// An error here must short-circuit with a bare return, which only
-	// fires d.Close — there are no running goroutines to join yet.
-	brokerClient, err := newBrokerClient(cfg.Broker, logger.With("component", "broker"))
-	if err != nil {
-		return fmt.Errorf("broker init: %w", err)
-	}
-
-	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	// Bind the admin listener BEFORE any bgWG-tracked goroutine is
 	// spawned, so a port-conflict (or other bind failure) on the admin
@@ -448,6 +474,10 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		var berr error
 		adminLn, berr = bindListener(cfg.Observability.AdminListen)
 		if berr != nil {
+			// Main listener was already bound; close it so the bind
+			// doesn't leak when this bare-return fires before any
+			// Serve goroutine starts.
+			_ = ln.Close()
 			return fmt.Errorf("bind admin listener: %w", berr)
 		}
 		// FOTOBANK_TEST_ADMIN_ADDR_SINK lets e2e tests discover the
@@ -462,31 +492,6 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		// Closed channel makes the final wait a no-op so callers don't
 		// need to special-case the disabled path.
 		close(adminDone)
-	}
-
-	// Boot-time embed probe. When [ai.embed].enabled is true we send one
-	// image and one short text input to the configured embeddings
-	// endpoint and assert both come back at the configured dimension.
-	// Probe failure aborts startup with an actionable message — better
-	// than discovering a misconfigured endpoint hours later when the
-	// first real embed job claim fails. MaxRetries=0 inside Probe keeps
-	// the boot delay bounded by cfg.AI.Embed.Timeout. The probe is
-	// independent of [ai].enabled (vision) — embed is its own pipeline.
-	//
-	// Runs BEFORE any bgWG-tracked goroutine spawns so a probe failure
-	// short-circuits with a bare return — no workers to join, and the
-	// deferred d.Close cannot race a mid-flight DB caller.
-	if cfg.AI.Embed.Enabled {
-		if err := embedding.Probe(sigCtx, embedding.Config{
-			Endpoint:   cfg.AI.Embed.Endpoint,
-			APIKey:     cfg.AI.Embed.APIKey(),
-			Model:      cfg.AI.Embed.Model,
-			Dimension:  cfg.AI.Embed.Dimension,
-			Timeout:    cfg.AI.Embed.Timeout,
-			MaxRetries: 0,
-		}); err != nil {
-			return fmt.Errorf("[ai.embed] probe failed: %w", err)
-		}
 	}
 
 	// bgWG joins every goroutine that holds references to d (SQL) or
