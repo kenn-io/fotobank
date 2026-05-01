@@ -864,12 +864,18 @@ SELECT m.id,
 	out := make([]SharedMediaRow, 0, 32)
 	for rows.Next() {
 		var (
-			row      SharedMediaRow
-			allowInt int
+			row         SharedMediaRow
+			displayTime string
+			allowInt    int
 		)
-		if err := rows.Scan(&row.MediaID, &row.DisplayTime, &allowInt); err != nil {
+		if err := rows.Scan(&row.MediaID, &displayTime, &allowInt); err != nil {
 			return nil, fmt.Errorf("scan shared media row: %w", err)
 		}
+		dt, perr := parseSQLiteTimeString(displayTime)
+		if perr != nil {
+			return nil, fmt.Errorf("parse display_time: %w", perr)
+		}
+		row.DisplayTime = dt
 		row.CanDownload = allowInt != 0
 		out = append(out, row)
 	}
@@ -1212,6 +1218,25 @@ func (r *Repo) albumSummary(ctx context.Context, albumID string) (AlbumSummary, 
 		return AlbumSummary{}, fmt.Errorf("read album summary: %w", err)
 	}
 	return s, nil
+}
+
+// parseSQLiteTimeString parses the string mattn/go-sqlite3 returns when
+// a TIMESTAMP value passes through an expression (COALESCE, CASE, …)
+// and loses its column declaration type. Mattn's column-decode path
+// only auto-parses values into time.Time when the originating column
+// is declared TIMESTAMP/DATETIME/DATE; expression results have no
+// declared type, so the driver returns the underlying TEXT bytes
+// unchanged. Mattn writes timestamps using the first format in
+// SQLiteTimestampFormats —
+// "2006-01-02 15:04:05.999999999-07:00" — so that's the layout we
+// parse with.
+//
+// UTC invariant: every TIMESTAMP we store is UTC; the returned
+// time.Time preserves the offset that time.Parse recovers from the
+// "+00:00" tail, so downstream comparisons against other UTC times
+// stay correct.
+func parseSQLiteTimeString(s string) (time.Time, error) {
+	return time.Parse("2006-01-02 15:04:05.999999999-07:00", s)
 }
 
 // statusPlaceholders renders `IN (?,?,?)` argument tuples. Returns the
