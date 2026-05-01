@@ -289,6 +289,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%w: observability.logging.level=%q (must be debug|info|warn|error)",
 			errs.ErrBadConfiguration, c.Observability.Logging.Level)
 	}
+	if err := c.AI.Validate(); err != nil {
+		return fmt.Errorf("%w: %s", errs.ErrBadConfiguration, err)
+	}
 	return nil
 }
 

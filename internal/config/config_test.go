@@ -599,6 +599,38 @@ pprof_enabled = true
 	r.Equal("127.0.0.1:9090", cfg.Observability.AdminListen)
 }
 
+func TestValidateRejectsEnabledAIWithoutEndpoint(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[ai]
+enabled = true
+`), 0o600))
+	_, err := config.Load(p)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+	require.Contains(t, err.Error(), "endpoint")
+}
+
+func TestValidateRejectsEnabledAITagWithoutModel(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[ai]
+enabled = true
+[ai.vision]
+endpoint = "http://127.0.0.1:11434/v1"
+[ai.tag]
+enabled = true
+`), 0o600))
+	_, err := config.Load(p)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+	require.Contains(t, err.Error(), "ai.tag.model")
+}
+
 func TestObservabilityRejectsBadFormatAndLevel(t *testing.T) {
 	for _, body := range []string{
 		`[observability.logging]
