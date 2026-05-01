@@ -213,6 +213,20 @@ func TestOpen_RoundTripTZ(t *testing.T) {
 //     window. If busy_timeout were 0 / broken, h2's Exec would error
 //     immediately with "database is locked" instead of waiting.
 //
+// Goroutine-start handshake (Job 65 follow-up): the h2 goroutine
+// closes a `started` channel immediately before calling ExecContext so
+// the test can be sure the goroutine has actually been scheduled
+// before the main test goroutine sleeps the hold window. Without this,
+// a busy CI runner could leave the goroutine unscheduled until after
+// the main goroutine has already committed, in which case h2 would
+// run with no lock contention and `elapsed < holdWindow - slack`
+// would falsely fail. The handshake closes the start window from
+// milliseconds to microseconds; the small post-handshake sleep gives
+// the goroutine a moment to actually reach the SQLite layer (the
+// channel close only proves the goroutine started, not that
+// ExecContext has reached SQLite). Combined with the 5ms slack on the
+// elapsed assertion, that's enough headroom on any realistic runner.
+//
 // db.Open is deliberately NOT used here because it pins the RW pool
 // to MaxOpenConns(1), which would queue writers inside the Go
 // database/sql layer and never give SQLite a chance to return
@@ -272,11 +286,24 @@ func TestOpen_ConcurrentWriters(t *testing.T) {
 		elapsed time.Duration
 	}
 	resCh := make(chan result, 1)
+	// started closes immediately before h2's ExecContext is invoked.
+	// The main goroutine waits on it (plus a tiny sleep) so the hold
+	// window only starts ticking after we've observed h2 enter its
+	// blocking call. See the doc-comment above re: Job 65 race.
+	started := make(chan struct{})
 	go func() {
+		close(started)
 		start := time.Now()
 		_, err := h2.ExecContext(ctx, `INSERT INTO stress (v) VALUES (?)`, "from-h2")
 		resCh <- result{err: err, elapsed: time.Since(start)}
 	}()
+	<-started
+	// Closing `started` only proves the goroutine has been scheduled;
+	// it doesn't prove h2.ExecContext has actually reached SQLite and
+	// is blocked on the write lock. A brief sleep gives the goroutine
+	// time to do that. 10ms is much smaller than holdWindow (100ms)
+	// so it doesn't materially affect the elapsed assertion.
+	time.Sleep(10 * time.Millisecond)
 
 	// Hold the write lock for a known window so h2 must wait that
 	// long. time.Sleep is fine here because we own the test goroutine
