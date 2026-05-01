@@ -2126,3 +2126,110 @@ func TestGetByUUIDMediaSetExcludesHiddenMembers(t *testing.T) {
 	r.Len(det.MediaIDs, 1, "hidden media_set member must be absent from GetByUUID.MediaIDs")
 	r.Equal(m1, det.MediaIDs[0])
 }
+
+// TestRepoMattnScanCompat_AllowDownloadBoolean exercises the BOOLEAN
+// scan path on scopes.allow_download. mattn/go-sqlite3 returns Go bool
+// for BOOLEAN-affinity columns; the previous modernc.org/sqlite driver
+// returned int64. A regression where scanScope decoded the column into
+// an int64 surfaced as a "converting driver.Value type bool to a
+// *int64" Scan error on every read of the scopes table — including the
+// shared-bytes preflight that gates the /shared/* download path. Both
+// values (true and false) are checked because mattn returns each as a
+// distinct Go bool, and the original regression masked false-only and
+// true-only paths separately depending on which test ran first.
+func TestRepoMattnScanCompat_AllowDownloadBoolean(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk-bool")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	mkScope := func(allow bool) string {
+		s := share.Scope{
+			UUID: uuid.NewString(), Owner: owner,
+			Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+			TargetType:    share.TargetAlbumLive,
+			TargetAlbumID: &albumID,
+			AllowDownload: allow,
+			CreatedAt:     time.Now().UTC().Truncate(time.Second),
+			BrokerStatus:  share.StatusPending,
+		}
+		r.NoError(repo.Insert(context.Background(), s, nil))
+		return s.UUID
+	}
+	allowID := mkScope(true)
+	denyID := mkScope(false)
+
+	gotAllow, err := repo.GetByUUID(context.Background(), allowID)
+	r.NoError(err)
+	r.True(gotAllow.AllowDownload, "BOOLEAN true must round-trip under mattn")
+
+	gotDeny, err := repo.GetByUUID(context.Background(), denyID)
+	r.NoError(err)
+	r.False(gotDeny.AllowDownload, "BOOLEAN false must round-trip under mattn")
+
+	// The list path uses the same scanScope helper; cover it explicitly
+	// so a regression in the list-side query (e.g. swapping column
+	// order) doesn't slip past the GetByUUID-only test.
+	got, err := repo.ListByOwner(context.Background(), owner, share.ScopeFilter{})
+	r.NoError(err)
+	r.Len(got, 2)
+	byID := map[string]share.Scope{got[0].UUID: got[0], got[1].UUID: got[1]}
+	r.True(byID[allowID].AllowDownload)
+	r.False(byID[denyID].AllowDownload)
+}
+
+// TestRepoMattnScanCompat_CoalescedDisplayTime exercises the COALESCE'd
+// TIMESTAMP scan path on m.timestamp / m.imported_at. mattn's
+// auto-decode to time.Time only fires when the column has a declared
+// TIMESTAMP/DATETIME/DATE type; expression results carry no declared
+// type, so the driver returns the underlying TEXT bytes. A direct
+// Scan(&time.Time{}) against such a value fails with "unsupported
+// Scan, storing driver.Value type string into type *time.Time"; the
+// repo scans into a string and parses with mattn's serialisation
+// layout to recover the time.Time value. Both branches of the
+// COALESCE are exercised: timestamp-present (path 1) and
+// imported_at-fallback (path 2), so a regression that hardcoded the
+// scan to one of the two branches is caught.
+func TestRepoMattnScanCompat_CoalescedDisplayTime(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk-coalesce")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk-coalesce")
+
+	withTS := time.Date(2026, 1, 15, 9, 30, 0, 0, time.UTC)
+	m1 := seedMediaWithTimestamp(t, d, alice, withTS) // path 1: timestamp present
+	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString()) // path 2: timestamp NULL → falls back to imported_at
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	now := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2)
+	bumpActive(t, d, s.UUID, now)
+
+	out, err := repo.ListSharedMediaIDs(
+		context.Background(),
+		[]share.Scope{s},
+		alice,
+		"",
+		share.SharedMediaCursor{Limit: 10},
+	)
+	r.NoError(err)
+	r.Len(out, 2)
+	byID := map[string]share.SharedMediaRow{out[0].MediaID: out[0], out[1].MediaID: out[1]}
+
+	// Path 1: timestamp populated; display_time must equal it exactly.
+	r.True(byID[m1].DisplayTime.Equal(withTS),
+		"display_time for media with explicit timestamp must equal it; got %v want %v",
+		byID[m1].DisplayTime, withTS)
+
+	// Path 2: timestamp NULL; display_time falls back to imported_at,
+	// which is non-zero (set by seedMedia at insert time). The exact
+	// value is not deterministic, but it must parse cleanly into a
+	// non-zero time.Time — proving the COALESCE-via-fallback path also
+	// round-trips.
+	r.False(byID[m2].DisplayTime.IsZero(),
+		"display_time fallback to imported_at must yield a non-zero time")
+}
