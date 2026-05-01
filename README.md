@@ -1,6 +1,8 @@
 # fotobank
 
-A self-hosted photo archive tool: deduplicates on import, gives files consistent date-based names, maintains a SQLite metadata registry, and (in progress) serves thumbnails and albums over a small HTTP API.
+A self-hosted photo archive tool: deduplicates on import, gives files
+consistent date-based names, maintains a SQLite metadata registry, and
+(in progress) serves thumbnails and albums over a small HTTP API.
 
 Your photos stay on your storage. Fotobank coexists with Lightroom Classic by organizing the files on disk; Lightroom can watch the same directory.
 
