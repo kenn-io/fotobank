@@ -46,6 +46,15 @@ func TestParseTaskList(t *testing.T) {
 	r.NoError(err)
 	r.Equal([]ai.Task{ai.TaskTag, ai.TaskCaption}, got)
 
+	// embed is the v1 search/embedding task; --task=embed must be accepted.
+	got, err = parseTaskList([]string{"embed"})
+	r.NoError(err)
+	r.Equal([]ai.Task{ai.TaskEmbed}, got)
+
+	got, err = parseTaskList([]string{"tag,caption,embed"})
+	r.NoError(err)
+	r.Equal([]ai.Task{ai.TaskTag, ai.TaskCaption, ai.TaskEmbed}, got)
+
 	// Unknown tasks are now an error rather than silently dropped.
 	_, err = parseTaskList([]string{" tag , bogus "})
 	r.Error(err)

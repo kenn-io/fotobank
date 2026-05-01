@@ -171,7 +171,7 @@ func newAIBackfillCmd() *cobra.Command {
 				return err
 			}
 			if len(tasks) == 0 {
-				return newUsageError("--task is required (tag,caption)")
+				return newUsageError("--task is required (tag,caption,embed)")
 			}
 			c, err := loadAICtx(cfgPath)
 			if err != nil {
@@ -195,7 +195,7 @@ func newAIBackfillCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
-	cmd.Flags().StringSliceVar(&taskList, "task", nil, "tag,caption")
+	cmd.Flags().StringSliceVar(&taskList, "task", nil, "tag,caption,embed")
 	cmd.Flags().BoolVar(&force, "force", false, "include media that already have an active result")
 	return cmd
 }
@@ -215,7 +215,7 @@ func newAIRetryFailedCmd() *cobra.Command {
 				return err
 			}
 			if len(tasks) == 0 {
-				return newUsageError("--task is required (tag,caption)")
+				return newUsageError("--task is required (tag,caption,embed)")
 			}
 			c, err := loadAICtx(cfgPath)
 			if err != nil {
@@ -233,7 +233,7 @@ func newAIRetryFailedCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
-	cmd.Flags().StringSliceVar(&taskList, "task", nil, "tag,caption")
+	cmd.Flags().StringSliceVar(&taskList, "task", nil, "tag,caption,embed")
 	return cmd
 }
 
@@ -284,7 +284,7 @@ func parseTaskList(in []string) ([]ai.Task, error) {
 			}
 			t := ai.Task(p)
 			if !t.Valid() {
-				return nil, newUsageError("unknown task %q (expected tag or caption)", p)
+				return nil, newUsageError("unknown task %q (expected tag, caption, or embed)", p)
 			}
 			if seen[t] {
 				continue

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/testutil"
@@ -79,6 +80,45 @@ func TestTxRollsBackOnError(t *testing.T) {
 	var n int
 	r.NoError(d.ReadDB().QueryRow(`SELECT COUNT(*) FROM t`).Scan(&n))
 	r.Equal(0, n)
+}
+
+// TestSchema_AIJobsAcceptsEmbedTask asserts the ai_jobs.task CHECK
+// constraint admits 'embed' (the v1 search/embedding task) and still
+// rejects unknown values like 'classify'. Inserts are inlined per
+// pre-alpha policy: no shared seed helpers in db_test.go yet.
+func TestSchema_AIJobsAcceptsEmbedTask(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	rw := d.WriteDB()
+	_, err := rw.Exec(
+		`INSERT INTO owners VALUES('h1','u1','k1','u1',datetime('now'))`,
+	)
+	r.NoError(err)
+
+	mediaID := uuid.NewString()
+	_, err = rw.Exec(
+		`INSERT INTO media (id,owner_hub,owner_user_id,media_type,mime_type,path,imported_at,size,checksum,thumb_status,thumb_version,thumb_updated_at)
+		 VALUES (?, 'h1','u1','photo','image/jpeg','a.jpg',datetime('now'),1,'cs','pending',1,datetime('now'))`,
+		mediaID,
+	)
+	r.NoError(err)
+
+	// Accepts 'embed'.
+	_, err = rw.Exec(
+		`INSERT INTO ai_jobs(id, media_id, task, fingerprint, status, attempts, enqueued_at)
+		 VALUES (?, ?, 'embed', 'fp', 'pending', 0, datetime('now'))`,
+		uuid.NewString(), mediaID,
+	)
+	r.NoError(err)
+
+	// Rejects 'classify'.
+	_, err = rw.Exec(
+		`INSERT INTO ai_jobs(id, media_id, task, fingerprint, status, attempts, enqueued_at)
+		 VALUES (?, ?, 'classify', 'fp', 'pending', 0, datetime('now'))`,
+		uuid.NewString(), mediaID,
+	)
+	r.Error(err)
 }
 
 func TestScopesBackoffMigration(t *testing.T) {

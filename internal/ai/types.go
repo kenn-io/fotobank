@@ -11,10 +11,11 @@ type Task string
 const (
 	TaskTag     Task = "tag"
 	TaskCaption Task = "caption"
+	TaskEmbed   Task = "embed"
 )
 
 // Valid reports whether t is a known task value.
-func (t Task) Valid() bool { return t == TaskTag || t == TaskCaption }
+func (t Task) Valid() bool { return t == TaskTag || t == TaskCaption || t == TaskEmbed }
 
 // Fingerprint is the (model, prompt, input) triple that identifies a
 // specific way of producing AI output. Stored verbatim on every result

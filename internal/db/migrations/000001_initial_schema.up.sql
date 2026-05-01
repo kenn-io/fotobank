@@ -387,7 +387,7 @@ CREATE TABLE auth_hidden_lockout (
 CREATE TABLE ai_results (
     id              UUID PRIMARY KEY,
     media_id        UUID NOT NULL REFERENCES media(id) ON DELETE CASCADE,
-    task            TEXT NOT NULL CHECK (task IN ('tag','caption')),
+    task            TEXT NOT NULL CHECK (task IN ('tag','caption','embed')),
     model_id        TEXT NOT NULL,
     prompt_version  TEXT NOT NULL,
     prompt_hash     TEXT NOT NULL,
@@ -417,7 +417,7 @@ CREATE TABLE media_captions (
 CREATE TABLE ai_jobs (
     id              UUID PRIMARY KEY,
     media_id        UUID NOT NULL REFERENCES media(id) ON DELETE CASCADE,
-    task            TEXT NOT NULL CHECK (task IN ('tag','caption')),
+    task            TEXT NOT NULL CHECK (task IN ('tag','caption','embed')),
     fingerprint     TEXT NOT NULL,
     status          TEXT NOT NULL CHECK (
                       status IN ('pending','working','blocked','done','failed','superseded')),
@@ -437,7 +437,7 @@ CREATE INDEX ai_jobs_terminal_idx
 
 CREATE TABLE ai_failures (
     media_id        UUID NOT NULL REFERENCES media(id) ON DELETE CASCADE,
-    task            TEXT NOT NULL CHECK (task IN ('tag','caption')),
+    task            TEXT NOT NULL CHECK (task IN ('tag','caption','embed')),
     model_id        TEXT NOT NULL,
     prompt_version  TEXT NOT NULL,
     input_profile   TEXT NOT NULL,
@@ -452,7 +452,7 @@ CREATE INDEX ai_failures_active_idx
 
 CREATE TABLE ai_skipped (
     media_id     UUID NOT NULL REFERENCES media(id) ON DELETE CASCADE,
-    task         TEXT NOT NULL CHECK (task IN ('tag','caption')),
+    task         TEXT NOT NULL CHECK (task IN ('tag','caption','embed')),
     reason       TEXT NOT NULL,
     recorded_at  TIMESTAMP NOT NULL,
     PRIMARY KEY (media_id, task)

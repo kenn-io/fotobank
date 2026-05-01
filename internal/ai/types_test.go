@@ -21,7 +21,9 @@ func TestFingerprintString(t *testing.T) {
 }
 
 func TestTaskValid(t *testing.T) {
-	require.True(t, ai.TaskTag.Valid())
-	require.True(t, ai.TaskCaption.Valid())
-	require.False(t, ai.Task("nonsense").Valid())
+	r := require.New(t)
+	r.True(ai.TaskTag.Valid())
+	r.True(ai.TaskCaption.Valid())
+	r.True(ai.TaskEmbed.Valid())
+	r.False(ai.Task("nonsense").Valid())
 }
