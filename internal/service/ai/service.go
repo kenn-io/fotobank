@@ -40,6 +40,17 @@ func (c ConfigFingerprints) Lookup(t ai.Task) (ai.Fingerprint, bool) {
 	return ai.Fingerprint{}, false
 }
 
+// MediaCheck is the visibility gate the lightbox AI surface uses before
+// returning per-photo artifacts. Implementations return errs.ErrNotFound
+// (anti-enumeration) when caller does not own mediaID, when the row
+// does not exist, or when the row is hidden and includeHidden is false.
+// MediaService satisfies this interface (its Get method has matching
+// semantics). Decoupling via interface keeps the AI service from
+// importing the internal/service package directly.
+type MediaCheck interface {
+	Check(ctx context.Context, mediaID string, caller owners.Principal, includeHidden bool) error
+}
+
 // Deps bundles the collaborators the service needs.
 type Deps struct {
 	Queue              *jobs.Queue
@@ -48,6 +59,7 @@ type Deps struct {
 	Skipped            *skipped.Repo
 	Ack                *ack.Store
 	Gap                *gapscanner.Scanner
+	Media              MediaCheck
 	ConfigFingerprints ConfigFingerprints
 }
 
@@ -241,11 +253,19 @@ type MediaFailure struct {
 }
 
 // MediaView returns the AI artifacts for one media. Caller must be
-// non-zero. Cross-owner reads are not enforced here in v1 (single-
-// principal stub mode), but the auth boundary is in place so a future
-// caller-vs-owner check can land without disturbing callers.
-func (s *Service) MediaView(ctx context.Context, caller owners.Principal, mediaID string) (MediaView, error) {
+// non-zero AND own the row; hidden rows are gated behind includeHidden
+// (set by the HTTP handler when a valid hidden-unlock cookie is
+// present). Failures of either check map to errs.ErrNotFound so the
+// surface cannot be used to probe for cross-owner media or to
+// enumerate hidden rows without an unlock.
+func (s *Service) MediaView(ctx context.Context, caller owners.Principal, mediaID string, includeHidden bool) (MediaView, error) {
 	if err := requireScopedCaller(caller); err != nil {
+		return MediaView{}, err
+	}
+	if s.deps.Media == nil {
+		return MediaView{}, fmt.Errorf("media gate not configured")
+	}
+	if err := s.deps.Media.Check(ctx, mediaID, caller, includeHidden); err != nil {
 		return MediaView{}, err
 	}
 	out := MediaView{}

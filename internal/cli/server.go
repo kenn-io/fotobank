@@ -251,6 +251,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		Skipped:  aiSkipped,
 		Ack:      aiAck,
 		Gap:      aiGap,
+		Media:    mediaCheckAdapter{mediaSvc: mediaSvc},
 		ConfigFingerprints: aiservice.ConfigFingerprints{
 			Tag:     tagFingerprint,
 			Caption: captionFingerprint,
@@ -978,6 +979,17 @@ func (disabledAIProbe) Probe(_ context.Context) error {
 type realAIProbe struct{ c gateway.VisionGateway }
 
 func (p realAIProbe) Probe(ctx context.Context) error { return p.c.HealthCheck(ctx) }
+
+// mediaCheckAdapter satisfies aiservice.MediaCheck on top of MediaService.
+// MediaService.Get already enforces ownership and the hidden-visibility
+// gate (returning errs.ErrNotFound on cross-owner or locked-hidden
+// reads), so the adapter just discards the returned row.
+type mediaCheckAdapter struct{ mediaSvc *service.MediaService }
+
+func (a mediaCheckAdapter) Check(ctx context.Context, mediaID string, caller owners.Principal, includeHidden bool) error {
+	_, err := a.mediaSvc.Get(ctx, mediaID, caller, includeHidden)
+	return err
+}
 
 // runAIBackground runs the AI workers' lease sweep and the gap-scan
 // repair tick. SweepLeases reclaims rows whose claim lease has expired

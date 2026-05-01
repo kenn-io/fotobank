@@ -22,6 +22,7 @@ import (
 	"github.com/wesm/fotobank/internal/ai/parse"
 	"github.com/wesm/fotobank/internal/ai/results"
 	"github.com/wesm/fotobank/internal/ai/skipped"
+	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/httpapi"
 	"github.com/wesm/fotobank/internal/identity"
 	"github.com/wesm/fotobank/internal/owners"
@@ -34,13 +35,53 @@ type unreachableProbe struct{}
 func (unreachableProbe) Probe(_ context.Context) error { return errors.New("unreachable") }
 
 type aiAPIFixture struct {
-	srv   *httptest.Server
-	owner owners.Principal
-	svc   *aiservice.Service
-	rw    *sql.DB
-	resR  *results.Repo
-	failR *failures.Repo
-	skipR *skipped.Repo
+	srv        *httptest.Server
+	owner      owners.Principal
+	svc        *aiservice.Service
+	rw         *sql.DB
+	resR       *results.Repo
+	failR      *failures.Repo
+	skipR      *skipped.Repo
+	mediaCheck *aiTestMediaCheck
+}
+
+// aiTestMediaCheck is the gate plumbed into AIService.Deps in tests.
+// It mirrors MediaService.Get's contract (errs.ErrNotFound on cross-
+// owner or locked-hidden reads); production wiring uses the real
+// MediaService. Tests register media via add().
+type aiTestMediaCheck struct {
+	rows map[string]struct {
+		owner  owners.Principal
+		hidden bool
+	}
+}
+
+func newAITestMediaCheck() *aiTestMediaCheck {
+	return &aiTestMediaCheck{rows: map[string]struct {
+		owner  owners.Principal
+		hidden bool
+	}{}}
+}
+
+func (m *aiTestMediaCheck) add(id string, owner owners.Principal, hidden bool) {
+	m.rows[id] = struct {
+		owner  owners.Principal
+		hidden bool
+	}{owner: owner, hidden: hidden}
+}
+
+func (m *aiTestMediaCheck) Check(_ context.Context, id string, caller owners.Principal, includeHidden bool) error {
+	row, ok := m.rows[id]
+	if !ok {
+		return errs.ErrNotFound
+	}
+	if row.owner != caller {
+		return errs.ErrNotFound
+	}
+	if row.hidden && !includeHidden {
+		return errs.ErrNotFound
+	}
+	return nil
 }
 
 func newAIAPIFixture(t *testing.T) aiAPIFixture {
@@ -60,6 +101,7 @@ func newAIAPIFixture(t *testing.T) aiAPIFixture {
 	skipR := skipped.NewRepo(rw, ro)
 	ackS := ack.New(rw, ro)
 	gs := gapscanner.New(ro, q, resR, skipR)
+	mediaCheck := newAITestMediaCheck()
 	svc := aiservice.New(aiservice.Deps{
 		Queue:    q,
 		Results:  resR,
@@ -67,6 +109,7 @@ func newAIAPIFixture(t *testing.T) aiAPIFixture {
 		Skipped:  skipR,
 		Ack:      ackS,
 		Gap:      gs,
+		Media:    mediaCheck,
 		ConfigFingerprints: aiservice.ConfigFingerprints{
 			Tag:     ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"},
 			Caption: ai.Fingerprint{ModelID: "m", PromptVersion: "caption-v1", InputProfile: "ip"},
@@ -83,7 +126,10 @@ func newAIAPIFixture(t *testing.T) aiAPIFixture {
 	require.NoError(t, err)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return aiAPIFixture{srv: srv, owner: owner, svc: svc, rw: rw, resR: resR, failR: failR, skipR: skipR}
+	return aiAPIFixture{
+		srv: srv, owner: owner, svc: svc, rw: rw,
+		resR: resR, failR: failR, skipR: skipR, mediaCheck: mediaCheck,
+	}
 }
 
 func TestAIHealthReportsAcknowledgementRequired(t *testing.T) {
@@ -131,6 +177,7 @@ func TestAIMediaViewReturnsArtifacts(t *testing.T) {
 	r := require.New(t)
 	fx := newAIAPIFixture(t)
 	mid := testutil.SeedPhoto(t, fx.rw, fx.owner, "p1")
+	fx.mediaCheck.add(mid, fx.owner, false)
 
 	tagFP := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
 	captionFP := ai.Fingerprint{ModelID: "m", PromptVersion: "caption-v1", InputProfile: "ip"}
@@ -157,28 +204,68 @@ func TestAIMediaViewReturnsArtifacts(t *testing.T) {
 	r.Nil(body.TagFailure)
 }
 
-func TestAIMediaViewReturnsEmptyForUnknownMedia(t *testing.T) {
+// TestAIMediaViewReturns404ForUnknownMedia verifies the High-severity
+// fix: an unknown media id returns 404, not 200 + empty body. Without
+// the gate, an empty MediaView would leak the existence of media that
+// the caller does not own (and would leak hidden rows when tags happen
+// to exist independently of the visibility check).
+func TestAIMediaViewReturns404ForUnknownMedia(t *testing.T) {
 	r := require.New(t)
 	fx := newAIAPIFixture(t)
 
 	resp, err := fx.srv.Client().Get(fx.srv.URL + "/api/v1/media/missing/ai")
 	r.NoError(err)
 	defer func() { _ = resp.Body.Close() }()
-	r.Equal(http.StatusOK, resp.StatusCode)
+	r.Equal(http.StatusNotFound, resp.StatusCode)
+}
 
-	var body aiservice.MediaView
-	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
-	r.Empty(body.Tags)
-	r.Nil(body.Caption)
-	r.Nil(body.Skipped)
-	r.Nil(body.TagFailure)
-	r.Nil(body.CaptionFailure)
+// TestAIMediaViewReturns404ForCrossOwner verifies the High-severity
+// fix: even with a seeded result, a media owned by another principal
+// is invisible to the caller (anti-enumeration).
+func TestAIMediaViewReturns404ForCrossOwner(t *testing.T) {
+	r := require.New(t)
+	fx := newAIAPIFixture(t)
+	bob := testutil.SeedOwner(t, fx.rw, "local", "bob")
+	bobMid := testutil.SeedPhoto(t, fx.rw, bob, "b1")
+	fx.mediaCheck.add(bobMid, bob, false)
+
+	tagFP := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	r.NoError(fx.resR.WriteTagResult(context.Background(), bobMid, tagFP, "h",
+		[]parse.Tag{{Key: "x", Label: "x", Rank: 1}}))
+
+	// Caller is Alice (per the fixture's identity stub); requesting
+	// Bob's media must 404.
+	resp, err := fx.srv.Client().Get(fx.srv.URL + "/api/v1/media/" + bobMid + "/ai")
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusNotFound, resp.StatusCode)
+}
+
+// TestAIMediaViewReturns404ForLockedHidden verifies the second half of
+// the High finding: a hidden row owned by the caller is invisible to
+// /api/v1/media/{id}/ai without an unlock cookie. The fixture does not
+// set an unlock claim, so the gate must hide the row.
+func TestAIMediaViewReturns404ForLockedHidden(t *testing.T) {
+	r := require.New(t)
+	fx := newAIAPIFixture(t)
+	mid := testutil.SeedPhoto(t, fx.rw, fx.owner, "p-hidden")
+	fx.mediaCheck.add(mid, fx.owner, true) // hidden
+
+	tagFP := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	r.NoError(fx.resR.WriteTagResult(context.Background(), mid, tagFP, "h",
+		[]parse.Tag{{Key: "secret", Label: "secret", Rank: 1}}))
+
+	resp, err := fx.srv.Client().Get(fx.srv.URL + "/api/v1/media/" + mid + "/ai")
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusNotFound, resp.StatusCode)
 }
 
 func TestAIMediaViewSurfacesSkipReason(t *testing.T) {
 	r := require.New(t)
 	fx := newAIAPIFixture(t)
 	mid := testutil.SeedPhoto(t, fx.rw, fx.owner, "p1")
+	fx.mediaCheck.add(mid, fx.owner, false)
 	r.NoError(fx.skipR.Record(context.Background(), mid, ai.TaskTag, "video"))
 
 	resp, err := fx.srv.Client().Get(fx.srv.URL + "/api/v1/media/" + mid + "/ai")

@@ -22,7 +22,52 @@ import (
 	"github.com/wesm/fotobank/internal/testutil"
 )
 
+// fakeMediaCheck mirrors MediaService.Get's contract: returns
+// errs.ErrNotFound when caller is not the owner of mediaID, or when
+// the row is hidden and includeHidden is false. Tests configure rows
+// via add(); the lightbox MediaView path goes through this gate before
+// reading any AI table.
+type fakeMediaCheck struct {
+	rows map[string]struct {
+		owner  owners.Principal
+		hidden bool
+	}
+}
+
+func newFakeMediaCheck() *fakeMediaCheck {
+	return &fakeMediaCheck{rows: map[string]struct {
+		owner  owners.Principal
+		hidden bool
+	}{}}
+}
+
+func (f *fakeMediaCheck) add(id string, owner owners.Principal, hidden bool) {
+	f.rows[id] = struct {
+		owner  owners.Principal
+		hidden bool
+	}{owner: owner, hidden: hidden}
+}
+
+func (f *fakeMediaCheck) Check(_ context.Context, id string, caller owners.Principal, includeHidden bool) error {
+	row, ok := f.rows[id]
+	if !ok {
+		return errs.ErrNotFound
+	}
+	if row.owner != caller {
+		return errs.ErrNotFound
+	}
+	if row.hidden && !includeHidden {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
 func makeServiceWithDB(t *testing.T) (*aiservice.Service, *sql.DB) {
+	svc, _, rw := makeServiceWithMedia(t)
+	return svc, rw
+}
+
+func makeServiceWithMedia(t *testing.T) (*aiservice.Service, *fakeMediaCheck, *sql.DB) {
 	t.Helper()
 	rw, ro := testutil.OpenTestDBPair(t)
 	q := jobs.NewQueue(rw, ro)
@@ -31,15 +76,17 @@ func makeServiceWithDB(t *testing.T) (*aiservice.Service, *sql.DB) {
 	skipR := skipped.NewRepo(rw, ro)
 	ackS := ack.New(rw, ro)
 	gs := gapscanner.New(ro, q, resR, skipR)
+	mediaCheck := newFakeMediaCheck()
 
-	return aiservice.New(aiservice.Deps{
+	svc := aiservice.New(aiservice.Deps{
 		Queue: q, Results: resR, Failures: failR, Skipped: skipR,
-		Ack: ackS, Gap: gs,
+		Ack: ackS, Gap: gs, Media: mediaCheck,
 		ConfigFingerprints: aiservice.ConfigFingerprints{
 			Tag:     ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"},
 			Caption: ai.Fingerprint{ModelID: "m", PromptVersion: "caption-v1", InputProfile: "ip"},
 		},
-	}), rw
+	})
+	return svc, mediaCheck, rw
 }
 
 func TestAcknowledgePersists(t *testing.T) {
@@ -203,16 +250,17 @@ func TestServiceRejectsZeroPrincipal(t *testing.T) {
 	_, err = svc.IsAcknowledged(ctx, zero)
 	r.ErrorIs(err, errs.ErrPermissionDenied)
 	r.ErrorIs(svc.Acknowledge(ctx, zero), errs.ErrPermissionDenied)
-	_, err = svc.MediaView(ctx, zero, "mid")
+	_, err = svc.MediaView(ctx, zero, "mid", false)
 	r.ErrorIs(err, errs.ErrPermissionDenied)
 }
 
 func TestMediaViewPopulatesAllSurfaces(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
-	svc, rw := makeServiceWithDB(t)
+	svc, mediaCheck, rw := makeServiceWithMedia(t)
 	owner := testutil.SeedOwner(t, rw, "local", "alice")
 	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	mediaCheck.add(mid, owner, false)
 
 	tagFP := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
 	captionFP := ai.Fingerprint{ModelID: "m", PromptVersion: "caption-v1", InputProfile: "ip"}
@@ -227,7 +275,7 @@ func TestMediaViewPopulatesAllSurfaces(t *testing.T) {
 	failR := failures.NewRepo(rw, rw)
 	r.NoError(failR.Record(ctx, mid, ai.TaskTag, tagFP, ai.ErrKindMalformed, "bad json", 2))
 
-	view, err := svc.MediaView(ctx, owner, mid)
+	view, err := svc.MediaView(ctx, owner, mid, false)
 	r.NoError(err)
 	r.Len(view.Tags, 2)
 	r.Equal("dog", view.Tags[0].Key)
@@ -248,14 +296,15 @@ func TestMediaViewPopulatesAllSurfaces(t *testing.T) {
 func TestMediaViewSurfacesSkipReason(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
-	svc, rw := makeServiceWithDB(t)
+	svc, mediaCheck, rw := makeServiceWithMedia(t)
 	owner := testutil.SeedOwner(t, rw, "local", "alice")
 	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	mediaCheck.add(mid, owner, false)
 
 	skipR := skipped.NewRepo(rw, rw)
 	r.NoError(skipR.Record(ctx, mid, ai.TaskTag, "video"))
 
-	view, err := svc.MediaView(ctx, owner, mid)
+	view, err := svc.MediaView(ctx, owner, mid, false)
 	r.NoError(err)
 	r.NotNil(view.Skipped)
 	r.Equal("video", view.Skipped.Reason)
@@ -263,17 +312,69 @@ func TestMediaViewSurfacesSkipReason(t *testing.T) {
 	r.Nil(view.Caption)
 }
 
-func TestMediaViewEmptyForUnknownMedia(t *testing.T) {
+// TestMediaViewMissingMediaReturnsNotFound verifies the gate fires
+// before any AI table is read: an unknown id propagates errs.ErrNotFound
+// so the caller cannot probe for cross-owner or non-existent rows.
+// (Previously, MediaView returned an empty MediaView for any id.)
+func TestMediaViewMissingMediaReturnsNotFound(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
-	svc, rw := makeServiceWithDB(t)
+	svc, _, rw := makeServiceWithMedia(t)
 	owner := testutil.SeedOwner(t, rw, "local", "alice")
 
-	view, err := svc.MediaView(ctx, owner, "missing")
+	_, err := svc.MediaView(ctx, owner, "missing", false)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+// TestMediaViewRejectsCrossOwnerReads verifies the High-severity fix:
+// even authenticated callers cannot fetch AI artifacts for media owned
+// by another principal. The gate maps to errs.ErrNotFound (not
+// ErrPermissionDenied) to preserve the anti-enumeration convention.
+func TestMediaViewRejectsCrossOwnerReads(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	svc, mediaCheck, rw := makeServiceWithMedia(t)
+	alice := testutil.SeedOwner(t, rw, "local", "alice")
+	bob := testutil.SeedOwner(t, rw, "local", "bob")
+	bobMid := testutil.SeedPhoto(t, rw, bob, "b1")
+	mediaCheck.add(bobMid, bob, false)
+
+	// Seed a tag result on Bob's photo so the gate is the only thing
+	// preventing Alice from reading it.
+	resR := results.NewRepo(rw, rw)
+	tagFP := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	r.NoError(resR.WriteTagResult(ctx, bobMid, tagFP, "h",
+		[]parse.Tag{{Key: "x", Label: "x", Rank: 1}}))
+
+	_, err := svc.MediaView(ctx, alice, bobMid, false)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+// TestMediaViewHiddenRowGatedOnIncludeHidden verifies the second half
+// of the High finding: a hidden media's AI artifacts are reachable only
+// when includeHidden=true (i.e. when the HTTP layer saw a valid
+// hidden-unlock claim). Without the unlock the gate returns
+// errs.ErrNotFound.
+func TestMediaViewHiddenRowGatedOnIncludeHidden(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	svc, mediaCheck, rw := makeServiceWithMedia(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p-hidden")
+	mediaCheck.add(mid, owner, true) // hidden=true
+
+	resR := results.NewRepo(rw, rw)
+	tagFP := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	r.NoError(resR.WriteTagResult(ctx, mid, tagFP, "h",
+		[]parse.Tag{{Key: "secret", Label: "secret", Rank: 1}}))
+
+	// Without the unlock claim, the gate hides the row.
+	_, err := svc.MediaView(ctx, owner, mid, false)
+	r.ErrorIs(err, errs.ErrNotFound)
+
+	// With includeHidden=true, the artifacts are visible.
+	view, err := svc.MediaView(ctx, owner, mid, true)
 	r.NoError(err)
-	r.Empty(view.Tags)
-	r.Nil(view.Caption)
-	r.Nil(view.Skipped)
-	r.Nil(view.TagFailure)
-	r.Nil(view.CaptionFailure)
+	r.Len(view.Tags, 1)
+	r.Equal("secret", view.Tags[0].Key)
 }

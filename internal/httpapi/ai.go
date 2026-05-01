@@ -15,6 +15,7 @@ import (
 
 	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/ai/failures"
+	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/errs"
 	aiservice "github.com/wesm/fotobank/internal/service/ai"
 )
@@ -170,7 +171,15 @@ func registerAIMediaView(api huma.API, svc *aiservice.Service) {
 		if !ok {
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
 		}
-		v, err := svc.MediaView(ctx, id.Principal.OwnersPrincipal(), in.MediaID)
+		caller := id.Principal.OwnersPrincipal()
+		// Mirror the direct media-detail route: a hidden-unlock claim
+		// from the same principal lets MediaView return artifacts for a
+		// hidden row; without it the row is treated as missing.
+		includeHidden := false
+		if claim, hasClaim := hidden.UnlockClaimFromContext(ctx); hasClaim && claim.Principal == caller {
+			includeHidden = true
+		}
+		v, err := svc.MediaView(ctx, caller, in.MediaID, includeHidden)
 		if err != nil {
 			return nil, Translate(err)
 		}
