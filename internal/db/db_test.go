@@ -195,9 +195,20 @@ func TestOpen_RoundTripTZ(t *testing.T) {
 // hasn't completed yet — and (b) the second writer completes
 // successfully once h1 releases the lock.
 //
-// The probe-based design (in place of an elapsed-time heuristic)
-// gives a genuinely deterministic test of the property "busy_timeout
-// makes the second writer wait rather than fail immediately":
+// The probe-based design gives a strong-but-not-perfect test of the
+// property "busy_timeout makes the second writer wait rather than
+// fail immediately." It is more reliable than any elapsed-time
+// heuristic (which is what previous iterations attempted; all
+// failed code review for various flake modes). The remaining
+// caveat: SQLite does not expose a portable way to observe a
+// blocked writer from outside, so the test relies on a generous
+// probe window (200ms) being enough for h2 to reach ExecContext
+// before the probe runs. On a runner so loaded that scheduling a
+// goroutine takes >200ms, the test could pass even with a broken
+// busy_timeout (h2 would simply not have run yet by the time we
+// COMMIT and proceed). That scenario is implausible on any modern
+// CI runner; for full determinism we would need SQLite-internal
+// lock observation that mattn does not surface.
 //
 //   - Two raw *sql.DB handles open the same file, each carrying the
 //     production DSN (_busy_timeout=5000&_fk=1). Two distinct handles
@@ -221,13 +232,17 @@ func TestOpen_RoundTripTZ(t *testing.T) {
 //     transaction and waits for h2 to finish. h2 must succeed (no
 //     error) — proving the retry path released cleanly.
 //
-// What this test specifically catches: a regression that breaks the
-// "block until the lock is released" contract. It does NOT measure
-// elapsed time, so it is immune to scheduler-stall false negatives
-// (Job 65) and stall-as-elapsed false positives (Jobs 73 and 75)
-// alike. The probe window has to be large enough that the spawned
-// goroutine has reliably reached ExecContext before we check; 200ms
-// is enormous on any realistic runner.
+// What this test specifically catches: a regression where h2 fails
+// IMMEDIATELY with SQLITE_BUSY (busy_timeout=0, missing retry path,
+// driver swap to a no-retry driver). What it does NOT catch: a
+// regression where h2 fails AFTER our probe window but before
+// COMMIT — that scenario is conceivable in theory but requires a
+// busy_timeout shorter than 200ms, which is itself a regression
+// SQLite would loudly surface elsewhere. The probe-based design
+// abandons the elapsed-time arms race that produced false negatives
+// from scheduler stalls (Job 65) and false positives from stalls
+// being counted as elapsed time (Jobs 73 and 75); each previous
+// iteration plugged one race only to expose another.
 //
 // Bound by ctx (2s); skipped under -short.
 func TestOpen_ConcurrentWriters(t *testing.T) {

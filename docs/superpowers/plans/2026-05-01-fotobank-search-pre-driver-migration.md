@@ -728,9 +728,11 @@ git commit -m "test(testutil): register sqlite-vec in OpenTestDB"
 12. Wait on `resCh` with `ctx.Done()` as the safety net. Assert no error.
 13. Assert the row count is exactly 1.
 
-**What this catches.** A regression that breaks the "block until the lock is released" contract — i.e. busy_timeout=0, missing retry logic, or any path that lets h2 fail-fast with `database is locked`. The probe window assumption is "200ms is enough for h2 to reach ExecContext"; if a runner is so loaded that it can't schedule a goroutine in 200ms, the entire test infrastructure is broken anyway.
+**What this catches.** A regression where h2 fails IMMEDIATELY with `SQLITE_BUSY` — busy_timeout=0, missing retry logic, or a driver swap that loses the retry path. Such regressions surface as a non-empty `resCh` at probe time.
 
-**What this does NOT do.** The test does not measure elapsed time and does not try to assert "h2 waited at least N milliseconds." That measurement is unreliable in the presence of scheduler stalls in either direction (Pitfall 2 above). The probe-based design replaces elapsed-time-measurement-as-proof with active-state-observation-as-proof, which is what the property requires.
+**What this does NOT prove.** The probe window is itself a heuristic — it assumes h2 has reached `ExecContext` within 200ms of being scheduled. On a runner so loaded that goroutine scheduling takes >200ms, the test could pass without ever exercising busy_timeout (h2 simply hasn't run yet when we COMMIT). For full determinism we would need SQLite-internal lock-state observation, which mattn does not surface. The probe design is a strong flake-reduction over the elapsed-time iterations (which had errors in either direction depending on stall placement) but is not theoretically perfect.
+
+**Why the test still earns its place.** The realistic regression mode this guards against — a driver swap silently losing busy-retry behavior — would manifest as immediate-failure on every contention attempt, which the probe catches loudly. The implausible failure mode (a runner so loaded it doesn't schedule for 200ms) is a CI-infrastructure problem, not a busy_timeout problem.
 
 This is genuinely deterministic: if `busy_timeout=0` or the driver lacks retry support, h2's `INSERT` errors immediately with `SQLITE_BUSY` (assertion 11 fails). If busy_timeout works, h2 blocks for `holdWindow` then succeeds (assertions 11-13 pass).
 
