@@ -190,49 +190,44 @@ func TestOpen_RoundTripTZ(t *testing.T) {
 }
 
 // TestOpen_ConcurrentWriters proves busy_timeout is actually engaged
-// by manufacturing a deterministic SQLITE_BUSY contention window and
-// asserting the second writer waits for the first to release the
-// write lock rather than failing immediately.
+// by manufacturing a SQLITE_BUSY contention window and asserting (a)
+// the second writer is BLOCKED while h1 holds the lock — i.e. it
+// hasn't completed yet — and (b) the second writer completes
+// successfully once h1 releases the lock.
 //
-// Contention model:
+// The probe-based design (in place of an elapsed-time heuristic)
+// gives a genuinely deterministic test of the property "busy_timeout
+// makes the second writer wait rather than fail immediately":
 //
 //   - Two raw *sql.DB handles open the same file, each carrying the
 //     production DSN (_busy_timeout=5000&_fk=1). Two distinct handles
-//     are required: a single *sql.DB with MaxOpenConns>1 still gives
-//     two real SQLite connections, but the simpler two-handle setup
-//     mirrors how independent workers run in production.
-//   - h1 starts a BEGIN IMMEDIATE transaction. BEGIN IMMEDIATE acquires
-//     the file's RESERVED write lock up front, so any other connection
-//     that tries to write must wait or return SQLITE_BUSY.
-//   - h2 then issues an INSERT. With busy_timeout=5000 active, h2's
-//     Exec must block until h1's COMMIT releases the lock.
-//   - After ~100ms the test commits h1. h2's INSERT then succeeds.
-//   - The wall-clock duration of h2's Exec must be >= the hold window
-//     (100ms minus a small slack for clock granularity), proving h2
-//     actually waited rather than racing through a brief lock-free
-//     window. If busy_timeout were 0 / broken, h2's Exec would error
-//     immediately with "database is locked" instead of waiting.
+//     are required: db.Open pins the RW pool to MaxOpenConns(1), which
+//     queues writers inside Go's database/sql layer and never gives
+//     SQLite a chance to return SQLITE_BUSY. Two raw handles with
+//     default MaxOpenConns let two real connections hit the file
+//     simultaneously, which is what busy_timeout is designed to handle.
+//   - h1 starts a BEGIN IMMEDIATE transaction on a pinned *sql.Conn.
+//     BEGIN IMMEDIATE acquires the file's RESERVED write lock up front,
+//     so any other connection that tries to write must wait or return
+//     SQLITE_BUSY. The pinned conn is required because BEGIN/COMMIT
+//     must run on the same connection.
+//   - h2 issues an INSERT in a goroutine. With busy_timeout=5000
+//     active, h2's Exec must block until h1's COMMIT releases the lock.
+//   - The test waits a probe window (200ms) and then asserts h2 has
+//     NOT yet completed. If busy_timeout is broken (e.g. 0 / no retry
+//     logic), h2 would have errored immediately with SQLITE_BUSY and
+//     resCh would be non-empty by now.
+//   - Only after confirming h2 is still blocked, the test commits h1's
+//     transaction and waits for h2 to finish. h2 must succeed (no
+//     error) — proving the retry path released cleanly.
 //
-// Goroutine-start handshake (Job 65 follow-up): the h2 goroutine
-// closes a `started` channel immediately before calling ExecContext so
-// the test can be sure the goroutine has actually been scheduled
-// before the main test goroutine sleeps the hold window. Without this,
-// a busy CI runner could leave the goroutine unscheduled until after
-// the main goroutine has already committed, in which case h2 would
-// run with no lock contention and `elapsed < holdWindow - slack`
-// would falsely fail. The handshake closes the start window from
-// milliseconds to microseconds; the small post-handshake sleep gives
-// the goroutine a moment to actually reach the SQLite layer (the
-// channel close only proves the goroutine started, not that
-// ExecContext has reached SQLite). Combined with the 5ms slack on the
-// elapsed assertion, that's enough headroom on any realistic runner.
-//
-// db.Open is deliberately NOT used here because it pins the RW pool
-// to MaxOpenConns(1), which would queue writers inside the Go
-// database/sql layer and never give SQLite a chance to return
-// SQLITE_BUSY. Two raw handles with default MaxOpenConns let two real
-// connections hit the file simultaneously, which is what busy_timeout
-// is designed to handle.
+// What this test specifically catches: a regression that breaks the
+// "block until the lock is released" contract. It does NOT measure
+// elapsed time, so it is immune to scheduler-stall false negatives
+// (Job 65) and stall-as-elapsed false positives (Jobs 73 and 75)
+// alike. The probe window has to be large enough that the spawned
+// goroutine has reliably reached ExecContext before we check; 200ms
+// is enormous on any realistic runner.
 //
 // Bound by ctx (2s); skipped under -short.
 func TestOpen_ConcurrentWriters(t *testing.T) {
@@ -241,9 +236,6 @@ func TestOpen_ConcurrentWriters(t *testing.T) {
 	}
 	r := require.New(t)
 
-	// RegisterSqliteVec is idempotent; call it before sql.Open to be
-	// safe even though the sqlite3 driver name is registered already
-	// via internal/db/sqlitevec.go's blank import.
 	db.RegisterSqliteVec()
 
 	path := filepath.Join(t.TempDir(), "stress.sqlite")
@@ -256,8 +248,7 @@ func TestOpen_ConcurrentWriters(t *testing.T) {
 	r.NoError(err)
 	defer h2.Close()
 
-	// Set WAL once via h1 before any contention starts. WAL is
-	// per-file, not per-handle.
+	// WAL once via h1 before any contention starts.
 	_, err = h1.Exec(`PRAGMA journal_mode=WAL`)
 	r.NoError(err)
 	_, err = h1.Exec(`CREATE TABLE stress (id INTEGER PRIMARY KEY, v TEXT)`)
@@ -266,84 +257,54 @@ func TestOpen_ConcurrentWriters(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// h1 holds the write lock via BEGIN IMMEDIATE on a single dedicated
-	// connection. A bare *sql.DB.Exec("BEGIN IMMEDIATE") would not work
-	// reliably because the next call could land on a different pooled
-	// conn that doesn't hold the lock; pinning to a single Conn fixes
-	// that.
+	// h1 holds the write lock via BEGIN IMMEDIATE on a pinned conn.
 	holdConn, err := h1.Conn(ctx)
 	r.NoError(err)
 	defer holdConn.Close()
 	_, err = holdConn.ExecContext(ctx, `BEGIN IMMEDIATE`)
 	r.NoError(err)
 
-	// 500ms is large enough that even a worst-case scheduler stall between
-	// `close(started)`, `start := time.Now()`, and `ExecContext` reaching
-	// SQLite is dwarfed by the hold. A 50ms stall (extreme on any modern
-	// runner) still leaves the elapsed assertion ~445ms above its
-	// threshold. See Job 72: the started-channel handshake closes the
-	// micro-race window down to microseconds in practice; this hold
-	// window provides the safety factor that makes the test robust to
-	// any residual scheduler noise without resorting to invasive
-	// SQLite-internal lock-state polling.
-	const holdWindow = 500 * time.Millisecond
-
-	// h2's Exec runs in a goroutine. It must block until holdConn
-	// commits or the ctx fires.
-	type result struct {
-		err     error
-		elapsed time.Duration
-	}
-	resCh := make(chan result, 1)
-	// `start` is captured BEFORE `close(started)` so any scheduler stall
-	// between the goroutine being scheduled and ExecContext reaching
-	// SQLite is included in `elapsed`. If we captured `start` after
-	// `close`, a sufficiently delayed goroutine could measure a too-low
-	// elapsed value and fail the busy_timeout assertion spuriously even
-	// when busy_timeout works correctly. See Job 73 race analysis.
+	// h2's Exec runs in a goroutine. The goroutine signals via the
+	// `started` channel just before invoking ExecContext.
+	resCh := make(chan error, 1)
 	started := make(chan struct{})
 	go func() {
-		start := time.Now()
 		close(started)
 		_, err := h2.ExecContext(ctx, `INSERT INTO stress (v) VALUES (?)`, "from-h2")
-		resCh <- result{err: err, elapsed: time.Since(start)}
+		resCh <- err
 	}()
 	<-started
-	// `started` closing proves the goroutine has captured `start` and
-	// is about to call ExecContext. A brief sleep gives ExecContext
-	// time to actually reach SQLite and observe the lock. 10ms is much
-	// smaller than holdWindow (500ms) so doesn't materially affect the
-	// elapsed assertion.
-	time.Sleep(10 * time.Millisecond)
 
-	// Hold the write lock for a known window so h2 must wait that
-	// long. time.Sleep is fine here because we own the test goroutine
-	// and the lock holder.
-	time.Sleep(holdWindow)
+	// Wait long enough for h2 to (a) be scheduled, (b) call ExecContext,
+	// and (c) attempt the write — at which point busy_timeout must keep
+	// it blocked. 200ms is huge on any realistic runner; even a 100ms
+	// scheduler stall would leave 100ms of margin for h2 to enter SQLite.
+	const probeWindow = 200 * time.Millisecond
+	time.Sleep(probeWindow)
+
+	// h2 must NOT have completed yet — it should be blocked on the
+	// write lock that h1 still holds. If resCh is non-empty here,
+	// busy_timeout did not engage (the writer either errored
+	// immediately or somehow got around the lock).
+	select {
+	case err := <-resCh:
+		r.FailNowf("h2 completed before COMMIT — busy_timeout failed",
+			"got err=%v after %v probe window with h1 still holding the lock",
+			err, probeWindow)
+	default:
+		// Good: h2 is blocked on the lock. busy_timeout is engaged.
+	}
+
+	// Release h1's lock. h2's INSERT should now unblock and succeed.
 	_, err = holdConn.ExecContext(ctx, `COMMIT`)
 	r.NoError(err)
 
-	// h2 should now complete. ctx is the hard cap (2s).
-	var got result
 	select {
-	case got = <-resCh:
+	case err := <-resCh:
+		r.NoError(err, "h2 INSERT must succeed once h1 releases the write lock")
 	case <-ctx.Done():
-		r.FailNow("h2 INSERT did not complete before ctx deadline", "%v", ctx.Err())
+		r.FailNowf("h2 INSERT did not complete after COMMIT", "%v", ctx.Err())
 	}
-	r.NoError(got.err, "h2 INSERT must succeed once h1 releases the write lock")
-
-	// The elapsed time MUST be at least the hold window (within a
-	// small slack for clock granularity). If busy_timeout were broken
-	// or 0, h2 would have errored immediately well below holdWindow.
-	// Slack is conservative — small enough to catch a regression that
-	// returns sub-holdWindow (e.g. busy_timeout=0 → immediate
-	// SQLITE_BUSY → ~ms) and large enough to absorb measurement noise
-	// in time.Since().
-	const slack = 5 * time.Millisecond
-	r.GreaterOrEqual(got.elapsed, holdWindow-slack,
-		"h2 Exec elapsed %v < holdWindow %v (slack %v): busy_timeout did not retry",
-		got.elapsed, holdWindow, slack)
-	t.Logf("h2 Exec waited %v for the write lock", got.elapsed)
 
 	// Exactly one row from h2.
 	var total int
