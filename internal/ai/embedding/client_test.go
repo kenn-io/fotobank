@@ -203,6 +203,43 @@ func TestClient_ContextCancelDoesNotWrapAsTransient(t *testing.T) {
 	r.NotErrorIs(err, embedding.ErrTransient, "must not be wrapped as transient")
 }
 
+// TestClient_ContextCanceledDuringBodyReadDoesNotWrapAsTransient
+// covers the body-read window: the server flushes a status header
+// (so http.Do returns success) then stalls during body emission.
+// The client's per-call context expires inside io.ReadAll, parse
+// classifies the truncated read as transient, but the post-parse
+// ctx.Err() check must convert that into a raw context error so
+// callers can detect the deadline cleanly.
+func TestClient_ContextCanceledDuringBodyReadDoesNotWrapAsTransient(t *testing.T) {
+	r := require.New(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Flush headers + a partial body, then stall long enough that
+		// the per-call deadline fires before the body finishes. The
+		// flush ensures http.Do returns success and parse is reached.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			_, _ = io.WriteString(w, `{"data":[`)
+			f.Flush()
+		}
+		time.Sleep(200 * time.Millisecond)
+	}))
+	defer srv.Close()
+
+	c := embedding.NewClient(embedding.Config{
+		Endpoint:  srv.URL + "/v1",
+		Model:     "m",
+		Dimension: 768,
+		Timeout:   5 * time.Second,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := c.EmbedImages(ctx, [][]byte{[]byte("x")})
+	r.Error(err)
+	r.ErrorIs(err, context.DeadlineExceeded, "got %v", err)
+	r.NotErrorIs(err, embedding.ErrTransient, "must not be wrapped as transient")
+}
+
 // TestClient_DeadlineExceededDoesNotWrapAsTransient is the deadline twin
 // of the cancel test: a tiny per-call deadline that fires mid-flight
 // returns context.DeadlineExceeded, not ErrTransient.

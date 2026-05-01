@@ -169,6 +169,15 @@ func (c *Client) callOnce(ctx context.Context, input []string) ([][]float32, err
 		out, class, perr := parse(resp, len(input), c.cfg.Dimension)
 		_ = resp.Body.Close()
 
+		// If the context was cancelled or the deadline expired during
+		// the body read, parse classifies the truncated read as
+		// transient. Surface the raw context error instead so callers
+		// can errors.Is(err, context.Canceled / DeadlineExceeded) and
+		// don't get a needless retry on a deliberate cancel.
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
+
 		switch class {
 		case classOK:
 			return out, nil
