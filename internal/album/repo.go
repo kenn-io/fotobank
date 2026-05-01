@@ -454,7 +454,7 @@ func (r *Repo) RemoveMedia(ctx context.Context, albumID, mediaID string) error {
 const albumMediaMediaSelect = `SELECT
     m.id, m.owner_hub, m.owner_user_id, m.media_type, m.mime_type, m.path, m.original_filename,
     m.imported_at, m.timestamp, m.size, m.checksum,
-    m.make, m.model, m.focal_length, m.shutter, m.width, m.height, m.iso, m.aperture,
+    m.make, m.model, m.lens_model, m.focal_length, m.shutter, m.width, m.height, m.iso, m.aperture,
     m.duration_ms,
     m.latitude, m.longitude, m.gps_at, m.location_label,
     m.thumb_status, m.thumb_version, m.thumb_updated_at,

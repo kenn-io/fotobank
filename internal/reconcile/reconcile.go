@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesm/fotobank/internal/exifread"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/storage"
@@ -39,6 +40,10 @@ type Report struct {
 	// DeletedTemps is the number of StaleTemps files removed when
 	// Options.CommitTemps is true.
 	DeletedTemps int `json:"deleted_temps"`
+	// LensModelBackfilled is the number of photo rows whose
+	// lens_model column was filled in from EXIF during this pass.
+	// Always zero for video rows or rows whose EXIF lacks LensModel.
+	LensModelBackfilled int `json:"lens_model_backfilled"`
 }
 
 // Orphan identifies bytes under the owner's NAS root that no media row
@@ -157,7 +162,52 @@ func Reconcile(ctx context.Context, mediaRepo *media.Repo, opts Options) (Report
 			rep.DeletedTemps++
 		}
 	}
+	rep.LensModelBackfilled = backfillLensModel(ctx, mediaRepo, ownerRoot, dbRows, diskMap)
 	return rep, nil
+}
+
+// backfillLensModel re-reads EXIF for every photo row whose lens_model
+// is currently empty AND whose on-disk file exists, writing lens_model
+// when EXIF surfaces a non-empty value. The pass is additive: rows
+// whose lens_model is already populated, rows missing on disk, video
+// rows, and rows whose EXIF lacks LensModel are all left untouched.
+//
+// Per-row failures (open, parse, UPDATE) are swallowed so a single bad
+// file does not abort the reconcile run; the count returned reflects
+// only successful UPDATEs. The backfill runs in every Reconcile pass —
+// this is safe because the UPDATE statement is gated on
+// `lens_model IS NULL`, so no work is done after the first successful
+// fill for a given row.
+func backfillLensModel(
+	ctx context.Context,
+	mediaRepo *media.Repo,
+	ownerRoot string,
+	dbRows []media.Media,
+	diskMap map[string]int64,
+) int {
+	updated := 0
+	for _, m := range dbRows {
+		if m.Type != media.TypePhoto {
+			continue
+		}
+		if m.LensModel != "" {
+			continue
+		}
+		if _, ok := diskMap[m.Path]; !ok {
+			continue
+		}
+		full := filepath.Join(ownerRoot, filepath.FromSlash(m.Path))
+		meta, err := exifread.ExtractPhoto(full)
+		if err != nil || meta.LensModel == "" {
+			continue
+		}
+		ok, err := mediaRepo.UpdateLensModelIfNull(ctx, m.ID, meta.LensModel)
+		if err != nil || !ok {
+			continue
+		}
+		updated++
+	}
+	return updated
 }
 
 // walkOwnerRoot walks ownerRoot and returns the map of storage-key-relative

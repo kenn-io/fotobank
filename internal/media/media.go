@@ -32,6 +32,7 @@ type Media struct {
 
 	Make        string
 	Model       string
+	LensModel   string
 	FocalLength string
 	Shutter     string
 	Width       *int

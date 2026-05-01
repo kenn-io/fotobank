@@ -18,6 +18,7 @@ type Metadata struct {
 	// Photos.
 	Make         string
 	Model        string
+	LensModel    string
 	FocalLength  string
 	ShutterSpeed string
 	ISO          int

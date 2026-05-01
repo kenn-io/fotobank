@@ -35,6 +35,7 @@ CREATE TABLE media (
 
     make              TEXT,
     model             TEXT,
+    lens_model        TEXT,
     focal_length      TEXT,
     shutter           TEXT,
     width             INTEGER,
@@ -94,6 +95,12 @@ CREATE INDEX media_paired_with_id_idx
 -- always filter hidden_at IS NULL. Partial index keeps that path narrow.
 CREATE INDEX media_visible_idx
     ON media(owner_hub, owner_user_id, timestamp DESC)
+    WHERE hidden_at IS NULL;
+-- Search v1: covers the (owner, type) → visible filter on the search
+-- entry path. Partial on hidden_at IS NULL so the index pages stay
+-- small and align with how list/search read the table.
+CREATE INDEX media_owner_type_idx
+    ON media(owner_hub, owner_user_id, media_type)
     WHERE hidden_at IS NULL;
 
 -- Owner-consistency triggers on paired_with_id. Mirrors the

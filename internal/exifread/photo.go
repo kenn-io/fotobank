@@ -58,6 +58,9 @@ func parseExif(raw []byte) (Metadata, error) {
 	if v := stringTag(by, "Model"); v != "" {
 		m.Model = strings.TrimSpace(v)
 	}
+	if v := stringTag(by, "LensModel"); v != "" {
+		m.LensModel = strings.TrimSpace(v)
+	}
 	if v := stringTag(by, "FocalLength"); v != "" {
 		m.FocalLength = v
 	}

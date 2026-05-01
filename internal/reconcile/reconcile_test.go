@@ -1,12 +1,16 @@
 package reconcile_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	exif "github.com/dsoprea/go-exif/v3"
+	exifcommon "github.com/dsoprea/go-exif/v3/common"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
@@ -229,4 +233,89 @@ func TestReconcileSkipsDotFiles(t *testing.T) {
 	r.Empty(rep.Missing)
 	r.Empty(rep.SizeMismatch)
 	r.Empty(rep.StaleTemps)
+}
+
+// buildJPEGWithLensModel builds a minimal JPEG (SOI + APP1/EXIF + EOI)
+// embedding a LensModel tag. Used by the lens_model backfill test
+// to produce on-disk bytes that exifread.ExtractPhoto can parse.
+func buildJPEGWithLensModel(t *testing.T, lens string) []byte {
+	t.Helper()
+	r := require.New(t)
+	im, err := exifcommon.NewIfdMappingWithStandard()
+	r.NoError(err)
+	ti := exif.NewTagIndex()
+	rootIb := exif.NewIfdBuilder(im, ti, exifcommon.IfdStandardIfdIdentity, binary.LittleEndian)
+	r.NoError(rootIb.AddStandardWithName("Make", "TestMake"))
+	childIb := exif.NewIfdBuilder(im, ti, exifcommon.IfdExifStandardIfdIdentity, binary.LittleEndian)
+	r.NoError(childIb.AddStandardWithName("LensModel", lens))
+	r.NoError(rootIb.AddChildIb(childIb))
+	ibe := exif.NewIfdByteEncoder()
+	exifData, err := ibe.EncodeToExif(rootIb)
+	r.NoError(err)
+	app1 := append([]byte("Exif\x00\x00"), exifData...)
+	r.Less(len(app1)+2, 0x10000, "APP1 must fit in u16 length field")
+
+	var buf bytes.Buffer
+	buf.Write([]byte{0xFF, 0xD8}) // SOI
+	buf.Write([]byte{0xFF, 0xE1}) // APP1 marker
+	r.NoError(binary.Write(&buf, binary.BigEndian, uint16(len(app1)+2)))
+	buf.Write(app1)
+	buf.Write([]byte{0xFF, 0xD9}) // EOI
+	return buf.Bytes()
+}
+
+// TestReconcileBackfillsLensModelWhenNull proves the lens_model
+// backfill: a photo row with NULL lens_model whose on-disk file's
+// EXIF carries a LensModel value gets updated by Reconcile, while
+// rows that already have lens_model set are not overwritten and rows
+// without on-disk bytes are left alone.
+func TestReconcileBackfillsLensModelWhenNull(t *testing.T) {
+	r := require.New(t)
+	f := newReconcileFixture(t)
+
+	const lens = "EF 35mm f/1.4L II USM"
+	jpeg := buildJPEGWithLensModel(t, lens)
+
+	// Row with on-disk bytes and NULL lens_model — should be filled in.
+	withFile := f.seedMedia(t, "2024/lens.jpg", "cs-lens", int64(len(jpeg)))
+	f.writeFile(t, "2024/lens.jpg", jpeg)
+
+	// Row with on-disk bytes whose lens_model is already set — must not
+	// be overwritten by the backfill.
+	preset := media.Media{
+		ID:          uuid.NewString(),
+		Owner:       f.owner,
+		Type:        media.TypePhoto,
+		MimeType:    "image/jpeg",
+		Path:        "2024/preset.jpg",
+		ImportedAt:  time.Now().UTC().Truncate(time.Second),
+		Size:        int64(len(jpeg)),
+		Checksum:    "cs-preset",
+		LensModel:   "Already Set",
+		ThumbStatus: "pending",
+	}
+	r.NoError(f.repo.Insert(f.ctx, preset))
+	f.writeFile(t, "2024/preset.jpg", jpeg)
+
+	// Row with NULL lens_model but no on-disk bytes — must be left alone
+	// (no LensModelBackfilled credit) and instead surface as Missing.
+	missing := f.seedMedia(t, "2024/missing.jpg", "cs-miss", 7)
+	_ = missing
+
+	rep, err := reconcile.Reconcile(f.ctx, f.repo, f.defaultOptions())
+	r.NoError(err)
+	r.Equal(1, rep.LensModelBackfilled)
+
+	got, err := f.repo.GetByID(f.ctx, withFile.ID)
+	r.NoError(err)
+	r.Equal(lens, got.LensModel)
+
+	gotPreset, err := f.repo.GetByID(f.ctx, preset.ID)
+	r.NoError(err)
+	r.Equal("Already Set", gotPreset.LensModel)
+
+	// Re-running reconcile is a no-op for the already-filled row.
+	rep2, err := reconcile.Reconcile(f.ctx, f.repo, f.defaultOptions())
+	r.NoError(err)
+	r.Zero(rep2.LensModelBackfilled)
 }

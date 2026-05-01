@@ -41,7 +41,7 @@ func NewRepo(rw, ro *sql.DB) *Repo { return &Repo{rw: rw, ro: ro} }
 const mediaSelect = `SELECT
 	id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
 	imported_at, timestamp, size, checksum,
-	make, model, focal_length, shutter, width, height, iso, aperture,
+	make, model, lens_model, focal_length, shutter, width, height, iso, aperture,
 	duration_ms,
 	latitude, longitude, gps_at, location_label,
 	thumb_status, thumb_version, thumb_updated_at,
@@ -58,7 +58,7 @@ FROM media`
 const mediaColumnsQualified = `
     m.id, m.owner_hub, m.owner_user_id, m.media_type, m.mime_type, m.path, m.original_filename,
     m.imported_at, m.timestamp, m.size, m.checksum,
-    m.make, m.model, m.focal_length, m.shutter, m.width, m.height, m.iso, m.aperture,
+    m.make, m.model, m.lens_model, m.focal_length, m.shutter, m.width, m.height, m.iso, m.aperture,
     m.duration_ms,
     m.latitude, m.longitude, m.gps_at, m.location_label,
     m.thumb_status, m.thumb_version, m.thumb_updated_at,
@@ -68,13 +68,13 @@ const mediaColumnsQualified = `
 const mediaInsert = `INSERT INTO media (
 	id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
 	imported_at, timestamp, size, checksum,
-	make, model, focal_length, shutter, width, height, iso, aperture,
+	make, model, lens_model, focal_length, shutter, width, height, iso, aperture,
 	duration_ms,
 	latitude, longitude, gps_at, location_label,
 	thumb_status, thumb_version, thumb_updated_at,
 	import_source_path, paired_with_id,
 	hidden_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // Insert stores a new media row. Returns errs.ErrAlreadyExists (wrapped)
 // if a row already exists with the same (owner, checksum) or (owner, path).
@@ -99,6 +99,7 @@ func (r *Repo) Insert(ctx context.Context, m Media) error {
 		m.Checksum,
 		nullStr(m.Make),
 		nullStr(m.Model),
+		nullStr(m.LensModel),
 		nullStr(m.FocalLength),
 		nullStr(m.Shutter),
 		nullInt(m.Width),
@@ -510,6 +511,7 @@ func scanMedia(s rowScanner) (Media, error) {
 		timestamp        sql.NullTime
 		makeN            sql.NullString
 		modelN           sql.NullString
+		lensModel        sql.NullString
 		focalLength      sql.NullString
 		shutter          sql.NullString
 		width            sql.NullInt64
@@ -540,6 +542,7 @@ func scanMedia(s rowScanner) (Media, error) {
 		&m.Checksum,
 		&makeN,
 		&modelN,
+		&lensModel,
 		&focalLength,
 		&shutter,
 		&width,
@@ -569,6 +572,7 @@ func scanMedia(s rowScanner) (Media, error) {
 	}
 	m.Make = makeN.String
 	m.Model = modelN.String
+	m.LensModel = lensModel.String
 	m.FocalLength = focalLength.String
 	m.Shutter = shutter.String
 	if width.Valid {
@@ -720,6 +724,31 @@ WHERE owner_hub = ? AND owner_user_id = ?
 		return nil, fmt.Errorf("iterate media: %w", err)
 	}
 	return out, nil
+}
+
+// UpdateLensModelIfNull writes lens_model for the given media row,
+// but only when the existing column is NULL. The reconcile backfill
+// uses this to fill in lens_model for rows imported before the column
+// existed without overwriting any value already present. Returns
+// (true, nil) when the row was updated, (false, nil) when no row
+// changed (either the id was unknown or lens_model was already set),
+// and a wrapped error on any DB failure.
+func (r *Repo) UpdateLensModelIfNull(ctx context.Context, id, lensModel string) (bool, error) {
+	if lensModel == "" {
+		return false, nil
+	}
+	res, err := r.rw.ExecContext(ctx,
+		`UPDATE media SET lens_model = ? WHERE id = ? AND lens_model IS NULL`,
+		lensModel, id,
+	)
+	if err != nil {
+		return false, fmt.Errorf("update lens_model: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("update lens_model rows affected: %w", err)
+	}
+	return n == 1, nil
 }
 
 // UpdatePairedWithID writes the paired_with_id column for a single

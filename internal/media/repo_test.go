@@ -1473,3 +1473,44 @@ func TestGetSidecarsFiltersHiddenWhenIncludeFalse(t *testing.T) {
 	r.NoError(err)
 	r.Len(gotAll, 2, "both sidecars should be returned when includeHidden=true")
 }
+
+// TestRepoLensModelRoundTrip proves the lens_model column round-trips
+// through Insert and GetByID. Mirrors the Make/Model/FocalLength pattern:
+// empty string → NULL on the wire, non-empty → stored verbatim.
+func TestRepoLensModelRoundTrip(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+
+	p := testOwner()
+	seedOwner(t, d.WriteDB(), p, "sk-lens")
+
+	const lens = "EF 50mm f/1.8 STM"
+	withLens := baseMedia(uuid.NewString(), p)
+	withLens.Path = "2024/lens.jpg"
+	withLens.Checksum = "cs-lens"
+	withLens.LensModel = lens
+	r.NoError(repo.Insert(ctx, withLens))
+
+	withoutLens := baseMedia(uuid.NewString(), p)
+	withoutLens.Path = "2024/no-lens.jpg"
+	withoutLens.Checksum = "cs-no-lens"
+	r.NoError(repo.Insert(ctx, withoutLens))
+
+	got, err := repo.GetByID(ctx, withLens.ID)
+	r.NoError(err)
+	r.Equal(lens, got.LensModel)
+
+	gotEmpty, err := repo.GetByID(ctx, withoutLens.ID)
+	r.NoError(err)
+	r.Empty(gotEmpty.LensModel)
+
+	// Also exercise the mediaColumnsQualified projection used by GetByIDs;
+	// a column-order drift here would silently corrupt list/album DTOs.
+	multi, err := repo.GetByIDs(ctx, []string{withLens.ID, withoutLens.ID})
+	r.NoError(err)
+	r.Len(multi, 2)
+	r.Equal(lens, multi[0].LensModel)
+	r.Empty(multi[1].LensModel)
+}

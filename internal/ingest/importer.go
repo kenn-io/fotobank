@@ -441,6 +441,7 @@ func buildMediaRow(c Candidate, owner owners.Principal, key, checksum string, si
 		Checksum:         checksum,
 		Make:             meta.Make,
 		Model:            meta.Model,
+		LensModel:        meta.LensModel,
 		FocalLength:      meta.FocalLength,
 		Shutter:          meta.ShutterSpeed,
 		ImportSourcePath: rel,

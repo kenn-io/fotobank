@@ -1,6 +1,7 @@
 package exifread
 
 import (
+	"encoding/binary"
 	"testing"
 	"time"
 
@@ -219,4 +220,67 @@ func TestParseExifGPSTimestampPreservesFractionalSeconds(t *testing.T) {
 	r.True(ok)
 	r.Equal(22, got.Second(), "whole seconds")
 	r.Equal(500_000_000, got.Nanosecond(), "fractional seconds preserved as ns")
+}
+
+// buildExifWithLensModel returns a minimal serialized EXIF segment
+// containing Make, Model, and a LensModel sub-IFD tag (0xA434). Used
+// by the LensModel parsing test to avoid dragging a binary fixture
+// through a check-in. The test fixtures under testdata/exif don't have
+// LensModel set, so this is the cleanest path to exercise the tag.
+func buildExifWithLensModel(t *testing.T, lens string) []byte {
+	r := require.New(t)
+	im, err := exifcommon.NewIfdMappingWithStandard()
+	r.NoError(err)
+	ti := exif.NewTagIndex()
+
+	rootIb := exif.NewIfdBuilder(im, ti, exifcommon.IfdStandardIfdIdentity, binary.LittleEndian)
+	r.NoError(rootIb.AddStandardWithName("Make", "Canon"))
+	r.NoError(rootIb.AddStandardWithName("Model", "EOS R5"))
+
+	exifIb := exif.NewIfdBuilder(im, ti, exifcommon.IfdExifStandardIfdIdentity, binary.LittleEndian)
+	r.NoError(exifIb.AddStandardWithName("LensModel", lens))
+	r.NoError(rootIb.AddChildIb(exifIb))
+
+	ibe := exif.NewIfdByteEncoder()
+	out, err := ibe.EncodeToExif(rootIb)
+	r.NoError(err)
+	return out
+}
+
+// TestParseExifSurfacesLensModel locks in that parseExif reads the
+// LensModel tag (Exif Photo IFD, 0xA434) and surfaces it on Metadata
+// with surrounding whitespace trimmed.
+func TestParseExifSurfacesLensModel(t *testing.T) {
+	r := require.New(t)
+	const lens = "EF 50mm f/1.8 STM"
+	padded := "  " + lens + " "
+	raw := buildExifWithLensModel(t, padded)
+
+	md, err := parseExif(raw)
+	r.NoError(err)
+	r.Equal(lens, md.LensModel)
+	// Sanity: the same parse path keeps Make/Model intact.
+	r.Equal("Canon", md.Make)
+	r.Equal("EOS R5", md.Model)
+}
+
+// TestParseExifAbsentLensModelStaysEmpty proves the LensModel field is
+// not populated by surrounding tags or stale state when LensModel is
+// absent from the input.
+func TestParseExifAbsentLensModelStaysEmpty(t *testing.T) {
+	r := require.New(t)
+	im, err := exifcommon.NewIfdMappingWithStandard()
+	r.NoError(err)
+	ti := exif.NewTagIndex()
+	rootIb := exif.NewIfdBuilder(im, ti, exifcommon.IfdStandardIfdIdentity, binary.LittleEndian)
+	r.NoError(rootIb.AddStandardWithName("Make", "Canon"))
+	r.NoError(rootIb.AddStandardWithName("Model", "EOS R5"))
+	ibe := exif.NewIfdByteEncoder()
+	raw, err := ibe.EncodeToExif(rootIb)
+	r.NoError(err)
+
+	md, err := parseExif(raw)
+	r.NoError(err)
+	r.Empty(md.LensModel)
+	r.Equal("Canon", md.Make)
 }
