@@ -277,7 +277,16 @@ func TestOpen_ConcurrentWriters(t *testing.T) {
 	_, err = holdConn.ExecContext(ctx, `BEGIN IMMEDIATE`)
 	r.NoError(err)
 
-	const holdWindow = 100 * time.Millisecond
+	// 500ms is large enough that even a worst-case scheduler stall between
+	// `close(started)`, `start := time.Now()`, and `ExecContext` reaching
+	// SQLite is dwarfed by the hold. A 50ms stall (extreme on any modern
+	// runner) still leaves the elapsed assertion ~445ms above its
+	// threshold. See Job 72: the started-channel handshake closes the
+	// micro-race window down to microseconds in practice; this hold
+	// window provides the safety factor that makes the test robust to
+	// any residual scheduler noise without resorting to invasive
+	// SQLite-internal lock-state polling.
+	const holdWindow = 500 * time.Millisecond
 
 	// h2's Exec runs in a goroutine. It must block until holdConn
 	// commits or the ctx fires.
@@ -324,6 +333,10 @@ func TestOpen_ConcurrentWriters(t *testing.T) {
 	// The elapsed time MUST be at least the hold window (within a
 	// small slack for clock granularity). If busy_timeout were broken
 	// or 0, h2 would have errored immediately well below holdWindow.
+	// Slack is conservative — small enough to catch a regression that
+	// returns sub-holdWindow (e.g. busy_timeout=0 → immediate
+	// SQLITE_BUSY → ~ms) and large enough to absorb measurement noise
+	// in time.Since().
 	const slack = 5 * time.Millisecond
 	r.GreaterOrEqual(got.elapsed, holdWindow-slack,
 		"h2 Exec elapsed %v < holdWindow %v (slack %v): busy_timeout did not retry",
