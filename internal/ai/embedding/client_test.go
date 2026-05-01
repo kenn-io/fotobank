@@ -77,6 +77,44 @@ func TestClient_BatchImagesReturnsVectorsByIndex(t *testing.T) {
 	r.NotEqual(out[0], out[1])
 }
 
+// TestClient_ReordersOutOfOrderResponse verifies that the client
+// reorders the returned vectors to match the input order regardless of
+// how the server emitted them. The mock server replies with index 2,
+// then 0, then 1 — if the client trusted server order without sorting
+// by `index`, the asserted positional alignment below would fail.
+func TestClient_ReordersOutOfOrderResponse(t *testing.T) {
+	r := require.New(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Three inputs were sent (indexes 0..2). Reply with them in
+		// reverse-ish order so trusting the response order would put
+		// the wrong vector at out[0].
+		_, _ = io.WriteString(w,
+			`{"data":[`+
+				`{"embedding":`+vec(768, 0.3)+`,"index":2},`+
+				`{"embedding":`+vec(768, 0.1)+`,"index":0},`+
+				`{"embedding":`+vec(768, 0.2)+`,"index":1}`+
+				`],"model":"siglip2"}`)
+	}))
+	defer srv.Close()
+
+	c := embedding.NewClient(embedding.Config{
+		Endpoint:  srv.URL + "/v1",
+		Model:     "siglip2",
+		Dimension: 768,
+		Timeout:   5 * time.Second,
+	})
+	out, err := c.EmbedImages(context.Background(),
+		[][]byte{[]byte("a"), []byte("b"), []byte("c")})
+	r.NoError(err)
+	r.Len(out, 3)
+	// out[i] must be the vector originally tagged index=i. The
+	// deterministic per-position float values make a swap detectable.
+	r.InDelta(0.1, float64(out[0][0]), 1e-6, "out[0] must be the index=0 vector")
+	r.InDelta(0.2, float64(out[1][0]), 1e-6, "out[1] must be the index=1 vector")
+	r.InDelta(0.3, float64(out[2][0]), 1e-6, "out[2] must be the index=2 vector")
+}
+
 func TestClient_RejectsDimensionMismatchAsMalformed(t *testing.T) {
 	r := require.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
