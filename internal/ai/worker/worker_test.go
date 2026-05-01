@@ -42,6 +42,20 @@ func (s *stubImage) ResolveAndEncode(_ context.Context, _ string) ([]byte, strin
 	return s.jpeg, s.status, s.err
 }
 
+type imageSequence struct {
+	calls atomic.Int32
+	steps []stubImage
+}
+
+func (s *imageSequence) ResolveAndEncode(_ context.Context, _ string) ([]byte, string, error) {
+	i := int(s.calls.Add(1)) - 1
+	if i >= len(s.steps) {
+		i = len(s.steps) - 1
+	}
+	step := s.steps[i]
+	return step.jpeg, step.status, step.err
+}
+
 func setup(t *testing.T) (
 	*worker.Worker, *jobs.Queue, *results.Repo, *failures.Repo, *skipped.Repo,
 	owners.Principal, string, *stubGateway, *stubImage,
@@ -169,6 +183,109 @@ func TestWorkerBlocksOnPendingThumb(t *testing.T) {
 	c, err := q.Counters(context.Background(), ai.TaskTag)
 	r.NoError(err)
 	r.Equal(1, c.Blocked)
+}
+
+func TestWorkerImageErrorRetriesBeforeFailing(t *testing.T) {
+	r := require.New(t)
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+
+	q := jobs.NewQueue(rw, ro)
+	resR := results.NewRepo(rw, ro)
+	failR := failures.NewRepo(rw, ro)
+	skipR := skipped.NewRepo(rw, ro)
+	ackS := ack.New(rw, ro)
+	require.NoError(t, ackS.Acknowledge(context.Background(), owner))
+
+	gw := &stubGateway{respond: func() (gateway.Response, error) {
+		return gateway.Response{Text: `{"tags":["x"]}`}, nil
+	}}
+	img := &imageSequence{steps: []stubImage{
+		{err: fmt.Errorf("transient io read"), status: ""},
+		{err: fmt.Errorf("transient io read"), status: ""},
+	}}
+
+	w := worker.New(worker.Config{
+		Task:        ai.TaskTag,
+		Fingerprint: ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"},
+		PromptHash:  "h", PromptText: "describe",
+		Gateway: gw, Image: img,
+		Queue: q, Results: resR, Failures: failR, Skipped: skipR,
+		Acknowledged: func(ctx context.Context, _ owners.Principal) (bool, error) {
+			return ackS.IsAcknowledged(ctx, owner)
+		},
+		OwnerOf: func(_ context.Context, _ string) (owners.Principal, error) {
+			return owner, nil
+		},
+		MaxJobAttempts: 2, Process: worker.TagProcess,
+		Sem: worker.NewVisionSemaphore(1),
+	})
+	fp := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	r.NoError(q.Enqueue(context.Background(), mid, ai.TaskTag, fp))
+
+	// First attempt: image err → retryable (back to pending, attempts=1).
+	_, err := w.RunOnce(context.Background())
+	r.NoError(err)
+	cnt, err := failR.CountForFingerprint(context.Background(), ai.TaskTag, fp)
+	r.NoError(err)
+	r.Equal(0, cnt, "first attempt should not record terminal failure")
+
+	// Second attempt: image err again → terminal failure.
+	_, err = w.RunOnce(context.Background())
+	r.NoError(err)
+	cnt, err = failR.CountForFingerprint(context.Background(), ai.TaskTag, fp)
+	r.NoError(err)
+	r.Equal(1, cnt, "image error should retry then fail with MissingAIInput")
+}
+
+func TestWorkerPromotesAckedBlockedJobs(t *testing.T) {
+	r := require.New(t)
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	q := jobs.NewQueue(rw, ro)
+	ackS := ack.New(rw, ro)
+	gw := &stubGateway{respond: func() (gateway.Response, error) {
+		return gateway.Response{Text: `{"tags":["x"]}`}, nil
+	}}
+	img := &stubImage{jpeg: []byte{0xff, 0xd8, 0xff, 0xd9}, status: "ready"}
+
+	ackedRef := atomic.Bool{}
+	w := worker.New(worker.Config{
+		Task:        ai.TaskTag,
+		Fingerprint: ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"},
+		PromptHash:  "h", PromptText: "describe",
+		Gateway: gw, Image: img,
+		Queue: q, Results: results.NewRepo(rw, ro),
+		Failures: failures.NewRepo(rw, ro), Skipped: skipped.NewRepo(rw, ro),
+		Acknowledged: func(_ context.Context, _ owners.Principal) (bool, error) {
+			return ackedRef.Load(), nil
+		},
+		OwnerOf: func(_ context.Context, _ string) (owners.Principal, error) {
+			return owner, nil
+		},
+		MaxJobAttempts: 2, Process: worker.TagProcess,
+		Sem: worker.NewVisionSemaphore(1),
+	})
+	fp := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	r.NoError(q.Enqueue(context.Background(), mid, ai.TaskTag, fp))
+
+	// First tick: not acked → blocked.
+	_, err := w.RunOnce(context.Background())
+	r.NoError(err)
+	c, err := q.Counters(context.Background(), ai.TaskTag)
+	r.NoError(err)
+	r.Equal(1, c.Blocked)
+
+	// Owner acknowledges.
+	r.NoError(ackS.Acknowledge(context.Background(), owner))
+	ackedRef.Store(true)
+
+	// Next tick: PromoteBlocked elevates the row, claim succeeds, gateway runs.
+	_, err = w.RunOnce(context.Background())
+	r.NoError(err)
+	r.EqualValues(1, gw.calls.Load(), "promoted job should reach the gateway")
 }
 
 func TestWorkerParkedWithoutAcknowledgement(t *testing.T) {

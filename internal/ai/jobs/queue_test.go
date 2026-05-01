@@ -2,6 +2,7 @@ package jobs_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 	"github.com/wesm/fotobank/internal/testutil"
 )
 
-func newQueue(t *testing.T) (*jobs.Queue, owners.Principal, []string) {
+func newQueueWithDB(t *testing.T) (*jobs.Queue, *sql.DB, owners.Principal, []string) {
 	t.Helper()
 	rw, ro := testutil.OpenTestDBPair(t)
 	owner := testutil.SeedOwner(t, rw, "local", "alice")
@@ -21,7 +22,13 @@ func newQueue(t *testing.T) (*jobs.Queue, owners.Principal, []string) {
 		testutil.SeedPhoto(t, rw, owner, "p1"),
 		testutil.SeedPhoto(t, rw, owner, "p2"),
 	}
-	return jobs.NewQueue(rw, ro), owner, mids
+	return jobs.NewQueue(rw, ro), rw, owner, mids
+}
+
+func newQueue(t *testing.T) (*jobs.Queue, owners.Principal, []string) {
+	t.Helper()
+	q, _, owner, mids := newQueueWithDB(t)
+	return q, owner, mids
 }
 
 func TestEnqueueAndClaim(t *testing.T) {
@@ -136,6 +143,131 @@ func TestSweepLeasesResetsStaleWorking(t *testing.T) {
 	r.NoError(err)
 	r.Len(again, 1)
 	r.Equal(0, again[0].Attempts)
+}
+
+func TestWriteAndMarkDoneCommitsBoth(t *testing.T) {
+	r := require.New(t)
+	q, rw, _, mids := newQueueWithDB(t)
+	ctx := context.Background()
+	fp := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	r.NoError(q.Enqueue(ctx, mids[0], ai.TaskTag, fp))
+	claims, err := q.ClaimBatch(ctx, ai.TaskTag, 10)
+	r.NoError(err)
+	r.Len(claims, 1)
+	c := claims[0]
+
+	r.NoError(q.WriteAndMarkDone(ctx, c, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO ai_results(id, media_id, task, model_id, prompt_version,
+			 prompt_hash, input_profile, status, generated_at)
+			 VALUES (?,?,?,?,?,?,?,'active',?)`,
+			"r1", c.MediaID, "tag", fp.ModelID, fp.PromptVersion, "h", fp.InputProfile, time.Now().UTC())
+		return err
+	}))
+
+	var status string
+	r.NoError(rw.QueryRowContext(ctx, `SELECT status FROM ai_jobs WHERE id=?`, c.JobID).Scan(&status))
+	r.Equal("done", status)
+
+	var n int
+	r.NoError(rw.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ai_results WHERE media_id=? AND status='active'`, c.MediaID).Scan(&n))
+	r.Equal(1, n)
+}
+
+func TestWriteAndMarkDoneRollsBackOnClaimLost(t *testing.T) {
+	r := require.New(t)
+	q, rw, _, mids := newQueueWithDB(t)
+	ctx := context.Background()
+	fp := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	r.NoError(q.Enqueue(ctx, mids[0], ai.TaskTag, fp))
+	claims, err := q.ClaimBatch(ctx, ai.TaskTag, 10)
+	r.NoError(err)
+	r.Len(claims, 1)
+	c := claims[0]
+
+	// Lease lost mid-flight: another worker / sweep advanced the row.
+	r.NoError(q.SupersedeAll(ctx, c.MediaID, ai.TaskTag))
+
+	err = q.WriteAndMarkDone(ctx, c, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO ai_results(id, media_id, task, model_id, prompt_version,
+			 prompt_hash, input_profile, status, generated_at)
+			 VALUES (?,?,?,?,?,?,?,'active',?)`,
+			"r1", c.MediaID, "tag", fp.ModelID, fp.PromptVersion, "h", fp.InputProfile, time.Now().UTC())
+		return err
+	})
+	r.ErrorIs(err, jobs.ErrClaimLost)
+
+	// The result row must NOT have been persisted.
+	var n int
+	r.NoError(rw.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ai_results WHERE media_id=?`, c.MediaID).Scan(&n))
+	r.Equal(0, n, "claim-lost write must roll back")
+}
+
+func TestPromoteAckedBlocked(t *testing.T) {
+	r := require.New(t)
+	q, rw, owner, mids := newQueueWithDB(t)
+	ctx := context.Background()
+	fp := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	r.NoError(q.Enqueue(ctx, mids[0], ai.TaskTag, fp))
+	claims, err := q.ClaimBatch(ctx, ai.TaskTag, 10)
+	r.NoError(err)
+	c := claims[0]
+	r.NoError(q.MarkBlocked(ctx, c.JobID, c.ClaimedAt, jobs.AckBlockedReason))
+
+	// Without an ack row, no promotion.
+	n, err := q.PromoteAckedBlocked(ctx, ai.TaskTag, "ai.hidden_processing_acknowledged_at")
+	r.NoError(err)
+	r.Equal(0, n)
+
+	_, err = rw.ExecContext(ctx,
+		`INSERT INTO user_settings(principal_hub, principal_user_id, key, value, updated_at)
+		 VALUES (?,?,?,?,?)`,
+		owner.Hub, owner.UserID, "ai.hidden_processing_acknowledged_at", "ts", time.Now().UTC())
+	r.NoError(err)
+
+	n, err = q.PromoteAckedBlocked(ctx, ai.TaskTag, "ai.hidden_processing_acknowledged_at")
+	r.NoError(err)
+	r.Equal(1, n)
+
+	again, err := q.ClaimBatch(ctx, ai.TaskTag, 10)
+	r.NoError(err)
+	r.Len(again, 1)
+}
+
+func TestPromoteThumbReadyBlocked(t *testing.T) {
+	r := require.New(t)
+	q, rw, _, mids := newQueueWithDB(t)
+	ctx := context.Background()
+	fp := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+
+	// Force the source media into a non-ready thumb_status; SeedPhoto
+	// inserts 'ready' so we override it.
+	_, err := rw.ExecContext(ctx, `UPDATE media SET thumb_status='pending' WHERE id=?`, mids[0])
+	r.NoError(err)
+
+	r.NoError(q.Enqueue(ctx, mids[0], ai.TaskTag, fp))
+	claims, err := q.ClaimBatch(ctx, ai.TaskTag, 10)
+	r.NoError(err)
+	c := claims[0]
+	r.NoError(q.MarkBlocked(ctx, c.JobID, c.ClaimedAt, jobs.ThumbBlockedPending))
+
+	// Still pending: no promotion.
+	n, err := q.PromoteThumbReadyBlocked(ctx, ai.TaskTag)
+	r.NoError(err)
+	r.Equal(0, n)
+
+	_, err = rw.ExecContext(ctx, `UPDATE media SET thumb_status='ready' WHERE id=?`, mids[0])
+	r.NoError(err)
+	n, err = q.PromoteThumbReadyBlocked(ctx, ai.TaskTag)
+	r.NoError(err)
+	r.Equal(1, n)
+
+	again, err := q.ClaimBatch(ctx, ai.TaskTag, 10)
+	r.NoError(err)
+	r.Len(again, 1)
 }
 
 func TestCounters(t *testing.T) {

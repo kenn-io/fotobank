@@ -38,7 +38,35 @@ type CaptionRow struct {
 
 // WriteTagResult atomically replaces the active tag result for media.
 func (r *Repo) WriteTagResult(ctx context.Context, mediaID string, fp ai.Fingerprint, promptHash string, tags []parse.Tag) error {
-	return r.writeWithChildren(ctx, mediaID, ai.TaskTag, fp, promptHash, func(ctx context.Context, tx *sql.Tx, resultID string) error {
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := r.WriteTagResultTx(ctx, tx, mediaID, fp, promptHash, tags); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// WriteCaptionResult atomically replaces the active caption result.
+func (r *Repo) WriteCaptionResult(ctx context.Context, mediaID string, fp ai.Fingerprint, promptHash, text string) error {
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := r.WriteCaptionResultTx(ctx, tx, mediaID, fp, promptHash, text); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// WriteTagResultTx is the in-tx variant of WriteTagResult. The caller
+// owns commit/rollback. Used by the worker to combine result write +
+// claim finalization in a single transaction.
+func (r *Repo) WriteTagResultTx(ctx context.Context, tx *sql.Tx, mediaID string, fp ai.Fingerprint, promptHash string, tags []parse.Tag) error {
+	return writeWithChildrenTx(ctx, tx, mediaID, ai.TaskTag, fp, promptHash, func(ctx context.Context, tx *sql.Tx, resultID string) error {
 		for _, t := range tags {
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO media_tags(result_id, tag_key, tag_label, rank) VALUES (?,?,?,?)`,
@@ -50,29 +78,24 @@ func (r *Repo) WriteTagResult(ctx context.Context, mediaID string, fp ai.Fingerp
 	})
 }
 
-// WriteCaptionResult atomically replaces the active caption result.
-func (r *Repo) WriteCaptionResult(ctx context.Context, mediaID string, fp ai.Fingerprint, promptHash, text string) error {
-	return r.writeWithChildren(ctx, mediaID, ai.TaskCaption, fp, promptHash, func(ctx context.Context, tx *sql.Tx, resultID string) error {
+// WriteCaptionResultTx is the in-tx variant of WriteCaptionResult.
+func (r *Repo) WriteCaptionResultTx(ctx context.Context, tx *sql.Tx, mediaID string, fp ai.Fingerprint, promptHash, text string) error {
+	return writeWithChildrenTx(ctx, tx, mediaID, ai.TaskCaption, fp, promptHash, func(ctx context.Context, tx *sql.Tx, resultID string) error {
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO media_captions(result_id, text) VALUES (?, ?)`, resultID, text)
 		return err
 	})
 }
 
-func (r *Repo) writeWithChildren(
+func writeWithChildrenTx(
 	ctx context.Context,
+	tx *sql.Tx,
 	mediaID string,
 	task ai.Task,
 	fp ai.Fingerprint,
 	promptHash string,
 	writeChildren func(context.Context, *sql.Tx, string) error,
 ) error {
-	tx, err := r.rw.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE ai_results SET status='stale' WHERE media_id=? AND task=? AND status='active'`,
 		mediaID, string(task)); err != nil {
@@ -86,10 +109,7 @@ func (r *Repo) writeWithChildren(
 		time.Now().UTC()); err != nil {
 		return fmt.Errorf("insert result: %w", err)
 	}
-	if err := writeChildren(ctx, tx, id); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return writeChildren(ctx, tx, id)
 }
 
 // GetActiveTags returns the active-result tags for a media, ordered by rank.

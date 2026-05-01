@@ -2,12 +2,14 @@ package worker
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/wesm/fotobank/internal/ai"
+	"github.com/wesm/fotobank/internal/ai/ack"
 	"github.com/wesm/fotobank/internal/ai/failures"
 	"github.com/wesm/fotobank/internal/ai/gateway"
 	"github.com/wesm/fotobank/internal/ai/jobs"
@@ -126,8 +128,13 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
-// RunOnce claims and processes up to BatchSize jobs.
+// RunOnce claims and processes up to BatchSize jobs. Before claiming it
+// promotes any blocked jobs whose blocker has cleared (acknowledgement
+// recorded, source thumb now ready) so they re-enter the claim path.
 func (w *Worker) RunOnce(ctx context.Context) (int, error) {
+	if err := w.PromoteBlocked(ctx); err != nil {
+		w.cfg.Logger.Warn("ai promote blocked failed", "task", w.cfg.Task, "err", err)
+	}
 	claims, err := w.cfg.Queue.ClaimBatch(ctx, w.cfg.Task, w.cfg.BatchSize)
 	if err != nil {
 		return 0, fmt.Errorf("claim: %w", err)
@@ -142,6 +149,19 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	return processed, nil
 }
 
+// PromoteBlocked walks blocked rows for the worker's task and elevates
+// any whose blocker has cleared. Errors are returned aggregated so the
+// caller can choose to log and continue.
+func (w *Worker) PromoteBlocked(ctx context.Context) error {
+	if _, err := w.cfg.Queue.PromoteAckedBlocked(ctx, w.cfg.Task, ack.SettingKey); err != nil {
+		return fmt.Errorf("promote acked: %w", err)
+	}
+	if _, err := w.cfg.Queue.PromoteThumbReadyBlocked(ctx, w.cfg.Task); err != nil {
+		return fmt.Errorf("promote thumb-ready: %w", err)
+	}
+	return nil
+}
+
 func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
 	owner, err := w.cfg.OwnerOf(ctx, c.MediaID)
 	if err != nil {
@@ -152,23 +172,25 @@ func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
 		return w.releaseTransient(ctx, c, ai.ErrKindTransient, fmt.Sprintf("ack lookup: %v", err))
 	}
 	if !acked {
-		return w.releaseTransient(ctx, c, ai.ErrKindTransient, "acknowledgement_required")
+		return w.releaseTransient(ctx, c, ai.ErrKindTransient, jobs.AckBlockedReason)
 	}
 
 	jpegBytes, thumbStatus, err := w.cfg.Image.ResolveAndEncode(ctx, c.MediaID)
 	if err != nil {
-		return w.markFailed(ctx, c, ai.ErrKindMissingAIInput, err.Error())
+		return w.maybeRetryOrFail(ctx, c, ai.ErrKindMissingAIInput, err.Error())
 	}
 	switch thumbStatus {
-	case "pending", "working":
-		return w.cfg.Queue.MarkBlocked(ctx, c.JobID, c.ClaimedAt, "thumb_"+thumbStatus)
+	case "pending":
+		return w.cfg.Queue.MarkBlocked(ctx, c.JobID, c.ClaimedAt, jobs.ThumbBlockedPending)
+	case "working":
+		return w.cfg.Queue.MarkBlocked(ctx, c.JobID, c.ClaimedAt, jobs.ThumbBlockedWorking)
 	case "no_preview":
 		if err := w.cfg.Skipped.Record(ctx, c.MediaID, w.cfg.Task, "no_preview"); err != nil {
 			return err
 		}
 		return w.cfg.Queue.MarkDone(ctx, c.JobID, c.ClaimedAt)
 	case "failed":
-		return w.cfg.Queue.MarkBlocked(ctx, c.JobID, c.ClaimedAt, "thumb_failed")
+		return w.cfg.Queue.MarkBlocked(ctx, c.JobID, c.ClaimedAt, jobs.ThumbBlockedFailed)
 	case "ready":
 	default:
 		return w.markFailed(ctx, c, ai.ErrKindMissingAIInput, "unknown thumb_status: "+thumbStatus)
@@ -199,23 +221,33 @@ func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
 		return w.maybeRetryOrFail(ctx, c, ai.ErrKindTransient, err.Error())
 	}
 
+	var writeFn func(context.Context, *sql.Tx) error
 	switch w.cfg.Task {
 	case ai.TaskTag:
-		if err := w.cfg.Results.WriteTagResult(ctx, c.MediaID, w.cfg.Fingerprint, w.cfg.PromptHash, out.Tags); err != nil {
-			return w.maybeRetryOrFail(ctx, c, ai.ErrKindTransient, "write tags: "+err.Error())
+		writeFn = func(ctx context.Context, tx *sql.Tx) error {
+			return w.cfg.Results.WriteTagResultTx(ctx, tx, c.MediaID, w.cfg.Fingerprint, w.cfg.PromptHash, out.Tags)
 		}
 	case ai.TaskCaption:
-		if err := w.cfg.Results.WriteCaptionResult(ctx, c.MediaID, w.cfg.Fingerprint, w.cfg.PromptHash, out.Caption); err != nil {
-			return w.maybeRetryOrFail(ctx, c, ai.ErrKindTransient, "write caption: "+err.Error())
+		writeFn = func(ctx context.Context, tx *sql.Tx) error {
+			return w.cfg.Results.WriteCaptionResultTx(ctx, tx, c.MediaID, w.cfg.Fingerprint, w.cfg.PromptHash, out.Caption)
 		}
 	default:
 		return w.markFailed(ctx, c, ai.ErrKindTransient, "unknown task: "+string(w.cfg.Task))
 	}
-
+	if err := w.cfg.Queue.WriteAndMarkDone(ctx, c, writeFn); err != nil {
+		if errors.Is(err, jobs.ErrClaimLost) {
+			// Lease was reclaimed mid-flight; the result tx was rolled back
+			// so the active row is unchanged. The job will be reprocessed
+			// under a fresh claim.
+			w.cfg.Logger.Debug("ai claim lost on finalize", "job", c.JobID)
+			return nil
+		}
+		return w.maybeRetryOrFail(ctx, c, ai.ErrKindTransient, "write result: "+err.Error())
+	}
 	if err := w.cfg.Failures.Delete(ctx, c.MediaID, w.cfg.Task, w.cfg.Fingerprint); err != nil {
 		w.cfg.Logger.Warn("clear failure row", "err", err)
 	}
-	return w.cfg.Queue.MarkDone(ctx, c.JobID, c.ClaimedAt)
+	return nil
 }
 
 func (w *Worker) maybeRetryOrFail(ctx context.Context, c jobs.Claim, kind ai.LastErrorKind, msg string) error {

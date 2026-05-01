@@ -159,6 +159,37 @@ func (q *Queue) MarkDone(ctx context.Context, jobID string, claimedAt time.Time)
 	return nil
 }
 
+// WriteAndMarkDone runs writeFn inside a single transaction and then marks
+// the claim done in the same transaction. If the claim has been swept or
+// superseded the entire tx is rolled back so writeFn's effects are not
+// persisted, and ErrClaimLost is returned. If writeFn returns an error,
+// the tx is rolled back and the error is propagated.
+func (q *Queue) WriteAndMarkDone(ctx context.Context, c Claim, writeFn func(context.Context, *sql.Tx) error) error {
+	tx, err := q.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := writeFn(ctx, tx); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx,
+		`UPDATE ai_jobs SET status='done', completed_at=?, last_error=NULL, last_error_kind=NULL
+		 WHERE id=? AND status='working' AND claimed_at=?`,
+		time.Now().UTC(), c.JobID, c.ClaimedAt)
+	if err != nil {
+		return fmt.Errorf("mark done: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("mark done rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrClaimLost
+	}
+	return tx.Commit()
+}
+
 // MarkFailed transitions a working row to 'failed' with classification.
 // Bumps attempts because failure reflects a real provider/parser run.
 func (q *Queue) MarkFailed(ctx context.Context, jobID string, claimedAt time.Time, kind ai.LastErrorKind, errMsg string) error {
@@ -230,6 +261,69 @@ func (q *Queue) PromoteBlocked(ctx context.Context, jobID string) error {
 		return fmt.Errorf("promote: %w", err)
 	}
 	return nil
+}
+
+// AckBlockedReason is the canonical last_error text the worker uses when
+// parking a job because the owner has not yet acknowledged AI processing.
+// Promotion logic keys on this exact value.
+const AckBlockedReason = "acknowledgement_required"
+
+// ThumbBlockedPending / Working / Failed are the canonical last_error
+// strings the worker uses when parking a job because the source media's
+// thumb pipeline is not in 'ready'.
+const (
+	ThumbBlockedPending = "thumb_pending"
+	ThumbBlockedWorking = "thumb_working"
+	ThumbBlockedFailed  = "thumb_failed"
+)
+
+// PromoteAckedBlocked transitions blocked rows whose last_error indicates
+// acknowledgement was missing back to 'pending' if the owning principal
+// now has a row in user_settings under settingKey.
+func (q *Queue) PromoteAckedBlocked(ctx context.Context, task ai.Task, settingKey string) (int, error) {
+	res, err := q.rw.ExecContext(ctx,
+		`UPDATE ai_jobs
+		    SET status='pending', last_error=NULL, last_error_kind=NULL
+		  WHERE task=? AND status='blocked' AND last_error=?
+		    AND id IN (
+		      SELECT j.id FROM ai_jobs j
+		        JOIN media m ON m.id = j.media_id
+		        JOIN user_settings s
+		          ON s.principal_hub = m.owner_hub
+		         AND s.principal_user_id = m.owner_user_id
+		         AND s.key = ?
+		       WHERE j.task=? AND j.status='blocked' AND j.last_error=?
+		    )`,
+		string(task), AckBlockedReason, settingKey, string(task), AckBlockedReason)
+	if err != nil {
+		return 0, fmt.Errorf("promote acked: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("promote acked rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
+// PromoteThumbReadyBlocked transitions blocked rows whose last_error
+// indicates the thumbnail pipeline was not ready back to 'pending' if
+// the source media's thumb_status is now 'ready'.
+func (q *Queue) PromoteThumbReadyBlocked(ctx context.Context, task ai.Task) (int, error) {
+	res, err := q.rw.ExecContext(ctx,
+		`UPDATE ai_jobs
+		    SET status='pending', last_error=NULL, last_error_kind=NULL
+		  WHERE task=? AND status='blocked'
+		    AND last_error IN (?, ?, ?)
+		    AND media_id IN (SELECT id FROM media WHERE thumb_status='ready')`,
+		string(task), ThumbBlockedPending, ThumbBlockedWorking, ThumbBlockedFailed)
+	if err != nil {
+		return 0, fmt.Errorf("promote thumb-ready: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("promote thumb-ready rows affected: %w", err)
+	}
+	return int(n), nil
 }
 
 // SweepLeases resets working rows whose lease is older than ttl. Does
