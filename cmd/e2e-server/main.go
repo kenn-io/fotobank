@@ -20,15 +20,29 @@
 //     shrink so the lockout test can complete without real wait. The override
 //     is gated on FOTOBANK_E2E_MODE=1 (set by this command) so an inherited
 //     environment variable cannot weaken a production deployment.
+//   - FOTOBANK_E2E_AI_PRE_ACK=1: pre-record the hidden-processing
+//     acknowledgement during fixture seeding. Default leaves the ack
+//     modal active so the AI Playwright spec can exercise the gate.
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/wesm/fotobank/internal/ai"
+	"github.com/wesm/fotobank/internal/ai/ack"
+	"github.com/wesm/fotobank/internal/ai/failures"
+	"github.com/wesm/fotobank/internal/ai/imginput"
+	"github.com/wesm/fotobank/internal/ai/parse"
+	aiprompts "github.com/wesm/fotobank/internal/ai/prompts"
+	"github.com/wesm/fotobank/internal/ai/results"
 	"github.com/wesm/fotobank/internal/album"
 	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/cli"
@@ -38,6 +52,11 @@ import (
 	"github.com/wesm/fotobank/internal/service"
 	"github.com/wesm/fotobank/internal/share"
 )
+
+// e2eVisionModelID matches the [ai.tag] / [ai.caption] model entries
+// the cfg heredoc writes — the AI fingerprints persisted on seeded
+// results must use the same model id so the gap scanner skips them.
+const e2eVisionModelID = "qwen2.5-vl:3b"
 
 // e2ePort returns the listen port for the e2e server, honoring
 // FOTOBANK_E2E_PORT and falling back to 18080.
@@ -75,6 +94,17 @@ func run() error {
 			return fmt.Errorf("creating %s: %w", d, err)
 		}
 	}
+
+	// Mock OpenAI-compat VLM. Started before the cfg is written so its
+	// listen URL can be threaded into [ai.vision].endpoint. The server
+	// is intentionally leaked: the CLI server runs in the foreground for
+	// the lifetime of the e2e process, so a graceful shutdown isn't
+	// required — the OS reclaims the listener on exit.
+	vlmURL, _, err := startMockVLM()
+	if err != nil {
+		return fmt.Errorf("start mock vlm: %w", err)
+	}
+
 	cfg := fmt.Sprintf(`
 [nas]
 root = "%s"
@@ -100,7 +130,25 @@ file_lock_path = "%s"
 enabled = false
 [observability]
 admin_listen = "127.0.0.1:0"
-`, nasRoot, flashRoot, e2ePort(), filepath.Join(tmp, "import.lock"))
+[ai]
+enabled = true
+[ai.vision]
+endpoint = "%s/v1"
+# 5s timeout keeps a hung mock from stalling the e2e suite. The mock
+# answers in <10ms in practice, so this is generous.
+timeout = "5s"
+max_retries = 1
+max_inflight = 1
+[ai.tag]
+enabled = true
+model = "%s"
+worker_concurrency = 1
+[ai.caption]
+enabled = true
+model = "%s"
+worker_concurrency = 1
+`, nasRoot, flashRoot, e2ePort(), filepath.Join(tmp, "import.lock"),
+		vlmURL, e2eVisionModelID, e2eVisionModelID)
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
@@ -122,6 +170,78 @@ admin_listen = "127.0.0.1:0"
 		return fmt.Errorf("server exited with code %d", code)
 	}
 	return nil
+}
+
+// startMockVLM stands up an OpenAI-compatible chat-completions stub on
+// a free loopback port. It implements the two routes the production
+// gateway hits: GET /v1/models (health probe) and POST
+// /v1/chat/completions (worker generate). Tag vs caption requests are
+// disambiguated by scanning the user message for the substring "tags"
+// (the canonical tag prompt mentions JSON tags); each branch returns a
+// deterministic JSON envelope wrapped in the OpenAI choices shape.
+func startMockVLM() (string, *http.Server, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", nil, fmt.Errorf("listen mock vlm: %w", err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"id": e2eVisionModelID, "object": "model"},
+			},
+		})
+	})
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Concatenate every text part across messages so the matcher
+		// works regardless of how the worker structures the prompt.
+		var allText strings.Builder
+		for _, m := range body.Messages {
+			for _, c := range m.Content {
+				if c.Type == "text" {
+					allText.WriteString(c.Text)
+					allText.WriteByte('\n')
+				}
+			}
+		}
+		var inner string
+		if strings.Contains(allText.String(), "\"tags\"") {
+			inner = `{"tags":["e2e-tag-a","e2e-tag-b"]}`
+		} else {
+			inner = `{"caption":"An e2e test photo of a small dog on a beach."}`
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"role": "assistant", "content": inner}},
+			},
+		})
+	})
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		// http.ErrServerClosed only fires on Shutdown, which we never
+		// call in the e2e harness — anything here is a real listen
+		// failure that the operator should see at the next request.
+		_ = srv.Serve(ln)
+	}()
+	return "http://" + ln.Addr().String(), srv, nil
 }
 
 // seedFixtures inserts an owner row and deterministic media rows used by
@@ -408,6 +528,10 @@ func seedFixtures(dbPath string) error {
 		return fmt.Errorf("seed f2.5 fixtures: %w", err)
 	}
 
+	if err := seedAIFixtures(ctx, d, repo, owner); err != nil {
+		return fmt.Errorf("seed ai fixtures: %w", err)
+	}
+
 	return nil
 }
 
@@ -522,6 +646,106 @@ func seedF2_5Fixtures(
 		}
 		if err := mediaRepo.Insert(ctx, row); err != nil {
 			return fmt.Errorf("seed %s: %w", id, err)
+		}
+	}
+
+	return nil
+}
+
+// seedAIFixtures inserts media rows and ai_results / ai_failures rows
+// the F4 AI Playwright spec uses. The fingerprints stamped on the
+// seeded results match the active config (model id from the cfg
+// heredoc, prompt versions from internal/ai/prompts, ProfileV1 from
+// imginput) so the gap scanner skips them and the AI worker never
+// re-processes them at e2e runtime.
+//
+//   - ai-fixture-tagged-1: visible photo with two active tags + an
+//     active caption. Drives the lightbox tag/caption/provenance
+//     assertions.
+//   - ai-fixture-failed-1: visible photo with active tags but a
+//     malformed caption failure row. Drives the lightbox per-photo
+//     retry button + "Caption failed" copy.
+//
+// FOTOBANK_E2E_AI_PRE_ACK=1 records the hidden-processing
+// acknowledgement during seeding so a separate run can exercise the
+// post-ack flows without driving the modal.
+func seedAIFixtures(
+	ctx context.Context,
+	d *db.DB,
+	mediaRepo *media.Repo,
+	owner owners.Principal,
+) error {
+	base := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+
+	tagPrompt := aiprompts.Tag()
+	captionPrompt := aiprompts.Caption()
+	tagFP := ai.Fingerprint{
+		ModelID:       e2eVisionModelID,
+		PromptVersion: tagPrompt.Version,
+		InputProfile:  imginput.ProfileV1,
+	}
+	captionFP := ai.Fingerprint{
+		ModelID:       e2eVisionModelID,
+		PromptVersion: captionPrompt.Version,
+		InputProfile:  imginput.ProfileV1,
+	}
+
+	resultsRepo := results.NewRepo(d.WriteDB(), d.ReadDB())
+	failuresRepo := failures.NewRepo(d.WriteDB(), d.ReadDB())
+
+	// ai-fixture-tagged-1: full success.
+	taggedID := "ai-fixture-tagged-1"
+	if err := mediaRepo.Insert(ctx, media.Media{
+		ID:          taggedID,
+		Owner:       owner,
+		Type:        media.TypePhoto,
+		MimeType:    "image/jpeg",
+		Path:        taggedID + ".jpg",
+		ImportedAt:  base.Add(-time.Hour),
+		Size:        1,
+		Checksum:    "checksum-" + taggedID,
+		ThumbStatus: "ready",
+	}); err != nil {
+		return fmt.Errorf("seed %s: %w", taggedID, err)
+	}
+	tags := []parse.Tag{
+		{Key: "e2e-tag-a", Label: "e2e-tag-a", Rank: 1},
+		{Key: "e2e-tag-b", Label: "e2e-tag-b", Rank: 2},
+	}
+	if err := resultsRepo.WriteTagResult(ctx, taggedID, tagFP, tagPrompt.Hash, tags); err != nil {
+		return fmt.Errorf("seed tag result for %s: %w", taggedID, err)
+	}
+	if err := resultsRepo.WriteCaptionResult(ctx, taggedID, captionFP, captionPrompt.Hash,
+		"An e2e test photo of a small dog on a beach."); err != nil {
+		return fmt.Errorf("seed caption result for %s: %w", taggedID, err)
+	}
+
+	// ai-fixture-failed-1: tags succeed, caption fails (malformed).
+	failedID := "ai-fixture-failed-1"
+	if err := mediaRepo.Insert(ctx, media.Media{
+		ID:          failedID,
+		Owner:       owner,
+		Type:        media.TypePhoto,
+		MimeType:    "image/jpeg",
+		Path:        failedID + ".jpg",
+		ImportedAt:  base.Add(-2 * time.Hour),
+		Size:        1,
+		Checksum:    "checksum-" + failedID,
+		ThumbStatus: "ready",
+	}); err != nil {
+		return fmt.Errorf("seed %s: %w", failedID, err)
+	}
+	if err := resultsRepo.WriteTagResult(ctx, failedID, tagFP, tagPrompt.Hash, tags); err != nil {
+		return fmt.Errorf("seed tag result for %s: %w", failedID, err)
+	}
+	if err := failuresRepo.Record(ctx, failedID, ai.TaskCaption, captionFP,
+		ai.ErrKindMalformed, "bad json", 2); err != nil {
+		return fmt.Errorf("seed caption failure for %s: %w", failedID, err)
+	}
+
+	if os.Getenv("FOTOBANK_E2E_AI_PRE_ACK") == "1" {
+		if err := ack.New(d.WriteDB(), d.ReadDB()).Acknowledge(ctx, owner); err != nil {
+			return fmt.Errorf("seed ai acknowledgement: %w", err)
 		}
 	}
 
