@@ -723,7 +723,7 @@ The test must:
 5. Set WAL mode and CREATE TABLE through `h1` BEFORE the contention phase.
 6. Bound the test with `ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)` so a regression cannot wedge the suite.
 7. Pin a `*sql.Conn` from `h1` (`h1.Conn(ctx)`) and `BEGIN IMMEDIATE` on it. The pinned conn is required — `h1.Exec("BEGIN IMMEDIATE")` would land on a pooled conn and the next call could land elsewhere, so `BEGIN` and `COMMIT` must use the same pinned conn.
-8. In a goroutine, `close(started)` channel and then run `h2.ExecContext(ctx, "INSERT INTO stress …")`. Capture the wall-clock elapsed time and any error.
+8. In a goroutine: capture `start := time.Now()` FIRST, then `close(started)` channel, THEN run `h2.ExecContext(ctx, "INSERT INTO stress …")`. The `start`-before-`close` ordering matters: any scheduler stall between the goroutine being scheduled and `ExecContext` reaching SQLite is folded into `elapsed`. If you flip the order (close first, capture second), a stall would subtract from `elapsed` and could cause spurious failures even when busy_timeout is working.
 9. Wait on `<-started`, sleep ~10ms (so h2 has a chance to actually enter `ExecContext` and reach SQLite), then sleep `holdWindow` (default **500ms** — see below for sizing). The `started` handshake plus the post-handshake sleep close the goroutine-start race window to microseconds in practice; a generous holdWindow provides the rest of the safety margin without resorting to invasive SQLite-internal lock-state polling.
 10. `COMMIT` on h1's pinned conn.
 11. Receive h2's result via a `select` on `resCh` and `ctx.Done()`. If `ctx.Done()` fires first, fail with a clear message (the busy-retry never released, or the test wedged).
@@ -775,7 +775,7 @@ git add internal/db/db_test.go
 git commit -m "test(db): deterministic concurrent-writer test via BEGIN IMMEDIATE"
 ```
 
-The reference implementation evolved through several commits as code review surfaced finer races: `ef636f8` (initial deterministic version), `dbe4d93` (started-channel handshake for Job 65), `651360a` (500ms holdWindow widening for Job 72). The current state captures all three.
+The reference implementation evolved through several commits as code review surfaced finer races: `ef636f8` (initial deterministic version), `dbe4d93` (started-channel handshake for Job 65), `651360a` (500ms holdWindow widening for Job 72), `8bb084a` (capture `start` BEFORE `close(started)` for Job 73). The current state captures all four. The combination of (a) `start` captured before the handshake, (b) the started-channel handshake, (c) a 10ms post-handshake sleep, and (d) a 500ms holdWindow with 5ms slack provides a pragmatic flake reduction strong enough that the empirical elapsed sits ~70ms above threshold under normal load (~565ms vs 495ms threshold across three runs).
 
 ---
 
