@@ -2204,6 +2204,16 @@ func TestRepoMattnScanCompat_CoalescedDisplayTime(t *testing.T) {
 	m1 := seedMediaWithTimestamp(t, d, alice, withTS)        // path 1: timestamp present
 	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString()) // path 2: timestamp NULL → falls back to imported_at
 
+	// Read m2's stored imported_at back out so the fallback assertion
+	// can compare against the exact value, not just IsZero(). seedMedia
+	// uses time.Now().UTC().Truncate(time.Second) at insert time and
+	// doesn't expose it; reading the row is the only reliable way to
+	// know what display_time should equal.
+	var m2ImportedAt time.Time
+	r.NoError(d.ReadDB().QueryRowContext(context.Background(),
+		`SELECT imported_at FROM media WHERE id = ?`, m2,
+	).Scan(&m2ImportedAt))
+
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 	now := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2)
@@ -2225,11 +2235,11 @@ func TestRepoMattnScanCompat_CoalescedDisplayTime(t *testing.T) {
 		"display_time for media with explicit timestamp must equal it; got %v want %v",
 		byID[m1].DisplayTime, withTS)
 
-	// Path 2: timestamp NULL; display_time falls back to imported_at,
-	// which is non-zero (set by seedMedia at insert time). The exact
-	// value is not deterministic, but it must parse cleanly into a
-	// non-zero time.Time — proving the COALESCE-via-fallback path also
-	// round-trips.
-	r.False(byID[m2].DisplayTime.IsZero(),
-		"display_time fallback to imported_at must yield a non-zero time")
+	// Path 2: timestamp NULL; display_time falls back to imported_at.
+	// The expected value is the imported_at we just read back from the
+	// row, compared with time.Time.Equal so a TZ-offset difference
+	// between the two reads doesn't cause a spurious mismatch.
+	r.True(byID[m2].DisplayTime.Equal(m2ImportedAt),
+		"display_time fallback must equal imported_at; got %v want %v",
+		byID[m2].DisplayTime, m2ImportedAt)
 }

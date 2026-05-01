@@ -1220,23 +1220,68 @@ func (r *Repo) albumSummary(ctx context.Context, albumID string) (AlbumSummary, 
 	return s, nil
 }
 
+// sqliteTimestampFormats mirrors mattn/go-sqlite3's
+// SQLiteTimestampFormats slice (v1.14.44, sqlite3.go:312-324) in the
+// same try-order mattn's own column auto-decode uses
+// (sqlite3.go:2622). We inline rather than import the driver
+// constant: this file is policy-neutral with respect to which driver
+// the *sql.DB pools came from, and importing mattn here just to read
+// a slice would couple the share repo to a specific driver build tag.
+//
+// On upgrade: re-verify against
+// github.com/mattn/go-sqlite3@<version>/sqlite3.go's
+// SQLiteTimestampFormats and refresh both the slice and this comment.
+var sqliteTimestampFormats = []string{
+	"2006-01-02 15:04:05.999999999-07:00",
+	"2006-01-02T15:04:05.999999999-07:00",
+	"2006-01-02 15:04:05.999999999",
+	"2006-01-02T15:04:05.999999999",
+	"2006-01-02 15:04:05",
+	"2006-01-02T15:04:05",
+	"2006-01-02 15:04",
+	"2006-01-02T15:04",
+	"2006-01-02",
+}
+
 // parseSQLiteTimeString parses the string mattn/go-sqlite3 returns when
 // a TIMESTAMP value passes through an expression (COALESCE, CASE, …)
 // and loses its column declaration type. Mattn's column-decode path
 // only auto-parses values into time.Time when the originating column
 // is declared TIMESTAMP/DATETIME/DATE; expression results have no
 // declared type, so the driver returns the underlying TEXT bytes
-// unchanged. Mattn writes timestamps using the first format in
-// SQLiteTimestampFormats —
-// "2006-01-02 15:04:05.999999999-07:00" — so that's the layout we
-// parse with.
+// unchanged.
+//
+// Mattn writes new timestamps with SQLiteTimestampFormats[0] but
+// happily reads any of the nine layouts in the list — including older
+// rows persisted before the format list was extended, or rows written
+// by external tools (sqlite3 CLI, sqldiff, manual ATTACH+INSERT).
+// We mirror the same try-in-order behaviour by iterating
+// sqliteTimestampFormats and returning the first format that parses;
+// if all nine fail we return the last error so the caller surfaces a
+// concrete parse error rather than a nil-time success.
+//
+// We pass time.UTC as the default location to match
+// mattn (sqlite3.go:2622-2623): for layouts that omit a TZ offset,
+// the recovered time.Time lands in UTC.
 //
 // UTC invariant: every TIMESTAMP we store is UTC; the returned
-// time.Time preserves the offset that time.Parse recovers from the
-// "+00:00" tail, so downstream comparisons against other UTC times
-// stay correct.
+// time.Time preserves the offset that time.ParseInLocation recovers
+// (or defaults to UTC), so downstream comparisons against other UTC
+// times stay correct.
 func parseSQLiteTimeString(s string) (time.Time, error) {
-	return time.Parse("2006-01-02 15:04:05.999999999-07:00", s)
+	// Mirror mattn's pre-parse trim of a trailing "Z" suffix
+	// (sqlite3.go:2621) so an explicit-Zulu layout (e.g. from external
+	// tools) doesn't fall off the end of the format list.
+	s = strings.TrimSuffix(s, "Z")
+	var lastErr error
+	for _, format := range sqliteTimestampFormats {
+		t, err := time.ParseInLocation(format, s, time.UTC)
+		if err == nil {
+			return t, nil
+		}
+		lastErr = err
+	}
+	return time.Time{}, lastErr
 }
 
 // statusPlaceholders renders `IN (?,?,?)` argument tuples. Returns the
