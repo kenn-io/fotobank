@@ -55,6 +55,60 @@ func TestGenerations_FindActive_ReturnsNoneInitially(t *testing.T) {
 	r.Nil(got, "no active generation initially")
 }
 
+// TestGenerations_FindBuilding covers the activator's lookup path.
+// The schema's embedding_generations_one_building partial unique
+// index enforces at most one building row at a time, so the test
+// rotates through the lifecycle: nil → one building → promote →
+// FindBuilding nil again until the next FindOrCreate, → retire,
+// nil. The ORDER BY id ASC LIMIT 1 in the implementation is
+// defensive — should the schema constraint ever be lifted, the
+// activator still picks the oldest candidate.
+func TestGenerations_FindBuilding(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	// Empty registry: nil, no error.
+	got, err := g.FindBuilding(ctx)
+	r.NoError(err)
+	r.Nil(got)
+
+	// One building row: returns it.
+	a, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+
+	got, err = g.FindBuilding(ctx)
+	r.NoError(err)
+	r.NotNil(got)
+	r.Equal(a.ID, got.ID)
+
+	// Promote the building row → state moves to 'active'. The
+	// one-building partial unique index now permits a fresh
+	// building row for a different fingerprint.
+	r.NoError(g.Promote(ctx, a.ID))
+	got, err = g.FindBuilding(ctx)
+	r.NoError(err)
+	r.Nil(got, "no building rows after the only candidate was promoted")
+
+	b, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v2", InputProfile: "p2"}, 768)
+	r.NoError(err)
+	r.NotEqual(a.ID, b.ID)
+
+	got, err = g.FindBuilding(ctx)
+	r.NoError(err)
+	r.NotNil(got)
+	r.Equal(b.ID, got.ID)
+
+	// Retire the last building; FindBuilding goes back to nil.
+	r.NoError(g.Retire(ctx, b.ID))
+	got, err = g.FindBuilding(ctx)
+	r.NoError(err)
+	r.Nil(got, "no building rows after retire")
+}
+
 func TestGenerations_PromoteRetiresPriorActive(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()

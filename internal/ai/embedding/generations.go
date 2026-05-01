@@ -289,6 +289,29 @@ func (g *Generations) FindActive(ctx context.Context) (*Row, error) {
 	return &row, nil
 }
 
+// FindBuilding returns the oldest currently-building generation, or nil
+// if none. Multiple building rows can coexist transiently — e.g. when an
+// operator switches the embed model mid-rollout the prior building row
+// keeps its mappings while the new one starts collecting — but the
+// activator only ever advances one at a time. Ordering by id ASC picks
+// the longest-running candidate so a stale building row is promoted (or
+// retired) before a newer one can race ahead.
+func (g *Generations) FindBuilding(ctx context.Context) (*Row, error) {
+	row, err := scanGeneration(g.ro.QueryRowContext(ctx,
+		`SELECT `+generationColumns+` FROM embedding_generations
+		  WHERE state = 'building'
+		  ORDER BY id ASC
+		  LIMIT 1`,
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil //nolint:nilnil // sentinel "no building generation" — distinct from an error.
+		}
+		return nil, fmt.Errorf("find building: %w", err)
+	}
+	return &row, nil
+}
+
 // List returns all generation rows in the supplied state. Caller is
 // responsible for passing a valid state ("building" / "active" /
 // "retired"); the table CHECK constraint rejects anything else at

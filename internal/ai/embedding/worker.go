@@ -42,6 +42,11 @@ var _ ClientIface = (*Client)(nil)
 type EventEmitter interface {
 	EmitAIEmbedCompleted(mediaID string, fingerprint string)
 	EmitAIEmbedFailed(mediaID string, fingerprint string)
+	// EmitAIEmbedGenerationActivated fires when the activator promotes
+	// a building generation to active. generationID is the row id and
+	// fingerprint is the canonical Fingerprint.String() value the row
+	// was created under, so listeners can route by either key.
+	EmitAIEmbedGenerationActivated(generationID int64, fingerprint string)
 }
 
 // NoopEmitter satisfies EventEmitter without doing anything. The
@@ -55,6 +60,9 @@ func (NoopEmitter) EmitAIEmbedCompleted(_ string, _ string) {}
 
 // EmitAIEmbedFailed is a no-op.
 func (NoopEmitter) EmitAIEmbedFailed(_ string, _ string) {}
+
+// EmitAIEmbedGenerationActivated is a no-op.
+func (NoopEmitter) EmitAIEmbedGenerationActivated(_ int64, _ string) {}
 
 // WorkerDeps is the fully-wired dependency set the worker requires.
 // Construct via NewWorker — there is no zero-value worker.

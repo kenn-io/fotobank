@@ -87,16 +87,21 @@ func (f *fakeResolver) ResolvePreviewJPEG(_ context.Context, _ string) ([]byte, 
 	return f.defaultJPEG, f.defaultStatus, nil
 }
 
-// recordingEmitter captures EmitAIEmbedCompleted calls so happy-path
-// tests can confirm the worker fires the post-commit event for every
-// successful claim.
+// recordingEmitter captures EmitAIEmbedCompleted / EmitAIEmbedFailed /
+// EmitAIEmbedGenerationActivated calls so happy-path tests can confirm
+// the worker (or activator) fires the post-commit event for every
+// successful claim or activation.
 type recordingEmitter struct {
 	completed atomic.Int32
 	failed    atomic.Int32
+	activated atomic.Int32
 }
 
 func (r *recordingEmitter) EmitAIEmbedCompleted(_ string, _ string) { r.completed.Add(1) }
 func (r *recordingEmitter) EmitAIEmbedFailed(_ string, _ string)    { r.failed.Add(1) }
+func (r *recordingEmitter) EmitAIEmbedGenerationActivated(_ int64, _ string) {
+	r.activated.Add(1)
+}
 
 // dim768N returns n distinct 768-dim vectors. Each vector starts with a
 // distinct float so the worker's positional alignment can be verified
