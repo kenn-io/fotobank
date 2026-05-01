@@ -7,6 +7,7 @@ package ai
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/ai/ack"
@@ -117,9 +118,13 @@ func (s *Service) Backfill(ctx context.Context, caller owners.Principal, task ai
 	})
 }
 
-// RetryFailed clears all current-fingerprint failures for task and
-// re-enqueues the corresponding media in bounded batches. Returns the
-// total count enqueued.
+// RetryFailed clears the current-fingerprint failures that existed at
+// the moment of the call and re-enqueues the corresponding media in
+// bounded batches. Returns the total count enqueued. The cutoff is
+// captured once at entry so newly recorded failures (e.g. from a
+// concurrent worker re-failing a freshly enqueued retry) are NOT
+// chased into a subsequent batch — that would let one
+// `retry-failed` request loop indefinitely on the same media.
 func (s *Service) RetryFailed(ctx context.Context, caller owners.Principal, task ai.Task) (int, error) {
 	if err := requireScopedCaller(caller); err != nil {
 		return 0, err
@@ -135,9 +140,11 @@ func (s *Service) RetryFailed(ctx context.Context, caller owners.Principal, task
 		return 0, errs.ErrAcknowledgementRequired
 	}
 	fp, _ := s.deps.ConfigFingerprints.Lookup(task)
+	cutoff := time.Now().UTC()
 	total := 0
 	for {
-		rows, err := s.deps.Failures.ListForFingerprintByOwner(ctx, task, fp, caller.Hub, caller.UserID, retryBatchSize)
+		rows, err := s.deps.Failures.ListForFingerprintByOwner(
+			ctx, task, fp, caller.Hub, caller.UserID, cutoff, retryBatchSize)
 		if err != nil {
 			return total, fmt.Errorf("list failures: %w", err)
 		}
@@ -206,5 +213,8 @@ func (s *Service) ListFailures(ctx context.Context, caller owners.Principal, tas
 		return nil, fmt.Errorf("%w: invalid task", errs.ErrInvalidArgument)
 	}
 	fp, _ := s.deps.ConfigFingerprints.Lookup(task)
-	return s.deps.Failures.ListForFingerprintByOwner(ctx, task, fp, caller.Hub, caller.UserID, limit)
+	// Panel reads pass a zero cutoff so the latest failures (including
+	// any that landed after the request started) are visible.
+	return s.deps.Failures.ListForFingerprintByOwner(
+		ctx, task, fp, caller.Hub, caller.UserID, time.Time{}, limit)
 }

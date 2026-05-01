@@ -139,16 +139,23 @@ func (r *Repo) ListForFingerprint(ctx context.Context, task ai.Task, fp ai.Finge
 // ListForFingerprintByOwner returns up to limit most-recent
 // current-fingerprint failures whose media is owned by (hub, userID).
 // limit <= 0 means unbounded — used by the retry-failed flow which
-// must process every failure for the caller.
-func (r *Repo) ListForFingerprintByOwner(ctx context.Context, task ai.Task, fp ai.Fingerprint, hub, userID string, limit int) ([]Row, error) {
+// must process every failure for the caller. cutoff filters to rows
+// whose failed_at is <= cutoff so the retry loop sees a stable
+// snapshot from the moment it started; pass a zero time.Time to skip
+// the filter (the periodic gap-scan and panel reads use this form).
+func (r *Repo) ListForFingerprintByOwner(ctx context.Context, task ai.Task, fp ai.Fingerprint, hub, userID string, cutoff time.Time, limit int) ([]Row, error) {
 	q := `
 		SELECT f.media_id, f.last_error, f.last_error_kind, f.attempt_count, f.failed_at
 		  FROM ai_failures f
 		  JOIN media m ON m.id = f.media_id
 		 WHERE f.task=? AND f.model_id=? AND f.prompt_version=? AND f.input_profile=?
-		   AND m.owner_hub=? AND m.owner_user_id=?
-		 ORDER BY f.failed_at DESC`
+		   AND m.owner_hub=? AND m.owner_user_id=?`
 	args := []any{string(task), fp.ModelID, fp.PromptVersion, fp.InputProfile, hub, userID}
+	if !cutoff.IsZero() {
+		q += ` AND f.failed_at <= ?`
+		args = append(args, cutoff)
+	}
+	q += ` ORDER BY f.failed_at DESC`
 	if limit > 0 {
 		q += ` LIMIT ?`
 		args = append(args, limit)
