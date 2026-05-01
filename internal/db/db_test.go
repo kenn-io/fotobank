@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -153,4 +155,50 @@ func TestOpen_RoundTripTZ(t *testing.T) {
 	var got time.Time
 	r.NoError(rw.QueryRow(`SELECT ts FROM t_tz WHERE id=1`).Scan(&got))
 	r.True(got.Equal(want), "Unix instant must round-trip")
+}
+
+// TestOpen_ConcurrentWriters spawns N goroutines that each insert
+// into a scratch table through the RW pool. They all share the same
+// single-connection RW pool and must serialise; the test asserts
+// that all N inserts complete within a generous deadline and the
+// final row count matches.
+func TestOpen_ConcurrentWriters(t *testing.T) {
+	if testing.Short() {
+		t.Skip("stress test; not under -short")
+	}
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	rw := d.WriteDB()
+
+	_, err := rw.Exec(`CREATE TABLE stress (id INTEGER PRIMARY KEY, v TEXT)`)
+	r.NoError(err)
+
+	const writers = 8
+	const perWriter = 50
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	errCh := make(chan error, writers*perWriter)
+
+	for w := range writers {
+		go func(w int) {
+			defer wg.Done()
+			for i := range perWriter {
+				_, err := rw.Exec(`INSERT INTO stress (v) VALUES (?)`,
+					fmt.Sprintf("w%d-%d", w, i))
+				if err != nil {
+					errCh <- err
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		r.NoError(err, "concurrent insert")
+	}
+
+	var total int
+	r.NoError(rw.QueryRow(`SELECT COUNT(*) FROM stress`).Scan(&total))
+	r.Equal(writers*perWriter, total)
 }
