@@ -213,6 +213,53 @@ func TestSchema_MediaEmbeddingIDsUniqueVecID(t *testing.T) {
 	r.Error(insertMapping(gid, m2, 1))
 }
 
+// TestSchema_MediaFTSPresentAndDeletable asserts the media_fts FTS5
+// virtual table exists, accepts an insert, returns hits via MATCH, and
+// is cleaned up by the AFTER DELETE ON media trigger when the parent
+// media row is deleted (search v1 design §7). Inserts are inlined to
+// match the surrounding pre-alpha style.
+func TestSchema_MediaFTSPresentAndDeletable(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	rw := d.WriteDB()
+
+	_, err := rw.Exec(
+		`INSERT INTO owners VALUES('h1','u1','k1','u1',datetime('now'))`,
+	)
+	r.NoError(err)
+
+	mediaID := uuid.NewString()
+	_, err = rw.Exec(
+		`INSERT INTO media (id,owner_hub,owner_user_id,media_type,mime_type,path,imported_at,size,checksum,thumb_status,thumb_version,thumb_updated_at)
+		 VALUES (?, 'h1','u1','photo','image/jpeg','a.jpg',datetime('now'),1,'cs','pending',1,datetime('now'))`,
+		mediaID,
+	)
+	r.NoError(err)
+
+	_, err = rw.Exec(
+		`INSERT INTO media_fts (media_id, caption_text, tag_label, filename, camera, lens, location_label)
+		 VALUES (?, 'small dog on a beach', 'dog beach', 'IMG_0001.jpg', 'Canon EOS R5', '', 'Paris, France')`,
+		mediaID,
+	)
+	r.NoError(err)
+
+	// MATCH works.
+	var got int
+	r.NoError(d.ReadDB().QueryRow(
+		`SELECT COUNT(*) FROM media_fts WHERE media_fts MATCH ?`, "dog AND beach",
+	).Scan(&got))
+	r.Equal(1, got)
+
+	// Delete cascade via media trigger.
+	_, err = rw.Exec(`DELETE FROM media WHERE id = ?`, mediaID)
+	r.NoError(err)
+
+	r.NoError(d.ReadDB().QueryRow(
+		`SELECT COUNT(*) FROM media_fts WHERE media_id = ?`, mediaID,
+	).Scan(&got))
+	r.Equal(0, got, "media_fts row must be cleaned up by trigger")
+}
+
 func TestScopesBackoffMigration(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)

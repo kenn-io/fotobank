@@ -19,10 +19,10 @@ $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)
 
 build: frontend | $(BIN_DIR) ## Build debug binary with version ldflags
-	go build -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/fotobank
+	go build -tags sqlite_fts5 -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/fotobank
 
 build-release: frontend | $(BIN_DIR) ## Build release binary (trimpath + stripped)
-	go build -ldflags="$(LDFLAGS_RELEASE)" -trimpath -o $(BINARY) ./cmd/fotobank
+	go build -tags sqlite_fts5 -ldflags="$(LDFLAGS_RELEASE)" -trimpath -o $(BINARY) ./cmd/fotobank
 
 install: build-release ## Install to ~/.local/bin or $GOBIN
 	@if [ -d "$(HOME)/.local/bin" ]; then \
@@ -73,18 +73,18 @@ dev: ensure-embed-dir ## Live-reload backend via air
 	air -c .air.toml -- $(ARGS)
 
 test: ensure-embed-dir ## Run full test suite
-	go test ./... -shuffle=on
+	go test -tags sqlite_fts5 ./... -shuffle=on
 
 test-short: ensure-embed-dir ## Run short tests only
-	go test ./... -short -shuffle=on
+	go test -tags sqlite_fts5 ./... -short -shuffle=on
 
 test-e2e: frontend ## Run Playwright e2e suite against built backend
 	mkdir -p tmp
-	go build -o tmp/e2e-server ./cmd/e2e-server
+	go build -tags sqlite_fts5 -o tmp/e2e-server ./cmd/e2e-server
 	cd frontend && bun run test:e2e
 
 vet: ## Run go vet
-	go vet ./...
+	go vet -tags sqlite_fts5 ./...
 
 lint: ## Run golangci-lint + testify-helper-check
 	mise exec -- golangci-lint run --fix
@@ -94,7 +94,7 @@ testify-helper-check: ## Enforce testify helper usage
 	go run ./tools/testifyhelpercheck/cmd ./...
 
 nilaway: ## Run nilaway (pre-push tier)
-	go run go.uber.org/nilaway/cmd/nilaway -include-pkgs=github.com/wesm/fotobank ./...
+	go run go.uber.org/nilaway/cmd/nilaway -tags sqlite_fts5 -include-pkgs=github.com/wesm/fotobank ./...
 
 tidy: ## go mod tidy
 	go mod tidy

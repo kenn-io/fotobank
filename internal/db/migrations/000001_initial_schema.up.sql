@@ -500,3 +500,25 @@ CREATE TABLE media_embedding_ids (
 );
 CREATE INDEX media_embedding_ids_media_idx
     ON media_embedding_ids(media_id);
+
+-- ============================================================
+-- Search v1 — FTS5 lexical index over the §7 corpus.
+-- ============================================================
+
+CREATE VIRTUAL TABLE media_fts USING fts5(
+    media_id UNINDEXED,
+    caption_text,
+    tag_label,
+    filename,
+    camera,
+    lens,
+    location_label,
+    tokenize = 'porter unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER media_fts_cleanup_after_delete
+AFTER DELETE ON media
+FOR EACH ROW
+BEGIN
+    DELETE FROM media_fts WHERE media_id = OLD.id;
+END;

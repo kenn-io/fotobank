@@ -68,7 +68,7 @@ Background workers (e.g. `internal/thumb/worker.go`) follow the same rule: they'
 - Migrations: pre-alpha policy — there is one migration, `000001_initial_schema.{up,down}.sql`, and you edit it directly for any schema change. No new numbered migrations until fotobank ships to real users. Both files (up + down) move together on every change.
 - HTTP: JSON routes use huma. Byte-streaming routes (`/original`, `/thumb`) use raw `http.HandlerFunc` on the same mux.
 - Identity: phase 1 is stub mode — one principal per config, set via `identity.mode = "stub"`. Other modes are rejected by the CLI tooling that mutates DB state.
-- Runtime: SQLite via `mattn/go-sqlite3` with the `sqlite-vec` auto-extension. CGO is enabled. One driver registration across the app — see `internal/db/sqlitevec.go`.
+- Runtime: SQLite via `mattn/go-sqlite3` with the `sqlite-vec` auto-extension and the `sqlite_fts5` build tag. CGO is enabled. One driver registration across the app — see `internal/db/sqlitevec.go`. Direct `go build` / `go test` invocations need `-tags sqlite_fts5`; `make` targets pass it automatically.
 - Cross-build (e.g. macOS host → Linux deploy): set `CC` to a cross-compiler (`zig cc -target x86_64-linux-musl`, `musl-cross`, or equivalent). Plain `GOOS=linux GOARCH=amd64 go build` without a cross `CC` will fail at link time.
 
 ## Plans

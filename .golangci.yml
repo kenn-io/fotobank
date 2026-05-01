@@ -1,6 +1,8 @@
 version: "2"
 run:
   tests: true
+  build-tags:
+    - sqlite_fts5
 linters:
   default: none
   enable:
