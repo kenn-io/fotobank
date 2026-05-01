@@ -26,9 +26,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"net"
 	"net/http"
 	"os"
@@ -51,6 +55,7 @@ import (
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service"
 	"github.com/wesm/fotobank/internal/share"
+	"github.com/wesm/fotobank/internal/thumb"
 )
 
 // e2eVisionModelID matches the [ai.tag] / [ai.caption] model entries
@@ -158,7 +163,7 @@ worker_concurrency = 1
 	// server reopens the DB on startup; SQLite + golang-migrate
 	// migrations are idempotent, so this is safe.
 	dbPath := filepath.Join(flashRoot, "fotobank.sqlite")
-	if err := seedFixtures(dbPath); err != nil {
+	if err := seedFixtures(dbPath, nasRoot); err != nil {
 		return fmt.Errorf("seed fixtures: %w", err)
 	}
 
@@ -253,7 +258,7 @@ func startMockVLM() (string, *http.Server, error) {
 //     (Argon2id-hashed). Skipped when FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1.
 //   - hidden-prehidden-1: hidden_at = now (used by gate/grid tests)
 //   - hidden-target-1:    hidden_at = NULL (used by hide-flow test)
-func seedFixtures(dbPath string) error {
+func seedFixtures(dbPath, nasRoot string) error {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		return fmt.Errorf("create db dir: %w", err)
 	}
@@ -528,7 +533,7 @@ func seedFixtures(dbPath string) error {
 		return fmt.Errorf("seed f2.5 fixtures: %w", err)
 	}
 
-	if err := seedAIFixtures(ctx, d, repo, owner); err != nil {
+	if err := seedAIFixtures(ctx, d, repo, owner, nasRoot, "alice-sk"); err != nil {
 		return fmt.Errorf("seed ai fixtures: %w", err)
 	}
 
@@ -666,6 +671,12 @@ func seedF2_5Fixtures(
 //     malformed caption failure row. Drives the lightbox per-photo
 //     retry button + "Caption failed" copy.
 //
+// Both fixtures get a real preview JPEG written under nasRoot at the
+// thumb storage path so a retry click triggers a real worker run that
+// re-resolves the input bytes; without it the worker errors with
+// "missing preview" and the malformed-caption fixture's failure row
+// flips to a different kind, breaking the e2e copy assertion.
+//
 // FOTOBANK_E2E_AI_PRE_ACK=1 records the hidden-processing
 // acknowledgement during seeding so a separate run can exercise the
 // post-ack flows without driving the modal.
@@ -674,6 +685,7 @@ func seedAIFixtures(
 	d *db.DB,
 	mediaRepo *media.Repo,
 	owner owners.Principal,
+	nasRoot, storageKey string,
 ) error {
 	base := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
 
@@ -693,6 +705,14 @@ func seedAIFixtures(
 	resultsRepo := results.NewRepo(d.WriteDB(), d.ReadDB())
 	failuresRepo := failures.NewRepo(d.WriteDB(), d.ReadDB())
 
+	// One small valid JPEG shared by both fixtures; the imginput resolver
+	// just needs decodable bytes to scale and re-encode at ProfileV1's
+	// 1024-edge target.
+	previewJPEG, err := smallTestJPEG()
+	if err != nil {
+		return fmt.Errorf("encode ai fixture preview jpeg: %w", err)
+	}
+
 	// ai-fixture-tagged-1: full success.
 	taggedID := "ai-fixture-tagged-1"
 	if err := mediaRepo.Insert(ctx, media.Media{
@@ -707,6 +727,9 @@ func seedAIFixtures(
 		ThumbStatus: "ready",
 	}); err != nil {
 		return fmt.Errorf("seed %s: %w", taggedID, err)
+	}
+	if err := writePreviewBlob(nasRoot, storageKey, taggedID, previewJPEG); err != nil {
+		return fmt.Errorf("write preview blob for %s: %w", taggedID, err)
 	}
 	tags := []parse.Tag{
 		{Key: "e2e-tag-a", Label: "e2e-tag-a", Rank: 1},
@@ -735,6 +758,9 @@ func seedAIFixtures(
 	}); err != nil {
 		return fmt.Errorf("seed %s: %w", failedID, err)
 	}
+	if err := writePreviewBlob(nasRoot, storageKey, failedID, previewJPEG); err != nil {
+		return fmt.Errorf("write preview blob for %s: %w", failedID, err)
+	}
 	if err := resultsRepo.WriteTagResult(ctx, failedID, tagFP, tagPrompt.Hash, tags); err != nil {
 		return fmt.Errorf("seed tag result for %s: %w", failedID, err)
 	}
@@ -749,5 +775,41 @@ func seedAIFixtures(
 		}
 	}
 
+	return nil
+}
+
+// smallTestJPEG returns a minimal valid JPEG suitable as a stand-in
+// preview blob. The mock VLM doesn't inspect pixel data, so any
+// decodable JPEG works — we keep the dimensions just under ProfileV1's
+// 1024 max edge so the resolver passes through without resampling.
+func smallTestJPEG() ([]byte, error) {
+	img := image.NewRGBA(image.Rect(0, 0, 64, 48))
+	white := color.RGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+	for y := range 48 {
+		for x := range 64 {
+			img.Set(x, y, white)
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 80}); err != nil {
+		return nil, fmt.Errorf("encode jpeg: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// writePreviewBlob writes the preview-tier thumbnail bytes for an AI
+// fixture under <nasRoot>/<storageKey>/<thumb.ThumbKey(id, 0, preview)>.
+// Bypasses storage.NewNASOnly so the seed function doesn't need to
+// reconstruct a principal→storage_key map; the e2e server has exactly
+// one owner.
+func writePreviewBlob(nasRoot, storageKey, mediaID string, jpg []byte) error {
+	key := thumb.ThumbKey(mediaID, 0, thumb.SizePreview)
+	full := filepath.Join(nasRoot, storageKey, filepath.FromSlash(key))
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	if err := os.WriteFile(full, jpg, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", full, err)
+	}
 	return nil
 }
