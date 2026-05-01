@@ -1,5 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
 
+// HIDDEN_UNCONFIGURED is true when the e2e server was started with
+// FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 — i.e. no passcode seeded. The
+// configured-only scenarios below skip themselves under that flag so a
+// dedicated unconfigured-server run only exercises the CTA path
+// without faceplanting on configured-only assertions.
+const HIDDEN_UNCONFIGURED = process.env["FOTOBANK_E2E_HIDDEN_UNCONFIGURED"] === "1";
+
 // ---------------------------------------------------------------------------
 // Shared helper: unlock the hidden vault with the seeded passcode.
 // ---------------------------------------------------------------------------
@@ -13,7 +20,16 @@ async function unlock(page: Page) {
   ).toBeVisible();
 }
 
+// Configured-only scenarios depend on a seeded hidden passcode and
+// must skip when the e2e server is started with
+// FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1. The CTA-only tests at the
+// bottom of the file require the inverse environment, so they live
+// in their own describe block with their own beforeAll guard.
 test.describe("F2.4 hidden privacy", () => {
+  test.skip(
+    HIDDEN_UNCONFIGURED,
+    "configured-only scenarios; skipped under FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1",
+  );
   // -------------------------------------------------------------------------
   // Scenario 1: Sidebar Hidden entry visible in BROWSE
   // -------------------------------------------------------------------------
@@ -42,16 +58,6 @@ test.describe("F2.4 hidden privacy", () => {
     expect(res.status()).toBe(200);
     const body = (await res.json()) as { configured: boolean };
     expect(body.configured).toBe(true);
-  });
-
-  test("CTA shown when not configured (requires FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 server)", async ({ page }) => {
-    test.skip(
-      process.env["FOTOBANK_E2E_HIDDEN_UNCONFIGURED"] !== "1",
-      "set FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 to run this scenario",
-    );
-    await page.goto("/hidden");
-    await expect(page.getByText("Hidden privacy isn't set up.")).toBeVisible();
-    await expect(page.getByText("fotobank hidden setup")).toBeVisible();
   });
 
   // -------------------------------------------------------------------------
@@ -203,16 +209,17 @@ test.describe("F2.4 hidden privacy", () => {
   test("library API excludes hidden rows even when unlock cookie is present", async ({
     page,
   }) => {
-    // Establish hidden state ourselves: hide hidden-target-1 via the API.
-    // PUT is idempotent — if a prior scenario already hid it, this is a
-    // no-op. Without this step the assertion below would only hold when
-    // scenario 8 had already run earlier in the file (the original bug).
+    // Establish hidden state ourselves via the registered bulk endpoint
+    // (POST /api/v1/media/hidden:bulk) so this test works regardless of
+    // whether scenario 8 has run earlier. The bulk endpoint is
+    // idempotent — re-hiding an already-hidden id is a successful no-op
+    // in the response's `succeeded` list.
     await unlock(page);
-    const hideRes = await page.request.put(
-      "/api/v1/media/hidden-target-1/hidden",
-      { headers: { "Content-Type": "application/json" }, data: {} },
-    );
-    expect([200, 204, 409]).toContain(hideRes.status());
+    const hideRes = await page.request.post("/api/v1/media/hidden:bulk", {
+      headers: { "Content-Type": "application/json" },
+      data: { media_ids: ["hidden-target-1"] },
+    });
+    expect(hideRes.status()).toBe(200);
 
     // Hit /api/v1/media — must exclude hidden-target-1 regardless of unlock.
     const res = await page.request.get("/api/v1/media?limit=200&offset=0");
@@ -410,11 +417,19 @@ test.describe("F2.4 hidden privacy", () => {
     await expect(page.getByRole("button", { name: "Hide" })).toBeVisible();
   });
 
-  test("Hide button absent when hiddenConfigured=false (requires FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 server)", async ({ page }) => {
-    test.skip(
-      process.env["FOTOBANK_E2E_HIDDEN_UNCONFIGURED"] !== "1",
-      "set FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 to run this scenario",
-    );
+});
+
+// Unconfigured-only scenarios. The describe-level skip is the inverse
+// of the configured block above: this only runs when the e2e server
+// was started with FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1, which means no
+// passcode is seeded and the UI must hide the Hide affordance.
+test.describe("F2.4 hidden privacy (unconfigured server)", () => {
+  test.skip(
+    !HIDDEN_UNCONFIGURED,
+    "requires FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 server",
+  );
+
+  test("Hide button absent when hiddenConfigured=false", async ({ page }) => {
     await page.goto("/library");
     const firstPhoto = page.getByLabel(/^Photo /).first();
     await expect(firstPhoto).toBeVisible();

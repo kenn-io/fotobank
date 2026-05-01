@@ -77,8 +77,18 @@ test.describe("F2.3 albums", () => {
 
     // Reload so the next /albums fetch comes from the server, not the
     // SPA cache. The server-side delete must really have happened —
-    // otherwise the album would reappear after a refetch.
+    // otherwise the album would reappear after a refetch. Wait for the
+    // /api/v1/albums response before asserting so we don't race the
+    // SPA's async load (a UI assertion alone could pass against an
+    // empty pre-populated grid).
+    const refetched = page.waitForResponse(
+      (resp) => resp.url().includes("/api/v1/albums") && resp.status() === 200,
+    );
     await page.reload();
+    const resp = await refetched;
+    const body = (await resp.json()) as { items?: Array<{ name?: string }> };
+    const names = (body.items ?? []).map((it) => it.name);
+    expect(names).not.toContain(albumName);
     await expect(page.getByText(albumName)).not.toBeVisible();
   });
 
