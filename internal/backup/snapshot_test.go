@@ -161,6 +161,7 @@ func TestBuildDSNEscapesReserved(t *testing.T) {
 // would fail — which is what we want. The snapshot lives under
 // t.TempDir() so writable open is safe; nothing else reads it.
 func TestSnapshotPragmas_AfterRestore_RoundTrip(t *testing.T) {
+	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	// Seed a parent owner row + a child media row that depends on the
 	// owners FK. SeedPhoto inserts a fully-formed media row.
@@ -169,19 +170,19 @@ func TestSnapshotPragmas_AfterRestore_RoundTrip(t *testing.T) {
 
 	// Snapshot.
 	snapPath := filepath.Join(t.TempDir(), "snap.sqlite")
-	require.NoError(t, Snapshot(context.Background(), d.WriteDB(), snapPath))
+	r.NoError(Snapshot(context.Background(), d.WriteDB(), snapPath))
 
 	// Re-open the snapshot via the same code path the restore tool uses.
 	conn, err := sql.Open("sqlite3", "file:"+snapPath+"?_busy_timeout=5000&_fk=1")
-	require.NoError(t, err)
+	r.NoError(err)
 	t.Cleanup(func() { _ = conn.Close() })
 
 	// Confirm the seeded media row arrived intact.
 	var got string
-	require.NoError(t, conn.QueryRow(
+	r.NoError(conn.QueryRow(
 		`SELECT id FROM media WHERE id = ?`, mediaID,
 	).Scan(&got))
-	require.Equal(t, mediaID, got)
+	r.Equal(mediaID, got)
 
 	// Confirm foreign_keys is enforced on the snapshot connection.
 	// Attempting to insert an album_media row with a non-existent
@@ -189,5 +190,5 @@ func TestSnapshotPragmas_AfterRestore_RoundTrip(t *testing.T) {
 	_, err = conn.Exec(`INSERT INTO album_media (album_id, media_id, added_at)
 	                       VALUES (?, ?, datetime('now'))`,
 		"00000000-0000-0000-0000-000000000000", mediaID)
-	require.Error(t, err, "foreign_keys=1 must be active on the snapshot connection")
+	r.Error(err, "foreign_keys=1 must be active on the snapshot connection")
 }
