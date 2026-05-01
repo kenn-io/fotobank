@@ -861,18 +861,12 @@ SELECT m.id,
 	out := make([]SharedMediaRow, 0, 32)
 	for rows.Next() {
 		var (
-			row         SharedMediaRow
-			displayTime string
-			allowInt    int
+			row      SharedMediaRow
+			allowInt int
 		)
-		if err := rows.Scan(&row.MediaID, &displayTime, &allowInt); err != nil {
+		if err := rows.Scan(&row.MediaID, &row.DisplayTime, &allowInt); err != nil {
 			return nil, fmt.Errorf("scan shared media row: %w", err)
 		}
-		dt, perr := parseSQLiteTimeString(displayTime)
-		if perr != nil {
-			return nil, fmt.Errorf("parse display_time: %w", perr)
-		}
-		row.DisplayTime = dt
 		row.CanDownload = allowInt != 0
 		out = append(out, row)
 	}
@@ -1215,22 +1209,6 @@ func (r *Repo) albumSummary(ctx context.Context, albumID string) (AlbumSummary, 
 		return AlbumSummary{}, fmt.Errorf("read album summary: %w", err)
 	}
 	return s, nil
-}
-
-// parseSQLiteTimeString parses the string representation modernc.org/sqlite
-// returns for COALESCE'd TIMESTAMP columns. The driver serializes time.Time
-// using Go's default Time.String() format, which is the layout below. When
-// the value passes through an expression (COALESCE, CASE, …) the driver
-// loses the TIMESTAMP affinity and returns the string unchanged rather than
-// re-parsing it, so a direct Scan into *time.Time fails — we parse it here.
-//
-// UTC invariant: every TIMESTAMP column we store is UTC (the repo writes
-// timestamps via nullTime/time.Now().UTC() and the `timestamp` column is
-// pinned UTC by the ingest pipeline). The returned time.Time preserves
-// the zone that time.Parse recovers from the string tail (" +0000 UTC"),
-// so downstream comparisons against other UTC times stay correct.
-func parseSQLiteTimeString(s string) (time.Time, error) {
-	return time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", s)
 }
 
 // statusPlaceholders renders `IN (?,?,?)` argument tuples. Returns the
