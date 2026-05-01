@@ -26,6 +26,7 @@
   import { isEditableTarget } from "./lib/dom/editable";
   import { modalStack } from "./lib/lightbox/modalStack.svelte";
   import { api } from "./lib/api/client";
+  import { aiHealthStore } from "./lib/ai/health.svelte";
 
   const themeStore = new ThemeStore(api);
   themeStore.load();
@@ -42,6 +43,20 @@
   const hiddenStore = new HiddenStore(api);
   hiddenStore.refresh();
   const toastStore = new ToastStore();
+  // Initial health snapshot — runs once on mount.
+  void aiHealthStore.refresh();
+
+  $effect(() => {
+    const ev = events.lastEvent;
+    if (!ev) return;
+    if (
+      ev.type === "ai.tag.completed" ||
+      ev.type === "ai.caption.completed" ||
+      ev.type === "ai.health.changed"
+    ) {
+      void aiHealthStore.refresh();
+    }
+  });
 
   $effect(() => {
     const onPop = () => router.syncFromLocation();
