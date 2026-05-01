@@ -16,6 +16,7 @@ import (
 	"github.com/wesm/fotobank/internal/identity"
 	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/service"
+	aiservice "github.com/wesm/fotobank/internal/service/ai"
 	"github.com/wesm/fotobank/internal/service/usersettings"
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/version"
@@ -87,6 +88,18 @@ type Deps struct {
 	// the middleware honours the configured proxy header in header
 	// mode (and ignores any request-supplied value in stub mode).
 	RequestIDHeader string
+	// AIService backs /api/v1/ai/*. Nil leaves those routes unregistered
+	// so the OpenAPI dumper can pass an empty Deps without wiring an AI
+	// service.
+	AIService *aiservice.Service
+	// AIVisionProbe drives /api/v1/ai/health's reachability probe. Nil
+	// means health reports the gateway as unreachable without attempting
+	// a probe.
+	AIVisionProbe aiservice.Probe
+	// AIEnabled is the [ai].enabled config flag at boot. Wired explicitly
+	// so the panel can show config_disabled without the AIService poking
+	// at config.
+	AIEnabled bool
 }
 
 // New constructs the Fotobank HTTP handler. The full middleware chain is:
@@ -160,6 +173,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	cookieCfg := hidden.CookieConfigFor(deps.DevInsecureHiddenCookies)
 	registerHiddenAuth(api, deps.HiddenAuth, cookieCfg)
 	registerHiddenMedia(api, deps.MediaService, deps.HiddenAuth)
+	registerAIRoutes(api, deps.AIService, deps.AIVisionProbe, deps.AIEnabled)
 	return mux, api
 }
 
