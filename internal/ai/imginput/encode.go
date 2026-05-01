@@ -57,6 +57,14 @@ func scaleToProfile(src image.Image) image.Image {
 		nh = MaxEdge
 		nw = int(float64(w) * float64(MaxEdge) / float64(h))
 	}
+	// Extreme aspect ratios can round the shorter edge to 0; clamp so
+	// the destination image stays valid.
+	if nw < 1 {
+		nw = 1
+	}
+	if nh < 1 {
+		nh = 1
+	}
 	dst := image.NewRGBA(image.Rect(0, 0, nw, nh))
 	draw.CatmullRom.Scale(dst, dst.Bounds(), src, b, draw.Over, nil)
 	return dst

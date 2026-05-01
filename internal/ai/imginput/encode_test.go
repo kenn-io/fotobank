@@ -43,6 +43,18 @@ func TestEncodeFromPreview_Idempotent(t *testing.T) {
 	require.LessOrEqual(cfg.Height, 600)
 }
 
+func TestEncodeFromPreview_ExtremeAspectRatio(t *testing.T) {
+	require := require.New(t)
+	// 5000 x 1 would round the shorter edge to 0 without clamping.
+	src := makeJPEG(t, 5000, 1)
+	out, err := imginput.Encode(src)
+	require.NoError(err)
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(out))
+	require.NoError(err)
+	require.Equal(1024, cfg.Width)
+	require.GreaterOrEqual(cfg.Height, 1)
+}
+
 func TestProfileString(t *testing.T) {
 	require.Equal(t, "jpeg-1024-q85-metadata-stripped-v1", imginput.ProfileV1)
 }
