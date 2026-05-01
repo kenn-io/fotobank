@@ -7,8 +7,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-
-	_ "modernc.org/sqlite"
 )
 
 // DB holds separate read-write and read-only connections to the SQLite
@@ -26,8 +24,9 @@ type DB struct {
 // mode=ro URI parameter so reader connections cannot mutate data, even
 // if a caller forgets and invokes Exec against ReadDB().
 func Open(path string) (*DB, error) {
-	rwDSN := path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-	rw, err := sql.Open("sqlite", rwDSN)
+	RegisterSqliteVec()
+	rwDSN := path + "?_busy_timeout=5000&_fk=1"
+	rw, err := sql.Open("sqlite3", rwDSN)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
@@ -44,8 +43,8 @@ func Open(path string) (*DB, error) {
 		return nil, err
 	}
 
-	roDSN := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&mode=ro"
-	ro, err := sql.Open("sqlite", roDSN)
+	roDSN := "file:" + path + "?_busy_timeout=5000&_fk=1&mode=ro"
+	ro, err := sql.Open("sqlite3", roDSN)
 	if err != nil {
 		_ = rw.Close()
 		return nil, fmt.Errorf("open db ro: %w", err)
