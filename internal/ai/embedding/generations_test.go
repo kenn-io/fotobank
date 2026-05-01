@@ -10,6 +10,7 @@ import (
 
 	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/ai/embedding"
+	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/testutil"
 )
 
@@ -125,6 +126,74 @@ func TestGenerations_RetireTransitionsToRetired(t *testing.T) {
 	active, err := g.FindActive(ctx)
 	r.NoError(err)
 	r.Nil(active)
+}
+
+// TestGenerations_PromoteUnknownIDFails covers the rows-affected guard
+// on the activation UPDATE: passing an id that doesn't exist must
+// return errs.ErrNotFound and roll back the transaction so a prior
+// active row stays active.
+func TestGenerations_PromoteUnknownIDFails(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	// Empty registry: Promote on a missing id is ErrNotFound.
+	err := g.Promote(ctx, 99999)
+	r.ErrorIs(err, errs.ErrNotFound)
+	active, err := g.FindActive(ctx)
+	r.NoError(err)
+	r.Nil(active, "no row should have transitioned to active")
+
+	// With a prior active row: Promote on a missing id must NOT retire
+	// the prior active. The two UPDATEs run in one tx; the activation's
+	// zero rows-affected rolls back the retire-prior-active UPDATE too.
+	prior, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, prior.ID))
+
+	err = g.Promote(ctx, 99999)
+	r.ErrorIs(err, errs.ErrNotFound)
+
+	active, err = g.FindActive(ctx)
+	r.NoError(err)
+	r.NotNil(active, "prior active must remain active after a failed Promote")
+	r.Equal(prior.ID, active.ID)
+	r.Nil(active.RetiredAt, "prior active must not carry a retired_at after rollback")
+}
+
+// TestGenerations_PromoteRetiredRowClearsRetiredAt covers the second
+// half of Promote's contract: when re-promoting a row that was
+// previously retired, the activation UPDATE must clear retired_at so
+// the row lands back in the canonical active shape.
+func TestGenerations_PromoteRetiredRowClearsRetiredAt(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	row, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, row.ID))
+	r.NoError(g.Retire(ctx, row.ID))
+
+	// Sanity: the row carries a retired_at after Retire.
+	retired, err := g.List(ctx, "retired")
+	r.NoError(err)
+	r.Len(retired, 1)
+	r.NotNil(retired[0].RetiredAt)
+
+	// Re-promote the same row. The activation UPDATE clears retired_at.
+	r.NoError(g.Promote(ctx, row.ID))
+
+	active, err := g.FindActive(ctx)
+	r.NoError(err)
+	r.NotNil(active)
+	r.Equal(row.ID, active.ID)
+	r.Nil(active.RetiredAt, "re-promoted row must have retired_at cleared")
+	r.NotNil(active.ActivatedAt)
 }
 
 // TestGenerations_FindOrCreateBuilding_ConcurrentSafety confirms the

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wesm/fotobank/internal/ai"
+	"github.com/wesm/fotobank/internal/errs"
 )
 
 // Row mirrors a row in the embedding_generations table.
@@ -205,6 +206,12 @@ func (g *Generations) FindOrCreateBuilding(ctx context.Context, fp ai.Fingerprin
 // active. The two UPDATEs run in one transaction so the partial unique
 // index embedding_generations_one_active never observes two active rows
 // at once.
+//
+// The activation UPDATE additionally clears retired_at so a previously
+// retired row that is being re-promoted lands in the canonical active
+// shape (activated_at set, retired_at NULL). Returns errs.ErrNotFound
+// when id does not match any row, rolling back so a prior active row
+// remains active.
 func (g *Generations) Promote(ctx context.Context, id int64) error {
 	tx, err := g.rw.BeginTx(ctx, nil)
 	if err != nil {
@@ -213,6 +220,8 @@ func (g *Generations) Promote(ctx context.Context, id int64) error {
 	defer func() { _ = tx.Rollback() }()
 
 	now := time.Now().UTC()
+	// Retire any currently-active row. RowsAffected=0 here is fine —
+	// "no prior active" is the normal state on first promotion.
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE embedding_generations
 		    SET state='retired', retired_at=?
@@ -221,13 +230,27 @@ func (g *Generations) Promote(ctx context.Context, id int64) error {
 	); err != nil {
 		return fmt.Errorf("retire prior active: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx,
+	// Activate the target row. Clearing retired_at keeps the row in the
+	// canonical active shape even if it was previously retired and is
+	// being re-promoted.
+	res, err := tx.ExecContext(ctx,
 		`UPDATE embedding_generations
-		    SET state='active', activated_at=?
+		    SET state='active', activated_at=?, retired_at=NULL
 		  WHERE id=?`,
 		now, id,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("promote: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("promote rows affected: %w", err)
+	}
+	if n == 0 {
+		// Roll back so the just-retired prior active is restored. Returning
+		// ErrNotFound here makes the caller's intent ("activate id X")
+		// surface as a clean sentinel rather than an opaque success.
+		return fmt.Errorf("promote id %d: %w", id, errs.ErrNotFound)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
