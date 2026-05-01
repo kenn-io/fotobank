@@ -41,7 +41,7 @@ Test plan (the verification surface for this migration):
 |---|---|
 | `internal/db/db_test.go::TestOpen_RoundTripNullableTime` | Mattn round-trips `*time.Time` (nil and non-nil) without losing TZ |
 | `internal/db/db_test.go::TestOpen_RoundTripCoalescedTime` | A `COALESCE(ts1, ts2)` expression scans into `time.Time` directly (the modernc-specific reason `parseSQLiteTimeString` existed is gone) |
-| `internal/db/db_test.go::TestOpen_ConcurrentWriters` | Two raw *sql.DB handles racing for the file write lock prove busy_timeout retries actually engage (max-Exec assertion) |
+| `internal/db/db_test.go::TestOpen_ConcurrentWriters` | Two raw *sql.DB handles + h1 BEGIN IMMEDIATE held for a known window; h2 INSERT must wait at least that long (deterministic) |
 | `internal/db/sqlitevec_test.go::TestRegistered` | `vec_version()` returns a non-empty string after `RegisterSqliteVec()` |
 | `internal/backup/restore_test.go::TestRestore_RoundTrip` | `VACUUM INTO` snapshot + restore re-open path works under mattn's connection lifecycle |
 | `internal/share/repo_test.go::TestListByOwner_*` | The previously-COALESCE'd time path scans cleanly without `parseSQLiteTimeString` |
@@ -705,35 +705,41 @@ git commit -m "test(testutil): register sqlite-vec in OpenTestDB"
 **Files:**
 - Modify: `internal/db/db_test.go` (append)
 
-**Context.** The spec calls for "exercise the import + AI worker concurrent-write paths under a stress test before declaring the migration done." The point is to verify that mattn's busy-timeout behavior under the new `_busy_timeout=5000` DSN actually engages — i.e. that under genuine SQLite-level write contention, the driver's retry loop kicks in and writes succeed without `database is locked`.
+**Context.** The spec calls for "exercise the import + AI worker concurrent-write paths under a stress test before declaring the migration done." The goal is a deterministic test that proves busy_timeout actually engages under SQLite-level write contention.
 
-**Critical pitfall (caught by code review of `7db55c33` and fixed in `2e7bea58`).** A naive test that uses `testutil.OpenTestDB(t)` and spawns goroutines against `d.WriteDB()` will pass even on a driver with NO busy-retry logic — because `db.Open` pins the RW pool to `MaxOpenConns(1)`, so the goroutines queue at the Go `database/sql` layer and never reach SQLite concurrently. To actually exercise busy_timeout you must open TWO separate `*sql.DB` handles to the same file with default (unlimited) `MaxOpenConns` so multiple SQLite connections genuinely race for the file write lock.
+**Critical pitfalls (both caught in review).**
+
+- *Pitfall 1 — pool serialization (caught reviewing `7db55c33`).* `testutil.OpenTestDB(t)` returns a `*db.DB` whose RW pool is pinned to `MaxOpenConns(1)`. Goroutines through `d.WriteDB()` therefore queue at the Go `database/sql` layer and never reach SQLite concurrently — the test passes even on a driver with NO busy-retry logic. To exercise busy_timeout you must open TWO separate raw `*sql.DB` handles to the same file with default (unlimited) `MaxOpenConns` so two SQLite connections genuinely race for the file write lock.
+- *Pitfall 2 — timing-based heuristic (caught reviewing `2e7bea58`).* Asserting `maxExec > 1ms` is a heuristic, not proof. A single fsync or scheduler stall can blow past 1ms even when no busy-retry happened, so the assertion can pass when busy_timeout is broken. The fix is a deterministic contention window: hold a `BEGIN IMMEDIATE` transaction on h1 for a known duration; assert h2's competing INSERT waits at least that long.
 
 **Step 1: Write the test.**
 
 The test must:
 
 1. Skip under `-short`.
-2. Call `db.RegisterSqliteVec()` defensively (the driver name is already registered transitively, but registration is idempotent).
+2. Call `db.RegisterSqliteVec()` defensively (registration is sync.Once-guarded; harmless).
 3. Create a scratch DB file in `t.TempDir()`.
-4. Open TWO raw `*sql.DB` handles via `sql.Open("sqlite3", path+"?_busy_timeout=5000&_fk=1")`. Default `MaxOpenConns`. Defer Close on both.
-5. Set WAL mode and CREATE TABLE through `h1` BEFORE any concurrent work begins (single-writer phase).
-6. Spawn `writersPerHandle` goroutines per handle (default 4 each → 8 total goroutines, two handles).
-7. Each goroutine performs `perWriter` inserts (default 100) and pushes any error to a buffered `errCh`.
-8. Track the maximum single-Exec wall-clock time via `atomic.Int64` (CAS loop) so concurrent writers don't stomp each other's measurements.
-9. After `wg.Wait()` and `close(errCh)`, drain errors via `r.NoError(err, "concurrent insert")` (testify's `require.NoError` calls `t.FailNow()` on the first error).
-10. Assert final row count == `totalWriters * perWriter`.
-11. **Assert `maxExec > 1ms`** with a clear failure message. This is the diagnostic that proves busy_timeout was actually exercised. Empirically, a real run observes max times of 22-41ms (driver retry waits). If it falls under 1ms, the test isn't exercising what it claims.
+4. Open TWO raw `*sql.DB` handles via `sql.Open("sqlite3", path+"?_busy_timeout=5000&_fk=1")`. Default `MaxOpenConns`. Defer `Close` on both.
+5. Set WAL mode and CREATE TABLE through `h1` BEFORE the contention phase.
+6. Bound the test with `ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)` so a regression cannot wedge the suite.
+7. Pin a `*sql.Conn` from `h1` (`h1.Conn(ctx)`) and `BEGIN IMMEDIATE` on it. The pinned conn is required — `h1.Exec("BEGIN IMMEDIATE")` would land on a pooled conn and the next call could land elsewhere, so `BEGIN` and `COMMIT` must use the same pinned conn.
+8. In a goroutine, run `h2.ExecContext(ctx, "INSERT INTO stress …")`. Capture the wall-clock elapsed time and any error.
+9. Sleep `holdWindow` (default 100ms) on the test goroutine, then `COMMIT` on h1's pinned conn.
+10. Receive h2's result via a `select` on `resCh` and `ctx.Done()`. If `ctx.Done()` fires first, fail with a clear message (the busy-retry never released, or the test wedged).
+11. Assert h2's `INSERT` succeeded (no error).
+12. Assert h2's elapsed time is `>= holdWindow - slack` (use ~5ms slack for clock granularity). If h2 returned faster than that, busy_timeout did not actually wait — h2 raced through a brief lock-free window or the busy-retry didn't engage.
+13. Assert the row count is exactly 1.
 
-Use the project conventions:
-- `r := require.New(t)` (the testify-helper-check tool flags ≥2 direct `require.X(t, ...)` calls per function).
-- `r.NoError(...)` instead of `t.Fatalf(...)` (forbidigo bans the test-fatal helpers).
-- `for w := range writersPerHandle` instead of C-style `for w := 0; w < writersPerHandle; w++` (gofmt 1.22+ rewrites this).
+This is genuinely deterministic: if `busy_timeout=0` or the driver lacks retry support, h2's `INSERT` errors immediately with `SQLITE_BUSY` (assertion 11 fails). If busy_timeout works, h2 blocks for `holdWindow` then succeeds (assertions 11-13 pass).
+
+Project conventions to use:
+- `r := require.New(t)` (testify-helper-check flags ≥2 direct `require.X(t, ...)` calls per function).
+- `r.FailNow(...)` instead of `t.Fatalf(...)` (forbidigo bans the test-fatal helpers).
 
 The doc-comment must explicitly call out:
-- The two-handle setup is what gives SQLite a chance to return `SQLITE_BUSY`.
-- `db.Open` is deliberately NOT used because `MaxOpenConns(1)` would defeat the test.
-- The `>1ms` assertion exists to prevent a future regression that re-serializes writers from going undetected.
+- Why two raw handles (pool-serialization pitfall).
+- Why `BEGIN IMMEDIATE` on a pinned `*sql.Conn` (lock-acquisition + same-conn `COMMIT`).
+- Why elapsed-time-vs-hold-window is the assertion (deterministic vs heuristic).
 
 **Step 2: Run.**
 
@@ -741,7 +747,7 @@ The doc-comment must explicitly call out:
 go test ./internal/db/ -run "TestOpen_ConcurrentWriters" -count=1 -v
 ```
 
-Expected: PASS within ~50ms. The test should log `max single Exec under contention: NN ms` where NN is well above 1ms (typically 10-50ms).
+Expected: PASS in ~120ms. The test should log `h2 Exec waited NNNms for the write lock` where NNN ≈ 100-110ms.
 
 **Step 3: Run with `-race`.**
 
@@ -749,7 +755,7 @@ Expected: PASS within ~50ms. The test should log `max single Exec under contenti
 go test ./internal/db/ -run "TestOpen_ConcurrentWriters" -count=1 -race
 ```
 
-Expected: PASS, no race reports. The CAS loop on `maxExec` is the only synchronization construct; if you skip it and use a plain int, `-race` will flag it.
+Expected: PASS, no race reports.
 
 **Step 4: Run with `-short`.**
 
@@ -763,10 +769,10 @@ Expected: SKIP.
 
 ```bash
 git add internal/db/db_test.go
-git commit -m "test(db): exercise busy_timeout via two concurrent *sql.DB handles"
+git commit -m "test(db): deterministic concurrent-writer test via BEGIN IMMEDIATE"
 ```
 
-The reference implementation lives at commit `2e7bea58` (the corrected version after `7db55c33` was found to use a single pinned-pool handle that masked busy_timeout entirely).
+The reference implementation lives at commit `ef636f8` (the deterministic version that supersedes `2e7bea58`'s timing-based version).
 
 ---
 
