@@ -71,6 +71,23 @@ func (r *Repo) Delete(ctx context.Context, mediaID string, task ai.Task, fp ai.F
 	return nil
 }
 
+// DeleteTx removes the failure row inside an existing transaction. The
+// worker uses this to clear the row in the same tx that writes the
+// successful result and marks the job done, so a crash between the
+// commit and a later cleanup can never leave a stale failure for a
+// completed job.
+func (r *Repo) DeleteTx(ctx context.Context, tx *sql.Tx, mediaID string, task ai.Task, fp ai.Fingerprint) error {
+	_, err := tx.ExecContext(ctx, `
+		DELETE FROM ai_failures
+		 WHERE media_id=? AND task=?
+		   AND model_id=? AND prompt_version=? AND input_profile=?`,
+		mediaID, string(task), fp.ModelID, fp.PromptVersion, fp.InputProfile)
+	if err != nil {
+		return fmt.Errorf("delete failure tx: %w", err)
+	}
+	return nil
+}
+
 // DeleteAllForFingerprint clears all current-fingerprint failures for
 // a task. Returns the number of rows deleted.
 func (r *Repo) DeleteAllForFingerprint(ctx context.Context, task ai.Task, fp ai.Fingerprint) (int, error) {

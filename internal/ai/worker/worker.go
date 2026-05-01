@@ -165,14 +165,19 @@ func (w *Worker) PromoteBlocked(ctx context.Context) error {
 func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
 	owner, err := w.cfg.OwnerOf(ctx, c.MediaID)
 	if err != nil {
-		return w.releaseTransient(ctx, c, ai.ErrKindTransient, fmt.Sprintf("owner lookup: %v", err))
+		// Transient DB error — retry on next tick. Burning an attempt is
+		// the contract: persistent owner-lookup failure eventually moves
+		// the job to ai_failures so it doesn't sit in pending forever.
+		return w.maybeRetryOrFail(ctx, c, ai.ErrKindTransient, "owner lookup: "+err.Error())
 	}
 	acked, err := w.cfg.Acknowledged(ctx, owner)
 	if err != nil {
-		return w.releaseTransient(ctx, c, ai.ErrKindTransient, fmt.Sprintf("ack lookup: %v", err))
+		return w.maybeRetryOrFail(ctx, c, ai.ErrKindTransient, "ack lookup: "+err.Error())
 	}
 	if !acked {
-		return w.releaseTransient(ctx, c, ai.ErrKindTransient, jobs.AckBlockedReason)
+		// Block until the principal acknowledges; PromoteAckedBlocked
+		// re-elevates this row when the user_settings flag flips.
+		return w.cfg.Queue.MarkBlocked(ctx, c.JobID, c.ClaimedAt, jobs.AckBlockedReason)
 	}
 
 	jpegBytes, thumbStatus, err := w.cfg.Image.ResolveAndEncode(ctx, c.MediaID)
@@ -197,7 +202,10 @@ func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
 	}
 
 	if err := w.cfg.Sem.Acquire(ctx); err != nil {
-		return w.releaseTransient(ctx, c, ai.ErrKindTransient, "sem: "+err.Error())
+		// Acquire only fails on ctx cancellation (worker shutdown). Don't
+		// touch DB state — the lease sweep recovers the abandoned claim
+		// on the next tick after restart.
+		return nil
 	}
 	defer w.cfg.Sem.Release()
 
@@ -225,11 +233,17 @@ func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
 	switch w.cfg.Task {
 	case ai.TaskTag:
 		writeFn = func(ctx context.Context, tx *sql.Tx) error {
-			return w.cfg.Results.WriteTagResultTx(ctx, tx, c.MediaID, w.cfg.Fingerprint, w.cfg.PromptHash, out.Tags)
+			if err := w.cfg.Results.WriteTagResultTx(ctx, tx, c.MediaID, w.cfg.Fingerprint, w.cfg.PromptHash, out.Tags); err != nil {
+				return err
+			}
+			return w.cfg.Failures.DeleteTx(ctx, tx, c.MediaID, w.cfg.Task, w.cfg.Fingerprint)
 		}
 	case ai.TaskCaption:
 		writeFn = func(ctx context.Context, tx *sql.Tx) error {
-			return w.cfg.Results.WriteCaptionResultTx(ctx, tx, c.MediaID, w.cfg.Fingerprint, w.cfg.PromptHash, out.Caption)
+			if err := w.cfg.Results.WriteCaptionResultTx(ctx, tx, c.MediaID, w.cfg.Fingerprint, w.cfg.PromptHash, out.Caption); err != nil {
+				return err
+			}
+			return w.cfg.Failures.DeleteTx(ctx, tx, c.MediaID, w.cfg.Task, w.cfg.Fingerprint)
 		}
 	default:
 		return w.markFailed(ctx, c, ai.ErrKindTransient, "unknown task: "+string(w.cfg.Task))
@@ -243,9 +257,6 @@ func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
 			return nil
 		}
 		return w.maybeRetryOrFail(ctx, c, ai.ErrKindTransient, "write result: "+err.Error())
-	}
-	if err := w.cfg.Failures.Delete(ctx, c.MediaID, w.cfg.Task, w.cfg.Fingerprint); err != nil {
-		w.cfg.Logger.Warn("clear failure row", "err", err)
 	}
 	return nil
 }
@@ -265,13 +276,4 @@ func (w *Worker) markFailed(ctx context.Context, c jobs.Claim, kind ai.LastError
 		w.cfg.Logger.Warn("record failure row", "err", err)
 	}
 	return nil
-}
-
-// releaseTransient puts a claim back in 'blocked' (without bumping
-// attempts). Used for ack-not-yet, owner-lookup transients, semaphore
-// cancellation. The periodic lease sweep + PromoteBlocked elevates
-// these back to pending.
-func (w *Worker) releaseTransient(ctx context.Context, c jobs.Claim, kind ai.LastErrorKind, msg string) error {
-	w.cfg.Logger.Debug("release transient", "kind", kind, "msg", msg, "job", c.JobID)
-	return w.cfg.Queue.MarkBlocked(ctx, c.JobID, c.ClaimedAt, msg)
 }
