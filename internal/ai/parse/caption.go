@@ -18,16 +18,16 @@ type captionEnvelope struct {
 // emitted markdown despite the prompt. Bare apostrophes/hyphens are
 // fine because they don't form constructs.
 var markdownPatterns = []*regexp.Regexp{
-	regexp.MustCompile("`"),                     // any backtick
-	regexp.MustCompile(`\*\*[^*]+\*\*`),         // **bold**
-	regexp.MustCompile(`\*[^*\s][^*]*[^*\s]\*`), // *emphasis*
-	regexp.MustCompile(`(?m)^\s*#\s`),           // # heading
-	regexp.MustCompile(`\[[^\]]+\]\([^)]+\)`),   // [text](url)
-	regexp.MustCompile(`(?m)^\s*>\s`),           // > blockquote
-	regexp.MustCompile(`\|[^|\n]+\|`),           // |table|
-	regexp.MustCompile(`(?m)^\s*[-*]\s`),        // - or * list item
-	regexp.MustCompile(`(?m)^\s*\d+\.\s`),       // 1. ordered list
-	regexp.MustCompile(`_[^_\s][^_]*[^_\s]_`),   // _emphasis_
+	regexp.MustCompile("`"),                        // any backtick
+	regexp.MustCompile(`\*\*[^*]+\*\*`),            // **bold**
+	regexp.MustCompile(`\*[^*\s]([^*]*[^*\s])?\*`), // *emphasis*
+	regexp.MustCompile(`(?m)^\s*#\s`),              // # heading
+	regexp.MustCompile(`\[[^\]]+\]\([^)]+\)`),      // [text](url)
+	regexp.MustCompile(`(?m)^\s*>\s`),              // > blockquote
+	regexp.MustCompile(`\|[^|\n]+\|`),              // |table|
+	regexp.MustCompile(`(?m)^\s*[-*]\s`),           // - or * list item
+	regexp.MustCompile(`(?m)^\s*\d+\.\s`),          // 1. ordered list
+	regexp.MustCompile(`_[^_\s]([^_]*[^_\s])?_`),   // _emphasis_
 }
 
 // Caption extracts the caption text and applies the validation pipeline.

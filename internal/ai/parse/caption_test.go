@@ -17,7 +17,11 @@ func TestParseCaption_Happy(t *testing.T) {
 
 func TestParseCaption_RejectsMarkdown(t *testing.T) {
 	cases := []string{
-		`{"caption":"A **dog** on a beach."}`,        // emphasis
+		`{"caption":"A **dog** on a beach."}`,        // bold
+		`{"caption":"A *dog* on a beach."}`,          // emphasis multi-char
+		`{"caption":"A *d* on a beach."}`,            // emphasis single char
+		`{"caption":"A _dog_ on a beach."}`,          // underscore emphasis multi-char
+		`{"caption":"A _d_ on a beach."}`,            // underscore emphasis single char
 		`{"caption":"# Heading\nA dog on a beach."}`, // heading
 		`{"caption":"[link](http://x)"}`,             // link
 		"{\"caption\":\"```code```\"}",               // code fence
