@@ -163,4 +163,69 @@ describe("AIHealthStore.refresh", () => {
     expect(store.health).toEqual(base);
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
+
+  it("drains a pending invalidation when the inflight request fails", async () => {
+    // Regression for an earlier bug: when an inflight fetch rejected,
+    // control jumped straight to finally and the queued invalidation
+    // (set by a refresh() that landed during the failed request) was
+    // lost. The snapshot stayed stale until another event fired.
+    //
+    // Strategy: make fetch() itself return a deferred promise so we
+    // control the timing of when it resolves to a non-ok response,
+    // which causes getAIHealth to throw.
+    type FetchResolver = (resp: { ok: boolean; status: number }) => void;
+    const resolve1: { current: FetchResolver | null } = { current: null };
+    mockFetch.mockReturnValueOnce(
+      new Promise((res) => {
+        resolve1.current = res as FetchResolver;
+      }),
+    );
+
+    const store = new AIHealthStore();
+    const a = store.refresh();
+    // While #1 is inflight, queue an invalidation. The contract: even
+    // if #1 fails, #2 must still fire.
+    const b = store.refresh();
+
+    // Wire up #2's response BEFORE letting #1 fail.
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => base });
+
+    const resolve = resolve1.current;
+    if (!resolve) throw new Error("expected refresh to wire up the resolver");
+    // Resolve #1 with a 500 — getAIHealth throws on !r.ok.
+    resolve({ ok: false, status: 500 });
+
+    // The chained #2 succeeds, so refresh() resolves cleanly.
+    await Promise.all([a, b]);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(store.health).toEqual(base);
+  });
+
+  it("rethrows the last error when every chained attempt fails", async () => {
+    // If both the inflight AND the chained refresh fail, refresh()
+    // surfaces the final failure so the caller can react. The
+    // alternative (silently swallowing) would mask network issues.
+    type FetchResolver = (resp: { ok: boolean; status: number }) => void;
+    const resolve1: { current: FetchResolver | null } = { current: null };
+    mockFetch.mockReturnValueOnce(
+      new Promise((res) => {
+        resolve1.current = res as FetchResolver;
+      }),
+    );
+
+    const store = new AIHealthStore();
+    const a = store.refresh();
+    const b = store.refresh();
+
+    // Chained attempt also fails.
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+
+    const resolve = resolve1.current;
+    if (!resolve) throw new Error("expected refresh to wire up the resolver");
+    resolve({ ok: false, status: 500 });
+
+    await expect(a).rejects.toThrow();
+    await expect(b).rejects.toThrow();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
 });

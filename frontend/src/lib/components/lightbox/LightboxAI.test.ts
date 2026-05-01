@@ -104,4 +104,54 @@ describe("LightboxAI", () => {
       expect(screen.getByText(/AI unavailable/)).toBeTruthy(),
     );
   });
+
+  it("ignores stale responses when mediaId changes mid-fetch", async () => {
+    // Regression for the lightbox race where rapid prop changes
+    // (mediaId A → B) could let A's slow response overwrite B's view.
+    // Strategy: deferred promises for both fetches, resolve A AFTER B
+    // so the test would fail without the monotonic-token guard.
+    type Resolver = (value: import("../../ai/client").AIMediaView) => void;
+    const resolveA: { current: Resolver | null } = { current: null };
+    const resolveB: { current: Resolver | null } = { current: null };
+
+    const promiseA = new Promise<import("../../ai/client").AIMediaView>((res) => {
+      resolveA.current = res;
+    });
+    const promiseB = new Promise<import("../../ai/client").AIMediaView>((res) => {
+      resolveB.current = res;
+    });
+    vi.mocked(client.getMediaAIView)
+      .mockReturnValueOnce(promiseA)
+      .mockReturnValueOnce(promiseB);
+
+    const { rerender } = render(LightboxAI, { props: { mediaId: "A" } });
+    // Switch to B before A's fetch settles.
+    await rerender({ mediaId: "B" });
+
+    const a = resolveA.current;
+    const b = resolveB.current;
+    if (!a || !b) throw new Error("expected both resolvers to be wired");
+
+    // Resolve B first with B's distinctive caption — that should commit.
+    b({
+      caption: {
+        text: "B-distinctive-caption",
+        model_id: "qwen2.5-vl:3b",
+        prompt_version: "caption-v1",
+        generated_at: new Date().toISOString(),
+      },
+    });
+    await waitFor(() => expect(screen.getByText("B-distinctive-caption")).toBeTruthy());
+
+    // Now resolve A with A's distinctive video skip — under the bug,
+    // this would overwrite B's view and hide the section. The token
+    // guard must drop A's stale result instead.
+    a({ skipped: { reason: "video" } });
+    // Give the suppressed update a chance to (incorrectly) commit.
+    await new Promise((r) => setTimeout(r, 20));
+
+    // B's caption is still visible; A's stale "video" skip did not
+    // hide the section.
+    expect(screen.getByText("B-distinctive-caption")).toBeTruthy();
+  });
 });

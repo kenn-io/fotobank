@@ -31,10 +31,25 @@ export class AIHealthStore {
     }
     this.inflight = (async () => {
       try {
+        // Drain pending invalidations even when a fetch fails. If a
+        // refresh() lands while a slow request is in flight and that
+        // request then rejects, jumping straight to the catch would
+        // drop the queued invalidation and leave the snapshot stale
+        // until another event fired. Loop until either a successful
+        // fetch leaves pending=false or every queued attempt fails;
+        // in the latter case we rethrow the last error so the caller
+        // sees the failure.
+        let lastErr: unknown = null;
         do {
           this.pending = false;
-          this.health = await getAIHealth();
+          try {
+            this.health = await getAIHealth();
+            lastErr = null;
+          } catch (err) {
+            lastErr = err;
+          }
         } while (this.pending);
+        if (lastErr !== null) throw lastErr;
       } finally {
         this.inflight = null;
       }
