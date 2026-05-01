@@ -333,9 +333,16 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	// but the disabled stub never actually fires because Health
 	// short-circuits with paused_reason=config_disabled before reaching
 	// the probe.
+	//
+	// Embed-only deployments (cfg.AI.Enabled=true with both
+	// cfg.AI.Tag.Enabled and cfg.AI.Caption.Enabled false) leave the
+	// vision endpoint unset by config validation. Building a real
+	// probe in that case would target an empty endpoint and report
+	// spurious failures; gate the real probe on at least one
+	// vision-using task being enabled.
 	var aiGateway gateway.VisionGateway
 	var aiProbe aiservice.Probe = disabledAIProbe{}
-	if cfg.AI.Enabled {
+	if cfg.AI.Enabled && (cfg.AI.Tag.Enabled || cfg.AI.Caption.Enabled) {
 		client := gateway.NewOpenAICompatible(gateway.OpenAIConfig{
 			Endpoint:   cfg.AI.Vision.Endpoint,
 			APIKey:     cfg.AI.Vision.APIKey(),
