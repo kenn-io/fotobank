@@ -19,33 +19,17 @@ import (
 	"github.com/wesm/fotobank/internal/thumb"
 )
 
-func TestResolverReturnsBytesAndStatus(t *testing.T) {
-	require := require.New(t)
-	rw, ro := testutil.OpenTestDBPair(t)
-	owner := testutil.SeedOwner(t, rw, "local", "alice")
-	mid := testutil.SeedPhoto(t, rw, owner, "p1")
-
-	store, version := newResolverStoreWithPreview(t, rw, owner, mid, makeJPEGForResolver(t, 2560, 1700))
-	require.Equal(1, version)
-
-	r := imginput.NewResolver(ro, store)
-	data, status, err := r.ResolveAndEncode(context.Background(), mid)
-	require.NoError(err)
-	require.Equal("ready", status)
-	require.NotEmpty(data)
-}
-
 func TestResolverFollowsThumbVersionBump(t *testing.T) {
 	require := require.New(t)
 	rw, ro := testutil.OpenTestDBPair(t)
 	owner := testutil.SeedOwner(t, rw, "local", "alice")
 	mid := testutil.SeedPhoto(t, rw, owner, "p1")
 
-	// v1 is wide-landscape (3:2) → encoded output downscales to 1024x683.
-	// v2 is portrait-tall (1:2) → encoded output downscales to 512x1024.
-	// Decoding the resolver's output and inspecting bounds unambiguously
-	// distinguishes which preview was read; without the version-aware
-	// fix, the resolver would still load v1 and the bounds check fails.
+	// v1 is wide-landscape (3:2) and v2 is portrait-tall (1:2). Decoding
+	// the returned preview and inspecting bounds unambiguously
+	// distinguishes which version the resolver read; without the
+	// version-aware fix, the resolver would still load v1 and the bounds
+	// check fails.
 	store, _ := newResolverStoreWithPreview(t, rw, owner, mid, makeJPEGForResolver(t, 2400, 1600))
 
 	_, err := rw.ExecContext(context.Background(),
@@ -54,7 +38,7 @@ func TestResolverFollowsThumbVersionBump(t *testing.T) {
 	writePreview(t, store, owner, mid, 2, makeJPEGForResolver(t, 800, 1600))
 
 	r := imginput.NewResolver(ro, store)
-	data, status, err := r.ResolveAndEncode(context.Background(), mid)
+	data, status, err := r.ResolvePreviewJPEG(context.Background(), mid)
 	require.NoError(err)
 	require.Equal("ready", status)
 	require.NotEmpty(data)
@@ -101,7 +85,7 @@ func TestResolverPropagatesMissingPreview(t *testing.T) {
 	})
 
 	r := imginput.NewResolver(ro, store)
-	_, status, err := r.ResolveAndEncode(context.Background(), mid)
+	_, status, err := r.ResolvePreviewJPEG(context.Background(), mid)
 	require.Error(t, err)
 	require.Equal(t, "ready", status)
 }
@@ -128,8 +112,9 @@ func writePreview(t *testing.T, store storage.Store, owner owners.Principal, mid
 	require.NoError(t, err)
 }
 
-// makeJPEGForResolver is a local copy of the helper in encode_test.go;
-// keeping resolver_test.go self-contained avoids cross-file test deps.
+// makeJPEGForResolver builds a synthetic JPEG of the given dimensions.
+// Mirrors the helper in encode/encode_test.go; keeping a local copy
+// avoids cross-package test deps for the resolver suite.
 func makeJPEGForResolver(t *testing.T, w, h int) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))

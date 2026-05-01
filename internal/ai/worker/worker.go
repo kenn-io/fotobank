@@ -12,6 +12,7 @@ import (
 	"github.com/wesm/fotobank/internal/ai/ack"
 	"github.com/wesm/fotobank/internal/ai/failures"
 	"github.com/wesm/fotobank/internal/ai/gateway"
+	"github.com/wesm/fotobank/internal/ai/imginput/encode"
 	"github.com/wesm/fotobank/internal/ai/jobs"
 	"github.com/wesm/fotobank/internal/ai/parse"
 	"github.com/wesm/fotobank/internal/ai/results"
@@ -19,14 +20,17 @@ import (
 	"github.com/wesm/fotobank/internal/owners"
 )
 
-// ImageResolver fetches the AI-input JPEG bytes for a media id, plus
-// the underlying thumb_status so the worker can react to upstream
-// readiness. Implementation: see Task G3 (real impl) and Task G2 stub.
+// ImageResolver fetches the preview-tier JPEG bytes for a media id,
+// plus the underlying thumb_status so the worker can react to upstream
+// readiness. The chat worker re-encodes the result via
+// encode.EncodeChat before handing it to the gateway.
 type ImageResolver interface {
-	// ResolveAndEncode returns (jpeg, thumbStatus, err).
-	// thumbStatus is the source media's thumb_status — "ready",
-	// "pending", "working", "no_preview", or "failed".
-	ResolveAndEncode(ctx context.Context, mediaID string) ([]byte, string, error)
+	// ResolvePreviewJPEG returns (jpeg, thumbStatus, err). thumbStatus
+	// is the source media's thumb_status — "ready", "pending",
+	// "working", "no_preview", or "failed". When status is anything
+	// other than "ready" the bytes are nil; the worker branches on
+	// status before attempting to encode.
+	ResolvePreviewJPEG(ctx context.Context, mediaID string) ([]byte, string, error)
 }
 
 // AcknowledgedFn returns whether ack has been recorded for a principal.
@@ -180,7 +184,7 @@ func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
 		return w.cfg.Queue.MarkBlocked(ctx, c.JobID, c.ClaimedAt, jobs.AckBlockedReason)
 	}
 
-	jpegBytes, thumbStatus, err := w.cfg.Image.ResolveAndEncode(ctx, c.MediaID)
+	previewJPEG, thumbStatus, err := w.cfg.Image.ResolvePreviewJPEG(ctx, c.MediaID)
 	if err != nil {
 		return w.maybeRetryOrFail(ctx, c, ai.ErrKindMissingAIInput, err.Error())
 	}
@@ -199,6 +203,10 @@ func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
 	case "ready":
 	default:
 		return w.markFailed(ctx, c, ai.ErrKindMissingAIInput, "unknown thumb_status: "+thumbStatus)
+	}
+	jpegBytes, err := encode.EncodeChat(previewJPEG)
+	if err != nil {
+		return w.maybeRetryOrFail(ctx, c, ai.ErrKindMissingAIInput, "encode chat input: "+err.Error())
 	}
 
 	if err := w.cfg.Sem.Acquire(ctx); err != nil {

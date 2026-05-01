@@ -1,8 +1,12 @@
 package worker_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"sync/atomic"
 	"testing"
 
@@ -38,7 +42,7 @@ type stubImage struct {
 	err    error
 }
 
-func (s *stubImage) ResolveAndEncode(_ context.Context, _ string) ([]byte, string, error) {
+func (s *stubImage) ResolvePreviewJPEG(_ context.Context, _ string) ([]byte, string, error) {
 	return s.jpeg, s.status, s.err
 }
 
@@ -47,7 +51,7 @@ type imageSequence struct {
 	steps []stubImage
 }
 
-func (s *imageSequence) ResolveAndEncode(_ context.Context, _ string) ([]byte, string, error) {
+func (s *imageSequence) ResolvePreviewJPEG(_ context.Context, _ string) ([]byte, string, error) {
 	i := int(s.calls.Add(1)) - 1
 	if i >= len(s.steps) {
 		i = len(s.steps) - 1
@@ -55,6 +59,24 @@ func (s *imageSequence) ResolveAndEncode(_ context.Context, _ string) ([]byte, s
 	step := s.steps[i]
 	return step.jpeg, step.status, step.err
 }
+
+// tinyJPEG is a real decodable JPEG produced once at package init. The
+// worker re-encodes preview bytes via encode.EncodeChat before calling
+// the gateway, so stubs returning a "ready" preview must return bytes
+// the JPEG decoder accepts.
+var tinyJPEG = func() []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 32, 24))
+	for y := range 24 {
+		for x := range 32 {
+			img.Set(x, y, color.RGBA{R: uint8(x * 8), G: uint8(y * 10), B: 0x40, A: 0xff})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 80}); err != nil {
+		panic(fmt.Errorf("seed tinyJPEG: %w", err))
+	}
+	return buf.Bytes()
+}()
 
 func setup(t *testing.T) (
 	*worker.Worker, *jobs.Queue, *results.Repo, *failures.Repo, *skipped.Repo,
@@ -73,7 +95,7 @@ func setup(t *testing.T) (
 	require.NoError(t, ackS.Acknowledge(context.Background(), owner))
 
 	gw := &stubGateway{}
-	img := &stubImage{jpeg: []byte{0xff, 0xd8, 0xff, 0xd9}, status: "ready"}
+	img := &stubImage{jpeg: tinyJPEG, status: "ready"}
 
 	w := worker.New(worker.Config{
 		Task:        ai.TaskTag,
@@ -249,7 +271,7 @@ func TestWorkerPromotesAckedBlockedJobs(t *testing.T) {
 	gw := &stubGateway{respond: func() (gateway.Response, error) {
 		return gateway.Response{Text: `{"tags":["x"]}`}, nil
 	}}
-	img := &stubImage{jpeg: []byte{0xff, 0xd8, 0xff, 0xd9}, status: "ready"}
+	img := &stubImage{jpeg: tinyJPEG, status: "ready"}
 
 	ackedRef := atomic.Bool{}
 	w := worker.New(worker.Config{
@@ -297,7 +319,7 @@ func TestWorkerParkedWithoutAcknowledgement(t *testing.T) {
 	gw := &stubGateway{respond: func() (gateway.Response, error) {
 		return gateway.Response{Text: `{"tags":["x"]}`}, nil
 	}}
-	img := &stubImage{jpeg: []byte{0xff, 0xd8, 0xff, 0xd9}, status: "ready"}
+	img := &stubImage{jpeg: tinyJPEG, status: "ready"}
 	w := worker.New(worker.Config{
 		Task:        ai.TaskTag,
 		Fingerprint: ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"},
