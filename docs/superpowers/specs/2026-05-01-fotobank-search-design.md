@@ -131,14 +131,27 @@ CREATE VIRTUAL TABLE media_embeddings_g<id> USING vec0(
 );
 ```
 
-**Write path (delete-then-insert; vec0 does not allow `INSERT OR REPLACE`):**
-1. `DELETE FROM media_embedding_ids WHERE generation_id = ? AND media_id = ?` (drops any prior `vec_id` for this media in this generation).
-2. `DELETE FROM media_embeddings_g<id> WHERE vec_id = ?` for any prior `vec_id` that came back from step 1.
-3. Allocate a fresh `vec_id`.
-4. `INSERT INTO media_embedding_ids (generation_id, media_id, vec_id) VALUES (?, ?, ?)`.
-5. `INSERT INTO media_embeddings_g<id> (vec_id, embedding) VALUES (?, vec_f32(?))`.
+**Write path (delete-then-insert; vec0 does not allow `INSERT OR REPLACE`).** Two cases — replacement of an existing vector and net-new write — are distinguished so `embedded_count` only ticks on net-new rows:
 
-All five statements run in one transaction with the `ai_jobs` status updates and the cached `embedded_count` increment.
+```sql
+-- Step 1: take + drop any prior mapping for (generation, media), capturing the prior vec_id.
+DELETE FROM media_embedding_ids
+ WHERE generation_id = ? AND media_id = ?
+RETURNING vec_id;
+-- Returns 1 row (replacement) or 0 rows (net-new).
+
+-- Step 2: drop the prior vec row if there was one.
+DELETE FROM media_embeddings_g<id> WHERE vec_id = ?;     -- only if step 1 returned a row
+
+-- Step 3: allocate a fresh vec_id (per-generation MAX+1, or 1 if empty).
+-- Step 4: insert the new mapping + vec row.
+INSERT INTO media_embedding_ids (generation_id, media_id, vec_id) VALUES (?, ?, ?);
+INSERT INTO media_embeddings_g<id> (vec_id, embedding)              VALUES (?, vec_f32(?));
+```
+
+All statements run in one transaction with the `ai_jobs` status updates. `embedded_count` is incremented **only when step 1 returned no rows** — replacements (e.g. thumb regen on a media that already had a vector in this generation) are zero-delta. This keeps the cached counter honest about distinct embedded photos rather than total writes.
+
+Allocation strategy for `vec_id`: per-generation `SELECT COALESCE(MAX(vec_id), 0) + 1 FROM media_embedding_ids WHERE generation_id = ?` inside the same transaction. Concurrent worker writes are serialized by SQLite's writer lock, so `MAX+1` is safe; under contention the second writer's `SELECT MAX` reads the first writer's committed row.
 
 **Read path** (the FusedSearch composed query) joins `media_embedding_ids` ↔ `media_embeddings_g<id>` on `vec_id` and projects `media_id` for the result row.
 
@@ -244,7 +257,7 @@ The same client also embeds plain text queries at search time:
 { "input": ["small dog on a beach"], "model": "<embed_model_id>" }
 ```
 
-**The configured embed model must produce shared image-text embeddings** (CLIP / SigLIP-family). This is validated at server boot: a startup probe sends one image data URL and one short text string and verifies that both responses come back with the configured dimension. Boot fails with a clear error if the model is image-only or text-only.
+**The configured embed model must produce shared image-text embeddings** (CLIP / SigLIP-family). At server boot a startup probe validates **modality support and dimension**: one image data URL and one short text string are sent and each response is checked for a vector at the configured dimension. The probe cannot prove that the two vectors live in a meaningfully aligned latent space — that is a model contract, documented in the operator's chosen model card, not something fotobank can verify. Boot fails with a clear error if either modality fails to return a vector at the expected dimension; alignment is the operator's responsibility.
 
 Failure classification mirrors the chat-completions client: 4xx → permanent (`provider_4xx`), 429 + 5xx → transient (retried per `[ai.embed].max_retries`, default 1), network/timeout → transient.
 
@@ -284,8 +297,10 @@ SELECT m.id FROM media m
    AND m.thumb_status = 'ready'
    AND (m.hidden_at IS NULL OR ?)             -- ack_allows_hidden
    AND NOT EXISTS (
-     SELECT 1 FROM media_embeddings_g<active_or_building_id> v
-      WHERE v.media_id = m.id
+     -- Vector present in the active-or-building generation? Check goes
+     -- through the mapping table; the vec0 table itself only carries vec_id.
+     SELECT 1 FROM media_embedding_ids x
+      WHERE x.generation_id = ? AND x.media_id = m.id
    )
    AND NOT EXISTS (
      SELECT 1 FROM ai_skipped s
@@ -306,7 +321,7 @@ SELECT m.id FROM media m
  LIMIT ?
 ```
 
-The active-or-building generation id is resolved once per scanner pass. Two separate scanner queries — one for tag/caption (existing), one for embed (new).
+The active-or-building generation id is resolved once per scanner pass and bound as the `?` to `x.generation_id`. The check is mapping-only — proving `media_embedding_ids` has a row for `(generation_id, media_id)` is sufficient because the §5.4 write path never inserts a mapping row without an accompanying vec row in the same transaction. Two separate scanner queries: one for tag/caption (existing), one for embed (new).
 
 ### 6.7 Auto-enqueue triggers
 
@@ -360,7 +375,22 @@ SELECT COUNT(*) FROM media m
    )
 ```
 
-Embedded-count is an assertive `SELECT COUNT(*) FROM media_embeddings_g<id>` (the cached `embedded_count` is for runtime telemetry; activation reads the assertive count to guard against drift).
+Embedded-count is an assertive query against the **mapping table joined back to eligible media** — counting raw vec rows would let orphaned vec rows (stale rowids from prior crashes), as well as future owner/hidden drift, contribute to the threshold and promote too early:
+
+```sql
+SELECT COUNT(*) FROM media_embedding_ids x
+ JOIN media m ON m.id = x.media_id
+ WHERE x.generation_id = ?
+   AND m.owner_hub = ? AND m.owner_user_id = ?
+   AND m.thumb_status = 'ready'
+   AND (m.hidden_at IS NULL OR ?)             -- ack_allows_hidden, same value as the eligible query
+   AND NOT EXISTS (
+     SELECT 1 FROM ai_skipped s
+      WHERE s.media_id = m.id AND s.task = 'embed'
+   )
+```
+
+The cached `embedded_count` is for runtime telemetry only; activation always recounts assertively against the same predicate as the eligible query so numerator and denominator agree exactly.
 
 Promotion is one transaction:
 
@@ -426,6 +456,9 @@ Response:
   "next_cursor": "...",                  // null when no more
   "has_more":    true,
   "total":       142,                    // present only on filter-only or date-sorted queries
+  "effective_sort":                "newest",  // echoes the sort actually applied; differs from the
+                                         // request's `sort` only when the server coerced it
+                                         // (see §7.3 "q == '' && sort == 'relevance'")
   "embedding_completeness": 0.97,        // active generation embedded/eligible — computed under
                                          // the same hidden predicate as the request
   "semantic_unavailable":          false,// true when no active generation OR query embedding failed
@@ -450,6 +483,7 @@ The result row embeds everything the existing justified-row grid needs to render
 
 Decision tree per request:
 
+- **`q == "" && sort == "relevance"`** → coerced server-side to `sort = "newest"`; the response's `effective_sort` field reflects what was actually applied so the client can update its segmented control if needed. Relevance has no defined meaning without a query string; rather than 400 the request, the server picks the most useful default. The frontend defaults away from this combination on its own; the coercion is a defensive fallback for direct-API callers and bookmarked URLs.
 - **`q == "" && sort == "newest" | "oldest"`** → filter-only browse. Single SQL query against `media` with the structured filter; cursor is `(timestamp NULLS LAST, imported_at, id)`. No FTS5, no ANN, no scoring. Fast path; existing query patterns.
 - **`q != ""` and active generation present** → hybrid. Embed `q` once via the embedding client; build the FTS5 MATCH expression (§7.4); call `Backend.FusedSearch` (the sqlite-vec capability) with both signals + filter. Returns RRF-ordered hits. Cursor is `(rrf_score, media_id)`.
 - **`q != ""` and no active generation** → BM25-only. Same FTS5 MATCH expression, no vector signal. Response stamps `semantic_unavailable: true`, `semantic_unavailable_reason: "no_active_generation"`. Cursor is `(bm25_score, media_id)`.
@@ -673,7 +707,7 @@ retain_retired_days  = 30
 activation_threshold = 95   # percent
 ```
 
-`api_key_env` is a new config field (not present today; the existing gateway code supports an `APIKey` runtime field but doesn't expose it via TOML). Empty disables the `Authorization` header (the local-inference default); non-empty names an env var whose value is sent as `Authorization: Bearer <value>`. Storing the secret in an env var rather than the TOML file keeps secrets out of the config file the operator commits. As a small adjacent change, the same field is added to `[ai.vision]` so both AI gateway clients have a consistent way to reach hosted endpoints.
+`api_key_env` is added to `[ai.embed]` and mirrors the existing `[ai.vision].api_key_env` field (already present today as `VisionConfig.APIKeyEnv` in `internal/ai/config.go`). Empty disables the `Authorization` header (the local-inference default); non-empty names an env var whose value is sent as `Authorization: Bearer <value>`. The new embed-side field reuses the same `APIKeyEnv` resolution helper.
 
 The `[ai.vision]` block (existing, drives the chat-completions gateway) and `[ai.embed]` block coexist; they may point at the same endpoint or different endpoints. Boot-time validation: dimension probe + image/text shared-space probe; failure aborts startup with a clear message.
 
