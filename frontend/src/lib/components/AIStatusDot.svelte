@@ -1,6 +1,7 @@
 <!-- frontend/src/lib/components/AIStatusDot.svelte -->
 <script lang="ts">
   import { aiHealthStore, deriveDot } from "../ai/health.svelte";
+  import { handleInternalLinkClick } from "../router/router.svelte";
   import type { AIDotState } from "../ai/types";
 
   // App.svelte already calls aiHealthStore.refresh() on mount and on
@@ -34,6 +35,7 @@
     style:--dot-color={colorByState[dot.state]}
     class="ai-dot"
     data-state={dot.state}
+    onclick={(e) => handleInternalLinkClick(e, "/settings/ai")}
   >
     <span class="dot" aria-hidden="true"></span>
     <span class="icon" aria-hidden="true">{iconByState[dot.state]}</span>

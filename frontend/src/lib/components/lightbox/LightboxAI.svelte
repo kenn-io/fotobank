@@ -1,6 +1,7 @@
 <!-- frontend/src/lib/components/lightbox/LightboxAI.svelte -->
 <script lang="ts">
   import { getMediaAIView, retryPhotoAI, type AIMediaView } from "../../ai/client";
+  import { handleInternalLinkClick } from "../../router/router.svelte";
 
   let { mediaId }: { mediaId: string } = $props();
 
@@ -8,22 +9,35 @@
   let loading = $state(true);
   let loadError = $state<string | null>(null);
   let lastID: string | null = null;
+  // Monotonic token: every load() captures a token, and only commits its
+  // result when the token still matches the latest request. Without this,
+  // rapid lightbox navigation (mediaId changes A → B → C while A's fetch
+  // is in flight) could let A's stale response overwrite C's view.
+  let loadToken = 0;
 
   $effect(() => {
     if (mediaId === lastID) return;
     lastID = mediaId;
+    // Clear stale view on photo change so a left-over `video` skip
+    // branch from the previous photo doesn't render against the new one
+    // before the new fetch resolves.
+    view = null;
     void load(mediaId);
   });
 
   async function load(id: string): Promise<void> {
+    const token = ++loadToken;
     loading = true;
     loadError = null;
     try {
-      view = await getMediaAIView(id);
+      const next = await getMediaAIView(id);
+      if (token !== loadToken) return; // superseded by a newer load()
+      view = next;
     } catch (e) {
+      if (token !== loadToken) return;
       loadError = (e as Error).message;
     } finally {
-      loading = false;
+      if (token === loadToken) loading = false;
     }
   }
 
@@ -78,7 +92,10 @@
     {:else if view.caption}
       <p class="caption">{view.caption.text}</p>
       <p class="provenance">
-        <a href="/settings/ai">{view.caption.model_id}</a> · {fmtDate(view.caption.generated_at)}
+        <a
+          href="/settings/ai"
+          onclick={(e) => handleInternalLinkClick(e, "/settings/ai")}
+        >{view.caption.model_id}</a> · {fmtDate(view.caption.generated_at)}
       </p>
     {:else}
       <p class="muted">Caption pending</p>

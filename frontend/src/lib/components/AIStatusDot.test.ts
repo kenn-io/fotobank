@@ -1,7 +1,8 @@
-import { render } from "@testing-library/svelte";
-import { describe, it, expect, beforeEach } from "vitest";
+import { fireEvent, render } from "@testing-library/svelte";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import AIStatusDot from "./AIStatusDot.svelte";
 import { aiHealthStore } from "../ai/health.svelte";
+import { router } from "../router/router.svelte";
 import type { AIHealth } from "../ai/types";
 
 const healthy: AIHealth = {
@@ -61,5 +62,22 @@ describe("AIStatusDot", () => {
     const { container } = render(AIStatusDot);
     const link = container.querySelector("a.ai-dot");
     expect(link?.getAttribute("data-state")).toBe("paused");
+  });
+
+  it("plain-click routes through SPA navigate (no full reload)", async () => {
+    aiHealthStore.health = healthy;
+    const navigate = vi.spyOn(router, "navigate").mockImplementation(() => {});
+    try {
+      const { container } = render(AIStatusDot);
+      const link = container.querySelector("a.ai-dot");
+      expect(link).toBeTruthy();
+      // fireEvent.click defaults to a plain-button, no-modifier event,
+      // which is what handleInternalLinkClick treats as SPA nav. Without
+      // the onclick wiring the browser would do a full page reload.
+      await fireEvent.click(link!);
+      expect(navigate).toHaveBeenCalledWith("/settings/ai");
+    } finally {
+      navigate.mockRestore();
+    }
   });
 });
