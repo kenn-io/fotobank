@@ -74,6 +74,12 @@ test.describe("F2.3 albums", () => {
       .click();
     await expect(page).toHaveURL(/\/albums$/);
     await expect(page.getByText(albumName)).not.toBeVisible();
+
+    // Reload so the next /albums fetch comes from the server, not the
+    // SPA cache. The server-side delete must really have happened —
+    // otherwise the album would reappear after a refetch.
+    await page.reload();
+    await expect(page.getByText(albumName)).not.toBeVisible();
   });
 
   test("bulk-select-by-group via month header", async ({ page }) => {

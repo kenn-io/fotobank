@@ -44,15 +44,15 @@ test.describe("F2.4 hidden privacy", () => {
     expect(body.configured).toBe(true);
   });
 
-  test.skip(
-    "CTA shown when not configured (requires FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 server)",
-    async ({ page }) => {
-      // Run: FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 make test-e2e
-      await page.goto("/hidden");
-      await expect(page.getByText("Hidden privacy isn't set up.")).toBeVisible();
-      await expect(page.getByText("fotobank hidden setup")).toBeVisible();
-    },
-  );
+  test("CTA shown when not configured (requires FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 server)", async ({ page }) => {
+    test.skip(
+      process.env["FOTOBANK_E2E_HIDDEN_UNCONFIGURED"] !== "1",
+      "set FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 to run this scenario",
+    );
+    await page.goto("/hidden");
+    await expect(page.getByText("Hidden privacy isn't set up.")).toBeVisible();
+    await expect(page.getByText("fotobank hidden setup")).toBeVisible();
+  });
 
   // -------------------------------------------------------------------------
   // Scenario 3: Wrong passcode shows error; no cookie set
@@ -194,25 +194,31 @@ test.describe("F2.4 hidden privacy", () => {
   // -------------------------------------------------------------------------
   // Scenario 10: Library list NOT affected by unlock cookie
   //
-  // After hiding hidden-target-1 (scenario 8), the /api/v1/media endpoint
-  // must exclude it even when the unlock cookie is present in the context.
-  //
-  // Note: this test runs AFTER scenario 8 in the same test run (sequential,
-  // workers=1). hidden-target-1 was hidden by scenario 8 and must remain
-  // excluded from the owner's library listing regardless of unlock state.
+  // The library endpoint must exclude hidden rows even when the unlock
+  // cookie is present. This test establishes its own hidden state via
+  // the API (rather than depending on scenario 8 having run first), so
+  // running this spec alone, retrying it, or sharding the file does not
+  // produce false failures.
   // -------------------------------------------------------------------------
   test("library API excludes hidden rows even when unlock cookie is present", async ({
     page,
   }) => {
-    // Unlock so the cookie is present in the browser context.
+    // Establish hidden state ourselves: hide hidden-target-1 via the API.
+    // PUT is idempotent — if a prior scenario already hid it, this is a
+    // no-op. Without this step the assertion below would only hold when
+    // scenario 8 had already run earlier in the file (the original bug).
     await unlock(page);
+    const hideRes = await page.request.put(
+      "/api/v1/media/hidden-target-1/hidden",
+      { headers: { "Content-Type": "application/json" }, data: {} },
+    );
+    expect([200, 204, 409]).toContain(hideRes.status());
 
-    // Hit /api/v1/media — must still exclude hidden-target-1.
+    // Hit /api/v1/media — must exclude hidden-target-1 regardless of unlock.
     const res = await page.request.get("/api/v1/media?limit=200&offset=0");
     expect(res.status()).toBe(200);
     const body = (await res.json()) as { items: Array<{ id: string }> };
     const ids = body.items.map((it) => it.id);
-    // hidden-target-1 was hidden by scenario 8 — must not appear in library.
     expect(ids).not.toContain("hidden-target-1");
   });
 
@@ -404,17 +410,17 @@ test.describe("F2.4 hidden privacy", () => {
     await expect(page.getByRole("button", { name: "Hide" })).toBeVisible();
   });
 
-  test.skip(
-    "Hide button absent when hiddenConfigured=false (requires FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 server)",
-    async ({ page }) => {
-      // Run: FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 make test-e2e
-      await page.goto("/library");
-      const firstPhoto = page.getByLabel(/^Photo /).first();
-      await expect(firstPhoto).toBeVisible();
-      await firstPhoto.click({ modifiers: ["Meta"] });
-      await expect(page.getByText("1 selected")).toBeVisible();
-      // No Hide button when credential is not seeded.
-      await expect(page.getByRole("button", { name: "Hide" })).toHaveCount(0);
-    },
-  );
+  test("Hide button absent when hiddenConfigured=false (requires FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 server)", async ({ page }) => {
+    test.skip(
+      process.env["FOTOBANK_E2E_HIDDEN_UNCONFIGURED"] !== "1",
+      "set FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1 to run this scenario",
+    );
+    await page.goto("/library");
+    const firstPhoto = page.getByLabel(/^Photo /).first();
+    await expect(firstPhoto).toBeVisible();
+    await firstPhoto.click({ modifiers: ["Meta"] });
+    await expect(page.getByText("1 selected")).toBeVisible();
+    // No Hide button when credential is not seeded.
+    await expect(page.getByRole("button", { name: "Hide" })).toHaveCount(0);
+  });
 });
