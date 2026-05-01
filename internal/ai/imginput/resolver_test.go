@@ -40,20 +40,28 @@ func TestResolverFollowsThumbVersionBump(t *testing.T) {
 	owner := testutil.SeedOwner(t, rw, "local", "alice")
 	mid := testutil.SeedPhoto(t, rw, owner, "p1")
 
-	store, _ := newResolverStoreWithPreview(t, rw, owner, mid, makeJPEGForResolver(t, 2560, 1700))
+	// v1 is wide-landscape (3:2) → encoded output downscales to 1024x683.
+	// v2 is portrait-tall (1:2) → encoded output downscales to 512x1024.
+	// Decoding the resolver's output and inspecting bounds unambiguously
+	// distinguishes which preview was read; without the version-aware
+	// fix, the resolver would still load v1 and the bounds check fails.
+	store, _ := newResolverStoreWithPreview(t, rw, owner, mid, makeJPEGForResolver(t, 2400, 1600))
 
-	// Bump version on the row and write a fresh preview at the new key.
-	// The old key (v1) stays on disk; the resolver must read v2.
 	_, err := rw.ExecContext(context.Background(),
 		`UPDATE media SET thumb_version=2 WHERE id=?`, mid)
 	require.NoError(err)
-	writePreview(t, store, owner, mid, 2, makeJPEGForResolver(t, 1280, 800))
+	writePreview(t, store, owner, mid, 2, makeJPEGForResolver(t, 800, 1600))
 
 	r := imginput.NewResolver(ro, store)
 	data, status, err := r.ResolveAndEncode(context.Background(), mid)
 	require.NoError(err)
 	require.Equal("ready", status)
 	require.NotEmpty(data)
+
+	decoded, err := jpeg.Decode(bytes.NewReader(data))
+	require.NoError(err)
+	b := decoded.Bounds()
+	require.Lessf(b.Dx(), b.Dy(), "v2 preview is portrait; resolver returned landscape (likely read stale v1): %dx%d", b.Dx(), b.Dy())
 }
 
 func TestResolverPropagatesMissingPreview(t *testing.T) {
