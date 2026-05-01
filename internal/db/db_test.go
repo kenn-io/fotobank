@@ -4,10 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"path/filepath"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -158,22 +155,41 @@ func TestOpen_RoundTripTZ(t *testing.T) {
 	r.True(got.Equal(want), "Unix instant must round-trip")
 }
 
-// TestOpen_ConcurrentWriters opens two raw *sql.DB handles (no
-// MaxOpenConns(1) pinning) against the same file to model the
-// production import-worker / AI-worker concurrent-write contention.
-// Asserts (a) no insert errors despite genuine SQLite-level lock
-// contention, (b) all writes succeed, (c) at least one Exec was
-// observed taking > 1ms, proving busy_timeout was actually exercised
-// rather than serialized away by the connection pool.
+// TestOpen_ConcurrentWriters proves busy_timeout is actually engaged
+// by manufacturing a deterministic SQLITE_BUSY contention window and
+// asserting the second writer waits for the first to release the
+// write lock rather than failing immediately.
+//
+// Contention model:
+//
+//   - Two raw *sql.DB handles open the same file, each carrying the
+//     production DSN (_busy_timeout=5000&_fk=1). Two distinct handles
+//     are required: a single *sql.DB with MaxOpenConns>1 still gives
+//     two real SQLite connections, but the simpler two-handle setup
+//     mirrors how independent workers run in production.
+//   - h1 starts a BEGIN IMMEDIATE transaction. BEGIN IMMEDIATE acquires
+//     the file's RESERVED write lock up front, so any other connection
+//     that tries to write must wait or return SQLITE_BUSY.
+//   - h2 then issues an INSERT. With busy_timeout=5000 active, h2's
+//     Exec must block until h1's COMMIT releases the lock.
+//   - After ~100ms the test commits h1. h2's INSERT then succeeds.
+//   - The wall-clock duration of h2's Exec must be >= the hold window
+//     (100ms minus a small slack for clock granularity), proving h2
+//     actually waited rather than racing through a brief lock-free
+//     window. If busy_timeout were 0 / broken, h2's Exec would error
+//     immediately with "database is locked" instead of waiting.
 //
 // db.Open is deliberately NOT used here because it pins the RW pool
-// to MaxOpenConns(1), which would queue writers at the Go database/sql
-// layer and never give SQLite a chance to return SQLITE_BUSY. Two raw
-// handles with default MaxOpenConns let multiple connections hit the
-// file simultaneously, which is what busy_timeout is designed to handle.
+// to MaxOpenConns(1), which would queue writers inside the Go
+// database/sql layer and never give SQLite a chance to return
+// SQLITE_BUSY. Two raw handles with default MaxOpenConns let two real
+// connections hit the file simultaneously, which is what busy_timeout
+// is designed to handle.
+//
+// Bound by ctx (2s); skipped under -short.
 func TestOpen_ConcurrentWriters(t *testing.T) {
 	if testing.Short() {
-		t.Skip("stress test; not under -short")
+		t.Skip("contention test; not under -short")
 	}
 	r := require.New(t)
 
@@ -185,9 +201,6 @@ func TestOpen_ConcurrentWriters(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stress.sqlite")
 	dsn := path + "?_busy_timeout=5000&_fk=1"
 
-	// Two distinct *sql.DB handles, each with the default (unlimited)
-	// MaxOpenConns. This mirrors production where independent workers
-	// each hold their own *sql.DB against the same file.
 	h1, err := sql.Open("sqlite3", dsn)
 	r.NoError(err)
 	defer h1.Close()
@@ -195,68 +208,69 @@ func TestOpen_ConcurrentWriters(t *testing.T) {
 	r.NoError(err)
 	defer h2.Close()
 
-	// Set WAL mode and create the scratch table once via h1 before any
-	// concurrent writers start. WAL is per-file, not per-handle, so
-	// h2 inherits it.
+	// Set WAL once via h1 before any contention starts. WAL is
+	// per-file, not per-handle.
 	_, err = h1.Exec(`PRAGMA journal_mode=WAL`)
 	r.NoError(err)
 	_, err = h1.Exec(`CREATE TABLE stress (id INTEGER PRIMARY KEY, v TEXT)`)
 	r.NoError(err)
 
-	const writersPerHandle = 4
-	const perWriter = 100
-	const totalWriters = 2 * writersPerHandle
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
-	var (
-		wg      sync.WaitGroup
-		maxExec atomic.Int64 // nanoseconds; tracks the slowest single Exec
-		errCh   = make(chan error, totalWriters*perWriter)
-	)
+	// h1 holds the write lock via BEGIN IMMEDIATE on a single dedicated
+	// connection. A bare *sql.DB.Exec("BEGIN IMMEDIATE") would not work
+	// reliably because the next call could land on a different pooled
+	// conn that doesn't hold the lock; pinning to a single Conn fixes
+	// that.
+	holdConn, err := h1.Conn(ctx)
+	r.NoError(err)
+	defer holdConn.Close()
+	_, err = holdConn.ExecContext(ctx, `BEGIN IMMEDIATE`)
+	r.NoError(err)
 
-	insert := func(handle *sql.DB, label string) {
-		defer wg.Done()
-		for i := range perWriter {
-			start := time.Now()
-			_, err := handle.Exec(`INSERT INTO stress (v) VALUES (?)`,
-				fmt.Sprintf("%s-%d", label, i))
-			elapsed := time.Since(start).Nanoseconds()
-			// Record max via CAS loop so concurrent writers don't
-			// stomp each other's measurements.
-			for {
-				prev := maxExec.Load()
-				if elapsed <= prev || maxExec.CompareAndSwap(prev, elapsed) {
-					break
-				}
-			}
-			if err != nil {
-				errCh <- err
-				return
-			}
-		}
+	const holdWindow = 100 * time.Millisecond
+
+	// h2's Exec runs in a goroutine. It must block until holdConn
+	// commits or the ctx fires.
+	type result struct {
+		err     error
+		elapsed time.Duration
 	}
+	resCh := make(chan result, 1)
+	go func() {
+		start := time.Now()
+		_, err := h2.ExecContext(ctx, `INSERT INTO stress (v) VALUES (?)`, "from-h2")
+		resCh <- result{err: err, elapsed: time.Since(start)}
+	}()
 
-	wg.Add(totalWriters)
-	for w := range writersPerHandle {
-		go insert(h1, fmt.Sprintf("h1-w%d", w))
-		go insert(h2, fmt.Sprintf("h2-w%d", w))
-	}
-	wg.Wait()
-	close(errCh)
-	for err := range errCh {
-		r.NoError(err, "concurrent insert")
-	}
+	// Hold the write lock for a known window so h2 must wait that
+	// long. time.Sleep is fine here because we own the test goroutine
+	// and the lock holder.
+	time.Sleep(holdWindow)
+	_, err = holdConn.ExecContext(ctx, `COMMIT`)
+	r.NoError(err)
 
+	// h2 should now complete. ctx is the hard cap (2s).
+	var got result
+	select {
+	case got = <-resCh:
+	case <-ctx.Done():
+		r.FailNow("h2 INSERT did not complete before ctx deadline", "%v", ctx.Err())
+	}
+	r.NoError(got.err, "h2 INSERT must succeed once h1 releases the write lock")
+
+	// The elapsed time MUST be at least the hold window (within a
+	// small slack for clock granularity). If busy_timeout were broken
+	// or 0, h2 would have errored immediately well below holdWindow.
+	const slack = 5 * time.Millisecond
+	r.GreaterOrEqual(got.elapsed, holdWindow-slack,
+		"h2 Exec elapsed %v < holdWindow %v (slack %v): busy_timeout did not retry",
+		got.elapsed, holdWindow, slack)
+	t.Logf("h2 Exec waited %v for the write lock", got.elapsed)
+
+	// Exactly one row from h2.
 	var total int
-	r.NoError(h1.QueryRow(`SELECT COUNT(*) FROM stress`).Scan(&total))
-	r.Equal(totalWriters*perWriter, total)
-
-	// Diagnostic: with two handles racing for the write lock, at
-	// least one Exec must have observed contention and waited >1ms
-	// for busy_timeout to retry. If this fires under 1ms the test
-	// isn't actually exercising what it claims.
-	maxObserved := time.Duration(maxExec.Load())
-	t.Logf("max single Exec under contention: %v", maxObserved)
-	r.Greater(maxObserved, time.Millisecond,
-		"expected at least one Exec >1ms (busy_timeout retry); got %v — test is not exercising real contention",
-		maxObserved)
+	r.NoError(h1.QueryRowContext(ctx, `SELECT COUNT(*) FROM stress`).Scan(&total))
+	r.Equal(1, total)
 }
