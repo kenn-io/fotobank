@@ -2201,7 +2201,7 @@ func TestRepoMattnScanCompat_CoalescedDisplayTime(t *testing.T) {
 	seedOwner(t, d.WriteDB(), bob, "bob-sk-coalesce")
 
 	withTS := time.Date(2026, 1, 15, 9, 30, 0, 0, time.UTC)
-	m1 := seedMediaWithTimestamp(t, d, alice, withTS) // path 1: timestamp present
+	m1 := seedMediaWithTimestamp(t, d, alice, withTS)        // path 1: timestamp present
 	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString()) // path 2: timestamp NULL → falls back to imported_at
 
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
