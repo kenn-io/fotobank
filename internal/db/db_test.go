@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -157,40 +158,87 @@ func TestOpen_RoundTripTZ(t *testing.T) {
 	r.True(got.Equal(want), "Unix instant must round-trip")
 }
 
-// TestOpen_ConcurrentWriters spawns N goroutines that each insert
-// into a scratch table through the RW pool. They all share the same
-// single-connection RW pool and must serialise; the test asserts
-// that all N inserts complete within a generous deadline and the
-// final row count matches.
+// TestOpen_ConcurrentWriters opens two raw *sql.DB handles (no
+// MaxOpenConns(1) pinning) against the same file to model the
+// production import-worker / AI-worker concurrent-write contention.
+// Asserts (a) no insert errors despite genuine SQLite-level lock
+// contention, (b) all writes succeed, (c) at least one Exec was
+// observed taking > 1ms, proving busy_timeout was actually exercised
+// rather than serialized away by the connection pool.
+//
+// db.Open is deliberately NOT used here because it pins the RW pool
+// to MaxOpenConns(1), which would queue writers at the Go database/sql
+// layer and never give SQLite a chance to return SQLITE_BUSY. Two raw
+// handles with default MaxOpenConns let multiple connections hit the
+// file simultaneously, which is what busy_timeout is designed to handle.
 func TestOpen_ConcurrentWriters(t *testing.T) {
 	if testing.Short() {
 		t.Skip("stress test; not under -short")
 	}
 	r := require.New(t)
-	d := testutil.OpenTestDB(t)
-	rw := d.WriteDB()
 
-	_, err := rw.Exec(`CREATE TABLE stress (id INTEGER PRIMARY KEY, v TEXT)`)
+	// RegisterSqliteVec is idempotent; call it before sql.Open to be
+	// safe even though the sqlite3 driver name is registered already
+	// via internal/db/sqlitevec.go's blank import.
+	db.RegisterSqliteVec()
+
+	path := filepath.Join(t.TempDir(), "stress.sqlite")
+	dsn := path + "?_busy_timeout=5000&_fk=1"
+
+	// Two distinct *sql.DB handles, each with the default (unlimited)
+	// MaxOpenConns. This mirrors production where independent workers
+	// each hold their own *sql.DB against the same file.
+	h1, err := sql.Open("sqlite3", dsn)
+	r.NoError(err)
+	defer h1.Close()
+	h2, err := sql.Open("sqlite3", dsn)
+	r.NoError(err)
+	defer h2.Close()
+
+	// Set WAL mode and create the scratch table once via h1 before any
+	// concurrent writers start. WAL is per-file, not per-handle, so
+	// h2 inherits it.
+	_, err = h1.Exec(`PRAGMA journal_mode=WAL`)
+	r.NoError(err)
+	_, err = h1.Exec(`CREATE TABLE stress (id INTEGER PRIMARY KEY, v TEXT)`)
 	r.NoError(err)
 
-	const writers = 8
-	const perWriter = 50
-	var wg sync.WaitGroup
-	wg.Add(writers)
-	errCh := make(chan error, writers*perWriter)
+	const writersPerHandle = 4
+	const perWriter = 100
+	const totalWriters = 2 * writersPerHandle
 
-	for w := range writers {
-		go func(w int) {
-			defer wg.Done()
-			for i := range perWriter {
-				_, err := rw.Exec(`INSERT INTO stress (v) VALUES (?)`,
-					fmt.Sprintf("w%d-%d", w, i))
-				if err != nil {
-					errCh <- err
-					return
+	var (
+		wg      sync.WaitGroup
+		maxExec atomic.Int64 // nanoseconds; tracks the slowest single Exec
+		errCh   = make(chan error, totalWriters*perWriter)
+	)
+
+	insert := func(handle *sql.DB, label string) {
+		defer wg.Done()
+		for i := range perWriter {
+			start := time.Now()
+			_, err := handle.Exec(`INSERT INTO stress (v) VALUES (?)`,
+				fmt.Sprintf("%s-%d", label, i))
+			elapsed := time.Since(start).Nanoseconds()
+			// Record max via CAS loop so concurrent writers don't
+			// stomp each other's measurements.
+			for {
+				prev := maxExec.Load()
+				if elapsed <= prev || maxExec.CompareAndSwap(prev, elapsed) {
+					break
 				}
 			}
-		}(w)
+			if err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}
+
+	wg.Add(totalWriters)
+	for w := range writersPerHandle {
+		go insert(h1, fmt.Sprintf("h1-w%d", w))
+		go insert(h2, fmt.Sprintf("h2-w%d", w))
 	}
 	wg.Wait()
 	close(errCh)
@@ -199,6 +247,16 @@ func TestOpen_ConcurrentWriters(t *testing.T) {
 	}
 
 	var total int
-	r.NoError(rw.QueryRow(`SELECT COUNT(*) FROM stress`).Scan(&total))
-	r.Equal(writers*perWriter, total)
+	r.NoError(h1.QueryRow(`SELECT COUNT(*) FROM stress`).Scan(&total))
+	r.Equal(totalWriters*perWriter, total)
+
+	// Diagnostic: with two handles racing for the write lock, at
+	// least one Exec must have observed contention and waited >1ms
+	// for busy_timeout to retry. If this fires under 1ms the test
+	// isn't actually exercising what it claims.
+	maxObserved := time.Duration(maxExec.Load())
+	t.Logf("max single Exec under contention: %v", maxObserved)
+	r.Greater(maxObserved, time.Millisecond,
+		"expected at least one Exec >1ms (busy_timeout retry); got %v — test is not exercising real contention",
+		maxObserved)
 }
