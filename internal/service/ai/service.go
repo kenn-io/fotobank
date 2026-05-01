@@ -85,6 +85,7 @@ func (s *Service) Backfill(ctx context.Context, caller owners.Principal, task ai
 	return s.deps.Gap.Scan(ctx, gapscanner.ScanRequest{
 		Task:        task,
 		Fingerprint: fp,
+		Owner:       caller,
 		Force:       force,
 		Limit:       0,
 	})
@@ -104,27 +105,28 @@ func (s *Service) RetryFailed(ctx context.Context, caller owners.Principal, task
 		return 0, errs.ErrAcknowledgementRequired
 	}
 	fp, _ := s.deps.ConfigFingerprints.Lookup(task)
-	rows, err := s.deps.Failures.ListForFingerprint(ctx, task, fp, 1000)
+	rows, err := s.deps.Failures.ListForFingerprintByOwner(ctx, task, fp, caller.Hub, caller.UserID, 0)
 	if err != nil {
 		return 0, fmt.Errorf("list failures: %w", err)
+	}
+	if len(rows) == 0 {
+		return 0, nil
 	}
 	mediaIDs := make([]string, 0, len(rows))
 	for _, r := range rows {
 		mediaIDs = append(mediaIDs, r.MediaID)
 	}
-	if _, err := s.deps.Failures.DeleteAllForFingerprint(ctx, task, fp); err != nil {
+	if _, err := s.deps.Failures.DeleteByMediaIDs(ctx, task, fp, mediaIDs); err != nil {
 		return 0, fmt.Errorf("delete failures: %w", err)
 	}
-	if len(mediaIDs) == 0 {
-		return 0, nil
-	}
 	return s.deps.Gap.Scan(ctx, gapscanner.ScanRequest{
-		Task: task, Fingerprint: fp, Force: true, MediaIDs: mediaIDs,
+		Task: task, Fingerprint: fp, Owner: caller, Force: true, MediaIDs: mediaIDs,
 	})
 }
 
-// RetryPhoto enqueues a single (media, task) job after clearing its
-// failure row. Lightbox per-photo Retry button.
+// RetryPhoto enqueues a single (media, task) job and clears its
+// failure row. Lightbox per-photo Retry button. Returns errs.ErrNotFound
+// (wrapped) if mediaID does not belong to caller.
 func (s *Service) RetryPhoto(ctx context.Context, caller owners.Principal, mediaID string, task ai.Task) error {
 	if !task.Valid() {
 		return fmt.Errorf("%w: invalid task", errs.ErrInvalidArgument)
@@ -137,23 +139,26 @@ func (s *Service) RetryPhoto(ctx context.Context, caller owners.Principal, media
 		return errs.ErrAcknowledgementRequired
 	}
 	fp, _ := s.deps.ConfigFingerprints.Lookup(task)
+	// Owner-scoped scan verifies that mediaID belongs to caller. If not,
+	// it returns errs.ErrNotFound and we never touch the failure row.
+	if _, err := s.deps.Gap.Scan(ctx, gapscanner.ScanRequest{
+		Task: task, Fingerprint: fp, Owner: caller, Force: true, MediaIDs: []string{mediaID},
+	}); err != nil {
+		return fmt.Errorf("scan: %w", err)
+	}
 	if err := s.deps.Failures.Delete(ctx, mediaID, task, fp); err != nil {
 		return fmt.Errorf("delete failure: %w", err)
 	}
-	_, err = s.deps.Gap.Scan(ctx, gapscanner.ScanRequest{
-		Task: task, Fingerprint: fp, Force: true, MediaIDs: []string{mediaID},
-	})
-	return err
+	return nil
 }
 
-// ListFailures returns recent failures for the active fingerprint.
-// caller is part of the public signature so a future multi-principal
-// mode can scope the list; v1 stub mode does not enforce on reads.
+// ListFailures returns recent failures for the active fingerprint,
+// scoped to caller-owned media so failure metadata never leaks across
+// principals.
 func (s *Service) ListFailures(ctx context.Context, caller owners.Principal, task ai.Task, limit int) ([]failures.Row, error) {
 	if !task.Valid() {
 		return nil, fmt.Errorf("%w: invalid task", errs.ErrInvalidArgument)
 	}
-	_ = caller
 	fp, _ := s.deps.ConfigFingerprints.Lookup(task)
-	return s.deps.Failures.ListForFingerprint(ctx, task, fp, limit)
+	return s.deps.Failures.ListForFingerprintByOwner(ctx, task, fp, caller.Hub, caller.UserID, limit)
 }

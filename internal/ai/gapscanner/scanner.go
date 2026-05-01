@@ -6,18 +6,27 @@ package gapscanner
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/ai/jobs"
 	"github.com/wesm/fotobank/internal/ai/results"
 	"github.com/wesm/fotobank/internal/ai/skipped"
+	"github.com/wesm/fotobank/internal/errs"
+	"github.com/wesm/fotobank/internal/owners"
 )
 
 // ScanRequest controls one scan invocation.
+//
+// When Owner is non-zero, candidates are restricted to media owned by
+// that principal: an explicit MediaIDs entry that doesn't belong to
+// Owner is reported as errs.ErrNotFound, and an unbounded scan only
+// considers Owner's library.
 type ScanRequest struct {
 	Task        ai.Task
 	Fingerprint ai.Fingerprint
+	Owner       owners.Principal
 	Force       bool     // include media that already have an active result for fp
 	Limit       int      // 0 = unbounded
 	MediaIDs    []string // 0 = all media; otherwise scoped subset
@@ -76,14 +85,28 @@ type candidate struct {
 }
 
 // candidates returns media to consider. With MediaIDs set, returns only
-// those rows; otherwise scans up to Limit (or all) media.
+// those rows; otherwise scans up to Limit (or all) media. When req.Owner
+// is non-zero, the query is restricted to that owner's media so a caller
+// can never enqueue jobs for another principal's library.
 func (s *Scanner) candidates(ctx context.Context, req ScanRequest) ([]candidate, error) {
+	scoped := !req.Owner.IsZero()
 	if len(req.MediaIDs) > 0 {
 		out := make([]candidate, 0, len(req.MediaIDs))
 		for _, id := range req.MediaIDs {
-			var mt string
-			row := s.ro.QueryRowContext(ctx, `SELECT media_type FROM media WHERE id=?`, id)
-			if err := row.Scan(&mt); err != nil {
+			var (
+				mt   string
+				stmt = `SELECT media_type FROM media WHERE id=?`
+				args = []any{id}
+			)
+			if scoped {
+				stmt += ` AND owner_hub=? AND owner_user_id=?`
+				args = append(args, req.Owner.Hub, req.Owner.UserID)
+			}
+			row := s.ro.QueryRowContext(ctx, stmt, args...)
+			switch err := row.Scan(&mt); {
+			case errors.Is(err, sql.ErrNoRows):
+				return nil, fmt.Errorf("%w: media %s", errs.ErrNotFound, id)
+			case err != nil:
 				return nil, fmt.Errorf("read %s: %w", id, err)
 			}
 			out = append(out, candidate{ID: id, MediaType: mt})
@@ -92,6 +115,10 @@ func (s *Scanner) candidates(ctx context.Context, req ScanRequest) ([]candidate,
 	}
 	q := `SELECT id, media_type FROM media`
 	args := []any{}
+	if scoped {
+		q += ` WHERE owner_hub=? AND owner_user_id=?`
+		args = append(args, req.Owner.Hub, req.Owner.UserID)
+	}
 	if req.Limit > 0 {
 		q += ` LIMIT ?`
 		args = append(args, req.Limit)

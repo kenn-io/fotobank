@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wesm/fotobank/internal/ai"
@@ -116,6 +117,83 @@ func (r *Repo) ListForFingerprint(ctx context.Context, task ai.Task, fp ai.Finge
 		return nil, fmt.Errorf("rows: %w", err)
 	}
 	return out, nil
+}
+
+// ListForFingerprintByOwner returns up to limit most-recent
+// current-fingerprint failures whose media is owned by (hub, userID).
+// limit <= 0 means unbounded — used by the retry-failed flow which
+// must process every failure for the caller.
+func (r *Repo) ListForFingerprintByOwner(ctx context.Context, task ai.Task, fp ai.Fingerprint, hub, userID string, limit int) ([]Row, error) {
+	q := `
+		SELECT f.media_id, f.last_error, f.last_error_kind, f.attempt_count, f.failed_at
+		  FROM ai_failures f
+		  JOIN media m ON m.id = f.media_id
+		 WHERE f.task=? AND f.model_id=? AND f.prompt_version=? AND f.input_profile=?
+		   AND m.owner_hub=? AND m.owner_user_id=?
+		 ORDER BY f.failed_at DESC`
+	args := []any{string(task), fp.ModelID, fp.PromptVersion, fp.InputProfile, hub, userID}
+	if limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := r.ro.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list by owner: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Row
+	for rows.Next() {
+		x := Row{
+			Task:          task,
+			ModelID:       fp.ModelID,
+			PromptVersion: fp.PromptVersion,
+			InputProfile:  fp.InputProfile,
+		}
+		var kind string
+		if err := rows.Scan(&x.MediaID, &x.LastError, &kind, &x.AttemptCount, &x.FailedAt); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		x.LastErrorKind = ai.LastErrorKind(kind)
+		out = append(out, x)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
+// DeleteByMediaIDs removes current-fingerprint failure rows for the
+// supplied media IDs only. Used by the retry-failed flow so we never
+// touch failures whose media isn't in the caller's selected set.
+// Chunks IDs to stay under SQLite's bind-variable limit.
+func (r *Repo) DeleteByMediaIDs(ctx context.Context, task ai.Task, fp ai.Fingerprint, mediaIDs []string) (int, error) {
+	if len(mediaIDs) == 0 {
+		return 0, nil
+	}
+	const chunkSize = 250
+	total := 0
+	for start := 0; start < len(mediaIDs); start += chunkSize {
+		end := min(start+chunkSize, len(mediaIDs))
+		chunk := mediaIDs[start:end]
+		placeholders := strings.Repeat("?,", len(chunk))
+		placeholders = placeholders[:len(placeholders)-1]
+		args := make([]any, 0, len(chunk)+4)
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		args = append(args, string(task), fp.ModelID, fp.PromptVersion, fp.InputProfile)
+		res, err := r.rw.ExecContext(ctx, `
+			DELETE FROM ai_failures
+			 WHERE media_id IN (`+placeholders+`)
+			   AND task=? AND model_id=? AND prompt_version=? AND input_profile=?`,
+			args...)
+		if err != nil {
+			return total, fmt.Errorf("delete by ids: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		total += int(n)
+	}
+	return total, nil
 }
 
 // CountForFingerprint returns how many failures match the active fingerprint.
