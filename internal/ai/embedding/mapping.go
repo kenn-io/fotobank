@@ -84,14 +84,20 @@ func WriteVectorTx(ctx context.Context, tx *sql.Tx, gen Row, mediaID string, vec
 		}
 	}
 
-	// Step 3: allocate the new vec_id. Per-generation MAX+1 (or 1 when
-	// the generation's mapping table partition is empty). Concurrent
-	// workers serialise on SQLite's single rw connection, so the read of
-	// MAX inside this tx sees prior committed inserts.
+	// Step 3: allocate the new vec_id. Query the vec0 table directly
+	// rather than media_embedding_ids: vec0 is the authoritative source
+	// of vec_id usage, and orphan vec0 rows can outlive their mapping
+	// row (e.g. a media row was hard-deleted, FK-cascading the mapping
+	// out from under us before the K1 compactor sweeps the orphan vec0
+	// row). Querying media_embedding_ids would return MAX+1 that
+	// collides with the orphan and the subsequent vec0 INSERT would
+	// fail; using vec0 itself always picks an unused vec_id.
+	//
+	// Concurrent workers serialise on SQLite's single rw connection, so
+	// the read of MAX inside this tx sees prior committed inserts.
 	var nextVecID int64
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(vec_id), 0) + 1 FROM media_embedding_ids WHERE generation_id=?`,
-		gen.ID,
+		fmt.Sprintf(`SELECT COALESCE(MAX(vec_id), 0) + 1 FROM %s`, gen.VecTableName),
 	).Scan(&nextVecID); err != nil {
 		return 0, fmt.Errorf("allocate vec_id: %w", err)
 	}

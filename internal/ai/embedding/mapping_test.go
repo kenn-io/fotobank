@@ -147,6 +147,73 @@ func TestMapping_VecBlobRoundTrip(t *testing.T) {
 	r.Equal(vec, got, "round-tripped float32 values match input")
 }
 
+// TestMapping_VecIDAllocatorAvoidsOrphanedVec0Rows covers the
+// orphan-collision regression: a media row hard-deleted via FK cascade
+// removes the mapping row from media_embedding_ids but leaves the
+// matching vec0 row in place (the K1 compactor is the only thing that
+// drops orphan vec0 rows). A subsequent allocator call MUST query the
+// vec0 table — not media_embedding_ids — so the new vec_id doesn't
+// collide with the orphan and fail the vec0 INSERT.
+func TestMapping_VecIDAllocatorAvoidsOrphanedVec0Rows(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "hub", "alice")
+	gen := mustCreateBuildingGen(t, d, 4)
+
+	m := embedding.NewMapping(d.WriteDB())
+
+	// Seed three vectors, one per media. Each gets vec_id 1..3.
+	mids := []string{
+		testutil.SeedPhoto(t, d.WriteDB(), owner, "p1"),
+		testutil.SeedPhoto(t, d.WriteDB(), owner, "p2"),
+		testutil.SeedPhoto(t, d.WriteDB(), owner, "p3"),
+	}
+	for _, mid := range mids {
+		_, err := m.WriteVector(ctx, gen, mid, mockVec(4))
+		r.NoError(err)
+	}
+
+	// Delete media[1]. The FK cascade removes its row from
+	// media_embedding_ids but leaves vec0 row 2 in place — that's the
+	// orphan the allocator must not collide with.
+	_, err := d.WriteDB().ExecContext(ctx, `DELETE FROM media WHERE id = ?`, mids[1])
+	r.NoError(err)
+
+	// Confirm the orphan exists in vec0 and the mapping is gone.
+	var mappingCount, vecCount int
+	r.NoError(d.ReadDB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM media_embedding_ids WHERE generation_id=?`, gen.ID,
+	).Scan(&mappingCount))
+	r.Equal(2, mappingCount, "mapping row 2 cascaded out")
+	r.NoError(d.ReadDB().QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT COUNT(*) FROM %s`, gen.VecTableName),
+	).Scan(&vecCount))
+	r.Equal(3, vecCount, "vec0 still has the orphan row 2")
+
+	// Write a fourth vector. The allocator must pick vec_id=4 (MAX+1
+	// over the vec0 table), not 3 (which would be MAX+1 over the
+	// orphan-pruned mapping table and would collide with vec0 row 3).
+	mid4 := testutil.SeedPhoto(t, d.WriteDB(), owner, "p4")
+	_, err = m.WriteVector(ctx, gen, mid4, mockVec(4))
+	r.NoError(err, "WriteVector must succeed despite the orphan vec0 row")
+
+	var newVecID int64
+	r.NoError(d.ReadDB().QueryRowContext(ctx,
+		`SELECT vec_id FROM media_embedding_ids WHERE generation_id=? AND media_id=?`,
+		gen.ID, mid4,
+	).Scan(&newVecID))
+	r.Equal(int64(4), newVecID, "new vec_id must be 4, not 3 (orphan vec0 row 3 is still live)")
+
+	// Read back the new vec0 row to confirm INSERT succeeded.
+	var blobLen int
+	r.NoError(d.ReadDB().QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT length(embedding) FROM %s WHERE vec_id=?`, gen.VecTableName),
+		newVecID,
+	).Scan(&blobLen))
+	r.Equal(4*4, blobLen, "new vec row stored at the allocated id")
+}
+
 func TestMapping_WriteVector_AllocatesUniqueVecIDs(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
