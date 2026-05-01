@@ -1,5 +1,7 @@
 <!-- frontend/src/lib/components/AppHeader.svelte -->
 <script lang="ts">
+  import AIStatusDot from "./AIStatusDot.svelte";
+
   let searchEl: HTMLInputElement | null = $state(null);
 
   $effect(() => {
@@ -24,6 +26,7 @@
     placeholder="Search ⌘K"
     aria-label="Search"
   />
+  <AIStatusDot />
   <button class="account" aria-label="Account menu">⋯</button>
 </header>
 
