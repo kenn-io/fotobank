@@ -36,6 +36,7 @@ func registerAIRoutes(api huma.API, svc *aiservice.Service, probe aiservice.Prob
 	registerAIRetryFailed(api, svc)
 	registerAIRetryPhoto(api, svc)
 	registerAIAcknowledge(api, svc)
+	registerAIMediaView(api, svc)
 }
 
 func registerAIHealth(api huma.API, svc *aiservice.Service, probe aiservice.Probe, enabled bool) {
@@ -156,6 +157,33 @@ func registerAIAcknowledge(api huma.API, svc *aiservice.Service) {
 		}
 		return &aiAckOutput{Body: aiAckBody{OK: true}}, nil
 	})
+}
+
+func registerAIMediaView(api huma.API, svc *aiservice.Service) {
+	huma.Register(api, huma.Operation{
+		OperationID: "ai-media-view",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/media/{media_id}/ai",
+		Summary:     "Get AI artifacts (tags, caption, skip, failures) for a media",
+	}, func(ctx context.Context, in *aiMediaViewInput) (*aiMediaViewOutput, error) {
+		id, ok := IdentityFromContext(ctx)
+		if !ok {
+			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
+		}
+		v, err := svc.MediaView(ctx, id.Principal.OwnersPrincipal(), in.MediaID)
+		if err != nil {
+			return nil, Translate(err)
+		}
+		return &aiMediaViewOutput{Body: v}, nil
+	})
+}
+
+type aiMediaViewInput struct {
+	MediaID string `path:"media_id"`
+}
+
+type aiMediaViewOutput struct {
+	Body aiservice.MediaView
 }
 
 // aiFailuresDefaultLimit matches the panel's "Recent failures" pagination.

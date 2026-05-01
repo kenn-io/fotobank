@@ -7,6 +7,7 @@ package failures
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -100,6 +101,33 @@ func (r *Repo) DeleteAllForFingerprint(ctx context.Context, task ai.Task, fp ai.
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
+}
+
+// GetForFingerprint returns the failure row for (media, task, fp) if
+// one exists. Used by the lightbox AI surface to display per-photo
+// failure detail without scanning the full failures list.
+func (r *Repo) GetForFingerprint(ctx context.Context, mediaID string, task ai.Task, fp ai.Fingerprint) (Row, bool, error) {
+	row := r.ro.QueryRowContext(ctx, `
+		SELECT media_id, last_error, last_error_kind, attempt_count, failed_at
+		  FROM ai_failures
+		 WHERE media_id=? AND task=?
+		   AND model_id=? AND prompt_version=? AND input_profile=?`,
+		mediaID, string(task), fp.ModelID, fp.PromptVersion, fp.InputProfile)
+	out := Row{
+		Task:          task,
+		ModelID:       fp.ModelID,
+		PromptVersion: fp.PromptVersion,
+		InputProfile:  fp.InputProfile,
+	}
+	var kind string
+	switch err := row.Scan(&out.MediaID, &out.LastError, &kind, &out.AttemptCount, &out.FailedAt); {
+	case errors.Is(err, sql.ErrNoRows):
+		return Row{}, false, nil
+	case err != nil:
+		return Row{}, false, fmt.Errorf("scan: %w", err)
+	}
+	out.LastErrorKind = ai.LastErrorKind(kind)
+	return out, true, nil
 }
 
 // ListForFingerprint returns up to limit most-recent current-fingerprint

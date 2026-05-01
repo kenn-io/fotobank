@@ -13,6 +13,7 @@ import (
 	"github.com/wesm/fotobank/internal/ai/failures"
 	"github.com/wesm/fotobank/internal/ai/gapscanner"
 	"github.com/wesm/fotobank/internal/ai/jobs"
+	"github.com/wesm/fotobank/internal/ai/parse"
 	"github.com/wesm/fotobank/internal/ai/results"
 	"github.com/wesm/fotobank/internal/ai/skipped"
 	"github.com/wesm/fotobank/internal/errs"
@@ -202,4 +203,77 @@ func TestServiceRejectsZeroPrincipal(t *testing.T) {
 	_, err = svc.IsAcknowledged(ctx, zero)
 	r.ErrorIs(err, errs.ErrPermissionDenied)
 	r.ErrorIs(svc.Acknowledge(ctx, zero), errs.ErrPermissionDenied)
+	_, err = svc.MediaView(ctx, zero, "mid")
+	r.ErrorIs(err, errs.ErrPermissionDenied)
+}
+
+func TestMediaViewPopulatesAllSurfaces(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	svc, rw := makeServiceWithDB(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+
+	tagFP := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	captionFP := ai.Fingerprint{ModelID: "m", PromptVersion: "caption-v1", InputProfile: "ip"}
+
+	resR := results.NewRepo(rw, rw)
+	r.NoError(resR.WriteTagResult(ctx, mid, tagFP, "thash", []parse.Tag{
+		{Key: "dog", Label: "Dog", Rank: 1},
+		{Key: "beach", Label: "Beach", Rank: 2},
+	}))
+	r.NoError(resR.WriteCaptionResult(ctx, mid, captionFP, "chash", "A small dog on a beach."))
+
+	failR := failures.NewRepo(rw, rw)
+	r.NoError(failR.Record(ctx, mid, ai.TaskTag, tagFP, ai.ErrKindMalformed, "bad json", 2))
+
+	view, err := svc.MediaView(ctx, owner, mid)
+	r.NoError(err)
+	r.Len(view.Tags, 2)
+	r.Equal("dog", view.Tags[0].Key)
+	r.Equal("Dog", view.Tags[0].Label)
+	r.Equal(1, view.Tags[0].Rank)
+	r.NotNil(view.Caption)
+	r.Equal("A small dog on a beach.", view.Caption.Text)
+	r.Equal("m", view.Caption.ModelID)
+	r.Equal("caption-v1", view.Caption.PromptVersion)
+	r.False(view.Caption.GeneratedAt.IsZero())
+	r.NotNil(view.TagFailure)
+	r.Equal("bad json", view.TagFailure.Message)
+	r.Equal(string(ai.ErrKindMalformed), view.TagFailure.Kind)
+	r.Nil(view.CaptionFailure)
+	r.Nil(view.Skipped)
+}
+
+func TestMediaViewSurfacesSkipReason(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	svc, rw := makeServiceWithDB(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+
+	skipR := skipped.NewRepo(rw, rw)
+	r.NoError(skipR.Record(ctx, mid, ai.TaskTag, "video"))
+
+	view, err := svc.MediaView(ctx, owner, mid)
+	r.NoError(err)
+	r.NotNil(view.Skipped)
+	r.Equal("video", view.Skipped.Reason)
+	r.Empty(view.Tags)
+	r.Nil(view.Caption)
+}
+
+func TestMediaViewEmptyForUnknownMedia(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	svc, rw := makeServiceWithDB(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+
+	view, err := svc.MediaView(ctx, owner, "missing")
+	r.NoError(err)
+	r.Empty(view.Tags)
+	r.Nil(view.Caption)
+	r.Nil(view.Skipped)
+	r.Nil(view.TagFailure)
+	r.Nil(view.CaptionFailure)
 }

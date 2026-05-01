@@ -2,6 +2,8 @@ package httpapi_test
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -17,6 +19,7 @@ import (
 	"github.com/wesm/fotobank/internal/ai/failures"
 	"github.com/wesm/fotobank/internal/ai/gapscanner"
 	"github.com/wesm/fotobank/internal/ai/jobs"
+	"github.com/wesm/fotobank/internal/ai/parse"
 	"github.com/wesm/fotobank/internal/ai/results"
 	"github.com/wesm/fotobank/internal/ai/skipped"
 	"github.com/wesm/fotobank/internal/httpapi"
@@ -34,6 +37,10 @@ type aiAPIFixture struct {
 	srv   *httptest.Server
 	owner owners.Principal
 	svc   *aiservice.Service
+	rw    *sql.DB
+	resR  *results.Repo
+	failR *failures.Repo
+	skipR *skipped.Repo
 }
 
 func newAIAPIFixture(t *testing.T) aiAPIFixture {
@@ -76,7 +83,7 @@ func newAIAPIFixture(t *testing.T) aiAPIFixture {
 	require.NoError(t, err)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return aiAPIFixture{srv: srv, owner: owner, svc: svc}
+	return aiAPIFixture{srv: srv, owner: owner, svc: svc, rw: rw, resR: resR, failR: failR, skipR: skipR}
 }
 
 func TestAIHealthReportsAcknowledgementRequired(t *testing.T) {
@@ -118,4 +125,69 @@ func TestAIAcknowledgeRecordsAck(t *testing.T) {
 	acked, err := fx.svc.IsAcknowledged(context.Background(), fx.owner)
 	require.NoError(err)
 	require.True(acked)
+}
+
+func TestAIMediaViewReturnsArtifacts(t *testing.T) {
+	r := require.New(t)
+	fx := newAIAPIFixture(t)
+	mid := testutil.SeedPhoto(t, fx.rw, fx.owner, "p1")
+
+	tagFP := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	captionFP := ai.Fingerprint{ModelID: "m", PromptVersion: "caption-v1", InputProfile: "ip"}
+	ctx := context.Background()
+	r.NoError(fx.resR.WriteTagResult(ctx, mid, tagFP, "thash", []parse.Tag{
+		{Key: "dog", Label: "Dog", Rank: 1},
+	}))
+	r.NoError(fx.resR.WriteCaptionResult(ctx, mid, captionFP, "chash", "A small dog."))
+	r.NoError(fx.failR.Record(ctx, mid, ai.TaskCaption, captionFP, ai.ErrKindMalformed, "bad json", 2))
+
+	resp, err := fx.srv.Client().Get(fx.srv.URL + "/api/v1/media/" + mid + "/ai")
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusOK, resp.StatusCode)
+
+	var body aiservice.MediaView
+	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
+	r.Len(body.Tags, 1)
+	r.Equal("Dog", body.Tags[0].Label)
+	r.NotNil(body.Caption)
+	r.Equal("A small dog.", body.Caption.Text)
+	r.NotNil(body.CaptionFailure)
+	r.Equal("bad json", body.CaptionFailure.Message)
+	r.Nil(body.TagFailure)
+}
+
+func TestAIMediaViewReturnsEmptyForUnknownMedia(t *testing.T) {
+	r := require.New(t)
+	fx := newAIAPIFixture(t)
+
+	resp, err := fx.srv.Client().Get(fx.srv.URL + "/api/v1/media/missing/ai")
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusOK, resp.StatusCode)
+
+	var body aiservice.MediaView
+	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
+	r.Empty(body.Tags)
+	r.Nil(body.Caption)
+	r.Nil(body.Skipped)
+	r.Nil(body.TagFailure)
+	r.Nil(body.CaptionFailure)
+}
+
+func TestAIMediaViewSurfacesSkipReason(t *testing.T) {
+	r := require.New(t)
+	fx := newAIAPIFixture(t)
+	mid := testutil.SeedPhoto(t, fx.rw, fx.owner, "p1")
+	r.NoError(fx.skipR.Record(context.Background(), mid, ai.TaskTag, "video"))
+
+	resp, err := fx.srv.Client().Get(fx.srv.URL + "/api/v1/media/" + mid + "/ai")
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusOK, resp.StatusCode)
+
+	var body aiservice.MediaView
+	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
+	r.NotNil(body.Skipped)
+	r.Equal("video", body.Skipped.Reason)
 }

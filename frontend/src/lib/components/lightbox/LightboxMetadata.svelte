@@ -2,6 +2,7 @@
 <script lang="ts">
   import type { Media } from "../../media/mediaStore.svelte";
   import { formatCoord } from "../../format/coords";
+  import LightboxAI from "./LightboxAI.svelte";
 
   let { media }: { media: Media } = $props();
 
@@ -62,6 +63,8 @@
     </dd>
   {/if}
 </dl>
+
+<LightboxAI mediaId={media.id} />
 
 <style>
   /* Inherit color from parent so this content reads correctly on

@@ -202,6 +202,92 @@ func (s *Service) RetryPhoto(ctx context.Context, caller owners.Principal, media
 	return nil
 }
 
+// MediaView is the lightbox-facing artifact bundle for one media: the
+// active tag list, the active caption, an optional skip reason, and any
+// current-fingerprint failure rows for tag/caption.
+type MediaView struct {
+	Tags           []TagItem     `json:"tags,omitempty"`
+	Caption        *CaptionItem  `json:"caption,omitempty"`
+	Skipped        *SkippedItem  `json:"skipped,omitempty"`
+	TagFailure     *MediaFailure `json:"tag_failure,omitempty"`
+	CaptionFailure *MediaFailure `json:"caption_failure,omitempty"`
+}
+
+// TagItem is one tag in MediaView.Tags.
+type TagItem struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Rank  int    `json:"rank"`
+}
+
+// CaptionItem is the active caption with its provenance fields.
+type CaptionItem struct {
+	Text          string    `json:"text"`
+	ModelID       string    `json:"model_id"`
+	PromptVersion string    `json:"prompt_version"`
+	GeneratedAt   time.Time `json:"generated_at"`
+}
+
+// SkippedItem captures why a media is excluded from AI processing.
+type SkippedItem struct {
+	Reason string `json:"reason"`
+}
+
+// MediaFailure is the per-photo failure detail surfaced inline in the
+// lightbox so the user can retry without leaving the photo.
+type MediaFailure struct {
+	Kind    string `json:"kind"`
+	Message string `json:"message"`
+}
+
+// MediaView returns the AI artifacts for one media. Caller must be
+// non-zero. Cross-owner reads are not enforced here in v1 (single-
+// principal stub mode), but the auth boundary is in place so a future
+// caller-vs-owner check can land without disturbing callers.
+func (s *Service) MediaView(ctx context.Context, caller owners.Principal, mediaID string) (MediaView, error) {
+	if err := requireScopedCaller(caller); err != nil {
+		return MediaView{}, err
+	}
+	out := MediaView{}
+	tags, err := s.deps.Results.GetActiveTags(ctx, mediaID)
+	if err != nil {
+		return MediaView{}, fmt.Errorf("tags: %w", err)
+	}
+	for _, t := range tags {
+		out.Tags = append(out.Tags, TagItem{Key: t.Key, Label: t.Label, Rank: t.Rank})
+	}
+	caption, found, err := s.deps.Results.GetActiveCaption(ctx, mediaID)
+	if err != nil {
+		return MediaView{}, fmt.Errorf("caption: %w", err)
+	}
+	if found {
+		out.Caption = &CaptionItem{
+			Text:          caption.Text,
+			ModelID:       caption.ModelID,
+			PromptVersion: caption.PromptVersion,
+			GeneratedAt:   caption.GeneratedAt,
+		}
+	}
+	if reason, found, err := s.deps.Skipped.Get(ctx, mediaID, ai.TaskTag); err != nil {
+		return MediaView{}, fmt.Errorf("skipped: %w", err)
+	} else if found {
+		out.Skipped = &SkippedItem{Reason: reason}
+	}
+	if r, found, err := s.deps.Failures.GetForFingerprint(
+		ctx, mediaID, ai.TaskTag, s.deps.ConfigFingerprints.Tag); err != nil {
+		return MediaView{}, fmt.Errorf("tag failure: %w", err)
+	} else if found {
+		out.TagFailure = &MediaFailure{Kind: string(r.LastErrorKind), Message: r.LastError}
+	}
+	if r, found, err := s.deps.Failures.GetForFingerprint(
+		ctx, mediaID, ai.TaskCaption, s.deps.ConfigFingerprints.Caption); err != nil {
+		return MediaView{}, fmt.Errorf("caption failure: %w", err)
+	} else if found {
+		out.CaptionFailure = &MediaFailure{Kind: string(r.LastErrorKind), Message: r.LastError}
+	}
+	return out, nil
+}
+
 // ListFailures returns recent failures for the active fingerprint,
 // scoped to caller-owned media so failure metadata never leaks across
 // principals.

@@ -60,3 +60,25 @@ export async function acknowledgeHiddenProcessing(): Promise<void> {
   });
   if (!r.ok) throw new Error(`/ai/acknowledge ${r.status}`);
 }
+
+// AIMediaView is the per-photo lightbox bundle. Mirrors the
+// aiservice.MediaView wire shape; all fields are optional because the
+// backend omits them when there's no row.
+export interface AIMediaView {
+  tags?: Array<{ key: string; label: string; rank: number }>;
+  caption?: {
+    text: string;
+    model_id: string;
+    prompt_version: string;
+    generated_at: string;
+  };
+  skipped?: { reason: string };
+  tag_failure?: { kind: string; message: string };
+  caption_failure?: { kind: string; message: string };
+}
+
+export async function getMediaAIView(mediaId: string): Promise<AIMediaView> {
+  const r = await fetch(`/api/v1/media/${encodeURIComponent(mediaId)}/ai`);
+  if (!r.ok) throw new Error(`/media/${mediaId}/ai ${r.status}`);
+  return (await r.json()) as AIMediaView;
+}

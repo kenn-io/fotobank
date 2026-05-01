@@ -1,6 +1,12 @@
-import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/svelte";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, waitFor } from "@testing-library/svelte";
 import LightboxMetadata from "./LightboxMetadata.svelte";
+import * as client from "../../ai/client";
+
+vi.mock("../../ai/client", () => ({
+  getMediaAIView: vi.fn(),
+  retryPhotoAI: vi.fn(),
+}));
 
 const baseMedia = {
   id: "m1",
@@ -14,15 +20,35 @@ const baseMedia = {
   location_label: "Paris, France",
 };
 
+beforeEach(() => {
+  vi.mocked(client.getMediaAIView).mockReset();
+  vi.mocked(client.retryPhotoAI).mockReset();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("LightboxMetadata", () => {
-  it("renders existing fields only (no caption/rating/AI tags)", () => {
-    const { container, getAllByText, getByText } = render(LightboxMetadata, {
+  it("renders capture/location/download fields", () => {
+    vi.mocked(client.getMediaAIView).mockResolvedValue({});
+    const { getAllByText, getByText } = render(LightboxMetadata, {
       props: { media: baseMedia } as never,
     });
     // Filename appears twice (File row and Download link), so use getAllByText.
     expect(getAllByText("IMG_001.JPG").length).toBeGreaterThan(0);
     expect(getByText(/5\.0 MB/)).toBeTruthy();
     expect(getByText("Paris, France")).toBeTruthy();
-    expect(container.textContent ?? "").not.toMatch(/Rating|Caption|AI/);
+  });
+
+  it("mounts the AI section after the metadata fields", async () => {
+    vi.mocked(client.getMediaAIView).mockResolvedValueOnce({
+      tags: [{ key: "dog", label: "Dog", rank: 1 }],
+    });
+    const { getByText } = render(LightboxMetadata, {
+      props: { media: baseMedia } as never,
+    });
+    await waitFor(() => expect(getByText("Dog")).toBeTruthy());
+    expect(vi.mocked(client.getMediaAIView)).toHaveBeenCalledWith("m1");
   });
 });
