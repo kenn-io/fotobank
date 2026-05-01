@@ -20,6 +20,18 @@ describe("RouterStore.match", () => {
     expect(r.current.route).toBe("settings");
   });
 
+  it("resolves /settings/ai", () => {
+    setLocation("/settings/ai");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "settings.ai" });
+  });
+
+  it("resolves /settings/ai/ (trailing slash)", () => {
+    setLocation("/settings/ai/");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "settings.ai" });
+  });
+
   it("matches /media/:id and exposes the id", () => {
     setLocation("/media/abc");
     const r = new RouterStore();

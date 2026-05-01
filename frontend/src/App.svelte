@@ -11,6 +11,7 @@
   import AlbumDetail from "./routes/AlbumDetail.svelte";
   import SharesPage from "./routes/SharesPage.svelte";
   import HiddenLibrary from "./routes/HiddenLibrary.svelte";
+  import SettingsAI from "./routes/SettingsAI.svelte";
   import NotFound from "./routes/NotFound.svelte";
   import HiddenLockStrip from "./lib/components/HiddenLockStrip.svelte";
   import ToastStack from "./lib/components/ToastStack.svelte";
@@ -101,7 +102,7 @@
 
   function activeId(route: RouteMatch): string {
     if (route.route === "sessions") return "sessions";
-    if (route.route === "settings") return "settings";
+    if (route.route === "settings" || route.route === "settings.ai") return "settings";
     if (route.route === "albums" || route.route === "albums.detail") return "albums";
     if (route.route === "shares") return "shares";
     if (route.route === "hidden") return "hidden";
@@ -146,6 +147,8 @@
       <HiddenLibrary {hiddenStore} {albumsStore} {toastStore} />
     {:else if router.current.route === "settings"}
       <div style="padding:20px">Settings (placeholder; theme = {themeStore.theme})</div>
+    {:else if router.current.route === "settings.ai"}
+      <SettingsAI />
     {:else}
       <NotFound />
     {/if}

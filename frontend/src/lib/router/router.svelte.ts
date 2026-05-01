@@ -4,6 +4,7 @@ export type RouteMatch =
   | { route: "library" }
   | { route: "sessions" }
   | { route: "settings" }
+  | { route: "settings.ai" }
   | { route: "albums" }
   | { route: "albums.detail"; id: string }
   | { route: "shares"; album_id?: string; show_revoked?: boolean }
@@ -18,6 +19,7 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
   { re: /^\/$/,           build: () => ({ route: "library" }) },
   { re: /^\/library$/,    build: () => ({ route: "library" }) },
   { re: /^\/sessions$/,   build: () => ({ route: "sessions" }) },
+  { re: /^\/settings\/ai\/?$/, build: () => ({ route: "settings.ai" }) },
   { re: /^\/settings$/,   build: () => ({ route: "settings" }) },
   { re: /^\/albums\/?$/,  build: () => ({ route: "albums" }) },
   { re: /^\/albums\/([^/]+)\/?$/, build: (m) => ({ route: "albums.detail", id: m[1]! }) },
