@@ -92,26 +92,52 @@ describe("AIHealthStore.refresh", () => {
     vi.unstubAllGlobals();
   });
 
-  it("dedupes concurrent calls", async () => {
+  it("collapses a burst into at most one inflight + one chained fetch", async () => {
+    // Refresh semantics: a single call fires one fetch. If additional
+    // refresh() calls land while one is in flight, they all collapse
+    // onto the same promise AND mark the snapshot stale, so exactly
+    // one more fetch fires after the inflight settles. This catches
+    // an `ai.health.changed` event that lands during the initial
+    // mount fetch — without the chained fetch the store would keep
+    // the pre-event snapshot until the next event.
     type Resolver = (value: AIHealth) => void;
-    // The Promise constructor callback runs synchronously, so the box's
-    // current is set before mockFetch is wired up.
-    const box: { current: Resolver | null } = { current: null };
-    const bodyPromise = new Promise<AIHealth>((res) => {
-      box.current = res;
+    const first: { current: Resolver | null } = { current: null };
+    const firstBody = new Promise<AIHealth>((res) => {
+      first.current = res;
     });
-    mockFetch.mockReturnValueOnce({ ok: true, json: () => bodyPromise });
+    mockFetch.mockReturnValueOnce({ ok: true, json: () => firstBody });
+
     const store = new AIHealthStore();
     const a = store.refresh();
+    // Three more concurrent refreshes — they all collapse onto one
+    // chained follow-up, not three.
     const b = store.refresh();
-    // Both calls collapse onto the same in-flight fetch.
+    const c = store.refresh();
+    const d = store.refresh();
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    const resolve = box.current;
+
+    // Wire up the chained fetch's response BEFORE letting the first
+    // settle so the IIFE's do/while finds the mock ready.
+    const next: AIHealth = { ...base, tag: { ...base.tag, pending: 9 } };
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => next });
+
+    const resolve = first.current;
     if (!resolve) throw new Error("expected refresh to wire up the body resolver");
     resolve(base);
-    await Promise.all([a, b]);
-    expect(store.health).toEqual(base);
+    await Promise.all([a, b, c, d]);
+
+    // Final state reflects the chained fetch (the freshest snapshot).
+    expect(store.health).toEqual(next);
+    // Exactly two network calls regardless of burst size.
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("a single refresh fires exactly one fetch (no follow-up)", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => base });
+    const store = new AIHealthStore();
+    await store.refresh();
     expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(store.health).toEqual(base);
   });
 
   it("allows a fresh fetch after the inflight promise settles", async () => {
