@@ -150,6 +150,16 @@ func TestBuildDSNEscapesReserved(t *testing.T) {
 // DB. Foreign-key enforcement is the one that bites silently — a
 // snapshot opened without _fk=1 would let a child-row delete cascade
 // disappear in tests that assert on FK behavior.
+//
+// The snapshot is intentionally re-opened in WRITABLE mode (no
+// mode=ro on the DSN). A read-only open would make the FK-violating
+// INSERT error with "attempt to write a readonly database" before
+// SQLite ever consults _fk=1, masking a regression where _fk=1 is
+// stripped from the DSN. With a writable connection the INSERT
+// reaches FK enforcement: it must error on the constraint, and if
+// _fk=1 were ever dropped the INSERT would succeed and the test
+// would fail — which is what we want. The snapshot lives under
+// t.TempDir() so writable open is safe; nothing else reads it.
 func TestSnapshotPragmas_AfterRestore_RoundTrip(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	// Seed a parent owner row + a child media row that depends on the
@@ -162,7 +172,7 @@ func TestSnapshotPragmas_AfterRestore_RoundTrip(t *testing.T) {
 	require.NoError(t, Snapshot(context.Background(), d.WriteDB(), snapPath))
 
 	// Re-open the snapshot via the same code path the restore tool uses.
-	conn, err := sql.Open("sqlite3", "file:"+snapPath+"?_busy_timeout=5000&_fk=1&mode=ro")
+	conn, err := sql.Open("sqlite3", "file:"+snapPath+"?_busy_timeout=5000&_fk=1")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 
