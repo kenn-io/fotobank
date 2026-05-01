@@ -937,17 +937,17 @@ If the smoke pass produced a regression (e.g. a new `database is locked` from a 
 
 ## Verification checklist (must all be true before the search-v1 plan begins)
 
-- [ ] `grep -rn 'modernc.org/sqlite' .` returns zero `.go` matches (a stray reference in a comment is fine; an import is not).
-- [ ] `grep -rn '_pragma=' internal/` returns zero matches.
-- [ ] `grep -rn 'parseSQLiteTimeString' internal/` returns zero matches.
-- [ ] `make test` passes with `-shuffle=on` (at least once cleanly without flakes).
-- [ ] `make build-release` produces a non-empty binary.
-- [ ] `make lint` passes.
-- [ ] `make nilaway` passes (pre-push tier).
-- [ ] `internal/db/sqlitevec_test.go` proves `vec_version()` resolves in tests.
-- [ ] `internal/db/db_test.go` covers nullable-time, COALESCE'd-time, TZ round-trip, and concurrent writers.
-- [ ] `internal/backup/snapshot_test.go` covers the snapshot-side DSN's pragma defaults under mattn.
-- [ ] `CLAUDE.md` has been updated; no `modernc` or `no CGO` references remain.
-- [ ] The end-to-end smoke pass (Task 12) was completed by a human and any regressions fixed.
+- [x] `grep -rn 'modernc.org/sqlite' --include="*.go" .` returns zero matches (one comment-only mention in a `_test.go` file is acceptable; an import is not). **Verified:** zero imports.
+- [x] `grep -rn '_pragma=' internal/` returns zero matches. **Verified:** 0 matches.
+- [ ] ~~`grep -rn 'parseSQLiteTimeString' internal/` returns zero matches.~~ **Replaced by:** the helper exists and is correct under mattn (commit `db7f157`); it iterates every entry in mattn's `SQLiteTimestampFormats` to handle COALESCE'd TIMESTAMP columns whose declared type is lost in expressions. mattn does NOT auto-decode such columns into `time.Time` (contrary to an early assumption that drove cleanup commit `1b1f112`). Coverage in `internal/share/repo_test.go::TestRepoMattnScanCompat_CoalescedDisplayTime` asserts both COALESCE branches round-trip correctly.
+- [x] `make test` passes with `-shuffle=on`. **Verified:** all packages green.
+- [x] `make build-release` produces a non-empty binary. **Verified:** 33MB binary at `bin/fotobank`.
+- [x] `make lint` passes. **Verified:** `0 issues` from golangci-lint, testify-helper-check clean.
+- [ ] `make nilaway` passes (pre-push tier). **TODO:** run before pushing.
+- [x] `internal/db/sqlitevec_test.go` proves `vec_version()` resolves in tests. **Verified:** `TestRegisterSqliteVec_LoadsExtension` PASS; `TestOpenTestDB_VecRegistered` PASS.
+- [x] `internal/db/db_test.go` covers nullable-time, TZ round-trip (with sub-second + offset assertions), and concurrent writers (probe-based busy_timeout test). The plan's originally-specced `TestOpen_RoundTripCoalescedTime` was deliberately omitted — coverage lives in `internal/share/repo_test.go` because mattn's COALESCE behavior is the share-side helper's contract.
+- [x] `internal/backup/snapshot_test.go` covers the snapshot-side DSN's FK enforcement under mattn (writable mode so the FK assertion isn't shadowed by mode=ro).
+- [x] `CLAUDE.md` has been updated; no `modernc` or `no CGO` references remain. **Verified:** `grep` returns 0.
+- [ ] The end-to-end smoke pass (Task 12) was completed by a human and any regressions fixed. **TODO:** owner-driven manual run.
 
 When all the above are true, the migration plan is done. The search-v1 plan (`docs/superpowers/plans/2026-05-01-fotobank-search-v1.md`) can begin.
