@@ -124,7 +124,6 @@ func scanScope(s rowScanner) (Scope, error) {
 	var (
 		sc            Scope
 		targetAlbumID sql.NullString
-		allowDownload int64
 		label         sql.NullString
 		expiresAt     sql.NullTime
 		revokedAt     sql.NullTime
@@ -136,10 +135,15 @@ func scanScope(s rowScanner) (Scope, error) {
 		targetType    string
 		brokerStatus  string
 	)
+	// allow_download is declared BOOLEAN in the schema. Under
+	// mattn/go-sqlite3, BOOLEAN-affinity columns Scan into Go bool
+	// natively (the prior modernc driver returned int64). Scanning
+	// directly into sc.AllowDownload — a bool field — round-trips
+	// without an intermediate int.
 	if err := s.Scan(
 		&sc.UUID, &sc.Owner.Hub, &sc.Owner.UserID,
 		&sc.Grantee.Hub, &sc.Grantee.UserID,
-		&targetType, &targetAlbumID, &allowDownload, &label,
+		&targetType, &targetAlbumID, &sc.AllowDownload, &label,
 		&sc.CreatedAt, &expiresAt, &revokedAt,
 		&brokerStatus, &brokerRegAt, &brokerGrAt,
 		&brokerRevAt, &brokerLastErr, &sc.BrokerAttempts,
@@ -153,7 +157,6 @@ func scanScope(s rowScanner) (Scope, error) {
 		v := targetAlbumID.String
 		sc.TargetAlbumID = &v
 	}
-	sc.AllowDownload = allowDownload != 0
 	if label.Valid {
 		sc.Label = label.String
 	}
