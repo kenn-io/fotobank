@@ -367,7 +367,12 @@ func TestSnapshotPragmas_AfterRestore_RoundTrip(t *testing.T) {
 	require.NoError(t, backup.Snapshot(context.Background(), d.WriteDB(), snapPath))
 
 	// Re-open the snapshot via the same code path the restore tool uses.
-	conn, err := sql.Open("sqlite3", "file:"+snapPath+"?_busy_timeout=5000&_fk=1&mode=ro")
+	// IMPORTANT: open writable (no `mode=ro`). With `mode=ro` the FK
+	// INSERT below would fail with "attempt to write a readonly
+	// database" before SQLite ever consults `_fk=1`, making the
+	// foreign-key assertion vacuous. Writing to the snapshot file is
+	// fine because it lives in t.TempDir().
+	conn, err := sql.Open("sqlite3", "file:"+snapPath+"?_busy_timeout=5000&_fk=1")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 
@@ -415,85 +420,97 @@ git commit -m "test(backup): pragma + restore round-trip under mattn"
 
 ---
 
-## Section C — Time scanning
+## Section C — Mattn-compatibility audit
 
-### Task 6 — Audit time.Time scan paths and remove parseSQLiteTimeString
+### Task 6 — Audit and fix all mattn-vs-modernc scan-type mismatches
 
-**Files:**
-- Modify: `internal/share/repo.go`
-- Modify: `internal/share/repo_test.go`
+**Status note (post-Task-5 cleanup checkpoint).** When Task 3 landed the driver swap, an unobserved regression took down `internal/cli`, `internal/httpapi`, `internal/service`, `internal/share`, and `internal/shareworker` — five packages that ALL pass on pre-swap master `96ebcb2`. The narrow time-scan focus this section originally carried is too narrow: the regression is broader. Mattn and modernc differ in how they decode at least three column shapes. This task widens accordingly.
 
-**Context.** Modernc loses `TIMESTAMP` affinity through expressions (`COALESCE(a, b)`, `CASE`) and returns Go's default `time.Time.String()` output (`"2006-01-02 15:04:05.999999999 -0700 MST"`) which Scan cannot decode into a `time.Time`. `internal/share/repo.go::parseSQLiteTimeString` exists exactly to translate that string back. Mattn does not have this issue: COALESCE'd TIMESTAMP columns scan into `time.Time` directly. After the driver swap, the helper is dead code, and its caller can scan directly into a `time.Time`.
+**Files (expected — not exhaustive; the audit may surface more):**
+- Modify: `internal/share/repo.go` (the `scanScope` helper and any `bool`-typed Scan target where the schema declares `BOOLEAN`)
+- Modify: `internal/share/repo_test.go` (add regression coverage for the affected scan paths)
+- Modify: any other repo file the audit surfaces — likely `internal/album/repo.go`, `internal/media/repo.go`, `internal/ai/results/repo.go` if they Scan booleans or COALESCE'd timestamps.
 
-**Step 1: Find the caller(s).**
+**Context — the three known driver-behavior differences.**
 
-Run: `grep -n parseSQLiteTimeString internal/share/repo.go`
+1. **`BOOLEAN` columns scan as Go `int64` under modernc but as Go `bool` under mattn.** SQLite has no native BOOLEAN type — the `BOOLEAN` declaration is type affinity sugar. modernc returns the underlying `INTEGER` value; mattn returns a `bool`. A `Scan(&intVar)` against a column that mattn returns as `bool` produces a "converting NULL to int64 is unsupported" or "sql: Scan error on column index N: converting driver.Value type bool" error. The known-affected column is `scopes.allow_download` (referenced from `scanScope` in `internal/share/repo.go`). There may be others (search the schema for `BOOLEAN`).
+2. **COALESCE'd `TIMESTAMP` columns scan into `time.Time` natively under mattn but return a Go-formatted string under modernc.** This is the original time-scan motivation for `parseSQLiteTimeString` in `internal/share/repo.go`. Cleanup commit `1b1f112` already removed that helper and its single call site; this task keeps that work and verifies no other caller of similar machinery exists.
+3. **`NULL` `TIMESTAMP` columns scan into `*time.Time` (or `sql.NullTime`) cleanly on both drivers, but bare `time.Time` rejects NULL on both.** Confirm no path scans `NULL TIMESTAMP` into a non-pointer `time.Time`.
 
-Expected: two matches — the function definition (~line 1232) and one or more call sites (e.g. line 871). Capture the call site context:
+**Step 1: Snapshot the failure surface.**
 
-```go
-// existing code at internal/share/repo.go:~870
-var displayTime string
-if err := row.Scan(..., &displayTime, ...); err != nil { ... }
-dt, perr := parseSQLiteTimeString(displayTime)
+Run, from repo root:
+
+```bash
+go test ./... -count=1 -timeout=300s 2>&1 | grep -E "^(--- FAIL|FAIL\s)" > /tmp/fb-mattn-failures.txt
+wc -l /tmp/fb-mattn-failures.txt
 ```
 
-**Step 2: Write a test that demonstrates the new direct-Scan path works.**
+Expected: dozens of failing tests across the five known packages. Inspect a few failing test bodies and capture the underlying scan error message (commonly `Scan error on column index N: converting driver.Value type bool to a *int64`). This gives you the exact column shape to fix.
 
-```go
-// internal/share/repo_test.go (append or augment an existing test in
-// the same file). The test name depends on which existing test covers
-// the COALESCE'd-time path; if the file has no test naming the path
-// directly, add a new one.
+**Step 2: Triage by error class.**
 
-// TestRepo_DisplayTimeRoundTrip_DirectTimeScan proves that under the
-// mattn driver, a COALESCE'd TIMESTAMP column scans directly into a
-// time.Time without the modernc-era string-parse helper.
-func TestRepo_DisplayTimeRoundTrip_DirectTimeScan(t *testing.T) {
-	d := testutil.OpenTestDB(t)
-	// Seed a scope row with broker_granted_at set and broker_revoked_at
-	// null; the displayTime SELECT picks the first non-null. Then read
-	// it back via the repo method that previously called
-	// parseSQLiteTimeString and assert the time round-trips with no
-	// loss-of-precision and TZ=UTC.
-	// ... (concrete seeding mirrors the existing share repo tests)
-}
+Group every failing test by the error message its body produces. Three buckets are likely:
+
+- **Bucket B (BOOLEAN→int)**: `converting driver.Value type bool to a *int64` (or `*int`). The fix is to change the Scan target type to `bool` and adjust any downstream comparison (`== 1` → `== true`).
+- **Bucket T (TIMESTAMP→string)**: `Scan error … converting … to *string` on a column declared `TIMESTAMP`. The fix is to change the Scan target type to `time.Time` (or `*time.Time` for nullable) and remove any string-parsing dance.
+- **Bucket O (other)**: anything else. Investigate per-test.
+
+If a fourth bucket emerges (e.g. JSON columns, BLOB-typed UUID columns, REAL columns the schema declared as something else), extend the triage table here and address each.
+
+**Step 3: Fix Bucket B (BOOLEAN scans).**
+
+`grep -rn "BOOLEAN" internal/db/migrations/000001_initial_schema.up.sql` gives every BOOLEAN-typed column. Cross-reference against `grep -rn "&[a-zA-Z][a-zA-Z0-9]*[\.,]" internal/*/repo.go | grep -i "allow\|enabled\|done\|active"` to find the scan sites. For each:
+
+- Change the Scan target field from `int` / `int64` / `sql.NullBool` (where the schema is non-NULL) to `bool`.
+- Remove any `0/1`-style comparisons; replace with the bool value directly.
+- Where a struct exposes the column publicly, prefer keeping the public field as `bool` for clarity. If the existing public field type is `int` and changing it would break callers, use a `bool` local var inside the Scan and convert.
+
+Add at least one unit test per scan site under modernc-incompatible behavior. The simplest pattern is a round-trip: insert a row with the boolean true, read it back via the repo method, assert the field is `true`. The previously-passing tests will also exercise the path; treat the targeted unit test as belt-and-braces against future regressions.
+
+**Step 4: Fix Bucket T (TIMESTAMP scans).**
+
+For every Scan target currently typed `string` against a column declared `TIMESTAMP` (look in COALESCE/CASE expressions especially), change the target to `time.Time` (or `*time.Time` for nullable). Drop any string-parse dance.
+
+Cleanup commit `1b1f112` already handled the one call site for `parseSQLiteTimeString`. Sweep again: `grep -rn "time.Parse\|Parse(\"2006" internal/` to catch any other modernc-string-parse helpers that may have been copy-pasted.
+
+Add a test that demonstrates the round-trip works under mattn — adapt an existing test in `internal/share/repo_test.go` if its setup already covers the scope-with-broker-times path.
+
+**Step 5: Fix Bucket O (anything else the audit surfaced).**
+
+Per-failure investigation. Document each in the commit message body so reviewers can audit the reasoning.
+
+**Step 6: Verify the regression is gone.**
+
+Run:
+
+```bash
+go test ./... -count=1 -timeout=300s -shuffle=on
 ```
 
-(Lift the seeding patterns from neighbouring tests in `internal/share/repo_test.go`. If the existing test that covers `displayTime` is `TestListByOwner_*`, adapt one of those to assert on the time field rather than adding a brand-new test.)
+Expected: all packages pass. If any test still fails, it must reproduce on pre-swap master `96ebcb2` (use a worktree or fresh clone to confirm). Pre-swap-failing tests are out of scope for this task — flag them explicitly in the commit message body so a future task can address them.
 
-**Step 3: Run the existing share tests under mattn to see what currently happens.**
+Run:
 
-Run: `go test ./internal/share/ -count=1`
-
-Expected: PASS or FAIL is informative — if mattn returns a `time.Time` directly and the existing code immediately calls `parseSQLiteTimeString(timeAsString)`, that line stops compiling once you change the variable type. If it currently passes, the helper is harmlessly running; we still want to delete it and switch to a direct Scan.
-
-**Step 4: Replace the call site with a direct `time.Time` Scan.**
-
-```go
-// internal/share/repo.go (around the existing call site)
-var displayTime time.Time
-if err := row.Scan(..., &displayTime, ...); err != nil { ... }
-// no more parseSQLiteTimeString call — `displayTime` is already a time.Time
+```bash
+go vet ./...
 ```
 
-**Step 5: Delete `parseSQLiteTimeString` and its dedicated tests.**
-
-Remove the function from `internal/share/repo.go`. If `repo_test.go` has a unit test that exercises `parseSQLiteTimeString` in isolation, delete that test too — coverage now lives in the round-trip test added in Step 2.
-
-**Step 6: Verify.**
-
-Run: `go test ./internal/share/ -count=1`
-Run: `go vet ./internal/share/`
-
-Expected: PASS, no `unused` warnings.
+Expected: clean.
 
 **Step 7: Commit.**
 
-```bash
-git add internal/share/repo.go internal/share/repo_test.go
-git commit -m "refactor(share): drop modernc time-string parser, scan time.Time"
-```
+One commit per logical fix or per package, depending on how the buckets fall out. Suggested subjects:
+
+- `fix(share): scan BOOLEAN columns as bool under mattn`
+- `fix(media): scan COALESCE'd TIMESTAMP into time.Time`
+- `test(share): regression coverage for mattn scan types`
+
+Avoid one giant "fix everything" commit — split by package or by bucket so reviewers can verify each logically.
+
+**Step 8: Confirm cumulative state with the pre-existing E2E test set.**
+
+Three CLI E2E tests (`TestE2EBrokerExecPublishesAndRevokes`, `TestE2ESharesRoundTrip`, `TestSharedE2EHeaderMode`) appeared to be pre-existing failures in earlier task reviews, but the cleanup checkpoint clarified those tracked back to the same bool/time scan regression (the broker pipeline writes a scope row, then reads it back via `scanScope` which fails). After Task 6 lands those three should pass. If they do not, log why in the commit body.
 
 ---
 
