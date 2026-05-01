@@ -235,14 +235,20 @@ func TestOpen_RoundTripTZ(t *testing.T) {
 // What this test specifically catches: a regression where h2 fails
 // IMMEDIATELY with SQLITE_BUSY (busy_timeout=0, missing retry path,
 // driver swap to a no-retry driver). What it does NOT catch: a
-// regression where h2 fails AFTER our probe window but before
-// COMMIT — that scenario is conceivable in theory but requires a
-// busy_timeout shorter than 200ms, which is itself a regression
-// SQLite would loudly surface elsewhere. The probe-based design
-// abandons the elapsed-time arms race that produced false negatives
-// from scheduler stalls (Job 65) and false positives from stalls
-// being counted as elapsed time (Jobs 73 and 75); each previous
-// iteration plugged one race only to expose another.
+// scenario where h2's goroutine doesn't reach ExecContext within the
+// 200ms probe window. On a sufficiently overloaded runner h2 could
+// still be unscheduled (or sitting between `close(started)` and
+// `ExecContext`) when we probe — in which case `resCh` would be empty
+// for the wrong reason and the test would proceed to COMMIT, after
+// which h2 would succeed regardless of whether busy_timeout works.
+// 200ms is enormous for goroutine scheduling on any modern system, so
+// this miss is implausible in practice, but acknowledging it honestly:
+// the probe is a strong-flake-reduction heuristic, not theoretical
+// proof. The probe-based design abandons the elapsed-time arms race
+// that produced false negatives from scheduler stalls (Job 65) and
+// false positives from stalls being counted as elapsed time (Jobs 73
+// and 75); each previous iteration plugged one race only to expose
+// another.
 //
 // Bound by ctx (2s); skipped under -short.
 func TestOpen_ConcurrentWriters(t *testing.T) {
