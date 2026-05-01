@@ -121,6 +121,98 @@ func TestSchema_AIJobsAcceptsEmbedTask(t *testing.T) {
 	r.Error(err)
 }
 
+// TestSchema_EmbeddingGenerationsOneActiveOneBuilding asserts the
+// partial unique indexes on embedding_generations.state enforce the
+// at-most-one-active and at-most-one-building invariants from the
+// search v1 design (§5.3). Inserts are inlined to match A1's style;
+// no shared seed helpers in db_test.go yet.
+func TestSchema_EmbeddingGenerationsOneActiveOneBuilding(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	rw := d.WriteDB()
+
+	mustInsertGen := func(state string) {
+		_, err := rw.Exec(
+			`INSERT INTO embedding_generations
+			 (fingerprint, fingerprint_hash, model_id, input_profile, vec_table_name,
+			  dimension, state, created_at)
+			 VALUES (?, ?, 'm', 'p', ?, 768, ?, datetime('now'))`,
+			"fp-"+state, "h-"+state, "media_embeddings_g_"+state, state,
+		)
+		r.NoError(err)
+	}
+
+	mustInsertGen("active")
+	// Second active must fail.
+	_, err := rw.Exec(
+		`INSERT INTO embedding_generations
+		 (fingerprint, fingerprint_hash, model_id, input_profile, vec_table_name,
+		  dimension, state, created_at)
+		 VALUES ('fp2','h2','m','p','t2',768,'active', datetime('now'))`,
+	)
+	r.Error(err, "must reject two active generations")
+
+	mustInsertGen("building")
+	// Second building must fail.
+	_, err = rw.Exec(
+		`INSERT INTO embedding_generations
+		 (fingerprint, fingerprint_hash, model_id, input_profile, vec_table_name,
+		  dimension, state, created_at)
+		 VALUES ('fp3','h3','m','p','t3',768,'building', datetime('now'))`,
+	)
+	r.Error(err, "must reject two building generations")
+}
+
+// TestSchema_MediaEmbeddingIDsUniqueVecID asserts the
+// UNIQUE (generation_id, vec_id) constraint on media_embedding_ids
+// rejects two media rows mapping to the same vec_id within a
+// generation (search v1 design §5.4).
+func TestSchema_MediaEmbeddingIDsUniqueVecID(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	rw := d.WriteDB()
+
+	_, err := rw.Exec(
+		`INSERT INTO owners VALUES('h1','u1','k1','u1',datetime('now'))`,
+	)
+	r.NoError(err)
+
+	m1 := uuid.NewString()
+	m2 := uuid.NewString()
+	for _, mid := range []string{m1, m2} {
+		_, err = rw.Exec(
+			`INSERT INTO media (id,owner_hub,owner_user_id,media_type,mime_type,path,imported_at,size,checksum,thumb_status,thumb_version,thumb_updated_at)
+			 VALUES (?, 'h1','u1','photo','image/jpeg',?,datetime('now'),1,?,'pending',1,datetime('now'))`,
+			mid, "p-"+mid, "cs-"+mid,
+		)
+		r.NoError(err)
+	}
+
+	// Insert a generation row.
+	res, err := rw.Exec(
+		`INSERT INTO embedding_generations
+		 (fingerprint, fingerprint_hash, model_id, input_profile, vec_table_name,
+		  dimension, state, created_at)
+		 VALUES ('fp','h','m','p','media_embeddings_g1',768,'building', datetime('now'))`,
+	)
+	r.NoError(err)
+	gid, err := res.LastInsertId()
+	r.NoError(err)
+
+	insertMapping := func(generationID int64, mediaID string, vecID int64) error {
+		_, execErr := rw.Exec(
+			`INSERT INTO media_embedding_ids (generation_id, media_id, vec_id)
+			 VALUES (?, ?, ?)`,
+			generationID, mediaID, vecID,
+		)
+		return execErr
+	}
+
+	r.NoError(insertMapping(gid, m1, 1))
+	// Second mapping with the same vec_id must fail.
+	r.Error(insertMapping(gid, m2, 1))
+}
+
 func TestScopesBackoffMigration(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)

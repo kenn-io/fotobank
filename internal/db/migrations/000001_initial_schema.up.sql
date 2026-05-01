@@ -464,3 +464,39 @@ CREATE TABLE ai_skipped (
     recorded_at  TIMESTAMP NOT NULL,
     PRIMARY KEY (media_id, task)
 );
+
+-- ============================================================
+-- Search v1: embedding generations and per-media vec mapping.
+-- See docs/superpowers/specs/2026-05-01-fotobank-search-design.md §5.3-§5.4.
+-- ============================================================
+
+CREATE TABLE embedding_generations (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    fingerprint      TEXT    NOT NULL UNIQUE,
+    fingerprint_hash TEXT    NOT NULL UNIQUE,
+    model_id         TEXT    NOT NULL,
+    input_profile    TEXT    NOT NULL,
+    vec_table_name   TEXT    NOT NULL UNIQUE,
+    dimension        INTEGER NOT NULL,
+    state            TEXT    NOT NULL CHECK(state IN ('building','active','retired')),
+    embedded_count   INTEGER NOT NULL DEFAULT 0,
+    threshold_pct    INTEGER NOT NULL DEFAULT 95,
+    created_at       TIMESTAMP NOT NULL,
+    activated_at     TIMESTAMP,
+    retired_at       TIMESTAMP
+);
+
+CREATE UNIQUE INDEX embedding_generations_one_active
+    ON embedding_generations(state) WHERE state = 'active';
+CREATE UNIQUE INDEX embedding_generations_one_building
+    ON embedding_generations(state) WHERE state = 'building';
+
+CREATE TABLE media_embedding_ids (
+    generation_id INTEGER NOT NULL REFERENCES embedding_generations(id) ON DELETE CASCADE,
+    media_id      UUID    NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    vec_id        INTEGER NOT NULL,
+    PRIMARY KEY (generation_id, media_id),
+    UNIQUE (generation_id, vec_id)
+);
+CREATE INDEX media_embedding_ids_media_idx
+    ON media_embedding_ids(media_id);
