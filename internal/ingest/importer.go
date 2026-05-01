@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -57,6 +58,7 @@ type Importer struct {
 	repo   *media.Repo
 	places PlaceResolver
 	now    func() time.Time
+	ai     AIEnqueuer
 }
 
 // NewImporter constructs an Importer with the default UTC wall clock.
@@ -70,8 +72,14 @@ func NewImporter(store storage.Store, repo *media.Repo, places PlaceResolver) *I
 		repo:   repo,
 		places: places,
 		now:    func() time.Time { return time.Now().UTC() },
+		ai:     NoopAIEnqueuer{},
 	}
 }
+
+// SetAIEnqueuer swaps in a production AIEnqueuer. Server boot calls this
+// after the AI subsystem is initialized; CLIs that don't run the AI
+// pipeline leave the default NoopAIEnqueuer in place.
+func (imp *Importer) SetAIEnqueuer(e AIEnqueuer) { imp.ai = e }
 
 // candidateOutcome is what a worker reports per candidate. id is set
 // only when imported is true; the post-barrier pairing pass collects
@@ -287,6 +295,10 @@ func (imp *Importer) processPhoto(ctx context.Context, c Candidate, owner owners
 		m := buildMediaRow(c, owner, landed, checksum, size, meta, imp.now(), imp.places, sourceRoot)
 		switch err := imp.repo.Insert(ctx, m); {
 		case err == nil:
+			if aiErr := imp.ai.EnqueueForPhoto(ctx, m.ID); aiErr != nil {
+				slog.Default().Warn("ai enqueue for photo failed",
+					"media_id", m.ID, "err", aiErr)
+			}
 			return candidateOutcome{imported: true, id: m.ID}
 		case errors.Is(err, media.ErrDuplicateChecksum):
 			// A concurrent worker imported the same bytes first.
@@ -332,6 +344,10 @@ func (imp *Importer) processVideo(ctx context.Context, c Candidate, owner owners
 	m := buildMediaRow(c, owner, landed, checksum, size, meta, imp.now(), imp.places, sourceRoot)
 	switch err := imp.repo.Insert(ctx, m); {
 	case err == nil:
+		if aiErr := imp.ai.RecordVideoSkip(ctx, m.ID); aiErr != nil {
+			slog.Default().Warn("ai video skip record failed",
+				"media_id", m.ID, "err", aiErr)
+		}
 		return candidateOutcome{imported: true, id: m.ID}
 	case errors.Is(err, errs.ErrAlreadyExists):
 		// Video paths are content-addressed (movies/{md5}.ext). Any row
