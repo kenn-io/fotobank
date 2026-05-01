@@ -91,6 +91,36 @@ func TestNewMetrics_ProcessMetricsAppended(t *testing.T) {
 		"expected at least one go_memstats_* or process_* series; got %q", out)
 }
 
+func TestNewMetrics_AIMetricsExposed(t *testing.T) {
+	r := require.New(t)
+	m := NewMetrics(MetricSources{
+		AIJobsDepth: func(task, status string) int64 { return 7 },
+	}, BuildInfo{})
+
+	m.AIJobs("tag", "ok").Inc()
+	m.AIJobs("caption", "failed").Inc()
+	m.AIRequestDuration("tag", "ok").Update(0.12)
+	m.AIRequestDuration("caption", "transient").Update(2.5)
+	m.SetAIVisionReachable(true)
+	m.SetAIAcknowledgementRequired(false)
+
+	var buf bytes.Buffer
+	m.WritePrometheus(&buf)
+	out := buf.String()
+
+	r.Contains(out, `fotobank_ai_jobs_depth`)
+	r.Contains(out, `fotobank_ai_jobs_completed_total`)
+	r.Contains(out, `fotobank_ai_request_duration_seconds`)
+	r.Contains(out, `fotobank_ai_endpoint_reachable`)
+	r.Contains(out, `fotobank_ai_acknowledgement_required`)
+
+	r.Contains(out, `fotobank_ai_jobs_depth{task="tag",status="pending"} 7`)
+	r.Contains(out, `fotobank_ai_jobs_completed_total{task="tag",result="ok"} 1`)
+	r.Contains(out, `fotobank_ai_jobs_completed_total{task="caption",result="failed"} 1`)
+	r.Contains(out, `fotobank_ai_endpoint_reachable{kind="vision"} 1`)
+	r.Contains(out, `fotobank_ai_acknowledgement_required 0`)
+}
+
 func TestNewMetrics_PullSourceClosuresArePerState(t *testing.T) {
 	r := require.New(t)
 	thumbCalls := make(map[string]int)

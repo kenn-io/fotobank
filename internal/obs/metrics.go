@@ -21,6 +21,7 @@ type BuildInfo struct {
 type MetricSources struct {
 	ThumbQueueDepth  func(state string) int64
 	SharePendingByOp func(op string) int64
+	AIJobsDepth      func(task, status string) int64
 }
 
 // Metrics owns a private *metrics.Set, never the upstream global. All
@@ -34,6 +35,11 @@ type Metrics struct {
 	// each successful Snapshot. Stored atomically so the scrape closure
 	// can read consistently.
 	lastBackupUnix atomic.Int64
+
+	// AI gateway/global state pushed by the AI worker. Stored atomically
+	// so the scrape closure can read consistently. 0 or 1.
+	ackRequired     atomic.Int64
+	visionReachable atomic.Int64
 }
 
 // httpDurationBuckets and workerDurationBuckets are the Prometheus le
@@ -85,6 +91,23 @@ func NewMetrics(src MetricSources, build BuildInfo) *Metrics {
 			return float64(src.SharePendingByOp(op))
 		})
 	}
+	for _, task := range []string{"tag", "caption"} {
+		for _, status := range []string{"pending", "working", "blocked"} {
+			t, s := task, status // capture for closure
+			m.set.NewGauge(`fotobank_ai_jobs_depth{task="`+t+`",status="`+s+`"}`, func() float64 {
+				if src.AIJobsDepth == nil {
+					return 0
+				}
+				return float64(src.AIJobsDepth(t, s))
+			})
+		}
+	}
+	m.set.NewGauge(`fotobank_ai_acknowledgement_required`, func() float64 {
+		return float64(m.ackRequired.Load())
+	})
+	m.set.NewGauge(`fotobank_ai_endpoint_reachable{kind="vision"}`, func() float64 {
+		return float64(m.visionReachable.Load())
+	})
 	return m
 }
 
@@ -209,6 +232,41 @@ func (m *Metrics) BackupRetentionSweeps(result string) *metrics.Counter {
 // Incremented by the per-tick Sweep result count.
 func (m *Metrics) BackupRetentionDeleted() *metrics.Counter {
 	return m.set.GetOrCreateCounter(`fotobank_backup_retention_deleted_total`)
+}
+
+// AIJobs returns the (task, result) completion counter.
+// result ∈ {"ok", "failed", "skipped"}; task ∈ {"tag", "caption"}.
+func (m *Metrics) AIJobs(task, result string) *metrics.Counter {
+	return m.set.GetOrCreateCounter(`fotobank_ai_jobs_completed_total{task="` +
+		escapeLabel(task) + `",result="` + escapeLabel(result) + `"}`)
+}
+
+// AIRequestDuration is the (task, outcome) gateway-request histogram.
+// outcome ∈ {"ok", "transient", "provider_4xx", "malformed"}; uses workerDurationBuckets.
+func (m *Metrics) AIRequestDuration(task, outcome string) *metrics.PrometheusHistogram {
+	return m.getOrCreatePrometheusHistogram(
+		`fotobank_ai_request_duration_seconds`,
+		map[string]string{"task": task, "outcome": outcome},
+		workerDurationBuckets,
+	)
+}
+
+// SetAIVisionReachable flips the fotobank_ai_endpoint_reachable{kind="vision"} gauge.
+func (m *Metrics) SetAIVisionReachable(reachable bool) {
+	if reachable {
+		m.visionReachable.Store(1)
+	} else {
+		m.visionReachable.Store(0)
+	}
+}
+
+// SetAIAcknowledgementRequired flips fotobank_ai_acknowledgement_required.
+func (m *Metrics) SetAIAcknowledgementRequired(required bool) {
+	if required {
+		m.ackRequired.Store(1)
+	} else {
+		m.ackRequired.Store(0)
+	}
 }
 
 // WritePrometheus writes the private set's Prometheus exposition,
