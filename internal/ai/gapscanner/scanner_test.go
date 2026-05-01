@@ -2,11 +2,15 @@ package gapscanner_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/wesm/fotobank/internal/ai"
+	"github.com/wesm/fotobank/internal/ai/embedding"
 	"github.com/wesm/fotobank/internal/ai/failures"
 	"github.com/wesm/fotobank/internal/ai/gapscanner"
 	"github.com/wesm/fotobank/internal/ai/jobs"
@@ -188,4 +192,248 @@ func TestGapScannerLimitMakesProgressPastFinishedRows(t *testing.T) {
 	})
 	r.NoError(err)
 	r.Equal(2, n, "LIMIT counts unfinished work, not pre-filter rows")
+}
+
+// embedFingerprint mirrors how the embed worker builds fingerprints:
+// PromptVersion is empty (the embed task has no prompt). The scanner's
+// failure-budget predicate hard-codes the empty prompt_version against
+// ai_failures, so the test fixtures must match.
+func embedFingerprint() ai.Fingerprint {
+	return ai.Fingerprint{ModelID: "siglip2", InputProfile: "preview-v1"}
+}
+
+// seedEmbedGen creates a fresh "building" generation row plus its vec0
+// table for the embed scan tests. The dim is arbitrary (the scanner
+// never reads the vec table directly).
+func seedEmbedGen(t *testing.T, rw, ro *sql.DB) embedding.Row {
+	t.Helper()
+	g := embedding.NewGenerations(rw, ro)
+	row, err := g.FindOrCreateBuilding(context.Background(), embedFingerprint(), 8)
+	require.NoError(t, err)
+	return row
+}
+
+// insertEmbedMapping inserts a media_embedding_ids row for the given
+// (gen, media) without touching the vec0 table. The scanner's
+// gap-fill predicate only cares whether the mapping row exists, so
+// allocating a real vector via the Mapping helper is unnecessary work.
+func insertEmbedMapping(t *testing.T, rw *sql.DB, gen embedding.Row, mediaID string, vecID int64) {
+	t.Helper()
+	_, err := rw.ExecContext(context.Background(),
+		`INSERT INTO media_embedding_ids(generation_id, media_id, vec_id) VALUES (?,?,?)`,
+		gen.ID, mediaID, vecID)
+	require.NoError(t, err)
+}
+
+// insertAIJob writes a raw ai_jobs row with the given status. Used by
+// the in-flight test which needs a 'pending'/'working'/'blocked' row
+// without going through Queue.Enqueue (Enqueue would itself satisfy
+// the predicate, but we want to assert ScanEmbed sees the existing row
+// and skips, not that it then enqueues a duplicate).
+func insertAIJob(t *testing.T, rw *sql.DB, mediaID string, task ai.Task, fp ai.Fingerprint, status ai.JobStatus) {
+	t.Helper()
+	_, err := rw.ExecContext(context.Background(),
+		`INSERT INTO ai_jobs(id, media_id, task, fingerprint, status, attempts, enqueued_at)
+		 VALUES (?, ?, ?, ?, ?, 0, ?)`,
+		uuid.NewString(), mediaID, string(task), fp.String(), string(status), time.Now().UTC())
+	require.NoError(t, err)
+}
+
+func TestScanEmbed_EnqueuesNewMedia(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	gen := seedEmbedGen(t, rw, ro)
+
+	q := jobs.NewQueue(rw, ro)
+	resR := results.NewRepo(rw, ro)
+	skipR := skipped.NewRepo(rw, ro)
+	fp := embedFingerprint()
+
+	s := gapscanner.New(ro, q, resR, skipR)
+	n, err := s.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
+		Owner:       owner,
+		Generation:  gen,
+		Fingerprint: fp,
+		RetryBudget: 3,
+	})
+	r.NoError(err)
+	r.Equal(1, n, "thumb-ready media with no mapping/skip/failure/job is enqueued")
+
+	c, _ := q.Counters(ctx, ai.TaskEmbed)
+	r.Equal(1, c.Pending)
+	_ = mid
+}
+
+func TestScanEmbed_SkipsMediaWithExistingMappingInGen(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	gen := seedEmbedGen(t, rw, ro)
+
+	// Mapping row exists for (gen, mid) — scanner must NOT re-enqueue.
+	insertEmbedMapping(t, rw, gen, mid, 1)
+
+	q := jobs.NewQueue(rw, ro)
+	resR := results.NewRepo(rw, ro)
+	skipR := skipped.NewRepo(rw, ro)
+
+	s := gapscanner.New(ro, q, resR, skipR)
+	n, err := s.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
+		Owner:       owner,
+		Generation:  gen,
+		Fingerprint: embedFingerprint(),
+		RetryBudget: 3,
+	})
+	r.NoError(err)
+	r.Equal(0, n, "media already mapped in this generation must be skipped")
+}
+
+func TestScanEmbed_SkipsMediaWithSkippedRowForEmbed(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	gen := seedEmbedGen(t, rw, ro)
+
+	skipR := skipped.NewRepo(rw, ro)
+	r.NoError(skipR.Record(ctx, mid, ai.TaskEmbed, "no_preview"))
+
+	q := jobs.NewQueue(rw, ro)
+	resR := results.NewRepo(rw, ro)
+
+	s := gapscanner.New(ro, q, resR, skipR)
+	n, err := s.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
+		Owner:       owner,
+		Generation:  gen,
+		Fingerprint: embedFingerprint(),
+		RetryBudget: 3,
+	})
+	r.NoError(err)
+	r.Equal(0, n, "media with ai_skipped row for task=embed must be skipped")
+}
+
+func TestScanEmbed_SkipsMediaPastFailureBudget(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	gen := seedEmbedGen(t, rw, ro)
+
+	// Record a past-budget failure for the same fingerprint the worker
+	// would write: prompt_version=''.
+	failR := failures.NewRepo(rw, ro)
+	fp := embedFingerprint()
+	r.NoError(failR.Record(ctx, mid, ai.TaskEmbed, fp, ai.ErrKindMalformed, "x", 5))
+
+	q := jobs.NewQueue(rw, ro)
+	resR := results.NewRepo(rw, ro)
+	skipR := skipped.NewRepo(rw, ro)
+
+	s := gapscanner.New(ro, q, resR, skipR)
+	n, err := s.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
+		Owner:       owner,
+		Generation:  gen,
+		Fingerprint: fp,
+		RetryBudget: 3, // attempt_count(5) >= 3 → past budget
+	})
+	r.NoError(err)
+	r.Equal(0, n, "media past failure budget must be skipped")
+}
+
+func TestScanEmbed_SkipsMediaWithInflightJob(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	gen := seedEmbedGen(t, rw, ro)
+
+	q := jobs.NewQueue(rw, ro)
+	resR := results.NewRepo(rw, ro)
+	skipR := skipped.NewRepo(rw, ro)
+	fp := embedFingerprint()
+
+	// In-flight job already exists. Try each of the three live statuses
+	// to confirm the predicate's IN ('pending','working','blocked')
+	// covers them all.
+	for _, status := range []ai.JobStatus{ai.JobPending, ai.JobWorking, ai.JobBlocked} {
+		_, err := rw.ExecContext(ctx, `DELETE FROM ai_jobs WHERE media_id=?`, mid)
+		r.NoError(err)
+		insertAIJob(t, rw, mid, ai.TaskEmbed, fp, status)
+
+		s := gapscanner.New(ro, q, resR, skipR)
+		n, err := s.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
+			Owner:       owner,
+			Generation:  gen,
+			Fingerprint: fp,
+			RetryBudget: 3,
+		})
+		r.NoError(err)
+		r.Equalf(0, n, "in-flight ai_jobs row with status=%s must be skipped", status)
+	}
+}
+
+func TestScanEmbed_HiddenMediaExcludedWithoutAck(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	gen := seedEmbedGen(t, rw, ro)
+
+	// Hide the media: scanner without ack must exclude it.
+	_, err := rw.ExecContext(ctx, `UPDATE media SET hidden_at=? WHERE id=?`,
+		time.Now().UTC(), mid)
+	r.NoError(err)
+
+	q := jobs.NewQueue(rw, ro)
+	resR := results.NewRepo(rw, ro)
+	skipR := skipped.NewRepo(rw, ro)
+
+	s := gapscanner.New(ro, q, resR, skipR)
+	n, err := s.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
+		Owner:           owner,
+		Generation:      gen,
+		Fingerprint:     embedFingerprint(),
+		AckAllowsHidden: false,
+		RetryBudget:     3,
+	})
+	r.NoError(err)
+	r.Equal(0, n, "hidden media must not be enqueued without operator ack")
+}
+
+func TestScanEmbed_HiddenMediaIncludedWithAck(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	gen := seedEmbedGen(t, rw, ro)
+
+	_, err := rw.ExecContext(ctx, `UPDATE media SET hidden_at=? WHERE id=?`,
+		time.Now().UTC(), mid)
+	r.NoError(err)
+
+	q := jobs.NewQueue(rw, ro)
+	resR := results.NewRepo(rw, ro)
+	skipR := skipped.NewRepo(rw, ro)
+
+	s := gapscanner.New(ro, q, resR, skipR)
+	n, err := s.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
+		Owner:           owner,
+		Generation:      gen,
+		Fingerprint:     embedFingerprint(),
+		AckAllowsHidden: true,
+		RetryBudget:     3,
+	})
+	r.NoError(err)
+	r.Equal(1, n, "hidden media must be enqueued when operator ack allows it")
+	_ = mid
 }
