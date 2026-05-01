@@ -19,6 +19,17 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 
+	"github.com/wesm/fotobank/internal/ai"
+	"github.com/wesm/fotobank/internal/ai/ack"
+	"github.com/wesm/fotobank/internal/ai/failures"
+	"github.com/wesm/fotobank/internal/ai/gapscanner"
+	"github.com/wesm/fotobank/internal/ai/gateway"
+	"github.com/wesm/fotobank/internal/ai/imginput"
+	"github.com/wesm/fotobank/internal/ai/jobs"
+	aiprompts "github.com/wesm/fotobank/internal/ai/prompts"
+	"github.com/wesm/fotobank/internal/ai/results"
+	"github.com/wesm/fotobank/internal/ai/skipped"
+	aiworker "github.com/wesm/fotobank/internal/ai/worker"
 	"github.com/wesm/fotobank/internal/album"
 	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/backup"
@@ -30,6 +41,7 @@ import (
 	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service"
+	aiservice "github.com/wesm/fotobank/internal/service/ai"
 	"github.com/wesm/fotobank/internal/service/usersettings"
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/shareworker"
@@ -209,6 +221,42 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		storeLayer,
 	)
 
+	// AI subsystem collaborators. The fingerprints capture the active
+	// (model, prompt, profile) triple; the queue / repos / ack / gap
+	// scanner are wired into both the service (for /api/v1/ai/*) and
+	// the workers below. Constructed before metricsObj so the AIJobsDepth
+	// pull-source can capture the queue handle.
+	tagPrompt := aiprompts.Tag()
+	captionPrompt := aiprompts.Caption()
+	tagFingerprint := ai.Fingerprint{
+		ModelID:       cfg.AI.Tag.Model,
+		PromptVersion: tagPrompt.Version,
+		InputProfile:  imginput.ProfileV1,
+	}
+	captionFingerprint := ai.Fingerprint{
+		ModelID:       cfg.AI.Caption.Model,
+		PromptVersion: captionPrompt.Version,
+		InputProfile:  imginput.ProfileV1,
+	}
+	aiQueue := jobs.NewQueue(d.WriteDB(), d.ReadDB())
+	aiResults := results.NewRepo(d.WriteDB(), d.ReadDB())
+	aiFailures := failures.NewRepo(d.WriteDB(), d.ReadDB())
+	aiSkipped := skipped.NewRepo(d.WriteDB(), d.ReadDB())
+	aiAck := ack.New(d.WriteDB(), d.ReadDB())
+	aiGap := gapscanner.New(d.ReadDB(), aiQueue, aiResults, aiSkipped)
+	aiSvc := aiservice.New(aiservice.Deps{
+		Queue:    aiQueue,
+		Results:  aiResults,
+		Failures: aiFailures,
+		Skipped:  aiSkipped,
+		Ack:      aiAck,
+		Gap:      aiGap,
+		ConfigFingerprints: aiservice.ConfigFingerprints{
+			Tag:     tagFingerprint,
+			Caption: captionFingerprint,
+		},
+	})
+
 	// metricsObj owns the private VictoriaMetrics set. Pull-source
 	// closures resolve at scrape time from the queues/repos already
 	// constructed above. Each closure takes a 250ms timeout so a
@@ -235,6 +283,25 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			}
 			return n
 		},
+		AIJobsDepth: func(task, status string) int64 {
+			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			defer cancel()
+			c, qerr := aiQueue.Counters(ctx, ai.Task(task))
+			if qerr != nil {
+				logger.Warn("ai queue depth source", "task", task, "status", status, "err", qerr)
+				return 0
+			}
+			switch status {
+			case "pending":
+				return int64(c.Pending)
+			case "working":
+				return int64(c.Working)
+			case "blocked":
+				return int64(c.Blocked)
+			default:
+				return 0
+			}
+		},
 	}, obs.BuildInfo{
 		Version:   version.Short,
 		Commit:    version.Commit,
@@ -258,6 +325,24 @@ func runServer(ctx context.Context, opts serverOpts) error {
 
 	usersettingsSvc := usersettings.NewService(usersettings.NewRepo(d.WriteDB(), d.ReadDB()))
 	eventBus := httpapi.NewEventBus()
+
+	// AI vision gateway + probe. When [ai].enabled is false we still
+	// have to provide a Probe (httpapi/health expects a non-nil one)
+	// but the disabled stub never actually fires because Health
+	// short-circuits with paused_reason=config_disabled before reaching
+	// the probe.
+	var aiGateway gateway.VisionGateway
+	var aiProbe aiservice.Probe = disabledAIProbe{}
+	if cfg.AI.Enabled {
+		client := gateway.NewOpenAICompatible(gateway.OpenAIConfig{
+			Endpoint:   cfg.AI.Vision.Endpoint,
+			APIKey:     cfg.AI.Vision.APIKey(),
+			Timeout:    cfg.AI.Vision.Timeout,
+			MaxRetries: cfg.AI.Vision.MaxRetries,
+		})
+		aiGateway = client
+		aiProbe = realAIProbe{c: client}
+	}
 
 	apiHandler, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: idp,
@@ -284,6 +369,9 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		// caller-supplied value would let any client control the
 		// server-issued X-Request-ID and request-scoped log lines.
 		RequestIDHeader: requestIDHeaderFor(cfg),
+		AIService:       aiSvc,
+		AIVisionProbe:   aiProbe,
+		AIEnabled:       cfg.AI.Enabled,
 	})
 	if err != nil {
 		return err
@@ -438,6 +526,80 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			fmt.Fprintln(opts.stderr, "share worker exited:", err)
 		}
 	})
+
+	// AI workers + lease sweep + gap-scan tick. Only fires when
+	// [ai].enabled and at least one per-task .enabled flag is true. The
+	// VisionSemaphore caps simultaneous in-flight VLM calls across both
+	// task workers; per-task BatchSize is the claim size. ownerLookup
+	// resolves a media row's owning principal so the worker can gate on
+	// per-owner acknowledgement.
+	if cfg.AI.Enabled {
+		aiSem := aiworker.NewVisionSemaphore(cfg.AI.Vision.MaxInflight)
+		aiImg := imginput.NewResolver(d.ReadDB(), storeLayer)
+		aiMediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
+		aiOwnerOf := func(ctx context.Context, mediaID string) (owners.Principal, error) {
+			m, err := aiMediaRepo.GetByID(ctx, mediaID)
+			if err != nil {
+				return owners.Principal{}, err
+			}
+			return m.Owner, nil
+		}
+		if cfg.AI.Tag.Enabled {
+			tagWorker := aiworker.New(aiworker.Config{
+				Task:           ai.TaskTag,
+				Fingerprint:    tagFingerprint,
+				PromptHash:     tagPrompt.Hash,
+				PromptText:     tagPrompt.Text,
+				Gateway:        aiGateway,
+				Image:          aiImg,
+				Queue:          aiQueue,
+				Results:        aiResults,
+				Failures:       aiFailures,
+				Skipped:        aiSkipped,
+				Acknowledged:   aiAck.IsAcknowledged,
+				OwnerOf:        aiOwnerOf,
+				MaxJobAttempts: 2,
+				BatchSize:      cfg.AI.Tag.WorkerConcurrency,
+				Process:        aiworker.TagProcess,
+				Sem:            aiSem,
+				Logger:         logger.With("component", "ai-tag"),
+			})
+			bgWG.Go(func() {
+				if err := tagWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
+					fmt.Fprintln(opts.stderr, "ai tag worker exited:", err)
+				}
+			})
+		}
+		if cfg.AI.Caption.Enabled {
+			capWorker := aiworker.New(aiworker.Config{
+				Task:           ai.TaskCaption,
+				Fingerprint:    captionFingerprint,
+				PromptHash:     captionPrompt.Hash,
+				PromptText:     captionPrompt.Text,
+				Gateway:        aiGateway,
+				Image:          aiImg,
+				Queue:          aiQueue,
+				Results:        aiResults,
+				Failures:       aiFailures,
+				Skipped:        aiSkipped,
+				Acknowledged:   aiAck.IsAcknowledged,
+				OwnerOf:        aiOwnerOf,
+				MaxJobAttempts: 2,
+				BatchSize:      cfg.AI.Caption.WorkerConcurrency,
+				Process:        aiworker.CaptionProcess,
+				Sem:            aiSem,
+				Logger:         logger.With("component", "ai-caption"),
+			})
+			bgWG.Go(func() {
+				if err := capWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
+					fmt.Fprintln(opts.stderr, "ai caption worker exited:", err)
+				}
+			})
+		}
+		bgWG.Go(func() {
+			runAIBackground(sigCtx, aiQueue, aiGap, tagFingerprint, captionFingerprint, cfg, opts.stderr)
+		})
+	}
 
 	// backupDir is captured outside the cfg.Backup.Enabled block so the
 	// admin listener's snapshot_dir readyz check can refer to it. The
@@ -797,6 +959,67 @@ func runHiddenSweeper(
 		case <-ticker.C:
 			if err := svc.Sweep(ctx); err != nil {
 				fmt.Fprintln(stderr, "hidden sweep failed:", err)
+			}
+		}
+	}
+}
+
+// disabledAIProbe is the Probe used when [ai].enabled is false. The
+// /api/v1/ai/health endpoint reports paused_reason=config_disabled
+// before consulting the probe in that case, so this never actually
+// fires — but Health expects a non-nil Probe.
+type disabledAIProbe struct{}
+
+func (disabledAIProbe) Probe(_ context.Context) error {
+	return errors.New("ai disabled")
+}
+
+// realAIProbe wraps a VisionGateway for the Health endpoint.
+type realAIProbe struct{ c gateway.VisionGateway }
+
+func (p realAIProbe) Probe(ctx context.Context) error { return p.c.HealthCheck(ctx) }
+
+// runAIBackground runs the AI workers' lease sweep and the gap-scan
+// repair tick. SweepLeases reclaims rows whose claim lease has expired
+// (worker crash mid-process). The gap scan walks the catalog and
+// re-enqueues any (media, task) pair that has neither an active result
+// nor a skipped/failed row for the active fingerprint, repairing
+// missed enqueues from the importer.
+func runAIBackground(
+	ctx context.Context,
+	q *jobs.Queue,
+	gs *gapscanner.Scanner,
+	tagFP, capFP ai.Fingerprint,
+	cfg *config.Config,
+	stderr io.Writer,
+) {
+	sweepT := time.NewTicker(time.Minute)
+	gapT := time.NewTicker(15 * time.Minute)
+	defer sweepT.Stop()
+	defer gapT.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-sweepT.C:
+			if _, err := q.SweepLeases(ctx, 10*time.Minute); err != nil &&
+				!errors.Is(err, context.Canceled) {
+				fmt.Fprintln(stderr, "ai lease sweep:", err)
+			}
+		case <-gapT.C:
+			if cfg.AI.Tag.Enabled {
+				if _, err := gs.Scan(ctx, gapscanner.ScanRequest{
+					Task: ai.TaskTag, Fingerprint: tagFP, Limit: 200,
+				}); err != nil && !errors.Is(err, context.Canceled) {
+					fmt.Fprintln(stderr, "ai tag gap scan:", err)
+				}
+			}
+			if cfg.AI.Caption.Enabled {
+				if _, err := gs.Scan(ctx, gapscanner.ScanRequest{
+					Task: ai.TaskCaption, Fingerprint: capFP, Limit: 200,
+				}); err != nil && !errors.Is(err, context.Canceled) {
+					fmt.Fprintln(stderr, "ai caption gap scan:", err)
+				}
 			}
 		}
 	}

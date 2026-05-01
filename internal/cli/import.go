@@ -11,6 +11,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wesm/fotobank/internal/ai"
+	"github.com/wesm/fotobank/internal/ai/imginput"
+	"github.com/wesm/fotobank/internal/ai/jobs"
+	aiprompts "github.com/wesm/fotobank/internal/ai/prompts"
+	"github.com/wesm/fotobank/internal/ai/skipped"
 	"github.com/wesm/fotobank/internal/config"
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/errs"
@@ -130,6 +135,32 @@ func runImport(ctx context.Context, opts importOpts) error {
 		return fmt.Errorf("load geo gazetteer: %w", err)
 	}
 	imp := ingest.NewImporter(storeLayer, repo, places)
+
+	// Wire the production AIEnqueuer so an offline import auto-enqueues
+	// for AI processing. The fingerprints capture the active (model,
+	// prompt, profile) triple at boot; if [ai].enabled is false the
+	// worker pool is dormant but enqueued rows will be processed once
+	// the operator flips the flag.
+	aiQueue := jobs.NewQueue(d.WriteDB(), d.ReadDB())
+	aiSkippedRepo := skipped.NewRepo(d.WriteDB(), d.ReadDB())
+	tagPrompt := aiprompts.Tag()
+	captionPrompt := aiprompts.Caption()
+	tagFP := ai.Fingerprint{
+		ModelID:       cfg.AI.Tag.Model,
+		PromptVersion: tagPrompt.Version,
+		InputProfile:  imginput.ProfileV1,
+	}
+	captionFP := ai.Fingerprint{
+		ModelID:       cfg.AI.Caption.Model,
+		PromptVersion: captionPrompt.Version,
+		InputProfile:  imginput.ProfileV1,
+	}
+	imp.SetAIEnqueuer(ingest.NewRealAIEnqueuer(
+		tagFP, captionFP,
+		aiQueue.Enqueue,
+		aiSkippedRepo.Record,
+	))
+
 	res, err := imp.ImportDirectory(ctx, opts.source, ingest.Options{
 		Owner:             owner,
 		ConcurrentWorkers: workers,
