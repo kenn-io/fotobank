@@ -28,12 +28,10 @@ func TestPromptHashesArePinned(t *testing.T) {
 	require.Equal(hashHex(tagP.Text), tagP.Hash)
 	require.Equal(hashHex(capP.Text), capP.Hash)
 
-	if want := pinned[tagP.Version]; want != "" {
-		require.Equalf(want, tagP.Hash, "tag prompt drifted from pinned hash (bump version)")
-	}
-	if want := pinned[capP.Version]; want != "" {
-		require.Equalf(want, capP.Hash, "caption prompt drifted from pinned hash (bump version)")
-	}
+	require.Containsf(pinned, tagP.Version, "tag prompt version %q has no pinned hash; add one to pinned", tagP.Version)
+	require.Equalf(pinned[tagP.Version], tagP.Hash, "tag prompt drifted from pinned hash (bump version)")
+	require.Containsf(pinned, capP.Version, "caption prompt version %q has no pinned hash; add one to pinned", capP.Version)
+	require.Equalf(pinned[capP.Version], capP.Hash, "caption prompt drifted from pinned hash (bump version)")
 }
 
 func hashHex(s string) string {
