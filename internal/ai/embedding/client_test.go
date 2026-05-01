@@ -136,3 +136,56 @@ func TestClient_5xxRetriedAndEventuallyTransient(t *testing.T) {
 	r.ErrorIs(err, embedding.ErrTransient)
 	r.GreaterOrEqual(hits.Load(), int32(2), "must retry once on 5xx")
 }
+
+// TestClient_ContextCancelDoesNotWrapAsTransient verifies that a
+// pre-cancelled context surfaces context.Canceled, not ErrTransient.
+// Wrapping the cancel as transient would make a deliberate shutdown
+// indistinguishable from a 5xx and cause callers to retry instead of
+// quietly stopping.
+func TestClient_ContextCancelDoesNotWrapAsTransient(t *testing.T) {
+	r := require.New(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Slow handler — should not be reached if cancellation works.
+		time.Sleep(50 * time.Millisecond)
+		_, _ = io.WriteString(w, `{"data":[{"embedding":`+vec(768, 0.1)+`,"index":0}],"model":"m"}`)
+	}))
+	defer srv.Close()
+
+	c := embedding.NewClient(embedding.Config{
+		Endpoint:  srv.URL + "/v1",
+		Model:     "m",
+		Dimension: 768,
+		Timeout:   5 * time.Second,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := c.EmbedImages(ctx, [][]byte{[]byte("x")})
+	r.Error(err)
+	r.ErrorIs(err, context.Canceled, "got %v", err)
+	r.NotErrorIs(err, embedding.ErrTransient, "must not be wrapped as transient")
+}
+
+// TestClient_DeadlineExceededDoesNotWrapAsTransient is the deadline twin
+// of the cancel test: a tiny per-call deadline that fires mid-flight
+// returns context.DeadlineExceeded, not ErrTransient.
+func TestClient_DeadlineExceededDoesNotWrapAsTransient(t *testing.T) {
+	r := require.New(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		_, _ = io.WriteString(w, `{"data":[{"embedding":`+vec(768, 0.1)+`,"index":0}],"model":"m"}`)
+	}))
+	defer srv.Close()
+
+	c := embedding.NewClient(embedding.Config{
+		Endpoint:  srv.URL + "/v1",
+		Model:     "m",
+		Dimension: 768,
+		Timeout:   5 * time.Second,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
+	defer cancel()
+	_, err := c.EmbedImages(ctx, [][]byte{[]byte("x")})
+	r.Error(err)
+	r.ErrorIs(err, context.DeadlineExceeded, "got %v", err)
+	r.NotErrorIs(err, embedding.ErrTransient, "must not be wrapped as transient")
+}

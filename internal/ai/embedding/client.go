@@ -134,9 +134,13 @@ func (c *Client) callOnce(ctx context.Context, input []string) ([][]float32, err
 
 	var lastErr error
 	for attempt := 0; attempt <= c.cfg.MaxRetries; attempt++ {
-		// Honor cancellation between attempts.
+		// Honor cancellation between attempts. Return the raw ctx
+		// error (context.Canceled / context.DeadlineExceeded) so
+		// callers can errors.Is(err, context.Canceled). Wrapping it
+		// behind ErrTransient would make the cancel indistinguishable
+		// from a 5xx and trigger needless retries upstream.
 		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrTransient, err)
+			return nil, err
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -150,6 +154,13 @@ func (c *Client) callOnce(ctx context.Context, input []string) ([][]float32, err
 
 		resp, err := c.http.Do(req)
 		if err != nil {
+			// If the error is the context's own (cancel or deadline),
+			// surface it unwrapped — matches the pre-loop check above
+			// and keeps errors.Is(err, context.Canceled) usable. Don't
+			// retry: the context isn't going to un-cancel.
+			if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
+				return nil, cerr
+			}
 			// Network errors are transient by policy.
 			lastErr = fmt.Errorf("%w: http do: %v", ErrTransient, err)
 			continue
