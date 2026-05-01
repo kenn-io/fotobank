@@ -28,6 +28,7 @@ func TestTranslateMapsSentinels(t *testing.T) {
 		{errs.ErrBadConfiguration, 500},
 		{errs.ErrLockedOut, 429},
 		{errs.ErrHiddenNotConfigured, 409},
+		{errs.ErrAcknowledgementRequired, 409},
 		{errors.New("random"), 500},
 	}
 	for _, c := range cases {

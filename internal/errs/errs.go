@@ -29,4 +29,9 @@ var (
 	// requested but no credential row exists for the principal.
 	// HTTP maps it to 409 on POST /media:hidden.
 	ErrHiddenNotConfigured = errors.New("hidden not configured")
+	// ErrAcknowledgementRequired is returned by AI write operations when
+	// the caller's principal has not yet acknowledged hidden-photo
+	// processing. HTTP maps it to 409 Conflict so the UI can prompt for
+	// the gate before retrying.
+	ErrAcknowledgementRequired = errors.New("acknowledgement required")
 )
