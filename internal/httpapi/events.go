@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wesm/fotobank/internal/owners"
@@ -26,6 +27,7 @@ type EventBus struct {
 	mu     sync.Mutex
 	bufs   map[owners.Principal]*ring
 	bufLen int
+	nextID atomic.Int64
 }
 
 // Event is a single SSE payload. ID is monotonic per principal (the
@@ -320,4 +322,60 @@ func writeSSE(w http.ResponseWriter, ev Event) {
 // id field leaves lastEventId unchanged for the dispatched message.
 func writeControlSSE(w http.ResponseWriter, eventType string, data json.RawMessage) {
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, string(data))
+}
+
+// NextID returns a fresh monotonic event id. Emit helpers
+// (e.g. EmitAICompleted) call NextID to construct Event values without
+// each tracking their own counter; tests that pre-seed the ring still
+// assign IDs explicitly.
+func (b *EventBus) NextID() int64 {
+	return b.nextID.Add(1)
+}
+
+// AI event names emitted on the SSE wire. The worker fires
+// EventNameAITagCompleted / EventNameAICaptionCompleted on terminal
+// job state and EventNameAIHealthChanged when reachability or queue
+// depth crosses a threshold (Q1 throttles the latter on the frontend).
+const (
+	EventNameAITagCompleted     = "ai.tag.completed"
+	EventNameAICaptionCompleted = "ai.caption.completed"
+	EventNameAIHealthChanged    = "ai.health.changed"
+)
+
+// AICompletedEvent is the payload for ai.tag.completed and
+// ai.caption.completed. Status is "done" or "failed"; ResultID is
+// populated only on success (the SPA uses it to fetch the new tags or
+// caption row via REST).
+type AICompletedEvent struct {
+	MediaID       string `json:"media_id"`
+	Task          string `json:"task"`
+	Status        string `json:"status"`
+	ModelID       string `json:"model_id"`
+	PromptVersion string `json:"prompt_version"`
+	InputProfile  string `json:"input_profile"`
+	ResultID      string `json:"result_id,omitempty"`
+}
+
+// AIHealthChangedEvent is the payload for ai.health.changed. Vision
+// reports gateway reachability; Tag and Caption carry per-task queue
+// counters so the SPA can refresh the status dot without polling.
+type AIHealthChangedEvent struct {
+	Vision  AIHealthVisionDelta `json:"vision"`
+	Tag     AIHealthTaskDelta   `json:"tag"`
+	Caption AIHealthTaskDelta   `json:"caption"`
+}
+
+// AIHealthVisionDelta is the vision-gateway slice of an
+// ai.health.changed payload.
+type AIHealthVisionDelta struct {
+	Reachable bool   `json:"reachable"`
+	LastError string `json:"last_error,omitempty"`
+}
+
+// AIHealthTaskDelta is the per-task slice of an ai.health.changed
+// payload (Pending = queued+running; FailedActive = failures inside
+// the active retry window).
+type AIHealthTaskDelta struct {
+	Pending      int `json:"pending"`
+	FailedActive int `json:"failed_active"`
 }
