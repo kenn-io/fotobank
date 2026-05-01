@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/wesm/fotobank/internal/ai/ack"
@@ -73,6 +74,44 @@ func NewActivator(ro *sql.DB, gens *Generations, a *ack.Store, events EventEmitt
 		ack:    a,
 		cfg:    cfg,
 		events: events,
+	}
+}
+
+// Run is the long-running activator loop driver. Each cfg.Tick it
+// invokes Tick once and logs (does not propagate) per-tick errors so a
+// transient SQL hiccup does not tear down the watcher. Returns nil on
+// ctx cancellation — matches the embed worker's Run shape so the server
+// can shut both down via the same context.
+//
+// Concurrency: Run is single-threaded by contract. v1 wires exactly
+// one activator per server (see activator.go file-level comment); the
+// loop preserves that contract by awaiting each Tick before scheduling
+// the next.
+func (a *Activator) Run(ctx context.Context) error {
+	t := time.NewTicker(a.cfg.Tick)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+			if err := a.Tick(ctx); err != nil {
+				// Doctrine: log and continue. A transient SQL error
+				// here (e.g. a brief lock contention spike) must not
+				// stop the activator — the next tick re-evaluates from
+				// scratch and the failed pass had no side effects
+				// because every write flows through Promote inside a
+				// single tx that rolls back on error.
+				//
+				// context.Canceled is the shutdown signal racing with a
+				// tick that was already in flight when the caller
+				// canceled; suppress it because the next loop iteration
+				// will observe ctx.Done() and return nil cleanly.
+				if !errors.Is(err, context.Canceled) {
+					slog.Default().Warn("embedding activator tick failed", "err", err)
+				}
+			}
+		}
 	}
 }
 
@@ -168,6 +207,26 @@ func (a *Activator) Tick(ctx context.Context) error {
 	}
 	a.events.EmitAIEmbedGenerationActivated(building.ID, building.Fingerprint)
 	return nil
+}
+
+// EligibleCount returns the eligible-media count under the §6.6 hidden
+// predicate (ackAllowsHidden=false), exposing the activator's own
+// counter to external callers — specifically the health aggregator,
+// which needs the same number to populate the embedding-generation
+// summary block. Reusing the activator's SQL keeps the panel's
+// "embedded / eligible" reading in lockstep with the activation
+// decision.
+func (a *Activator) EligibleCount(ctx context.Context) (int, error) {
+	return a.eligibleCount(ctx, false)
+}
+
+// EmbeddedCount returns the assertive (JOIN-derived) embedded-media
+// count for generationID under the §6.6 hidden predicate
+// (ackAllowsHidden=false). Mirrors EligibleCount for the same
+// rationale: the health aggregator needs the same recount the
+// activator's promote condition is built on.
+func (a *Activator) EmbeddedCount(ctx context.Context, generationID int64) (int, error) {
+	return a.embeddedCount(ctx, generationID, false)
 }
 
 // eligibleCount returns the count of media owned by the configured

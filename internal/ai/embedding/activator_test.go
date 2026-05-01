@@ -251,3 +251,55 @@ func TestActivator_AssertiveCount_IgnoresOrphanedMappings(t *testing.T) {
 		"recount under hidden predicate must yield 19/20 = 95% → promote")
 	r.Equal(int32(1), emitter.activated.Load())
 }
+
+// TestActivator_RunTicksAndCancels exercises the H2 long-running loop:
+// Run wakes every cfg.Tick, calls Tick, and returns nil when the
+// supplied context is canceled. The test seeds an over-threshold
+// generation so the first tick promotes — Run's correctness is
+// observable as either (a) the row flipping to active, or (b) the
+// emitter recording at least one activation event. Asserting on the
+// emitter is the more direct signal.
+func TestActivator_RunTicksAndCancels(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	r.NoError(ack.New(d.WriteDB(), d.ReadDB()).Acknowledge(ctx, owner))
+
+	// Stage data the very first tick will promote: 20 ready media, 19
+	// mapped (95%, exactly at the default cutoff).
+	mids := seedReadyMedia(t, d.WriteDB(), owner, 20)
+	emitter := &recordingEmitter{}
+	a, gens, _ := newActivator(t, d, owner, 95, emitter)
+	building, err := gens.FindOrCreateBuilding(ctx, activatorFP(), 768)
+	r.NoError(err)
+	for i := range 19 {
+		insertMappingRaw(t, d.WriteDB(), building.ID, mids[i], i+1)
+	}
+
+	// Cancel-on-cleanup so a panic in the goroutine driver below cannot
+	// leak the Run goroutine across test boundaries.
+	ctx2, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx2) }()
+
+	// Sleep long enough for at least one tick (cfg.Tick = 50ms in
+	// newActivator) to fire and promote the row. 200ms gives ~3 ticks of
+	// headroom on a slow CI host.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		r.NoError(err, "Run must return nil on ctx cancellation")
+	case <-time.After(time.Second):
+		r.FailNow("Run did not return within 1s of ctx cancel")
+	}
+
+	r.GreaterOrEqual(emitter.activated.Load(), int32(1),
+		"Run loop must have invoked Tick at least once and promoted the building generation")
+	r.Equal("active", genState(t, d, building.ID),
+		"the staged building row must have been promoted by Run's tick")
+}

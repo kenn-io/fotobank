@@ -24,9 +24,15 @@ import (
 // from the operator's [ai] config + Go-defined prompts at boot. The
 // service treats them as immutable for its lifetime; a config change
 // requires a process restart.
+//
+// Embed is the embed task's fingerprint — model + input profile, no
+// prompt version (embeddings have no prompt). Surfaced on the health
+// payload's EmbedTaskPart so the panel can display the active embed
+// model alongside tag/caption.
 type ConfigFingerprints struct {
 	Tag     ai.Fingerprint
 	Caption ai.Fingerprint
+	Embed   ai.Fingerprint
 }
 
 // Lookup returns the active fingerprint for a task.
@@ -36,6 +42,8 @@ func (c ConfigFingerprints) Lookup(t ai.Task) (ai.Fingerprint, bool) {
 		return c.Tag, true
 	case ai.TaskCaption:
 		return c.Caption, true
+	case ai.TaskEmbed:
+		return c.Embed, true
 	}
 	return ai.Fingerprint{}, false
 }
@@ -52,15 +60,23 @@ type MediaCheck interface {
 }
 
 // Deps bundles the collaborators the service needs.
+//
+// EmbeddingActivator and EmbeddingGenerations are optional — they are
+// nil when the embed surface is not wired (e.g. in tests that exercise
+// only tag/caption flows, or in deployments where ai.embed.enabled is
+// false at boot). The health aggregator degrades gracefully under nil
+// (empty generations list, no eligible recount).
 type Deps struct {
-	Queue              *jobs.Queue
-	Results            *results.Repo
-	Failures           *failures.Repo
-	Skipped            *skipped.Repo
-	Ack                *ack.Store
-	Gap                *gapscanner.Scanner
-	Media              MediaCheck
-	ConfigFingerprints ConfigFingerprints
+	Queue                *jobs.Queue
+	Results              *results.Repo
+	Failures             *failures.Repo
+	Skipped              *skipped.Repo
+	Ack                  *ack.Store
+	Gap                  *gapscanner.Scanner
+	Media                MediaCheck
+	ConfigFingerprints   ConfigFingerprints
+	EmbeddingActivator   EmbeddingActivatorIface
+	EmbeddingGenerations EmbeddingGenerationsLister
 }
 
 // Service is the auth-scoped AI service.
