@@ -15,10 +15,12 @@ func TestSemaphoreLimitsConcurrency(t *testing.T) {
 	sem := worker.NewVisionSemaphore(2)
 	var inflight, peak atomic.Int32
 
-	run := func() {
+	run := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		require.NoError(t, sem.Acquire(ctx))
+		if err := sem.Acquire(ctx); err != nil {
+			return err
+		}
 		defer sem.Release()
 		current := inflight.Add(1)
 		for {
@@ -28,14 +30,15 @@ func TestSemaphoreLimitsConcurrency(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 		inflight.Add(-1)
+		return nil
 	}
 
-	done := make(chan struct{})
+	errs := make(chan error, 10)
 	for range 10 {
-		go func() { run(); done <- struct{}{} }()
+		go func() { errs <- run() }()
 	}
 	for range 10 {
-		<-done
+		require.NoError(t, <-errs)
 	}
 	require.LessOrEqual(t, peak.Load(), int32(2))
 }
