@@ -636,6 +636,42 @@ func TestAlbumGetDetailsByIDsEmpty(t *testing.T) {
 	require.Empty(t, got)
 }
 
+// TestAlbumGetDetailsByIDsHiddenAwareCounts covers the batch path used by
+// shared-album listing. The assertion is the same contract as
+// ListByOwner / GetDetailByID: ItemCount counts visible rows only,
+// HiddenCount counts hidden rows, and the cover never comes from a
+// hidden row even when the hidden row has the most recent added_at.
+func TestAlbumGetDetailsByIDsHiddenAwareCounts(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "sk-bd")
+	a := seedAlbum(t, repo, p, "Batch")
+
+	v1 := uuid.NewString()
+	v2 := uuid.NewString()
+	h1 := uuid.NewString()
+	seedMediaRow(t, d.WriteDB(), p, v1, "cs-bd-v1", "ready", 1)
+	seedMediaRow(t, d.WriteDB(), p, v2, "cs-bd-v2", "ready", 1)
+	seedHiddenMediaRow(t, d.WriteDB(), p, h1, "cs-bd-h1")
+
+	base := time.Now().UTC()
+	seedAlbumMedia(t, d.WriteDB(), a.ID, v1, base)
+	seedAlbumMedia(t, d.WriteDB(), a.ID, v2, base.Add(time.Second))
+	// Hidden row added last — without the visible-only cover filter it
+	// would be selected by ROW_NUMBER ORDER BY added_at DESC.
+	seedAlbumMedia(t, d.WriteDB(), a.ID, h1, base.Add(2*time.Second))
+
+	got, err := repo.GetDetailsByIDs(context.Background(), []string{a.ID})
+	r.NoError(err)
+	r.Len(got, 1)
+	r.Equal(2, got[0].ItemCount, "visible count must be 2")
+	r.Equal(1, got[0].HiddenCount, "hidden count must be 1")
+	r.NotNil(got[0].Cover, "cover must come from visible row")
+	r.Equal(v2, got[0].Cover.MediaID, "hidden row must not be selected as cover")
+}
+
 func TestRepoListMediaImportedSort(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
