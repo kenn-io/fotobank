@@ -73,9 +73,11 @@ type WorkerDeps struct {
 // per cycle, persists vectors via Mapping into the active building
 // generation, and updates ai_jobs in lockstep.
 //
-// Concurrency: RunOnce is single-threaded. F3 will spawn N parallel
-// RunOnce goroutines once the run loop and housekeeping promotion
-// land; until then a single worker drains the queue serially.
+// Concurrency: RunOnce is single-threaded. Run is the long-running
+// loop driver — see Run for the cancellation contract. The wiring in
+// internal/cli/server.go (Task S1) instantiates Cfg.WorkerConcurrency
+// Run goroutines off the same Queue, all sharing this Worker shape;
+// generation targeting + lease leases are designed for that fan-out.
 type Worker struct{ d WorkerDeps }
 
 // NewWorker constructs a Worker. The caller is responsible for
@@ -104,6 +106,45 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 		}
 		if err := w.process(ctx, batch); err != nil {
 			return err
+		}
+	}
+}
+
+// Run is the long-running loop driver: each tick it promotes any
+// blocked-by-thumb embed jobs whose source media has reached
+// thumb_status='ready', then drains the queue via RunOnce. The ticker
+// fires every Cfg.IdlePoll on an empty queue so newly enqueued jobs
+// are picked up promptly without a constant SQL hammer when idle.
+//
+// Returns nil on ctx cancellation (graceful shutdown). RunOnce errors
+// that wrap context.Canceled are treated as cancellation; any other
+// error is propagated to the caller so a misconfiguration surfaces
+// rather than getting swallowed by the loop.
+func (w *Worker) Run(ctx context.Context) error {
+	t := time.NewTicker(w.d.Cfg.IdlePoll)
+	defer t.Stop()
+	for {
+		// Promote any rows that the chat-style "thumb blocked" sweep
+		// would otherwise leave parked. The embed worker owns its own
+		// task's promotion because the chat worker only iterates over
+		// its configured task (tag or caption) — there is no central
+		// housekeeping site that knows about ai.TaskEmbed.
+		if _, err := w.d.Q.PromoteThumbReadyBlocked(ctx, ai.TaskEmbed); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return fmt.Errorf("promote thumb-ready blocked: %w", err)
+		}
+		if err := w.RunOnce(ctx); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return fmt.Errorf("RunOnce: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
 		}
 	}
 }

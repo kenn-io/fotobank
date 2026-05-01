@@ -76,6 +76,7 @@ func TestConfig_EmbedDefaultsApply(t *testing.T) {
 	r.Equal(32, c.Embed.BatchSize)
 	r.Equal(1, c.Embed.MaxRetries)
 	r.Equal(10*time.Second, c.Embed.Timeout)
+	r.Equal(2*time.Second, c.Embed.IdlePoll)
 }
 
 // TestConfig_EmbedOnlyConfigDoesNotRequireVisionEndpoint covers the

@@ -66,6 +66,11 @@ type EmbedConfig struct {
 	BatchSize         int           `toml:"batch_size"`
 	MaxRetries        int           `toml:"max_retries"`
 	Timeout           time.Duration `toml:"timeout"`
+	// IdlePoll controls how often the worker's Run loop wakes when the
+	// queue is empty. Default is 2s — short enough that a freshly
+	// enqueued job is picked up promptly, long enough that an idle
+	// deployment isn't constantly hammering ai_jobs.
+	IdlePoll time.Duration `toml:"idle_poll"`
 }
 
 // APIKey resolves the bearer token from the env var named in APIKeyEnv.
@@ -108,6 +113,9 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.Embed.Timeout <= 0 {
 		c.Embed.Timeout = 10 * time.Second
+	}
+	if c.Embed.IdlePoll <= 0 {
+		c.Embed.IdlePoll = 2 * time.Second
 	}
 }
 

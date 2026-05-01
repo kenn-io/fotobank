@@ -9,6 +9,7 @@ import (
 	"image/jpeg"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -29,13 +30,16 @@ func embedFP() ai.Fingerprint {
 	}
 }
 
-// embedCfg is the minimal EmbedConfig the worker consumes.
+// embedCfg is the minimal EmbedConfig the worker consumes. IdlePoll is
+// short so the Run-loop test can observe a tick without padding the
+// suite with multi-second waits.
 func embedCfg() ai.EmbedConfig {
 	return ai.EmbedConfig{
 		Model:     "siglip2",
 		Dimension: 768,
 		InputEdge: 384,
 		BatchSize: 32,
+		IdlePoll:  10 * time.Millisecond,
 	}
 }
 
@@ -348,6 +352,101 @@ func TestWorker_PartialFailureRerunsSingles(t *testing.T) {
 	for _, m := range mids {
 		r.Equal("failed", jobStatus(t, d, m, ai.TaskEmbed))
 		r.False(mappingExists(t, d, gen.ID, m), "no mapping for %s on partial failure", m)
+	}
+}
+
+// TestWorker_RunDrainsQueueAndExitsOnCancel covers the F3 long-running
+// loop: Run drains a queued job before the first idle tick fires and
+// returns nil when the supplied context is cancelled. Verifies that
+// the loop's cancellation path is the graceful one (no error returned)
+// and that RunOnce-equivalent work proceeds before the ticker has any
+// chance to fire.
+func TestWorker_RunDrainsQueueAndExitsOnCancel(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
+	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
+	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
+	w, q, gens := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+
+	fp := embedFP()
+	r.NoError(q.Enqueue(ctx, mid, ai.TaskEmbed, fp))
+
+	// Resolve the building generation up-front so the assertion can
+	// check the mapping under the same gen the worker writes into.
+	gen, err := gens.FindOrCreateBuilding(ctx, fp, embedCfg().Dimension)
+	r.NoError(err)
+
+	ctx2, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx2) }()
+
+	r.Eventually(func() bool {
+		return mappingExists(t, d, gen.ID, mid)
+	}, 5*time.Second, 25*time.Millisecond, "Run loop should drain the queued job")
+
+	cancel()
+	select {
+	case err := <-done:
+		r.NoError(err, "Run should return nil on context cancel")
+	case <-time.After(2 * time.Second):
+		r.Fail("Run did not return after cancel within 2s")
+	}
+}
+
+// TestWorker_RunPromotesThumbReadyBlocked covers the F3 housekeeping
+// promotion: a job that was MarkBlocked because thumb_status was
+// 'pending' must be re-promoted by the Run loop's pre-RunOnce sweep
+// once the source media flips to 'ready'. The worker then drains the
+// promoted row in the same loop iteration.
+func TestWorker_RunPromotesThumbReadyBlocked(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
+	// First pass: thumb_status='pending' so the worker parks the job.
+	resolver := &fakeResolver{defaultStatus: "pending"}
+	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
+	w, queue, gens := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+
+	fp := embedFP()
+	r.NoError(queue.Enqueue(ctx, mid, ai.TaskEmbed, fp))
+	r.NoError(w.RunOnce(ctx))
+	r.Equal("blocked", jobStatus(t, d, mid, ai.TaskEmbed))
+
+	// Second pass: flip the resolver to 'ready' and the media row's
+	// thumb_status to 'ready' so the promotion sweep matches. Then run
+	// the long-running loop and assert the previously blocked job
+	// drains through to 'done'.
+	resolver.defaultStatus = "ready"
+	resolver.defaultJPEG = mockJPEG
+	_, err := d.WriteDB().ExecContext(ctx,
+		`UPDATE media SET thumb_status='ready' WHERE id=?`, mid)
+	r.NoError(err)
+
+	gen, err := gens.FindOrCreateBuilding(ctx, fp, embedCfg().Dimension)
+	r.NoError(err)
+
+	ctx2, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx2) }()
+
+	r.Eventually(func() bool {
+		return mappingExists(t, d, gen.ID, mid)
+	}, 5*time.Second, 25*time.Millisecond, "Run should promote thumb-ready blocked and drain")
+	r.Equal("done", jobStatus(t, d, mid, ai.TaskEmbed))
+
+	cancel()
+	select {
+	case err := <-done:
+		r.NoError(err)
+	case <-time.After(2 * time.Second):
+		r.Fail("Run did not return after cancel within 2s")
 	}
 }
 
