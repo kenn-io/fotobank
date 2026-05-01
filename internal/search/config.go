@@ -3,6 +3,8 @@
 // service wiring land in later tasks.
 package search
 
+import "fmt"
+
 // Config is the [search] TOML block.
 type Config struct {
 	// KPerSignal caps the number of candidates pulled from each signal
@@ -34,4 +36,22 @@ func (c *Config) ApplyDefaults() {
 	if c.ActivationThresholdPct <= 0 {
 		c.ActivationThresholdPct = 95
 	}
+}
+
+// Validate checks that all values are in sensible ranges. Called by
+// the top-level config validator after ApplyDefaults.
+func (c *Config) Validate() error {
+	if c.KPerSignal <= 0 || c.KPerSignal > 10000 {
+		return fmt.Errorf("search.k_per_signal: must be in 1..10000 (got %d)", c.KPerSignal)
+	}
+	if c.RRFK <= 0 {
+		return fmt.Errorf("search.rrf_k: must be > 0 (got %d)", c.RRFK)
+	}
+	if c.RetainRetiredDays < 0 {
+		return fmt.Errorf("search.retain_retired_days: must be >= 0 (got %d)", c.RetainRetiredDays)
+	}
+	if c.ActivationThresholdPct < 1 || c.ActivationThresholdPct > 100 {
+		return fmt.Errorf("search.activation_threshold: must be in 1..100 (got %d)", c.ActivationThresholdPct)
+	}
+	return nil
 }

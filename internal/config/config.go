@@ -294,6 +294,9 @@ func (c *Config) Validate() error {
 	if err := c.AI.Validate(); err != nil {
 		return fmt.Errorf("%w: %s", errs.ErrBadConfiguration, err)
 	}
+	if err := c.Search.Validate(); err != nil {
+		return fmt.Errorf("%w: %s", errs.ErrBadConfiguration, err)
+	}
 	return nil
 }
 
