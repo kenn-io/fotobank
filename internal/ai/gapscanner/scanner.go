@@ -25,7 +25,6 @@ type ScanRequest struct {
 
 // Scanner walks media rows, classifies them, and enqueues jobs.
 type Scanner struct {
-	rw      *sql.DB
 	ro      *sql.DB
 	q       *jobs.Queue
 	results *results.Repo
@@ -33,8 +32,8 @@ type Scanner struct {
 }
 
 // New constructs a Scanner.
-func New(rw, ro *sql.DB, q *jobs.Queue, r *results.Repo, s *skipped.Repo) *Scanner {
-	return &Scanner{rw: rw, ro: ro, q: q, results: r, skipped: s}
+func New(ro *sql.DB, q *jobs.Queue, r *results.Repo, s *skipped.Repo) *Scanner {
+	return &Scanner{ro: ro, q: q, results: r, skipped: s}
 }
 
 // Scan returns the number of jobs enqueued.

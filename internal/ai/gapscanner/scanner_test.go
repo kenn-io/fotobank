@@ -32,7 +32,7 @@ func TestGapScannerEnqueuesMissingMedia(t *testing.T) {
 	r.NoError(resR.WriteTagResult(context.Background(), mids[0], fp, "h",
 		[]parse.Tag{{Key: "x", Label: "x", Rank: 1}}))
 
-	s := gapscanner.New(rw, ro, q, resR, skipR)
+	s := gapscanner.New(ro, q, resR, skipR)
 	n, err := s.Scan(context.Background(), gapscanner.ScanRequest{
 		Task: ai.TaskTag, Fingerprint: fp, Force: false, Limit: 100,
 	})
@@ -59,7 +59,7 @@ func TestGapScannerForceIncludesActiveMedia(t *testing.T) {
 	r.NoError(resR.WriteTagResult(context.Background(), mids[0], fp, "h",
 		[]parse.Tag{{Key: "x", Label: "x", Rank: 1}}))
 
-	s := gapscanner.New(rw, ro, q, resR, skipR)
+	s := gapscanner.New(ro, q, resR, skipR)
 	n, err := s.Scan(context.Background(), gapscanner.ScanRequest{
 		Task: ai.TaskTag, Fingerprint: fp, Force: true, Limit: 100,
 	})
@@ -82,7 +82,7 @@ func TestGapScannerSkipsVideoAndRecordsSkip(t *testing.T) {
 	skipR := skipped.NewRepo(rw, ro)
 	fp := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
 
-	s := gapscanner.New(rw, ro, q, resR, skipR)
+	s := gapscanner.New(ro, q, resR, skipR)
 	n, err := s.Scan(context.Background(), gapscanner.ScanRequest{
 		Task: ai.TaskTag, Fingerprint: fp, Force: false, Limit: 100,
 	})

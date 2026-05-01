@@ -27,7 +27,7 @@ func makeServiceWithDB(t *testing.T) (*aiservice.Service, *sql.DB) {
 	failR := failures.NewRepo(rw, ro)
 	skipR := skipped.NewRepo(rw, ro)
 	ackS := ack.New(rw, ro)
-	gs := gapscanner.New(rw, ro, q, resR, skipR)
+	gs := gapscanner.New(ro, q, resR, skipR)
 
 	return aiservice.New(aiservice.Deps{
 		Queue: q, Results: resR, Failures: failR, Skipped: skipR,
