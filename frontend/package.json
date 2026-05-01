@@ -13,7 +13,7 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "bun run check && bunx tsc --noEmit -p ./tsconfig.json",
     "test": "vitest run",
-    "pretest:e2e": "cd .. && make frontend && mkdir -p tmp && go build -o tmp/e2e-server ./cmd/e2e-server",
+    "pretest:e2e": "cd .. && make frontend && mkdir -p tmp && go build -tags sqlite_fts5 -o tmp/e2e-server ./cmd/e2e-server",
     "test:e2e": "playwright test --config=playwright-e2e.config.ts"
   },
   "dependencies": {
