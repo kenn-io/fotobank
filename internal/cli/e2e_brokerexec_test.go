@@ -14,8 +14,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/wesm/fotobank/internal/cli"
 	"github.com/wesm/fotobank/internal/testutil/brokerhelper"
 )
@@ -214,7 +212,7 @@ admin_listen = "127.0.0.1:0"
 // don't block writers in WAL mode.
 func readScopeStatus(t *testing.T, dbPath, uuid string) string {
 	t.Helper()
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(t, err)
 	defer db.Close()
 
@@ -233,7 +231,7 @@ func readScopeStatus(t *testing.T, dbPath, uuid string) string {
 // scopes row is non-NULL.
 func requireProgressSet(t *testing.T, dbPath, uuid string, cols ...string) {
 	t.Helper()
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(t, err)
 	defer db.Close()
 

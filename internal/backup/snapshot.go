@@ -7,8 +7,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-
-	_ "modernc.org/sqlite"
 )
 
 // Snapshot writes a defragmented self-contained copy of db's contents to
@@ -64,7 +62,7 @@ func SnapshotPath(ctx context.Context, srcDB, dst string) error {
 		return fmt.Errorf("stat source DB: %w", err)
 	}
 	dsn := buildDSN(srcDB)
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return fmt.Errorf("open source DB: %w", err)
 	}
@@ -90,8 +88,8 @@ func buildDSN(path string) string {
 	u := url.URL{Scheme: "file", Path: abs}
 	q := u.Query()
 	q.Set("mode", "rw")
-	q.Add("_pragma", "busy_timeout(5000)")
-	q.Add("_pragma", "foreign_keys(1)")
+	q.Add("_busy_timeout", "5000")
+	q.Add("_fk", "1")
 	u.RawQuery = q.Encode()
 	return u.String()
 }

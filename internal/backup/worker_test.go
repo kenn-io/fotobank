@@ -15,7 +15,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/wesm/fotobank/internal/obs"
-	_ "modernc.org/sqlite"
 )
 
 // syncBuf wraps bytes.Buffer with a mutex so a slog handler running in
@@ -42,7 +41,7 @@ func TestWorkerRunsTickAndExitsOnContextCancel(t *testing.T) {
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "src.sqlite")
 	makeSourceDB(t, src)
-	db, err := sql.Open("sqlite", src+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite3", src+"?_busy_timeout=5000&_fk=1")
 	r.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -73,7 +72,7 @@ func TestWorkerLogsSnapshotSuccessFields(t *testing.T) {
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "src.sqlite")
 	makeSourceDB(t, src)
-	db, err := sql.Open("sqlite", src+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite3", src+"?_busy_timeout=5000&_fk=1")
 	r.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -128,7 +127,7 @@ func TestWorkerStaleWarningSuppression(t *testing.T) {
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "src.sqlite")
 	makeSourceDB(t, src)
-	db, err := sql.Open("sqlite", src+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite3", src+"?_busy_timeout=5000&_fk=1")
 	r.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -160,7 +159,7 @@ func TestWorkerEmitsMetricsAndPushesLastSuccess(t *testing.T) {
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "src.sqlite")
 	makeSourceDB(t, src)
-	db, err := sql.Open("sqlite", src+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite3", src+"?_busy_timeout=5000&_fk=1")
 	r.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -198,7 +197,7 @@ func TestWorkerEmitsFailedSnapshotMetric(t *testing.T) {
 	tmp := t.TempDir()
 	// Use a missing source DB — Snapshot will fail.
 	src := filepath.Join(tmp, "missing.sqlite")
-	db, err := sql.Open("sqlite", "file:"+src+"?mode=rw")
+	db, err := sql.Open("sqlite3", "file:"+src+"?mode=rw")
 	r.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -231,7 +230,7 @@ func TestWorkerLogsCarryComponent(t *testing.T) {
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "src.sqlite")
 	makeSourceDB(t, src)
-	db, err := sql.Open("sqlite", src+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite3", src+"?_busy_timeout=5000&_fk=1")
 	r.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 

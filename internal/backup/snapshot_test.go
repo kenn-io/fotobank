@@ -11,13 +11,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 )
 
 // makeSourceDB creates a tiny SQLite DB at path with one table and one row.
 func makeSourceDB(t *testing.T, path string) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite3", path+"?_busy_timeout=5000&_fk=1")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	_, err = db.Exec("CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (42);")
@@ -27,7 +26,7 @@ func makeSourceDB(t *testing.T, path string) *sql.DB {
 
 func integrityOk(t *testing.T, path string) bool {
 	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	db, err := sql.Open("sqlite3", "file:"+path+"?mode=ro")
 	require.NoError(t, err)
 	defer db.Close()
 	var s string

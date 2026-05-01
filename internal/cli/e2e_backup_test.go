@@ -14,8 +14,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/wesm/fotobank/internal/cli"
 )
 
@@ -211,7 +209,7 @@ func TestE2EBackupWorkerProducesSnapshot(t *testing.T) {
 	r.NotEmpty(newest)
 	snapPath := filepath.Join(snapDir, newest)
 
-	d, err := sql.Open("sqlite", "file:"+snapPath+"?mode=ro")
+	d, err := sql.Open("sqlite3", "file:"+snapPath+"?mode=ro")
 	r.NoError(err)
 	t.Cleanup(func() { _ = d.Close() })
 	var s string

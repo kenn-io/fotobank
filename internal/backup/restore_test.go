@@ -10,12 +10,11 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
 )
 
 func makeBaselineDB(t *testing.T, path string) {
 	t.Helper()
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite3", path+"?_busy_timeout=5000&_fk=1")
 	require.NoError(t, err)
 	defer db.Close()
 	// Mirror what db.Open would do in production: enable WAL, run a
@@ -31,7 +30,7 @@ func makeBaselineDB(t *testing.T, path string) {
 
 func putRow(t *testing.T, dbPath, k, v string) {
 	t.Helper()
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(t, err)
 	defer db.Close()
 	_, err = db.Exec("INSERT OR REPLACE INTO example(k, v) VALUES (?, ?)", k, v)
@@ -40,7 +39,7 @@ func putRow(t *testing.T, dbPath, k, v string) {
 
 func readRow(t *testing.T, dbPath, k string) string {
 	t.Helper()
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(t, err)
 	defer db.Close()
 	var v string
@@ -265,7 +264,7 @@ func TestValidateSnapshotRejectsEmptySchema(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
 	snap := filepath.Join(tmp, "empty-schema.sqlite")
-	d, err := sql.Open("sqlite", snap+"?_pragma=busy_timeout(5000)")
+	d, err := sql.Open("sqlite3", snap+"?_busy_timeout=5000")
 	r.NoError(err)
 	// Force the DB file to materialize without creating any tables.
 	_, err = d.ExecContext(context.Background(), "PRAGMA user_version=0")
@@ -284,7 +283,7 @@ func TestValidateSnapshotRejectsUnrelatedSQLite(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
 	snap := filepath.Join(tmp, "unrelated.sqlite")
-	d, err := sql.Open("sqlite", snap+"?_pragma=busy_timeout(5000)")
+	d, err := sql.Open("sqlite3", snap+"?_busy_timeout=5000")
 	r.NoError(err)
 	_, err = d.ExecContext(context.Background(),
 		"CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)")

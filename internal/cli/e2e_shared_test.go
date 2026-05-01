@@ -16,8 +16,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/wesm/fotobank/internal/cli"
 )
 
@@ -322,8 +320,8 @@ func waitForSink(t *testing.T, path string) string {
 func bumpScopeActive(t *testing.T, dbPath, scopeUUID string, now time.Time) {
 	t.Helper()
 	r := require.New(t)
-	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-	d, err := sql.Open("sqlite", dsn)
+	dsn := dbPath + "?_busy_timeout=5000&_fk=1"
+	d, err := sql.Open("sqlite3", dsn)
 	r.NoError(err)
 	t.Cleanup(func() { _ = d.Close() })
 

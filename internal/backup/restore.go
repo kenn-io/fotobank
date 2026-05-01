@@ -200,7 +200,7 @@ func ValidateSnapshot(ctx context.Context, path string) error {
 		return fmt.Errorf("%s is zero bytes (not a SQLite database)", path)
 	}
 	dsn := buildDSN(path)
-	d, err := sql.Open("sqlite", dsn)
+	d, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return fmt.Errorf("open snapshot: %w", err)
 	}
