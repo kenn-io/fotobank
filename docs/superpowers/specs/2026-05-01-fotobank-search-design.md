@@ -69,10 +69,11 @@ This is a coordinated edit across roughly twelve sites. The plan tracks it as a 
 
 ### 5.2 New `media.lens_model` column
 
-Today's schema captures `make`, `model`, and `focal_length` but not a lens model. The §7 lexical-search surface promises a `lens` column, and indexing `focal_length` as if it were a lens name produces dishonest diagnostics. The migration adds:
+Today's schema captures `make`, `model`, and `focal_length` but not a lens model. The §7 lexical-search surface promises a `lens` column, and indexing `focal_length` as if it were a lens name produces dishonest diagnostics. Per the pre-alpha edit-in-place policy, this is added directly to the `CREATE TABLE media` definition (and mirrored in the down file's reverse drop) — not via `ALTER TABLE`:
 
 ```sql
-ALTER TABLE media ADD COLUMN lens_model TEXT;
+-- inside CREATE TABLE media (...)
+lens_model        TEXT,
 ```
 
 Populated at import time by reading the EXIF `LensModel` tag (`internal/exifread/`) and at reconcile time for existing rows on a one-time pass. `focal_length` stays as a separate column and is **not** included in the FTS corpus until a future structured focal-length filter requests it.
@@ -104,18 +105,44 @@ CREATE UNIQUE INDEX embedding_generations_one_building
 
 `fingerprint`, `fingerprint_hash`, `model_id`, and `input_profile` are all denormalized so a row dump tells the operator immediately what was being indexed, without rehydrating from a hash table elsewhere. Partial unique indexes ensure at most one `active` and at most one `building` generation at any time.
 
-### 5.4 Per-generation vec tables
+### 5.4 Per-generation vec tables and the media-id mapping
 
-Created at generation creation time by `internal/search/index.CreateGeneration`:
+`vec0` does not support `INSERT OR REPLACE` and prefers integer rowid keys (msgvault uses this same pattern in `internal/vector/sqlitevec/backend.go`). Two tables work together — one stable mapping from `media_id` to a per-generation integer `vec_id`, and one vec0 table keyed by that integer.
+
+```sql
+-- one row per (generation, media); vec_id is the rowid used inside the vec0 table
+CREATE TABLE media_embedding_ids (
+    generation_id INTEGER NOT NULL REFERENCES embedding_generations(id) ON DELETE CASCADE,
+    media_id      UUID    NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    vec_id        INTEGER NOT NULL,
+    PRIMARY KEY (generation_id, media_id),
+    UNIQUE (generation_id, vec_id)
+);
+CREATE INDEX media_embedding_ids_media_idx
+    ON media_embedding_ids(media_id);
+```
+
+`vec_id` is allocated by the embedding worker as `MAX(vec_id)+1` per generation inside the same write transaction (or 1 when the table is empty for that generation). Per-generation virtual table:
 
 ```sql
 CREATE VIRTUAL TABLE media_embeddings_g<id> USING vec0(
-    media_id TEXT PRIMARY KEY,
+    vec_id INTEGER PRIMARY KEY,
     embedding FLOAT[<dim>]
 );
 ```
 
-The only safe-eval surface is `vec_table_name`, generated as `"media_embeddings_g" + strconv.FormatInt(id, 10)` — never user-supplied. The retire path (§7.6) drops this table on the compaction window expiry; the `embedding_generations` row sticks around with `state='retired'` until compaction removes both atomically.
+**Write path (delete-then-insert; vec0 does not allow `INSERT OR REPLACE`):**
+1. `DELETE FROM media_embedding_ids WHERE generation_id = ? AND media_id = ?` (drops any prior `vec_id` for this media in this generation).
+2. `DELETE FROM media_embeddings_g<id> WHERE vec_id = ?` for any prior `vec_id` that came back from step 1.
+3. Allocate a fresh `vec_id`.
+4. `INSERT INTO media_embedding_ids (generation_id, media_id, vec_id) VALUES (?, ?, ?)`.
+5. `INSERT INTO media_embeddings_g<id> (vec_id, embedding) VALUES (?, vec_f32(?))`.
+
+All five statements run in one transaction with the `ai_jobs` status updates and the cached `embedded_count` increment.
+
+**Read path** (the FusedSearch composed query) joins `media_embedding_ids` ↔ `media_embeddings_g<id>` on `vec_id` and projects `media_id` for the result row.
+
+The only safe-eval surface is `vec_table_name`, generated as `"media_embeddings_g" + strconv.FormatInt(id, 10)` — never user-supplied. The retire path drops the vec table on the compaction window expiry; the `embedding_generations` row + its `media_embedding_ids` rows stick around with `state='retired'` until compaction removes both atomically (the FK cascade from `embedding_generations.id` handles `media_embedding_ids` cleanup automatically).
 
 ### 5.5 `media_fts` — FTS5 lexical index
 
@@ -166,7 +193,7 @@ END;
 
 ### 5.7 Search-supporting indexes — minimal, no duplication
 
-The structured filters in §7 are date, tag, location, media type. Existing indexes already cover the date dimension (`media_owner_timestamp_idx`, `media_visible_idx`). Tag-filter resolution joins through `media_tags` (already indexed via `media_tags_key_idx`). Location resolution is a substring match against `location_label` — accepted as a small-row scan in v1, no new index. Only the missing media-type index is added:
+The structured filters in §7 are date, tag, location, media type. Existing indexes already cover the date dimension (`media_owner_timestamp_idx`, `media_visible_idx`). Tag-filter resolution joins through `media_tags` (already indexed via `media_tags_key_idx`). Location resolution is **exact-match** against `location_label` (the chip carries a label resolved through the autocomplete endpoint; substring matching lives only in autocomplete). Equality on `location_label` is cheap at personal-library scale, no new index. Only the missing media-type index is added:
 
 ```sql
 CREATE INDEX media_owner_type_idx
@@ -199,7 +226,17 @@ The triple `(model_id, "" /* no prompt */, "jpeg-<edge>-q85-metadata-stripped-em
 { "input": ["data:image/jpeg;base64,<bytes>", "..."], "model": "<embed_model_id>" }
 ```
 
-Response is an array of `{embedding: [...], index: int}` objects in input order. The client validates that each returned vector's dimension matches the configured `[ai.embed].dimension`; mismatched dimensions fail the batch with `ErrKindMalformed` (re-running won't help — it's a config drift).
+Response is the standard OpenAI-compat object envelope:
+```json
+{
+  "data": [
+    { "embedding": [0.123, -0.456, ...], "index": 0 },
+    { "embedding": [...], "index": 1 }
+  ],
+  "model": "<embed_model_id>"
+}
+```
+The `data` array preserves input order via the `index` field. The client validates that each returned vector's dimension matches the configured `[ai.embed].dimension`; mismatched dimensions fail the batch with `ErrKindMalformed` (re-running won't help — it's a config drift).
 
 The same client also embeds plain text queries at search time:
 
@@ -224,7 +261,7 @@ Loop:
    - `thumb_status='ready'` with a missing or unreadable preview blob → retryable failure (`ErrKindMissingBlob` or `provider_4xx`-classed failure). Counted against the per-photo retry budget. Not a skip — the DB says the blob should exist.
 3. Preprocess the batch in parallel via `EncodeEmbed` (CPU-bound; bounded by GOMAXPROCS).
 4. Issue one batched `/v1/embeddings` call.
-5. Write vectors into the target generation's vec table — one `INSERT OR REPLACE INTO media_embeddings_g<id> (media_id, embedding) VALUES (?, vec_f32(?))` per row, all in one transaction with the job-status updates and the cached `embedded_count` increment.
+5. Write vectors into the target generation using the §5.4 delete-then-insert pattern (`media_embedding_ids` mapping write + `media_embeddings_g<id>` row write per photo), all batched in one transaction with the `ai_jobs` status updates and the cached `embedded_count` increment.
 6. On partial failure (some response indices missing): re-run the failed indices as singles to attribute the failure to specific photos.
 7. On full-batch failure: mark every job in the batch as failed with `attempts++`; the queue's existing per-photo retry budget logic applies.
 
@@ -257,7 +294,7 @@ SELECT m.id FROM media m
    AND NOT EXISTS (
      SELECT 1 FROM ai_failures f
       WHERE f.media_id = m.id AND f.task = 'embed'
-        AND f.model_id = ? AND f.input_profile = ?
+        AND f.model_id = ? AND f.prompt_version = '' AND f.input_profile = ?
         AND f.attempt_count >= ?               -- retry budget
    )
    AND NOT EXISTS (
@@ -273,7 +310,7 @@ The active-or-building generation id is resolved once per scanner pass. Two sepa
 
 ### 6.7 Auto-enqueue triggers
 
-- **On import.** Alongside the existing tag + caption enqueue in the importer, add embed enqueue. If `thumb_status != 'ready'`, defer all three until the thumb worker promotes the row (existing pattern via the `ai.thumb.ready` event listener).
+- **On import.** Alongside the existing tag + caption enqueue in the importer, add embed enqueue. The existing pattern is: jobs enqueue regardless of thumb readiness, the worker `MarkBlocked`s a job whose preview isn't ready (last_error tagged `thumb_blocked`), and the housekeeping tick calls `Queue.PromoteThumbReadyBlocked(ctx, task)` to flip blocked → pending once the thumb worker reports the row ready. Embed reuses this pattern verbatim — extend the housekeeping promotion call to iterate `embed` alongside `tag` and `caption`.
 - **On thumb regen** (`thumb_version` bump). Delete the media's vector from **every non-retired generation** — both `active` and `building` rows might hold a vector for the same media during a swap. Then re-enqueue the embed job. There is no `stale` analogue for vectors; during the rebuild window for a single photo, that photo is absent from the vector index (lexical-only). Cheap and simple.
 - **On config fingerprint swap.** The gap scanner notices a fingerprint with no active or building generation and creates a fresh `building` generation. The scanner then enqueues embed jobs for every eligible media against the new generation.
 - **On model swap mid-build.** If the user changes config again while a build is in progress, the in-progress building generation gets retired (no activation). A new building generation is created against the new fingerprint, and the gap scanner re-enqueues. The retired-but-never-activated generation's vec table is dropped on the next compaction sweep.
@@ -281,6 +318,8 @@ The active-or-building generation id is resolved once per scanner pass. Two sepa
 ### 6.8 Activation coordinator
 
 `internal/ai/embedding/activator.go` runs as a small periodic tick (default 30 s) inside the AI worker process.
+
+**Single-principal scope (v1).** Embedding generations are global (one active vec table at a time across the whole DB), but eligibility and activation are evaluated against a **single configured principal** — the stub-mode owner registered in `[identity.stub]`. This matches phase 1 of the master vision (`identity.mode = "stub"`) and the existing AI-worker assumption. Multi-principal activation (where one owner can't cross the threshold while another is mostly unindexed) is explicitly deferred to the same future spec that activates multi-principal AI workers more broadly.
 
 ```dot
 digraph activator {
@@ -369,7 +408,11 @@ Response:
 {
   "results": [{
     "media_id":      "...",
-    "timestamp":     "2025-04-12T18:30:11Z",
+    "media_type":    "photo",            // "photo" | "video"
+    "timestamp":     "2025-04-12T18:30:11Z",  // null if EXIF lacked a capture date
+    "imported_at":   "2025-04-12T19:02:55Z",  // never null; date-sort tiebreaker
+    "width":         4032,                 // null when EXIF lacked dimensions; client falls back to a default aspect
+    "height":        3024,
     "thumb_version": 3,
     "score":         0.0156,            // present on relevance sort
     "score_components": {                // present iff explain=true and user_settings allows
@@ -383,12 +426,16 @@ Response:
   "next_cursor": "...",                  // null when no more
   "has_more":    true,
   "total":       142,                    // present only on filter-only or date-sorted queries
-  "embedding_completeness": 0.97,        // active generation embedded/eligible
-  "semantic_unavailable":  false         // true when no active generation
+  "embedding_completeness": 0.97,        // active generation embedded/eligible — computed under
+                                         // the same hidden predicate as the request
+  "semantic_unavailable":          false,// true when no active generation OR query embedding failed
+  "semantic_unavailable_reason":   ""    // "" | "no_active_generation" | "query_embedding_failed"
 }
 ```
 
-The result row embeds enough for the grid to render directly — no N+1 follow-up `/api/v1/media/{id}` fetch per cell. The full media payload (EXIF, GPS, AI tags + caption) is fetched only when the user opens a result in the lightbox.
+The result row embeds everything the existing justified-row grid needs to render a cell directly — `media_type`, `width`/`height` (for `aspect = width/height` per `frontend/src/lib/grid/justifiedLayout.ts`), `timestamp` and `imported_at` for date-sort cursor stability, and `thumb_version` for cache-busting the thumb URL. No N+1 follow-up `/api/v1/media/{id}` fetch per cell. The full media payload (EXIF, GPS, AI tags + caption) is fetched only when the user opens a result in the lightbox.
+
+**Hidden-aware count semantics.** `embedding_completeness` is computed under the **same hidden predicate** as the request that produced it. A request without unlock claim sees `embedded / eligible` over visible photos only; a request with `include_hidden=true` plus unlock claim sees the count over all photos. The numerator and denominator must agree on the predicate so the pill never reveals hidden-only embedding progress to a locked session.
 
 ### 7.2 Service layer
 
@@ -405,7 +452,8 @@ Decision tree per request:
 
 - **`q == "" && sort == "newest" | "oldest"`** → filter-only browse. Single SQL query against `media` with the structured filter; cursor is `(timestamp NULLS LAST, imported_at, id)`. No FTS5, no ANN, no scoring. Fast path; existing query patterns.
 - **`q != ""` and active generation present** → hybrid. Embed `q` once via the embedding client; build the FTS5 MATCH expression (§7.4); call `Backend.FusedSearch` (the sqlite-vec capability) with both signals + filter. Returns RRF-ordered hits. Cursor is `(rrf_score, media_id)`.
-- **`q != ""` and no active generation** → BM25-only. Same FTS5 MATCH expression, no vector signal. Response stamps `semantic_unavailable: true`. Cursor is `(bm25_score, media_id)`.
+- **`q != ""` and no active generation** → BM25-only. Same FTS5 MATCH expression, no vector signal. Response stamps `semantic_unavailable: true`, `semantic_unavailable_reason: "no_active_generation"`. Cursor is `(bm25_score, media_id)`.
+- **`q != ""`, active generation present, but `/v1/embeddings` fails for the query** (timeout, 5xx, network error) → degrade to BM25-only. Response stamps `semantic_unavailable: true`, `semantic_unavailable_reason: "query_embedding_failed"`. The whole request must not 500 just because the embedding endpoint is down — lexical results are still useful and arguably more deterministic. The error is logged once per request with the response code/body. The frontend banner copy distinguishes this from `no_active_generation`.
 - **`q != ""` and `sort != "relevance"`** → hybrid candidate selection (RRF top-K), then re-sort by `(timestamp NULLS LAST, imported_at, id)` for the page. The candidate pool is `KPerSignal * 2` (msgvault default 200) per signal so the date sort has enough candidates to fill the page cleanly.
 
 `KPerSignal` (default 200), `RRFK` (default 60), and the per-signal limits are config-tunable under `[search]`.
@@ -510,9 +558,10 @@ Segmented control: `Relevance | Newest | Oldest`. Defaults to Relevance when `q 
 
 - **Pill** in the search header: `2,143 / 2,981 indexed` — visible whenever `embeddingCompleteness < 1.0`. Hidden once fully indexed.
 - **Banner** above the results when `q != "" && embeddingCompleteness < 0.80 && !semanticUnavailable`. Banner text: *"Search is still indexing — semantic ranking covers X % of your library so far. Lexical results below."*
-- **Unavailable banner** when `semanticUnavailable === true` (no active generation): *"Semantic search is not yet available — your library is still being indexed for the first time."* One-time-dismissable per session.
+- **Unavailable banner — `no_active_generation`**: *"Semantic search is not yet available — your library is still being indexed for the first time."* One-time-dismissable per session.
+- **Unavailable banner — `query_embedding_failed`**: *"Semantic ranking is temporarily unavailable. Showing lexical results."* Auto-dismisses on the next successful query.
 
-The pill / banner reads from the search response payload directly, not from a separate health poll.
+The pill / banner reads from the search response payload directly, not from a separate health poll. Because both fields (`embedding_completeness`, `semantic_unavailable_reason`) come from the same hidden-aware service-layer call as the result rows, the pill never reveals hidden-only embedding progress to a locked session.
 
 ### 8.7 Diagnostics mode
 
@@ -520,13 +569,17 @@ Settings → "AI Inspection" toggle, persisted via `user_settings`. When enabled
 
 ## 9. Autocomplete endpoints
 
+**Both autocomplete endpoints honor the same hidden-context rules as the search route.** A request omits `include_hidden` (or sends `false`) and counts/labels are computed against visible-only media. A request with `include_hidden=true` requires a valid unlock claim; missing claim returns 403 generic. This applies to **tag autocomplete as well as location autocomplete** — without unlock, neither hidden-only tag occurrences nor hidden-only locations leak through suggestion counts or membership.
+
+**LIKE-input escaping.** The user-typed prefix/substring is run through a small escaper that doubles `%` and `_` and prefixes them with a backslash, then issues `LIKE ? ESCAPE '\'`. This prevents an injected wildcard from widening the match silently. (Same pattern the existing media filter substring matchers use.)
+
 ### 9.1 Tag autocomplete
 
 ```
-GET /api/v1/search/autocomplete/tags?q=<prefix>&limit=10
+GET /api/v1/search/autocomplete/tags?q=<prefix>&limit=10&include_hidden=false
 ```
 
-Returns up to 10 tag suggestions matching the prefix (case-insensitive `LIKE 'q%'`):
+Returns up to 10 tag suggestions matching the escaped prefix (case-insensitive `LIKE 'q%' ESCAPE '\'`):
 
 ```jsonc
 { "tags": [
@@ -535,7 +588,7 @@ Returns up to 10 tag suggestions matching the prefix (case-insensitive `LIKE 'q%
 ] }
 ```
 
-Owner-scoped. Resolved against `media_tags` joined to `ai_results` where `task='tag' AND status='active'`, deduped by `tag_key`, ordered by occurrence count descending. The chip stores `tag_key`; the UI renders `tag_label`.
+Owner-scoped. Resolved against `media_tags` joined to `ai_results` where `task='tag' AND status='active'`, plus a join to `media` carrying the hidden predicate. Counts are computed over the visible (or visible+hidden under unlock) subset. Deduped by `tag_key`, ordered by occurrence count descending. The chip stores `tag_key`; the UI renders `tag_label`.
 
 ### 9.2 Location autocomplete
 
@@ -543,7 +596,7 @@ Owner-scoped. Resolved against `media_tags` joined to `ai_results` where `task='
 GET /api/v1/search/autocomplete/locations?q=<substring>&limit=10&include_hidden=false
 ```
 
-Returns up to 10 distinct `location_label` values matching substring (case-insensitive `LIKE '%q%'`):
+Returns up to 10 distinct `location_label` values matching the escaped substring (case-insensitive `LIKE '%q%' ESCAPE '\'`):
 
 ```jsonc
 { "locations": [
@@ -552,7 +605,7 @@ Returns up to 10 distinct `location_label` values matching substring (case-insen
 ] }
 ```
 
-Owner-scoped. **Honors the same hidden-context rules as the search route**: `include_hidden=true` requires the unlock claim and returns 403 generic otherwise. Without unlock, hidden-only locations are filtered out so they do not leak through suggestions.
+Owner-scoped, hidden-aware via the same `include_hidden` + unlock-claim rule.
 
 Both endpoints are cheap and cached client-side per session.
 
@@ -605,6 +658,7 @@ New config block, sourced from the same TOML the existing `[ai.*]` blocks live i
 enabled            = true
 model              = "google/siglip2-base-patch16-384"   # configurable; must produce shared image-text embeddings
 endpoint           = "http://localhost:8080/v1"           # OpenAI-compat embeddings endpoint
+api_key_env        = ""                                    # optional env var name carrying a bearer token (hosted endpoints)
 dimension          = 768                                   # validated at boot
 input_edge         = 384                                   # JPEG resize edge before base64 encoding
 worker_concurrency = 1
@@ -618,6 +672,8 @@ rrf_k                = 60
 retain_retired_days  = 30
 activation_threshold = 95   # percent
 ```
+
+`api_key_env` is a new config field (not present today; the existing gateway code supports an `APIKey` runtime field but doesn't expose it via TOML). Empty disables the `Authorization` header (the local-inference default); non-empty names an env var whose value is sent as `Authorization: Bearer <value>`. Storing the secret in an env var rather than the TOML file keeps secrets out of the config file the operator commits. As a small adjacent change, the same field is added to `[ai.vision]` so both AI gateway clients have a consistent way to reach hosted endpoints.
 
 The `[ai.vision]` block (existing, drives the chat-completions gateway) and `[ai.embed]` block coexist; they may point at the same endpoint or different endpoints. Boot-time validation: dimension probe + image/text shared-space probe; failure aborts startup with a clear message.
 
