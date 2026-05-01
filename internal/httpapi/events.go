@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/wesm/fotobank/internal/owners"
@@ -23,11 +22,15 @@ import (
 // buffer's oldest entry get the missed events; clients whose
 // Last-Event-ID predates the buffer receive a synthetic
 // "catchup-required" event so they know to refetch state via REST.
+//
+// Event IDs are assigned per-principal under bus.mu so a subscriber
+// observes a strictly contiguous monotonic stream for its principal.
+// This keeps the Last-Event-ID gap check (lastID < oldestID-1) sound
+// when many principals are emitting concurrently.
 type EventBus struct {
 	mu     sync.Mutex
 	bufs   map[owners.Principal]*ring
 	bufLen int
-	nextID atomic.Int64
 }
 
 // Event is a single SSE payload. ID is monotonic per principal (the
@@ -42,10 +45,14 @@ type Event struct {
 // ring is a per-principal slot: the buffered events plus the active
 // subscriber channels. When events fills to bufLen, next is the
 // circular write index. subs is appended/sliced under EventBus.mu.
+// nextID is the next ID to hand out for this principal — kept here
+// (rather than as a global atomic) so subscribers see strictly
+// contiguous IDs even when other principals emit concurrently.
 type ring struct {
 	events []Event
 	next   int
 	subs   []chan Event
+	nextID int64
 }
 
 const eventBusBufLen = 256
@@ -70,9 +77,43 @@ func NewEventBusWithSize(bufLen int) *EventBus {
 // subscriber channel are dropped silently — the slow subscriber will
 // see "catchup-required" the next time it reconnects with a stale
 // Last-Event-ID, so the missed event is recoverable via REST.
+//
+// Tests are the primary callers of this form (they pre-seed events
+// with explicit IDs); production emit helpers use PublishAutoID.
 func (b *EventBus) Publish(p owners.Principal, ev Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.publishLocked(p, ev)
+	if ev.ID > b.bufs[p].nextID {
+		b.bufs[p].nextID = ev.ID
+	}
+}
+
+// PublishAutoID assigns a per-principal monotonic ID to a new event
+// inside the bus lock and publishes it. Returns the assigned ID. This
+// is the only emission path that production helpers should use — it
+// guarantees that subscribers observe events in the same order their
+// IDs were allocated, which is what the Last-Event-ID resume contract
+// depends on.
+func (b *EventBus) PublishAutoID(p owners.Principal, evType string, data json.RawMessage) int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	r := b.bufs[p]
+	if r == nil {
+		r = &ring{events: make([]Event, 0, b.bufLen)}
+		b.bufs[p] = r
+	}
+	r.nextID++
+	ev := Event{ID: r.nextID, Type: evType, Data: data}
+	b.publishLocked(p, ev)
+	return ev.ID
+}
+
+// publishLocked is the shared body used by Publish and PublishAutoID.
+// The caller must hold b.mu and must have already initialised the
+// principal's ring (PublishAutoID does this; Publish lets it happen
+// via the nil-check below for backward compatibility with tests).
+func (b *EventBus) publishLocked(p owners.Principal, ev Event) {
 	r := b.bufs[p]
 	if r == nil {
 		r = &ring{events: make([]Event, 0, b.bufLen)}
@@ -322,14 +363,6 @@ func writeSSE(w http.ResponseWriter, ev Event) {
 // id field leaves lastEventId unchanged for the dispatched message.
 func writeControlSSE(w http.ResponseWriter, eventType string, data json.RawMessage) {
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, string(data))
-}
-
-// NextID returns a fresh monotonic event id. Emit helpers
-// (e.g. EmitAICompleted) call NextID to construct Event values without
-// each tracking their own counter; tests that pre-seed the ring still
-// assign IDs explicitly.
-func (b *EventBus) NextID() int64 {
-	return b.nextID.Add(1)
 }
 
 // AI event names emitted on the SSE wire. The worker fires

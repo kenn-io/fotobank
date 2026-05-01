@@ -123,6 +123,72 @@ func TestEventBusSubscribeFromEmptyRing(t *testing.T) {
 	r.Equal(int64(0), oldestID, "empty ring reports oldestID=0")
 }
 
+// TestEventBusPublishAutoIDOrderUnderConcurrency confirms PublishAutoID
+// assigns IDs and appends to the ring under the same lock. Before the
+// fix, NextID was called outside Publish's lock, so concurrent emitters
+// could allocate IDs in one order and publish them in another — leaving
+// subscribers with a non-monotonic stream that broke Last-Event-ID
+// resume. The test fires N concurrent emits and asserts the buffered
+// stream is strictly increasing and contiguous from 1..N.
+func TestEventBusPublishAutoIDOrderUnderConcurrency(t *testing.T) {
+	r := require.New(t)
+	bus := NewEventBusWithSize(256)
+	p := owners.Principal{Hub: "local", UserID: "alice"}
+
+	const n = 200
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for range n {
+		go func() {
+			defer wg.Done()
+			bus.PublishAutoID(p, "test", json.RawMessage(`{}`))
+		}()
+	}
+	wg.Wait()
+
+	got := bus.replayAfter(p, 0)
+	r.Len(got, n)
+	for i := 1; i < len(got); i++ {
+		r.Greaterf(got[i].ID, got[i-1].ID,
+			"events must be in strictly increasing ID order; saw %d then %d",
+			got[i-1].ID, got[i].ID)
+	}
+	for i, ev := range got {
+		r.EqualValuesf(i+1, ev.ID, "event[%d] id mismatch", i)
+	}
+}
+
+// TestEventBusPublishAutoIDPerPrincipalGapDetection confirms that
+// per-principal contiguous IDs make the Last-Event-ID gap check
+// (lastID < oldestID-1) sound when many principals emit concurrently.
+// Before the fix, a global counter meant another principal's emits
+// could create numeric gaps in Alice's stream that fired
+// catchup-required even when nothing was actually evicted.
+func TestEventBusPublishAutoIDPerPrincipalGapDetection(t *testing.T) {
+	r := require.New(t)
+	bus := NewEventBusWithSize(4)
+	alice := owners.Principal{Hub: "local", UserID: "alice"}
+	bob := owners.Principal{Hub: "local", UserID: "bob"}
+
+	// Interleave Alice and Bob; Alice's IDs must remain 1..4 contiguous.
+	bus.PublishAutoID(alice, "t", json.RawMessage(`{}`))
+	bus.PublishAutoID(bob, "t", json.RawMessage(`{}`))
+	bus.PublishAutoID(alice, "t", json.RawMessage(`{}`))
+	bus.PublishAutoID(bob, "t", json.RawMessage(`{}`))
+	bus.PublishAutoID(alice, "t", json.RawMessage(`{}`))
+	bus.PublishAutoID(alice, "t", json.RawMessage(`{}`))
+
+	// Alice's last seen ID is 3; nothing has been evicted from her ring
+	// (only 4 events, ring size 4). Gap check should NOT fire.
+	replay, oldestID, _, unsub := bus.subscribeFrom(alice, 3)
+	defer unsub()
+	r.Equal(int64(1), oldestID, "Alice's oldest retained ID is 1")
+	r.Len(replay, 1, "only event 4 is newer than lastID=3")
+	r.Equal(int64(4), replay[0].ID)
+	// Per the handler logic: lastID < oldestID-1 → 3 < 0 → false → no catchup.
+	r.GreaterOrEqual(int64(3), oldestID-1, "no catchup-required when nothing evicted")
+}
+
 // TestEventBusSubscribeFromAtomic confirms the snapshot-then-subscribe
 // seam is closed: an event published concurrently with subscribeFrom
 // must surface either via the replay slice or via the live channel,

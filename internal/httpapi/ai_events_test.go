@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/wesm/fotobank/internal/httpapi"
+	"github.com/wesm/fotobank/internal/owners"
 )
 
 // TestAICompletedEventMarshal pins the JSON wire shape the SPA relies
@@ -71,20 +72,25 @@ func TestAIHealthChangedEventMarshal(t *testing.T) {
 	r.Contains(s, `"pending":0`)
 }
 
-// TestNextIDIsMonotonic confirms NextID hands out strictly increasing
-// IDs. The emit helpers rely on this so subscribers never observe a
-// duplicate id (which would break Last-Event-ID resume).
-func TestNextIDIsMonotonic(t *testing.T) {
+// TestPublishAutoIDIsMonotonicPerPrincipal confirms PublishAutoID
+// hands out strictly increasing per-principal IDs. The Last-Event-ID
+// resume contract depends on this: a subscriber must see a contiguous
+// monotonic stream for its own principal even when other principals
+// emit concurrently.
+func TestPublishAutoIDIsMonotonicPerPrincipal(t *testing.T) {
 	r := require.New(t)
 	bus := httpapi.NewEventBus()
+	alice := owners.Principal{Hub: "local", UserID: "alice"}
+	bob := owners.Principal{Hub: "local", UserID: "bob"}
+
 	const n = 100
-	seen := make(map[int64]bool, n)
 	var prev int64
 	for range n {
-		id := bus.NextID()
-		r.Greater(id, prev, "NextID must be strictly increasing")
-		r.False(seen[id], "NextID must be unique")
-		seen[id] = true
+		id := bus.PublishAutoID(alice, "test", json.RawMessage(`{}`))
+		r.Greater(id, prev, "Alice's IDs must be strictly increasing")
 		prev = id
 	}
+	// Bob's stream is independent — his first ID is 1, not 101.
+	bobID := bus.PublishAutoID(bob, "test", json.RawMessage(`{}`))
+	r.EqualValues(1, bobID, "Bob's per-principal counter starts fresh")
 }

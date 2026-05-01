@@ -26,7 +26,7 @@ func (b *EventBus) EmitAICompleted(p owners.Principal, ev AICompletedEvent) {
 	if err != nil {
 		return
 	}
-	b.Publish(p, Event{ID: b.NextID(), Type: name, Data: data})
+	b.PublishAutoID(p, name, data)
 }
 
 // EmitAIHealthChanged publishes a health-delta event to p. Q1
@@ -37,5 +37,5 @@ func (b *EventBus) EmitAIHealthChanged(p owners.Principal, ev AIHealthChangedEve
 	if err != nil {
 		return
 	}
-	b.Publish(p, Event{ID: b.NextID(), Type: EventNameAIHealthChanged, Data: data})
+	b.PublishAutoID(p, EventNameAIHealthChanged, data)
 }
