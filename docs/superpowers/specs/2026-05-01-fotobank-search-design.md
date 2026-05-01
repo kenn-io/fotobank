@@ -274,7 +274,7 @@ Loop:
    - `thumb_status='ready'` with a missing or unreadable preview blob → retryable failure (`ErrKindMissingBlob` or `provider_4xx`-classed failure). Counted against the per-photo retry budget. Not a skip — the DB says the blob should exist.
 3. Preprocess the batch in parallel via `EncodeEmbed` (CPU-bound; bounded by GOMAXPROCS).
 4. Issue one batched `/v1/embeddings` call.
-5. Write vectors into the target generation using the §5.4 delete-then-insert pattern (`media_embedding_ids` mapping write + `media_embeddings_g<id>` row write per photo), all batched in one transaction with the `ai_jobs` status updates and the cached `embedded_count` increment.
+5. Write vectors into the target generation using the §5.4 delete-then-insert pattern (`media_embedding_ids` mapping write + `media_embeddings_g<id>` row write per photo), all batched in one transaction with the `ai_jobs` status updates. The cached `embedded_count` is updated by the §5.4 net-new-only delta — replacements (e.g. re-embed of an already-mapped media in this generation) are zero-delta; only mappings whose `DELETE ... RETURNING vec_id` returned no row tick the counter.
 6. On partial failure (some response indices missing): re-run the failed indices as singles to attribute the failure to specific photos.
 7. On full-batch failure: mark every job in the batch as failed with `attempts++`; the queue's existing per-photo retry budget logic applies.
 
@@ -285,7 +285,7 @@ Each `ai_jobs` row carries the fingerprint it was enqueued against (the existing
 - If a generation row exists in state `building` or `active` for that fingerprint, write to that generation's vec table.
 - If neither exists (config fingerprint just changed, gap scanner hasn't run yet), the worker creates the `building` generation row + vec table on the spot inside its transaction. `INSERT OR IGNORE` on the unique index ensures only one creator wins under concurrent worker contention.
 
-Each successful write increments `embedded_count` on the target generation row.
+The cached `embedded_count` on the target generation row is updated by the §5.4 net-new delta — incremented only when the write produced a new mapping; replacements are zero-delta.
 
 ### 6.6 Embed gap scanner predicate
 
@@ -326,7 +326,12 @@ The active-or-building generation id is resolved once per scanner pass and bound
 ### 6.7 Auto-enqueue triggers
 
 - **On import.** Alongside the existing tag + caption enqueue in the importer, add embed enqueue. The existing pattern is: jobs enqueue regardless of thumb readiness, the worker `MarkBlocked`s a job whose preview isn't ready (last_error tagged `thumb_blocked`), and the housekeeping tick calls `Queue.PromoteThumbReadyBlocked(ctx, task)` to flip blocked → pending once the thumb worker reports the row ready. Embed reuses this pattern verbatim — extend the housekeeping promotion call to iterate `embed` alongside `tag` and `caption`.
-- **On thumb regen** (`thumb_version` bump). Delete the media's vector from **every non-retired generation** — both `active` and `building` rows might hold a vector for the same media during a swap. Then re-enqueue the embed job. There is no `stale` analogue for vectors; during the rebuild window for a single photo, that photo is absent from the vector index (lexical-only). Cheap and simple.
+- **On thumb regen** (`thumb_version` bump). For every non-retired generation `g` (both `active` and `building` rows might hold a vector for the same media during a swap):
+  1. `DELETE FROM media_embedding_ids WHERE generation_id = g AND media_id = ? RETURNING vec_id` — yields zero or one row.
+  2. If a row was returned: `DELETE FROM media_embeddings_g<g> WHERE vec_id = ?` to drop the corresponding vec row, and **decrement** the cached `embedded_count` on generation `g` by 1.
+  3. Re-enqueue the embed job.
+
+  There is no `stale` analogue for vectors; during the rebuild window for a single photo, that photo is absent from the vector index (lexical-only). Cheap and simple.
 - **On config fingerprint swap.** The gap scanner notices a fingerprint with no active or building generation and creates a fresh `building` generation. The scanner then enqueues embed jobs for every eligible media against the new generation.
 - **On model swap mid-build.** If the user changes config again while a build is in progress, the in-progress building generation gets retired (no activation). A new building generation is created against the new fingerprint, and the gap scanner re-enqueues. The retired-but-never-activated generation's vec table is dropped on the next compaction sweep.
 
@@ -488,7 +493,12 @@ Decision tree per request:
 - **`q != ""` and active generation present** → hybrid. Embed `q` once via the embedding client; build the FTS5 MATCH expression (§7.4); call `Backend.FusedSearch` (the sqlite-vec capability) with both signals + filter. Returns RRF-ordered hits. Cursor is `(rrf_score, media_id)`.
 - **`q != ""` and no active generation** → BM25-only. Same FTS5 MATCH expression, no vector signal. Response stamps `semantic_unavailable: true`, `semantic_unavailable_reason: "no_active_generation"`. Cursor is `(bm25_score, media_id)`.
 - **`q != ""`, active generation present, but `/v1/embeddings` fails for the query** (timeout, 5xx, network error) → degrade to BM25-only. Response stamps `semantic_unavailable: true`, `semantic_unavailable_reason: "query_embedding_failed"`. The whole request must not 500 just because the embedding endpoint is down — lexical results are still useful and arguably more deterministic. The error is logged once per request with the response code/body. The frontend banner copy distinguishes this from `no_active_generation`.
-- **`q != ""` and `sort != "relevance"`** → hybrid candidate selection (RRF top-K), then re-sort by `(timestamp NULLS LAST, imported_at, id)` for the page. The candidate pool is `KPerSignal * 2` (msgvault default 200) per signal so the date sort has enough candidates to fill the page cleanly.
+- **`q != ""` and `sort != "relevance"`** → date-sorted candidate selection. The candidate pool depends on which signals are available, mirroring the relevance-sort decision branches:
+  - **active generation present, query embedding succeeds** → hybrid candidate selection (RRF top-K from BM25 + ANN, `KPerSignal * 2` per signal so the date sort has enough candidates to fill the page cleanly), then re-sort by `(timestamp NULLS LAST, imported_at, id)` for the page.
+  - **no active generation** → BM25-only candidate selection, then date-sort. Response stamps `semantic_unavailable: true`, `semantic_unavailable_reason: "no_active_generation"`.
+  - **active generation present but `/v1/embeddings` failed for the query** → BM25-only candidate selection, then date-sort. Response stamps `semantic_unavailable: true`, `semantic_unavailable_reason: "query_embedding_failed"`.
+
+  In all three sub-cases the cursor is the date-sort tuple `(timestamp NULLS LAST, imported_at, id)` (not the relevance-sort cursor) and `effective_sort` echoes back `"newest"` or `"oldest"` as requested.
 
 `KPerSignal` (default 200), `RRFK` (default 60), and the per-signal limits are config-tunable under `[search]`.
 
@@ -531,7 +541,7 @@ Opaque base64-encoded JSON:
 }
 ```
 
-The normalized-request hash covers `q` (lowercased, trimmed), serialized filters (sorted keys), sort mode, `include_hidden`, and the engine mode (`hybrid` / `bm25_only` / `filter_only`). The decoder rejects mismatches with HTTP 400 instead of silently re-paginating a different query.
+The normalized-request hash covers `q` (lowercased, trimmed), serialized filters (sorted keys), the **effective sort** (i.e. after the §7.3 `q == "" && sort == "relevance"` coercion to `"newest"`; not the raw request sort), `include_hidden`, and the engine mode (`hybrid` / `bm25_only` / `filter_only`). Hashing the effective sort instead of the raw value keeps pagination semantics unambiguous after coercion: a cursor minted on the first page (where the server coerced) decodes cleanly on the next page (where the client may have updated its UI to send `"newest"` directly). The decoder rejects mismatches with HTTP 400 instead of silently re-paginating a different query.
 
 For date sorts the cursor key tuple matches the repo's real ordering: `(timestamp NULLS LAST, imported_at, id)`. The cursor carries all three.
 
@@ -709,7 +719,7 @@ activation_threshold = 95   # percent
 
 `api_key_env` is added to `[ai.embed]` and mirrors the existing `[ai.vision].api_key_env` field (already present today as `VisionConfig.APIKeyEnv` in `internal/ai/config.go`). Empty disables the `Authorization` header (the local-inference default); non-empty names an env var whose value is sent as `Authorization: Bearer <value>`. The new embed-side field reuses the same `APIKeyEnv` resolution helper.
 
-The `[ai.vision]` block (existing, drives the chat-completions gateway) and `[ai.embed]` block coexist; they may point at the same endpoint or different endpoints. Boot-time validation: dimension probe + image/text shared-space probe; failure aborts startup with a clear message.
+The `[ai.vision]` block (existing, drives the chat-completions gateway) and `[ai.embed]` block coexist; they may point at the same endpoint or different endpoints. Boot-time validation: a modality + dimension probe sends one image data URL and one short text string to `[ai.embed].endpoint`, requires both responses to come back with vectors at the configured `dimension`, and aborts startup with a clear message on failure. Shared-space alignment between the image-side and text-side encoders is a model contract documented in the operator's chosen model card; fotobank cannot verify alignment in code.
 
 ## 14. Out-of-scope (named v2 candidates)
 
