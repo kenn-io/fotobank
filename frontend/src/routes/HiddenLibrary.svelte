@@ -48,10 +48,16 @@
   });
 
   // Watch for 403 from the hidden media store — the session expired
-  // mid-view. Clear the unlock state so the gate re-appears (finding #6).
+  // mid-view. Clear the unlock state so the gate re-appears (finding #6),
+  // and reset the route-scoped store + the `started` guard so the next
+  // unlock on this same mount triggers a fresh loadInitial(). Without
+  // the resets, loadError=403 + started=true would leave the grid empty
+  // and silent until the user navigated away.
   $effect(() => {
     if (hiddenMediaStore.loadError === 403) {
       void hiddenStore.lock();
+      hiddenMediaStore.reset();
+      started = false;
     }
   });
 

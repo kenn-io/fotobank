@@ -67,6 +67,22 @@ export class HiddenMediaStore {
     this.rebuildMonths();
   }
 
+  /**
+   * Reset the store back to its initial state. HiddenLibrary calls this
+   * on a 403 lock so the next unlock starts with empty pagination,
+   * cleared loadError, and a fresh fetch — without it the route would
+   * keep its old months + loadError=403 and never refetch.
+   */
+  reset(): void {
+    this.months = [];
+    this.loading = false;
+    this.exhausted = false;
+    this.loadError = null;
+    this.nextOffset = 0;
+    this.byMonth = new Map();
+    this.byId = new Map();
+  }
+
   private removeFromIndexes(id: string): void {
     const mk = this.byId.get(id);
     if (mk === undefined) return;
