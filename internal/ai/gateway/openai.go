@@ -29,7 +29,6 @@ type OpenAIConfig struct {
 type OpenAICompatible struct {
 	cfg  OpenAIConfig
 	http *http.Client
-	rng  *rand.Rand
 }
 
 // NewOpenAICompatible applies defaults and constructs a client.
@@ -49,7 +48,6 @@ func NewOpenAICompatible(cfg OpenAIConfig) *OpenAICompatible {
 	return &OpenAICompatible{
 		cfg:  cfg,
 		http: &http.Client{Timeout: cfg.Timeout},
-		rng:  rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0xdeadbeef)),
 	}
 }
 
@@ -185,7 +183,7 @@ func (c *OpenAICompatible) computeBackoff(attempt int, retryAfter time.Duration,
 	if jitterCap <= 0 {
 		return exp
 	}
-	return exp + time.Duration(c.rng.Int64N(jitterCap))
+	return exp + time.Duration(rand.Int64N(jitterCap))
 }
 
 // HealthCheck pings /v1/models. Provider-agnostic: every OpenAI-compatible
