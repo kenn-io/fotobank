@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -62,6 +63,31 @@ func TestResolverFollowsThumbVersionBump(t *testing.T) {
 	require.NoError(err)
 	b := decoded.Bounds()
 	require.Lessf(b.Dx(), b.Dy(), "v2 preview is portrait; resolver returned landscape (likely read stale v1): %dx%d", b.Dx(), b.Dy())
+}
+
+func TestResolver_ResolvePreviewJPEG_ReturnsRawBytes(t *testing.T) {
+	require := require.New(t)
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+
+	srcJPEG := makeJPEGForResolver(t, 2560, 1700)
+	store, version := newResolverStoreWithPreview(t, rw, owner, mid, srcJPEG)
+	require.Equal(1, version)
+
+	r := imginput.NewResolver(ro, store)
+	jpg, status, err := r.ResolvePreviewJPEG(context.Background(), mid)
+	require.NoError(err)
+	require.Equal("ready", status)
+
+	// Bytes match the on-disk preview verbatim — no re-encode.
+	key := thumb.ThumbKey(mid, version, thumb.SizePreview)
+	rc, err := store.ReadRange(context.Background(), owner, key, 0, -1)
+	require.NoError(err)
+	defer func() { _ = rc.Close() }()
+	expected, err := io.ReadAll(rc)
+	require.NoError(err)
+	require.True(bytes.Equal(expected, jpg))
 }
 
 func TestResolverPropagatesMissingPreview(t *testing.T) {
