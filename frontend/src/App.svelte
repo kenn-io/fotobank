@@ -133,7 +133,7 @@
 {/if}
 <ThreeColumnLayout>
   {#snippet sidebar()}
-    <Sidebar active={activeId(router.current)} />
+    <Sidebar active={activeId(router.current)} {appConfig} />
   {/snippet}
   {#snippet main()}
     {#if router.current.route === "library"}

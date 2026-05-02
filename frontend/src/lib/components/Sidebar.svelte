@@ -1,10 +1,14 @@
 <!-- frontend/src/lib/components/Sidebar.svelte -->
 <script lang="ts">
   import { handleInternalLinkClick } from "../router/router.svelte";
+  import type { AppConfigStore } from "../app/appConfig.svelte";
 
-  let { active = "" }: { active?: string } = $props();
+  let {
+    active = "",
+    appConfig,
+  }: { active?: string; appConfig: AppConfigStore } = $props();
 
-  const groups = [
+  const groups = $derived([
     {
       key: "browse",
       label: "BROWSE",
@@ -22,24 +26,28 @@
     {
       key: "manage",
       label: "MANAGE",
-      entries: [{ id: "shares", label: "Shares", href: "/shares" }],
+      entries: appConfig.sharingEnabled
+        ? [{ id: "shares", label: "Shares", href: "/shares" }]
+        : [],
     },
-  ];
+  ]);
 </script>
 
 <nav>
   {#each groups as group (group.key)}
-    <div class="group" data-group={group.key}>
-      <div class="group-header">{group.label}</div>
-      {#each group.entries as entry (entry.id)}
-        <a
-          class="entry"
-          class:active={active === entry.id}
-          href={entry.href}
-          onclick={(e) => handleInternalLinkClick(e, entry.href)}
-        >{entry.label}</a>
-      {/each}
-    </div>
+    {#if group.entries.length > 0}
+      <div class="group" data-group={group.key}>
+        <div class="group-header">{group.label}</div>
+        {#each group.entries as entry (entry.id)}
+          <a
+            class="entry"
+            class:active={active === entry.id}
+            href={entry.href}
+            onclick={(e) => handleInternalLinkClick(e, entry.href)}
+          >{entry.label}</a>
+        {/each}
+      </div>
+    {/if}
   {/each}
 </nav>
 
