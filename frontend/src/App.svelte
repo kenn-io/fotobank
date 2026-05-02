@@ -13,6 +13,7 @@
   import HiddenLibrary from "./routes/HiddenLibrary.svelte";
   import SettingsAI from "./routes/SettingsAI.svelte";
   import Search from "./routes/Search.svelte";
+  import Map from "./routes/Map.svelte";
   import NotFound from "./routes/NotFound.svelte";
   import HiddenLockStrip from "./lib/components/HiddenLockStrip.svelte";
   import ToastStack from "./lib/components/ToastStack.svelte";
@@ -22,6 +23,7 @@
   import { AlbumsStore } from "./lib/albums/albumsStore.svelte";
   import { SharesStore } from "./lib/shares/sharesStore.svelte";
   import { HiddenStore } from "./lib/hidden/hiddenStore.svelte";
+  import { GeoStore } from "./lib/map/geoStore.svelte";
   import { ToastStore } from "./lib/toasts/toastStore.svelte";
   import { selection } from "./lib/selection/selectionStore.svelte";
   import { router, type RouteMatch } from "./lib/router/router.svelte";
@@ -46,6 +48,7 @@
   const sharesStore = new SharesStore(api);
   const hiddenStore = new HiddenStore(api);
   hiddenStore.refresh();
+  const geoStore = new GeoStore(api);
   const toastStore = new ToastStore();
   const appConfig = new AppConfigStore(api);
   // Initial health snapshot — runs once on mount.
@@ -126,6 +129,7 @@
     if (route.route === "albums" || route.route === "albums.detail") return "albums";
     if (route.route === "shares") return "shares";
     if (route.route === "hidden") return "hidden";
+    if (route.route === "map") return "map";
     // search has no sidebar entry of its own; the toolbar's search box
     // launches it and the user navigates back via the sidebar links.
     // Returning "" keeps the existing sections from looking active
@@ -177,6 +181,17 @@
       <SettingsAI />
     {:else if router.current.route === "search"}
       <Search {events} />
+    {:else if router.current.route === "map"}
+      <Map
+        z={router.current.z}
+        c={router.current.c}
+        focus={router.current.focus}
+        tab={router.current.tab}
+        {geoStore}
+        {mediaStore}
+        {hiddenStore}
+        {toastStore}
+      />
     {:else}
       <NotFound />
     {/if}

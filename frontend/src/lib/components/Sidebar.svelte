@@ -15,6 +15,7 @@
       entries: [
         { id: "library", label: "Library", href: "/library" },
         { id: "sessions", label: "Sessions", href: "/sessions" },
+        { id: "map", label: "Map", href: "/map" },
         { id: "hidden", label: "Hidden", href: "/hidden" },
       ],
     },

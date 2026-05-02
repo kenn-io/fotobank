@@ -13,6 +13,13 @@ export type RouteMatch =
   | { route: "media"; id: string; from?: string }
   | { route: "hidden" }
   | {
+      route: "map";
+      z?: number;
+      c?: [number, number];
+      focus?: string;
+      tab?: "map" | "photos";
+    }
+  | {
       route: "search";
       q?: string;
       sort?: SearchSort;
@@ -61,6 +68,28 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
     };
   } },
   { re: /^\/hidden\/?$/, build: () => ({ route: "hidden" as const }) },
+  // /map accepts ?z, ?c=lat,lng, ?focus=<id>, ?tab=map|photos.
+  // Invalid numeric params drop out (Number.isFinite check); unknown
+  // tab values fall through so they don't poison the map shell.
+  { re: /^\/map\/?$/, build: () => {
+    const sp = new URLSearchParams(window.location.search);
+    const zRaw = sp.get("z");
+    const cRaw = sp.get("c");
+    const focusRaw = sp.get("focus");
+    const tabRaw = sp.get("tab");
+    const z = zRaw !== null ? Number(zRaw) : NaN;
+    const cParts = cRaw !== null ? cRaw.split(",").map(Number) : [];
+    const tab = tabRaw === "photos" || tabRaw === "map" ? tabRaw : null;
+    return {
+      route: "map" as const,
+      ...(Number.isFinite(z) ? { z } : {}),
+      ...(cParts.length === 2 && cParts.every(Number.isFinite)
+        ? { c: [cParts[0]!, cParts[1]!] as [number, number] }
+        : {}),
+      ...(focusRaw !== null && focusRaw !== "" ? { focus: focusRaw } : {}),
+      ...(tab !== null ? { tab } : {}),
+    };
+  } },
   // /search accepts the full filter/sort surface as query params.
   // Unknown sort/media_type values are dropped (treated as absent) so
   // `?sort=garbage` doesn't poison the store; the page falls back to

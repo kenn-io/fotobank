@@ -40,13 +40,14 @@ describe("Sidebar grouped entries", () => {
     expect(headers).toEqual(["BROWSE", "CURATE", "MANAGE"]);
   });
 
-  it("renders Library + Sessions + Hidden under BROWSE", () => {
+  it("renders Library + Sessions + Map + Hidden under BROWSE", () => {
     const { container } = render(Sidebar, {
       props: { active: "library", appConfig: defaultAppConfig() },
     });
     const browseGroup = container.querySelector(".group[data-group='browse']");
     expect(browseGroup?.textContent).toContain("Library");
     expect(browseGroup?.textContent).toContain("Sessions");
+    expect(browseGroup?.textContent).toContain("Map");
     expect(browseGroup?.textContent).toContain("Hidden");
   });
 
