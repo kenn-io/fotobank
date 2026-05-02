@@ -56,13 +56,21 @@ func endsInWhitespace(q string) bool {
 }
 
 // tokenize splits q by whitespace, strips FTS5-meaningful and other
-// punctuation chars from each token, and drops tokens shorter than 2
-// characters (measured in runes).
+// punctuation chars from each token, and drops tokens that are
+// shorter than 2 characters (measured in runes) or contain no
+// letter/digit at all. The post-strip-no-alphanumeric guard catches
+// punctuation-only inputs like `'a'` (strips to `'a`) and `--`
+// (strips to `--`) that survive the strip but produce nonsensical
+// FTS5 phrases — the >=2-rune filter alone would let `'a` and `--`
+// through.
 func tokenize(q string) []string {
 	fields := strings.Fields(q)
 	out := make([]string, 0, len(fields))
 	for _, raw := range fields {
 		clean := stripFTS5Specials(raw)
+		if !hasLetterOrDigit(clean) {
+			continue
+		}
 		// Use rune count, not byte count, so multi-byte characters
 		// (e.g. accented letters) aren't accidentally treated as
 		// "long enough" by virtue of UTF-8 encoding bloat.
@@ -72,6 +80,20 @@ func tokenize(q string) []string {
 		out = append(out, clean)
 	}
 	return out
+}
+
+// hasLetterOrDigit reports whether s contains at least one Unicode
+// letter or digit. Used after stripFTS5Specials to drop tokens whose
+// only surviving runes are word-internal punctuation (apostrophes,
+// hyphens) — those slip through the >=2-rune filter but yield FTS5
+// phrases like `"--"` or `"'a"` that have no useful match semantics.
+func hasLetterOrDigit(s string) bool {
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // stripFTS5Specials keeps only Unicode letters, digits, apostrophes,

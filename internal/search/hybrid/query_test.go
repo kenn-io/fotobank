@@ -31,6 +31,11 @@ func TestBuildMatchExpr(t *testing.T) {
 		{"escape FTS5 chars", `dog "cat"`, `"dog" AND "cat"*`, true},
 		{"drop short tokens", "a small dog on", `"small" AND "dog" AND "on"*`, true},
 		{"all tokens drop → empty", "!! ?", "", false},
+		// `--` and `''` survive stripFTS5Specials (which keeps `-` and
+		// `'` as word-internal punctuation) but contain no letter or
+		// digit; the post-strip alphanumeric guard drops them so they
+		// don't leak into the MATCH expression as `"--"` / `"''"`.
+		{"punctuation-only tokens drop", "-- ''", "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
