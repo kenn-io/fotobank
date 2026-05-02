@@ -88,6 +88,29 @@ describe("AppHeader search input", () => {
     expect(input.value).toBe("hello");
   });
 
+  it("cancels a pending debounce when the route changes away from /search", async () => {
+    // User types "do" on /library, then a sidebar click navigates them
+    // to /albums before the 300ms debounce fires. The stale timer must
+    // be cancelled — otherwise it would navigate back to /search?q=do
+    // and stomp the user's chosen destination.
+    vi.useFakeTimers();
+    const navigate = vi.spyOn(router, "navigate").mockImplementation(() => {});
+    const { container } = render(AppHeader);
+    const input = container.querySelector("input.search") as HTMLInputElement;
+
+    await fireEvent.input(input, { target: { value: "do" } });
+    expect(navigate).not.toHaveBeenCalled();
+
+    // Simulate external navigation: location changes and router.current
+    // is synced. The header's effect on router.current must cancel the
+    // pending timer.
+    setLocation("/albums");
+
+    // Advance well past the debounce window — no commit may fire.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("⌘K focuses the search input from anywhere", async () => {
     const { container } = render(AppHeader);
     const input = container.querySelector("input.search") as HTMLInputElement;

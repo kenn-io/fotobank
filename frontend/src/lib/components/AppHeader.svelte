@@ -50,6 +50,22 @@
     };
   });
 
+  // Cancel any pending debounce when the route changes externally. If
+  // the user types "do" on /library and navigates away (sidebar click,
+  // back/forward) before the debounce fires, the stale timer would
+  // otherwise navigate back to /search?q=do and stomp the user's chosen
+  // route. The effect runs whenever router.current changes, including
+  // immediately after mount, which is harmless because timer is
+  // undefined at that point.
+  $effect(() => {
+    const _ = router.current;
+    void _;
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  });
+
   function onInput(): void {
     // `bind:value` already mirrors the DOM value into `value`; this
     // handler exists purely for the debounce side effect.
