@@ -146,22 +146,49 @@ func TestAutocompleteTags_HiddenWithoutUnlockExcluded(t *testing.T) {
 // TestAutocompleteTags_LIKEEscapesPercentAndUnderscore pins the SQL
 // injection / LIKE-glob defense: input "100_%" is treated as a literal
 // string, not as the LIKE-wildcard pattern that matches everything.
-// Owner has one "doggo" tag — the escaped query must yield zero.
+//
+// The fixture is built so the assertion actually exercises the escape:
+//
+//   - Negative seed "100abc" — would match the unescaped pattern
+//     "100_%%" ("100" + any-char + zero-or-more-chars + zero-or-
+//     more-chars from the trailing prefix wildcard). With escaping, the
+//     pattern becomes "100\_\%%" — literal "100_%" then any suffix —
+//     which "100abc" does NOT contain, so the row stays out.
+//
+//   - Positive seed "100_%abc" — the literal-underscore-percent prefix
+//     is exactly what the user typed; with escaping it matches.
+//
+// Without both seeds the test would still pass even if escaping were
+// removed (the original "doggo" seed didn't match either pattern).
 func TestAutocompleteTags_LIKEEscapesPercentAndUnderscore(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	rw := d.WriteDB()
 	owner := testutil.SeedOwner(t, rw, "test-hub", "alice")
-	mid := testutil.SeedPhoto(t, rw, owner, "p1")
-	seedTagsForMedia(t, rw, mid, map[string]string{"doggo": "doggo"})
+
+	// Negative seed: matches the un-escaped wildcard pattern
+	// (100 + any single char + anything) but NOT the escaped literal
+	// pattern (100 + literal "_%" + anything).
+	mNeg := testutil.SeedPhoto(t, rw, owner, "neg")
+	seedTagsForMedia(t, rw, mNeg, map[string]string{"100abc": "100abc"})
 
 	svc := autocompleteSvc(t, d)
-	// "100_%" without escaping would match anything starting with 100
-	// followed by any character; with proper escaping the underscore and
-	// percent are literal so the query yields zero.
 	got, err := svc.AutocompleteTags(context.Background(), owner, "100_%", 10, false, nil)
 	r.NoError(err)
-	r.Empty(got, "literal underscore + percent must not match doggo")
+	r.Empty(got,
+		`"100abc" must NOT match the prefix "100_%": underscore and percent must be escaped to literals`)
+
+	// Positive control: a label whose first five characters are exactly
+	// the user's literal input. With escaping, "100\_\%%" matches —
+	// proves the helper isn't over-escaping into a pattern that matches
+	// nothing.
+	mPos := testutil.SeedPhoto(t, rw, owner, "pos")
+	seedTagsForMedia(t, rw, mPos, map[string]string{"100_%abc": "100_%abc"})
+
+	got, err = svc.AutocompleteTags(context.Background(), owner, "100_%", 10, false, nil)
+	r.NoError(err)
+	r.Len(got, 1, `literal "100_%abc" must match the escaped prefix "100\_\%%"`)
+	r.Equal("100_%abc", got[0].Label)
 }
 
 // TestAutocompleteLocations_SubstringMatch — substring matching means
