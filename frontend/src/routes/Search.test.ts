@@ -298,29 +298,31 @@ describe("Search.svelte", () => {
     await inspectionStore.load();
     flushSync();
     await tick();
-    // After the initial hydration + URL-sync round-trip, the store's
-    // setters were called exactly once each from the seeded URL match
-    // (which carried no q/sort, so setFilters({tags:[]}), setSort
-    // ("relevance"), setQuery("") were issued). The URL-sync then
-    // wrote /search?q=trees&sort=newest from the seeded store state,
-    // which mutated router.current. The hydration effect must have
-    // suppressed its own echo: setQuery should not have been called a
-    // second time with a different argument coming from the
-    // writeback.
-    const setQueryCalls = (store.setQuery as ReturnType<typeof vi.fn>).mock.calls.length;
-    const setSortCalls = (store.setSort as ReturnType<typeof vi.fn>).mock.calls.length;
-    const setFiltersCalls = (store.setFilters as ReturnType<typeof vi.fn>).mock.calls.length;
 
-    // Route the URL-sync writeback again: bump the URL to itself by
-    // re-running syncFromLocation (no-op for the URL but exercises
-    // the hydration effect once more). After the round-trip, no
-    // additional setter calls should have been made.
+    // Assert the setters were called EXACTLY once each, with the
+    // seeded URL's values (the URL was /search with no params, so
+    // the hydration ran with q="", sort="relevance", filters={tags:[]}).
+    // The URL-sync then wrote /search?q=trees&sort=newest from the
+    // seeded store state, which mutated router.current. If echo
+    // suppression failed, we'd see a second hydration call here with
+    // setQuery("trees") and setSort("newest") — the assertions below
+    // would fail with a 2-count or with "trees"/"newest" arguments.
+    const setQueryMock = store.setQuery as ReturnType<typeof vi.fn>;
+    const setSortMock = store.setSort as ReturnType<typeof vi.fn>;
+    const setFiltersMock = store.setFilters as ReturnType<typeof vi.fn>;
+    expect(setQueryMock.mock.calls).toEqual([[""]]);
+    expect(setSortMock.mock.calls).toEqual([["relevance"]]);
+    expect(setFiltersMock.mock.calls).toEqual([[{ tags: [] }]]);
+
+    // Bump the URL via syncFromLocation again. The URL still matches
+    // lastSyncedKey from the prior writeback, so hydration must
+    // suppress this as an echo too — no new setter calls.
     router.syncFromLocation();
     flushSync();
     await tick();
-    expect((store.setQuery as ReturnType<typeof vi.fn>).mock.calls.length).toBe(setQueryCalls);
-    expect((store.setSort as ReturnType<typeof vi.fn>).mock.calls.length).toBe(setSortCalls);
-    expect((store.setFilters as ReturnType<typeof vi.fn>).mock.calls.length).toBe(setFiltersCalls);
+    expect(setQueryMock.mock.calls).toEqual([[""]]);
+    expect(setSortMock.mock.calls).toEqual([["relevance"]]);
+    expect(setFiltersMock.mock.calls).toEqual([[{ tags: [] }]]);
   });
 
   it("waits for AIInspection to load before the first search", async () => {
