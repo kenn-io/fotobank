@@ -144,7 +144,12 @@
   }
 </script>
 
-<AppHeader />
+<AppHeader
+  hub={appConfig.principal?.hub}
+  handle={appConfig.principal?.handle}
+  theme={themeStore.theme}
+  onSetTheme={(next) => themeStore.set(next)}
+/>
 {#if hiddenStore.unlocked}
   <HiddenLockStrip {hiddenStore} />
 {/if}
