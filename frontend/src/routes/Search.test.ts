@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { render } from "@testing-library/svelte";
+import { flushSync, tick } from "svelte";
 import Search from "./Search.svelte";
 import type { SearchStore } from "../lib/search/searchStore.svelte";
 import type { SearchClient } from "../lib/search/client";
 import type { SearchFilters, SearchResult, SearchSort } from "../lib/search/types";
+import { router } from "../lib/router/router.svelte";
 
 // VirtualGrid wires ResizeObserver + IntersectionObserver in $effect
 // blocks. jsdom ships neither. The default IntersectionObserver stub
@@ -30,8 +32,11 @@ beforeAll(() => {
 
 beforeEach(() => {
   // Reset the URL between tests so router.current observes the route
-  // /search rather than carrying over from a prior test.
+  // /search rather than carrying over from a prior test. router.current
+  // is computed once at module import; without an explicit sync the
+  // page's onMount short-circuits on `m.route !== "search"`.
   window.history.replaceState({}, "", "/search");
+  router.syncFromLocation();
 });
 
 // makeStore builds a SearchStore stub. Each method is a vi.fn() so
@@ -100,6 +105,61 @@ describe("Search.svelte", () => {
     const idle = container.querySelector("[data-testid='search-idle-state']");
     expect(idle).not.toBeNull();
     expect(container.querySelectorAll("a[data-media-id]").length).toBe(0);
+  });
+
+  it("writes the store's state into the URL after hydration", async () => {
+    // The page's URL-sync $effect projects (query, sort, filters) into
+    // /search?... so the URL is the source of truth. The effect is
+    // gated on a `hydrated` flag flipped at the end of onMount; the
+    // first observable navigate is therefore the one that mirrors the
+    // post-hydration store state.
+    const navigate = vi.spyOn(router, "navigate").mockImplementation(() => {});
+    const store = makeStore({
+      query: "trees",
+      sort: "newest",
+      filters: {
+        tags: [{ tag_key: "dog", tag_label: "Dog" }],
+        dateAfter: "2025-01-01",
+        mediaType: "photo",
+      },
+    });
+    render(Search, { props: { store, client: makeClient() } });
+    // $effect runs as a microtask after mount; awaiting tick lets it
+    // settle so the assertion sees the post-hydration navigate.
+    flushSync();
+    await tick();
+    // The navigate target encodes every set field. Tags use tag_label
+    // (not tag_key) per the O1 backend contract — searchInput.Tag is
+    // resolved server-side as labels. relevance is the default and
+    // gets omitted; "newest" is non-default and is written.
+    expect(navigate).toHaveBeenCalled();
+    const lastCall = navigate.mock.calls[navigate.mock.calls.length - 1]!;
+    const target = lastCall[0] as string;
+    const opts = lastCall[1] as { replace?: boolean } | undefined;
+    expect(opts?.replace).toBe(true);
+    const u = new URL(target, window.location.origin);
+    expect(u.pathname).toBe("/search");
+    expect(u.searchParams.get("q")).toBe("trees");
+    expect(u.searchParams.get("sort")).toBe("newest");
+    expect(u.searchParams.get("date_after")).toBe("2025-01-01");
+    expect(u.searchParams.getAll("tag")).toEqual(["Dog"]);
+    expect(u.searchParams.get("media_type")).toBe("photo");
+  });
+
+  it("omits sort=relevance from the URL (relevance is the default)", async () => {
+    // The URL convention is: relevance is implicit. The canonical URL
+    // for an empty-state /search is exactly /search with no query.
+    const navigate = vi.spyOn(router, "navigate").mockImplementation(() => {});
+    const store = makeStore({ query: "trees", sort: "relevance" });
+    render(Search, { props: { store, client: makeClient() } });
+    flushSync();
+    await tick();
+    expect(navigate).toHaveBeenCalled();
+    const lastCall = navigate.mock.calls[navigate.mock.calls.length - 1]!;
+    const target = lastCall[0] as string;
+    const u = new URL(target, window.location.origin);
+    expect(u.searchParams.has("sort")).toBe(false);
+    expect(u.searchParams.get("q")).toBe("trees");
   });
 
   it("triggers fetchNextPage when VirtualGrid's load-more sentinel intersects", async () => {

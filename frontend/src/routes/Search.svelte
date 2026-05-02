@@ -1,10 +1,9 @@
 <!-- frontend/src/routes/Search.svelte
-     T2: page shell for /search. Reads the route match into the search
-     store on mount and renders the filter / sort / status surface plus
-     a result grid. The popover, chip strip, sort segment, and indexing
-     pill/banner are stubbed at this checkpoint (see TODO U1/U2/V1
-     comments in their files); this commit only proves the wiring,
-     prop shapes, and pagination glue. -->
+     U2: page shell for /search. Reads the route match into the search
+     store on mount, then writes the store's reactive state back into
+     the URL on every change so the URL is the source of truth and a
+     full reload preserves the user's view. The pill/banner are still
+     stubbed (see TODO V1 comments). -->
 <script lang="ts">
   import { onMount } from "svelte";
   import { createSearchStore, type SearchStore } from "../lib/search/searchStore.svelte";
@@ -31,6 +30,16 @@
 
   // svelte-ignore state_referenced_locally
   const s: SearchStore = store ?? createSearchStore({ client });
+
+  // hydrated guards the URL-sync $effect from firing during the initial
+  // hydration cycle (when onMount writes the URL's params *into* the
+  // store). Without it, the effect would fire 3+ times during onMount
+  // — once per setFilters/setSort/setQuery — and each fire would
+  // navigate(replace) with a partial state that doesn't reflect the
+  // user's URL until the last call lands. The effect skips while
+  // hydrated=false so the first user-driven mutation produces the
+  // first URL write.
+  let hydrated = $state(false);
 
   // filtersFromMatch projects the route match into the SearchFilters
   // shape the store expects. It is only called inside onMount with a
@@ -76,6 +85,47 @@
     void s.setFilters(filtersFromMatch(m));
     void s.setSort(initialSort);
     void s.setQuery(initialQuery);
+    // Flip the gate after the synchronous state writes complete so the
+    // URL-sync effect can take over. The async fetch promises are
+    // intentionally left unawaited — URL state and the request are
+    // independent concerns and the URL must not block on the request.
+    hydrated = true;
+  });
+
+  // URL param sync: project the store's current state back into the
+  // location bar so a reload, deep link, or share preserves the view.
+  // Tag values are written as labels (the backend's ?tag= param is
+  // matched against tag_label per the O1 contract; the canonical
+  // tag_key only exists inside the store for dedupe). Sort omits the
+  // "relevance" default so the canonical URL for an empty-state /search
+  // is exactly /search with no query string.
+  $effect(() => {
+    if (!hydrated) return;
+    const params = new URLSearchParams();
+    if (s.query !== "") params.set("q", s.query);
+    if (s.sort !== "relevance") params.set("sort", s.sort);
+    if (s.filters.dateAfter !== undefined && s.filters.dateAfter !== "") {
+      params.set("date_after", s.filters.dateAfter);
+    }
+    if (s.filters.dateBefore !== undefined && s.filters.dateBefore !== "") {
+      params.set("date_before", s.filters.dateBefore);
+    }
+    for (const t of s.filters.tags) params.append("tag", t.tag_label);
+    if (s.filters.location !== undefined && s.filters.location.location_label !== "") {
+      params.set("location", s.filters.location.location_label);
+    }
+    if (s.filters.mediaType !== undefined) params.set("media_type", s.filters.mediaType);
+    const qs = params.toString();
+    const target = qs.length > 0 ? `/search?${qs}` : "/search";
+    // replace: true so typing into a filter doesn't fill the back stack.
+    // Compare against current path+search before navigating: navigate()
+    // calls syncFromLocation() which mutates router.current; if the URL
+    // is already what we'd write, skipping the navigate avoids
+    // re-running every dependent reactive read.
+    const current = window.location.pathname + window.location.search;
+    if (current !== target) {
+      router.navigate(target, { replace: true });
+    }
   });
 
   // Wrap SearchResult rows into the Media shape VirtualGrid expects.
@@ -112,7 +162,7 @@
 <div class="search-page">
   <div class="search-toolbar">
     <SearchFiltersPopover filters={s.filters} onChange={onFiltersChange} />
-    <SearchSortSegment sort={s.sort} onChange={onSortChange} />
+    <SearchSortSegment sort={s.sort} query={s.query} onChange={onSortChange} />
     <IndexingStatusPill completeness={s.embeddingCompleteness} />
   </div>
   <SearchFilterChips filters={s.filters} onChange={onFiltersChange} />
