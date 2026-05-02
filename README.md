@@ -19,6 +19,10 @@ workflow, and preferences.
 Pre-alpha. This repository is public-looking code, but the project is not yet
 ready for broad public use.
 
+Albums, hidden, sessions, AI tag/caption, search, and sharing CLI/API are in.
+The owner sharing UI is hidden by default behind `[ui].sharing_enabled` in
+`config.toml`; the CLI works regardless of the flag.
+
 Expect schema changes, incomplete operator documentation, rough upgrade paths,
 and implementation details that still assume a developer/operator who is
 comfortable reading the code. The README is written to explain where the
@@ -138,10 +142,20 @@ Requirements:
 Build:
 
 ```sh
-make build
+make build            # → bin/fotobank (debug)
+make build-release    # → bin/fotobank (release; trimpath + stripped)
+make install          # copies bin/fotobank to ~/.local/bin or $GOBIN
+make dev              # live-reload via air
 ```
 
-This builds the frontend and writes the binary to `bin/fotobank`.
+`make build` is the preferred entry point — it builds the SPA into
+`internal/web/dist/` before the Go build embeds it. The direct
+`go build -tags sqlite_fts5 …` path skips the SPA build, so it produces a
+backend-only binary unless `internal/web/dist/` is already populated:
+
+```sh
+go build -tags sqlite_fts5 -o bin/fotobank ./cmd/fotobank
+```
 
 Create a config:
 
@@ -150,7 +164,16 @@ mkdir -p ~/.config/fotobank
 cp internal/config/config.example.toml ~/.config/fotobank/config.toml
 ```
 
-At minimum, edit `[nas].root` in `config.toml`. The default stub identity is
+Fotobank uses TOML. The loader resolves the config path with this precedence:
+
+1. `--config <path>` flag
+2. `FOTOBANK_CONFIG` environment variable
+3. `$XDG_CONFIG_HOME/fotobank/config.toml`
+4. `$HOME/.config/fotobank/config.toml`
+5. `./config.toml`
+
+The canonical example lives at `internal/config/config.example.toml`. At
+minimum, edit `[nas].root` in `config.toml`. The default stub identity is
 usable for local development.
 
 Validate and run:
@@ -166,12 +189,19 @@ By default the server listens on `127.0.0.1:8090`.
 Common commands:
 
 ```sh
+bin/fotobank server            # HTTP API + background workers
 bin/fotobank config path
-bin/fotobank reconcile
-bin/fotobank thumbs regenerate --all
-bin/fotobank albums list
-bin/fotobank shares list
-bin/fotobank backup snapshot
+bin/fotobank import <dir>      # import photos/videos
+bin/fotobank reconcile         # NAS ↔ DB drift report
+bin/fotobank thumbs regenerate # rebuild thumbnails
+bin/fotobank albums            # CRUD over albums
+bin/fotobank shares            # CRUD over share scopes (CLI works regardless of [ui].sharing_enabled)
+bin/fotobank hidden            # manage the hidden-privacy passcode
+bin/fotobank ai                # AI status / backfill / retry / acknowledge
+bin/fotobank gps               # GPS metadata management
+bin/fotobank pair              # RAW/JPEG sidecar pairing
+bin/fotobank backup            # snapshot / list / restore the metadata DB
+bin/fotobank owners            # list / register principals
 ```
 
 ## Development
