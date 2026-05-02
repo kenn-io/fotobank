@@ -66,6 +66,14 @@ type Request struct {
 // at zero. SemanticUnavailable / SemanticUnavailableReason surface
 // degradation to the UI banner so the user knows the result set is
 // BM25-only or filter-only.
+//
+// Explain mirrors the request's gated Explain flag — the service
+// has already gated it on the caller's AI Inspection setting, so
+// the engine just passes the value through. The HTTP handler uses
+// resp.Explain to decide whether to emit per-signal score
+// components on the wire; consumers that read engine output
+// directly (CLI, internal callers) can use it for the same
+// gating decision without re-deriving it from the request.
 type Response struct {
 	Hits                      []index.Hit
 	NextCursor                string
@@ -75,6 +83,7 @@ type Response struct {
 	EmbeddingCompleteness     float64
 	SemanticUnavailable       bool
 	SemanticUnavailableReason string
+	Explain                   bool
 }
 
 // engine-mode labels populated into Response.EffectiveSort and the
@@ -345,6 +354,11 @@ func (e *Engine) runFilterOnly(ctx context.Context, cte index.FilterCTE, effSort
 // id) — the page-skip math that consumes them lands in a follow-up;
 // for v1 the cursor exists so the client can verify ReqHash on the
 // next page and the engine can wire HasMore off len(hits) == Limit.
+//
+// Explain is forwarded from the request unchanged — the service has
+// already gated it on the caller's AI Inspection setting before
+// handing the engine a Request. Consumers (HTTP handler, CLI) read
+// resp.Explain to decide whether to emit per-signal score components.
 func (e *Engine) buildResponse(req Request, hits []index.Hit, effSort, mode string,
 	semanticUnavailable bool, semanticReason string) Response {
 
@@ -353,6 +367,7 @@ func (e *Engine) buildResponse(req Request, hits []index.Hit, effSort, mode stri
 		EffectiveSort:             effSort,
 		SemanticUnavailable:       semanticUnavailable,
 		SemanticUnavailableReason: semanticReason,
+		Explain:                   req.Explain,
 	}
 
 	if req.Limit > 0 && len(hits) == req.Limit {

@@ -116,7 +116,7 @@ func handleSearch(ctx context.Context, svc *searchsvc.Service, in *searchInput) 
 	}
 
 	body := searchBody{
-		Results:                   toSearchResultDTOs(resp.Hits),
+		Results:                   toSearchResultDTOs(resp.Hits, resp.Explain),
 		HasMore:                   resp.HasMore,
 		Total:                     resp.Total,
 		EffectiveSort:             resp.EffectiveSort,
@@ -205,10 +205,17 @@ type scoreComponentsDTO struct {
 // toSearchResultDTOs converts the engine's per-hit slice into the wire
 // shape. Length-preserving; nil-safe (empty input yields a non-nil
 // empty slice so the JSON shape is always `"results":[]` not `null`).
-func toSearchResultDTOs(hits []index.Hit) []searchResultDTO {
+//
+// explain gates ScoreComponents emission: when false, the wire shape
+// omits score_components even if the engine populated them. The
+// service has already gated request.Explain on the caller's AI
+// Inspection setting, and the engine forwards the gated value via
+// resp.Explain — so the HTTP handler reads resp.Explain (not the
+// raw request flag) to make this decision.
+func toSearchResultDTOs(hits []index.Hit, explain bool) []searchResultDTO {
 	out := make([]searchResultDTO, 0, len(hits))
 	for _, h := range hits {
-		out = append(out, toSearchResultDTO(h))
+		out = append(out, toSearchResultDTO(h, explain))
 	}
 	return out
 }
@@ -217,8 +224,10 @@ func toSearchResultDTOs(hits []index.Hit) []searchResultDTO {
 // ScoreComponents conversion handles the nullable RRF on the engine
 // side: index.Hit.ScoreComponents.RRF is *float64 (nil when the row
 // only matched one signal); the wire DTO collapses that nil to 0,
-// matching the field's non-nullable JSON shape.
-func toSearchResultDTO(h index.Hit) searchResultDTO {
+// matching the field's non-nullable JSON shape. When explain is
+// false the entire score_components substruct is omitted so the
+// diagnostics-mode payload stays gated.
+func toSearchResultDTO(h index.Hit, explain bool) searchResultDTO {
 	dto := searchResultDTO{
 		MediaID:      h.MediaID,
 		MediaType:    h.MediaType,
@@ -229,7 +238,7 @@ func toSearchResultDTO(h index.Hit) searchResultDTO {
 		ThumbVersion: h.ThumbVersion,
 		Score:        h.Score,
 	}
-	if h.ScoreComponents != nil {
+	if explain && h.ScoreComponents != nil {
 		sc := &scoreComponentsDTO{
 			BM25:       h.ScoreComponents.BM25,
 			Vector:     h.ScoreComponents.Vector,

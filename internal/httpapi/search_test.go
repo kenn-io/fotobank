@@ -84,6 +84,15 @@ func (searchFakeSettings) AIInspectionEnabled(_ context.Context, _ owners.Princi
 	return false, nil
 }
 
+// searchFakeSettingsOn is the AI-Inspection-enabled twin used by the
+// explain=true positive control. The split keeps the default-off
+// posture intact for every other test.
+type searchFakeSettingsOn struct{}
+
+func (searchFakeSettingsOn) AIInspectionEnabled(_ context.Context, _ owners.Principal) (bool, error) {
+	return true, nil
+}
+
 // searchFakeTags is a pass-through tag resolver: every label maps to
 // itself. Sufficient for route tests that don't exercise label
 // canonicalisation.
@@ -127,6 +136,14 @@ type searchFixtureOpts struct {
 }
 
 func newSearchAPIFixtureWith(t *testing.T, opts *searchFixtureOpts) searchAPIFixture {
+	return newSearchAPIFixtureWithSettings(t, false, opts)
+}
+
+// newSearchAPIFixtureWithSettings builds the fixture with an
+// optionally-enabled AI Inspection setting. inspectionOn=true is the
+// happy path for the explain=true test that needs the service to NOT
+// silently downgrade the request's diagnostics flag.
+func newSearchAPIFixtureWithSettings(t *testing.T, inspectionOn bool, opts *searchFixtureOpts) searchAPIFixture {
 	t.Helper()
 	d := testutil.OpenTestDB(t)
 	rw, ro := d.WriteDB(), d.ReadDB()
@@ -150,7 +167,11 @@ func newSearchAPIFixtureWith(t *testing.T, opts *searchFixtureOpts) searchAPIFix
 	eng := hybrid.NewEngine(be, tc, gens, cfg)
 	checker := &searchFakeChecker{valid: false}
 
-	svc := searchsvc.New(eng, searchFakeSettings{}, searchFakeTags{}, checker, gens, ro)
+	var settings searchsvc.UserSettingsRepo = searchFakeSettings{}
+	if inspectionOn {
+		settings = searchFakeSettingsOn{}
+	}
+	svc := searchsvc.New(eng, settings, searchFakeTags{}, checker, gens, ro)
 
 	idp := identity.NewStub(owner, "Alice")
 	h, err := httpapi.New(httpapi.Deps{
@@ -306,6 +327,81 @@ func TestRoute_Search_IncludeHiddenWithoutUnlockReturns403(t *testing.T) {
 
 	resp, _ := doGetSearch(t, fx, q)
 	r.Equal(http.StatusForbidden, resp.StatusCode)
+}
+
+// TestRoute_Search_ExplainFalseHidesScoreComponents pins the
+// post-fix gate: when explain=false (the default, and what the
+// service hands back when AI Inspection is off), the response must
+// omit score_components even if the backend populated them on the
+// hit. The pre-fix DTO converter always emitted score_components
+// so a diagnostics-mode payload leaked into ordinary responses.
+func TestRoute_Search_ExplainFalseHidesScoreComponents(t *testing.T) {
+	r := require.New(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	rrf := 0.5
+	bm25 := -1.5
+	rankBM25 := 1
+	fx := newSearchAPIFixtureWith(t, &searchFixtureOpts{
+		hits: []index.Hit{{
+			MediaID:    "m1",
+			MediaType:  "photo",
+			ImportedAt: now,
+			Score:      rrf,
+			ScoreComponents: &index.ScoreComponents{
+				RRF:      &rrf,
+				BM25:     &bm25,
+				RankBM25: &rankBM25,
+			},
+		}},
+	})
+
+	q := url.Values{}
+	q.Set("q", "puppy")
+	q.Set("sort", "relevance")
+	// explain not set → defaults to false.
+
+	resp, body := doGetSearch(t, fx, q)
+	r.Equal(http.StatusOK, resp.StatusCode)
+	r.NotNil(body)
+	r.Len(body.Results, 1)
+	r.Nil(body.Results[0].ScoreComponents,
+		"explain=false must omit score_components even if backend populated them")
+}
+
+// TestRoute_Search_ExplainTrueIncludesScoreComponents is the
+// positive control: with AI Inspection enabled and explain=true
+// the response carries score_components. Different fixture from
+// the default — this one wires a settings repo that returns true.
+func TestRoute_Search_ExplainTrueIncludesScoreComponents(t *testing.T) {
+	r := require.New(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	rrf := 0.5
+	bm25 := -1.5
+	fx := newSearchAPIFixtureWithSettings(t, true, &searchFixtureOpts{
+		hits: []index.Hit{{
+			MediaID:    "m1",
+			MediaType:  "photo",
+			ImportedAt: now,
+			Score:      rrf,
+			ScoreComponents: &index.ScoreComponents{
+				RRF:  &rrf,
+				BM25: &bm25,
+			},
+		}},
+	})
+
+	q := url.Values{}
+	q.Set("q", "puppy")
+	q.Set("sort", "relevance")
+	q.Set("explain", "true")
+
+	resp, body := doGetSearch(t, fx, q)
+	r.Equal(http.StatusOK, resp.StatusCode)
+	r.NotNil(body)
+	r.Len(body.Results, 1)
+	r.NotNil(body.Results[0].ScoreComponents,
+		"explain=true with inspection enabled must emit score_components")
+	r.InDelta(rrf, body.Results[0].ScoreComponents.RRF, 1e-9)
 }
 
 // TestRoute_Search_CursorRoundTrip — first page returns a non-empty
