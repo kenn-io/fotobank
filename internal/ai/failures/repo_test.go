@@ -33,6 +33,45 @@ func TestRecordAndDelete(t *testing.T) {
 	r.Empty(rows)
 }
 
+// TestRecord_AccumulatesAttemptCountOnConflict pins the upsert
+// contract that the gap scanner's failure-budget gate relies on:
+// when a (media, task, fingerprint) row already exists, a follow-up
+// Record must INCREMENT attempt_count, not overwrite it. The embed
+// worker re-enqueues create a fresh ai_jobs row each time, so each
+// re-enqueue presents attempts=1 to Record. Without the accumulator,
+// the panel and the gap-scanner both lose count of repeat failures.
+func TestRecord_AccumulatesAttemptCountOnConflict(t *testing.T) {
+	r := require.New(t)
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	repo := failures.NewRepo(rw, ro)
+	ctx := context.Background()
+	fp := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+
+	// First record: net-new row. attempt_count is whatever the caller
+	// supplied (mirrors the chat worker's c.Attempts+1).
+	r.NoError(repo.Record(ctx, mid, ai.TaskTag, fp, ai.ErrKindMalformed, "first", 1))
+	row, found, err := repo.GetForFingerprint(ctx, mid, ai.TaskTag, fp)
+	r.NoError(err)
+	r.True(found)
+	r.Equal(1, row.AttemptCount)
+
+	// Second record under the same key: attempt_count += 1.
+	r.NoError(repo.Record(ctx, mid, ai.TaskTag, fp, ai.ErrKindTransient, "second", 1))
+	row, _, err = repo.GetForFingerprint(ctx, mid, ai.TaskTag, fp)
+	r.NoError(err)
+	r.Equal(2, row.AttemptCount, "second record must increment, not overwrite")
+	r.Equal("second", row.LastError, "last_error must reflect the latest record")
+	r.Equal(ai.ErrKindTransient, row.LastErrorKind)
+
+	// Third record bumps to 3.
+	r.NoError(repo.Record(ctx, mid, ai.TaskTag, fp, ai.ErrKindMalformed, "third", 1))
+	row, _, err = repo.GetForFingerprint(ctx, mid, ai.TaskTag, fp)
+	r.NoError(err)
+	r.Equal(3, row.AttemptCount)
+}
+
 func TestCountForFingerprint(t *testing.T) {
 	r := require.New(t)
 	rw, ro := testutil.OpenTestDBPair(t)

@@ -692,6 +692,38 @@ func TestWorker_PerFingerprintRequestUsesClaimFingerprint(t *testing.T) {
 		"each fingerprint group must encode at its InputProfile's edge")
 }
 
+// TestWorker_RepeatedFailuresAccumulateAttemptCount covers the
+// embed-side of the upsert-accumulate contract. Each re-enqueue
+// creates a fresh ai_jobs row with attempts=0; the worker's
+// recordTerminalFailure passes c.Attempts+1=1 every time. Without
+// Failures.Record incrementing on conflict, attempt_count would stay
+// pinned at 1 across N runs and the gap scanner's budget gate would
+// never trip on a repeat-failing media.
+func TestWorker_RepeatedFailuresAccumulateAttemptCount(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
+	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
+	client := &fakeEmbedClient{err: errors.New("HTTP 500: boom")}
+	w, q, _, failR := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+
+	fp := embedFP()
+	// Three independent re-enqueue cycles. Each terminal-fails the
+	// fresh ai_jobs row and Records a failure. The conflict path must
+	// accumulate attempt_count on every conflict.
+	for i := range 3 {
+		r.NoError(q.Enqueue(ctx, mid, ai.TaskEmbed, fp))
+		r.NoError(w.RunOnce(ctx), "iter %d", i)
+	}
+
+	row, found, err := failR.GetForFingerprint(ctx, mid, ai.TaskEmbed, fp)
+	r.NoError(err)
+	r.True(found)
+	r.GreaterOrEqual(row.AttemptCount, 3, "three terminal failures must accumulate")
+}
+
 // TestWorker_TerminalFailureRecordsAIFailureRow asserts the worker
 // upserts an ai_failures row alongside MarkFailed when the embeddings
 // endpoint reports a terminal failure. The row is keyed on the claim's
