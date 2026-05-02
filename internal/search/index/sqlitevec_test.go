@@ -528,16 +528,19 @@ func TestSQLiteVec_BM25OnlySortNewest(t *testing.T) {
 // the ann CTE itself is then capped at KPerSignal so the
 // over-fetched candidates never bleed into the fusion pool.
 //
-// Setup: a single owner with N=20 media whose BM25 corpus does NOT
-// match the query (so BM25Only would return zero hits) and whose
-// vectors all sit at the query baseline (distance 0; ann_raw picks
-// them all). With KPerSignal=5, the over-fetched ann_raw returns
-// up to 50 candidates — but the post-filter ann CTE must cap at 5,
-// and the final result set must therefore not exceed 5.
+// The ann CTE's LIMIT must be paired with an explicit ORDER BY on
+// distance so the cap drops the FARTHEST candidates, not arbitrary
+// post-filter rows. To exercise that ordering, the fixture seeds N
+// vectors at distinct distances from the query — derived from
+// `varying-{i}` text — and pre-computes the expected K-nearest set
+// in Go space. The assertion then checks the result IDs match that
+// set, not just |hits| ≤ K. Without the ORDER BY before LIMIT,
+// SQLite would be free to drop arbitrary candidates, leaking farther
+// vectors into the result.
 //
-// If the LIMIT on ann is missing, every owner-scoped candidate
-// surfaces and the result count exceeds KPerSignal — failing the
-// assertion.
+// BM25 is silenced (caption tokens never match the query) so the
+// result set is purely ANN-driven and the per-row distance ordering
+// directly drives the final ranking.
 func TestSQLiteVec_FusedSearchANNCappedPostFilter(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
@@ -546,6 +549,8 @@ func TestSQLiteVec_FusedSearchANNCappedPostFilter(t *testing.T) {
 
 	const N = 20
 	mids := make([]string, N)
+	vecs := make([][]float32, N)
+	queryBaseline := vecForText("baseline")
 	for i := range mids {
 		mid := seedSearchMedia(t, d, owner)
 		mids[i] = mid
@@ -555,6 +560,11 @@ func TestSQLiteVec_FusedSearchANNCappedPostFilter(t *testing.T) {
 			Caption: "irrelevant_caption",
 			Tags:    "irrelevant_tag",
 		})
+		// Distinct vectors per row so each lands at its own L2
+		// distance from queryBaseline. The ORDER BY in the ann CTE
+		// has to discriminate among them or the cap silently drops
+		// the wrong candidates.
+		vecs[i] = vecForText(fmt.Sprintf("varying-%d", i))
 	}
 
 	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
@@ -565,9 +575,8 @@ func TestSQLiteVec_FusedSearchANNCappedPostFilter(t *testing.T) {
 	gen, err := g.FindOrCreateBuilding(ctx, fp, 768)
 	r.NoError(err)
 	mp := embedding.NewMapping(d.WriteDB())
-	queryBaseline := vecForText("baseline")
-	for _, mid := range mids {
-		_, err := mp.WriteVector(ctx, gen, mid, queryBaseline)
+	for i, mid := range mids {
+		_, err := mp.WriteVector(ctx, gen, mid, vecs[i])
 		r.NoError(err)
 	}
 	r.NoError(g.Promote(ctx, gen.ID))
@@ -576,6 +585,29 @@ func TestSQLiteVec_FusedSearchANNCappedPostFilter(t *testing.T) {
 	b := index.NewSQLiteVecBackend(d.ReadDB(), *got)
 
 	const K = 5
+	// Compute the K-nearest set in Go so the assertion compares the
+	// query result against the ground truth. l2sq is monotonic with
+	// L2 distance — same ordering, no sqrt needed.
+	type pair struct {
+		mid  string
+		dist float64
+	}
+	pairs := make([]pair, N)
+	for i := range mids {
+		pairs[i] = pair{mid: mids[i], dist: l2sq(queryBaseline, vecs[i])}
+	}
+	// Insertion sort by distance ascending. N=20, O(N^2) is fine and
+	// keeps the fixture independent of stdlib sort generics.
+	for i := 1; i < len(pairs); i++ {
+		for j := i; j > 0 && pairs[j-1].dist > pairs[j].dist; j-- {
+			pairs[j-1], pairs[j] = pairs[j], pairs[j-1]
+		}
+	}
+	expected := make(map[string]bool, K)
+	for i := range K {
+		expected[pairs[i].mid] = true
+	}
+
 	hits, err := b.FusedSearch(ctx, index.SearchInput{
 		Query:       "tokens_that_match_no_caption",
 		QueryVector: queryBaseline,
@@ -588,9 +620,28 @@ func TestSQLiteVec_FusedSearchANNCappedPostFilter(t *testing.T) {
 	r.NoError(err)
 	r.LessOrEqual(len(hits), K,
 		"ann CTE must cap candidates at KPerSignal even when the filter is broad")
-	// Sanity: at least one ANN-driven hit surfaces (otherwise the test
-	// is degenerate).
 	r.NotEmpty(hits)
+
+	// Every hit must come from the K-nearest set. A missing ORDER BY
+	// before the LIMIT would let farther candidates leak in.
+	for _, h := range hits {
+		r.True(expected[h.MediaID],
+			"hit %s is not in the K-nearest set; ANN cap must preserve nearest", h.MediaID)
+	}
+	r.Len(hits, K,
+		"with KPerSignal=K and N>K candidates all matching the filter, the result must have exactly K hits")
+}
+
+// l2sq returns the squared L2 distance between a and b. Squared (no
+// sqrt) is enough — it preserves the ordering of L2 — and matches
+// the kind of distance vec0 uses internally.
+func l2sq(a, b []float32) float64 {
+	var s float64
+	for i := range a {
+		d := float64(a[i]) - float64(b[i])
+		s += d * d
+	}
+	return s
 }
 
 // TestSQLiteVec_EmptyFilterIsRejected pins the fail-closed contract:

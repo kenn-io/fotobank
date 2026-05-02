@@ -165,6 +165,16 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	// candidates the plan never intended to fuse. The over-fetch
 	// stays in ann_raw to absorb owner-imbalance scenarios; ann
 	// then trims back down to KPerSignal post-filter.
+	//
+	// ORDER BY before LIMIT is load-bearing: without it, SQLite is
+	// free to drop arbitrary post-filter candidates and the cap
+	// could lose the actual nearest vectors in favour of farther
+	// ones that happened to be processed first. The ann_raw rows
+	// arrive in ann.distance order (vec0 returns top-k by distance)
+	// but the JOINs to media_embedding_ids and filter can re-order
+	// the iteration, so the explicit ORDER BY is what guarantees
+	// the nearest survive the cap.
+	sb.WriteString("    ORDER BY ann_raw.distance, x.media_id\n")
 	sb.WriteString("    LIMIT ?\n")
 	sb.WriteString("  ),\n")
 	sb.WriteString("  fused AS (\n")
