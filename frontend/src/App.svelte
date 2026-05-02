@@ -30,6 +30,7 @@
   import { api } from "./lib/api/client";
   import { aiHealthStore } from "./lib/ai/health.svelte";
   import { AppConfigStore } from "./lib/app/appConfig.svelte";
+  import { shouldRedirectSharesToHome } from "./lib/app/routeGuards";
 
   const themeStore = new ThemeStore(api);
   themeStore.load();
@@ -52,6 +53,18 @@
 
   onMount(() => {
     void appConfig.load();
+  });
+
+  // Route guard: when sharing UI is disabled, the /shares route must
+  // not render. C1 makes appConfig.ready=true on both /me success and
+  // failure (treat-failure-as-disabled), so this fires predictably even
+  // if /me errored. replace:true keeps the user from browser-backing
+  // into /shares after the redirect. Predicate lives in routeGuards.ts
+  // so it can be unit-tested without rendering the full App tree.
+  $effect(() => {
+    if (shouldRedirectSharesToHome(router.current, appConfig)) {
+      router.navigate("/", { replace: true });
+    }
   });
 
   $effect(() => {
