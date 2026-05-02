@@ -113,6 +113,23 @@ const (
 	SortOldest    Sort = "oldest"
 )
 
+// SortFromString maps the engine's effective-sort string onto the
+// strongly-typed Sort. Unknown values fall through to SortNewest —
+// the safest default for FilterOnly callers and the documented fallback
+// the SQLiteVecBackend already implements in its switch.
+func SortFromString(s string) Sort {
+	switch Sort(s) {
+	case SortRelevance:
+		return SortRelevance
+	case SortOldest:
+		return SortOldest
+	case SortNewest:
+		return SortNewest
+	default:
+		return SortNewest
+	}
+}
+
 // Cursor is opaque at the L1 layer. The engine module (M3) fills in
 // the fields used to skip already-seen rows on subsequent pages.
 type Cursor struct{}

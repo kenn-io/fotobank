@@ -54,6 +54,24 @@ type Input struct {
 	IncludeHidden bool
 }
 
+// WithOwner returns a copy of in with Owner set to the supplied
+// principal. Provided as a builder so the engine can compose an
+// owner-less Input from request parsing and stamp the principal on
+// just before Resolve.
+func (in Input) WithOwner(p owners.Principal) Input {
+	in.Owner = p
+	return in
+}
+
+// WithHidden returns a copy of in with IncludeHidden set to v. The
+// service layer (N1) is the gatekeeper that rejects IncludeHidden=true
+// without an unlock claim; this builder only carries the flag through
+// the engine pipeline.
+func (in Input) WithHidden(v bool) Input {
+	in.IncludeHidden = v
+	return in
+}
+
 // Resolve returns the body of a `filter` CTE (without the leading
 // "WITH filter AS (...)") and its bind arguments. The CTE projects
 // (id, timestamp, imported_at) FROM media so the hybrid Engine can
