@@ -348,6 +348,64 @@ func TestEngine_PureJunkQueryFallsThroughToFilter(t *testing.T) {
 	r.Equal("newest", resp.EffectiveSort)
 }
 
+// TestEngine_FilterOnly_NoActiveGenDoesNotSetSemanticUnavailable
+// pins the FilterOnly clear: when Q is empty (or all tokens drop)
+// the engine routes to FilterOnly, which never consults the semantic
+// signal. Even if no active generation has been promoted, the
+// response must not flag semantic_unavailable=true — the request
+// never asked for a semantic signal, so surfacing the degradation
+// banner would mislead the user into thinking something is broken.
+func TestEngine_FilterOnly_NoActiveGenDoesNotSetSemanticUnavailable(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	// No generation seeded → FindActive returns (nil, nil), the same
+	// state that would otherwise flip semantic_unavailable=true on a
+	// hybrid path.
+	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	be := &fakeBackend{hits: nil}
+	tc := &fakeTextClient{vec: make([]float32, 768)}
+	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+
+	resp, err := eng.Search(context.Background(), hybrid.Request{
+		Owner: engineTestOwner,
+		Query: "",
+		Sort:  "newest",
+		Limit: 25,
+	})
+	r.NoError(err)
+	r.Equal(int32(1), be.filterCalls.Load(), "FilterOnly should fire for empty Q")
+	r.False(resp.SemanticUnavailable,
+		"FilterOnly never consults semantic signal — flag must stay false")
+	r.Empty(resp.SemanticUnavailableReason)
+}
+
+// TestEngine_FilterOnly_PureJunkNoActiveGenDoesNotSetSemanticUnavailable
+// is the all-tokens-dropped twin of the empty-Q test: a query that
+// collapses to no FTS5 terms after stripping must take the same
+// FilterOnly clear, regardless of whether an active generation
+// exists.
+func TestEngine_FilterOnly_PureJunkNoActiveGenDoesNotSetSemanticUnavailable(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	be := &fakeBackend{hits: nil}
+	tc := &fakeTextClient{vec: make([]float32, 768)}
+	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+
+	resp, err := eng.Search(context.Background(), hybrid.Request{
+		Owner: engineTestOwner,
+		Query: "!! ?",
+		Sort:  "relevance",
+		Limit: 50,
+	})
+	r.NoError(err)
+	r.Equal(int32(1), be.filterCalls.Load())
+	r.False(resp.SemanticUnavailable)
+	r.Empty(resp.SemanticUnavailableReason)
+}
+
 // TestEngine_HasMoreSetWhenLimitFilled — len(hits) == Limit means
 // the v1 cursor is emitted and HasMore is true. Pin the round-trip
 // shape so a follow-up that wires page-skip math doesn't silently

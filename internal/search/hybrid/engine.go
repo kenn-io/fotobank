@@ -166,6 +166,13 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 	// Step 3: route. Empty-query branch and "all tokens dropped"
 	// branch share the same FilterOnly call — extracted into a helper
 	// so the recursion in the relevance branch is honest.
+	//
+	// FilterOnly never consults the semantic signal, so the
+	// semantic-unavailable flag must be cleared in this branch even if
+	// no active generation was resolved above. Otherwise an empty-Q
+	// page on a fresh library would render the "semantic unavailable"
+	// banner — which is misleading because the request never asked for
+	// a semantic signal in the first place.
 	if req.Query == "" {
 		if err := validateCursor(req, effSort, engineModeFilterOnly); err != nil {
 			return Response{}, err
@@ -175,7 +182,7 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 			return Response{}, err
 		}
 		return e.buildResponse(req, hits, effSort, engineModeFilterOnly,
-			semanticUnavailable, semanticUnavailableReason), nil
+			false, ""), nil
 	}
 
 	// Q is non-empty. Build the MATCH expression once; if it collapses
@@ -186,7 +193,10 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 	if !ok {
 		// Empty match → no lexical signal. Coerce sort to a date sort
 		// (relevance is meaningless without a query) and serve from
-		// the filter CTE.
+		// the filter CTE. As with the empty-Q branch, the
+		// semantic-unavailable flag is cleared here — pure-punctuation
+		// queries collapse to a filter-only request and the user
+		// never asked for semantic ranking.
 		filterSort := effSort
 		if filterSort == string(index.SortRelevance) {
 			filterSort = string(index.SortNewest)
@@ -199,7 +209,7 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 			return Response{}, err
 		}
 		return e.buildResponse(req, hits, filterSort, engineModeFilterOnly,
-			semanticUnavailable, semanticUnavailableReason), nil
+			false, ""), nil
 	}
 
 	// Decide between FusedSearch and BM25Only based on whether the
