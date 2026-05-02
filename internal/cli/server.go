@@ -477,7 +477,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		searchEngine := hybrid.NewEngine(searchBackend, embedClient, embedGens, cfg.Search)
 		searchService = searchsvc.New(
 			searchEngine,
-			userSettingsAIInspection{svc: usersettingsSvc},
+			usersettingsSvc,
 			tagLabelResolver{ro: d.ReadDB()},
 			hiddenCheckAdapter{},
 			embedGens,
@@ -1380,39 +1380,6 @@ func (hiddenCheckAdapter) Valid(claim *hidden.UnlockClaim, caller owners.Princip
 		return false
 	}
 	return true
-}
-
-// aiInspectionSettingKey is the canonical key the user-settings store
-// holds the per-caller AI Inspection toggle under. Reading the key
-// here keeps the canonical name in one place rather than hardcoding
-// it at every callsite — the search service consumes it via
-// userSettingsAIInspection below, and any future feature that wants
-// to check the same flag can read the same constant.
-const aiInspectionSettingKey = "ai.inspection"
-
-// userSettingsAIInspection adapts *usersettings.Service onto
-// searchsvc.UserSettingsRepo. The interface only needs the boolean
-// "is AI Inspection enabled?" answer for the caller; we read the
-// "ai.inspection" key, treat any non-`false`/empty JSON value as
-// truthy, and default to false on a missing row. This matches the
-// fakeSettings shape used in service_test.go and keeps the gate
-// fail-closed under unexpected payloads.
-type userSettingsAIInspection struct{ svc *usersettings.Service }
-
-func (u userSettingsAIInspection) AIInspectionEnabled(ctx context.Context, caller owners.Principal) (bool, error) {
-	val, ok, err := u.svc.Get(ctx, caller, aiInspectionSettingKey)
-	if err != nil {
-		return false, fmt.Errorf("read ai inspection setting: %w", err)
-	}
-	if !ok {
-		return false, nil
-	}
-	// Setting values are stored as JSON literals. The toggle is a
-	// boolean; treat the canonical "true" as on, everything else as
-	// off. A future migration may split the setting into a struct;
-	// until then the comparison stays simple and fail-closed for any
-	// unexpected payload.
-	return strings.TrimSpace(val) == "true", nil
 }
 
 // tagLabelResolver satisfies searchsvc.TagResolver by canonicalising

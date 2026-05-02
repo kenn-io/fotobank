@@ -61,11 +61,15 @@ function computeRequestHash(query: string, sort: SearchSort, filters: SearchFilt
 // buildParams projects the store's reactive state into the wire shape.
 // dateAfter / dateBefore are forwarded as-is — the caller is expected
 // to pass RFC3339 strings (the SearchFiltersPopover will produce these).
+// explain is only forwarded when the per-user AI Inspection setting is
+// on; the backend re-checks the same flag so a tampered request without
+// the toggle still receives a non-diagnostic response.
 function buildParams(
   query: string,
   sort: SearchSort,
   filters: SearchFilters,
   cursor: string | null,
+  explain: boolean,
 ): SearchRequestParams {
   const params: SearchRequestParams = {};
   if (query !== "") params.q = query;
@@ -85,6 +89,7 @@ function buildParams(
   if (filters.mediaType !== undefined) params.media_type = filters.mediaType;
   if (filters.includeHidden === true) params.include_hidden = true;
   if (cursor !== null) params.cursor = cursor;
+  if (explain) params.explain = true;
   return params;
 }
 
@@ -102,6 +107,14 @@ function isCursorMismatch(e: unknown): boolean {
 
 export interface CreateSearchStoreOptions {
   client: SearchClient;
+  // explain is read on each call to issue() so a route component can
+  // bind the flag to a reactive store (the AIInspectionStore). The
+  // default is a constant `false` getter for tests and any caller that
+  // doesn't wire the toggle. The function-as-getter shape lets the
+  // store consult the live setting on every search rather than
+  // capturing a value at construction; flipping the toggle takes
+  // effect on the next setQuery / setFilters / setSort.
+  explain?: () => boolean;
 }
 
 // createSearchStore builds a Svelte 5 rune-backed store. The function
@@ -111,6 +124,7 @@ export interface CreateSearchStoreOptions {
 // from consumers.
 export function createSearchStore(opts: CreateSearchStoreOptions): SearchStore {
   const client = opts.client;
+  const explainGetter = opts.explain ?? (() => false);
 
   let query = $state<string>("");
   let filters = $state<SearchFilters>(emptyFilters());
@@ -156,7 +170,7 @@ export function createSearchStore(opts: CreateSearchStoreOptions): SearchStore {
     const token = ++inflightToken;
     loading = true;
 
-    const params = buildParams(query, sort, filters, reqCursor);
+    const params = buildParams(query, sort, filters, reqCursor, explainGetter());
     let res: SearchResponse;
     try {
       res = await client.search(params, ctrl.signal);

@@ -1,6 +1,8 @@
 <!-- frontend/src/routes/SettingsAI.svelte -->
 <script lang="ts">
   import { aiHealthStore } from "../lib/ai/health.svelte";
+  import { AIInspectionStore } from "../lib/ai/inspectionStore.svelte";
+  import { api } from "../lib/api/client";
   import {
     acknowledgeHiddenProcessing,
     backfillAI,
@@ -9,11 +11,24 @@
   } from "../lib/ai/client";
   import type { AIFailureRow, AITask } from "../lib/ai/types";
 
+  // Tests inject a stubbed inspectionStore so the toggle can be driven
+  // without an HTTP roundtrip; production callers omit the prop and
+  // get a fresh store backed by the same-origin API client.
+  let { inspectionStore = new AIInspectionStore(api) }: {
+    inspectionStore?: AIInspectionStore;
+  } = $props();
+
   let tagFailures = $state<AIFailureRow[]>([]);
   let captionFailures = $state<AIFailureRow[]>([]);
   let busy = $state<string | null>(null);
 
   void refreshAll();
+  // Hydrate the toggle's persisted value on mount. Failures are silent
+  // — the default (false) is correct on a fresh account, and a load
+  // failure on an existing account just leaves the toggle off until
+  // the user clicks it (which writes a fresh value).
+  // svelte-ignore state_referenced_locally
+  void inspectionStore.load().catch(() => {});
 
   async function refreshAll(): Promise<void> {
     await aiHealthStore.refresh();
@@ -23,6 +38,16 @@
     ]);
     tagFailures = tags;
     captionFailures = captions;
+  }
+
+  async function toggleInspection(e: Event): Promise<void> {
+    const next = (e.currentTarget as HTMLInputElement).checked;
+    busy = "inspection";
+    try {
+      await inspectionStore.set(next);
+    } finally {
+      busy = null;
+    }
   }
 
   async function ack(): Promise<void> {
@@ -155,6 +180,31 @@
       </section>
     {/if}
   {/if}
+
+  <!-- AI Inspection toggle. Sits outside the health-gated branches so a
+       config-disabled or unacknowledged deployment can still toggle the
+       diagnostics surface ahead of an admin flip. The toggle's only
+       effect is on the search page: when on, every search request adds
+       explain=true and per-result score breakdowns appear in the grid
+       and the lightbox metadata row. -->
+  <section class="inspection">
+    <h4>AI Inspection</h4>
+    <p class="muted">
+      Show search relevance score breakdowns (RRF, BM25, vector) on each
+      result. Useful for tuning queries and understanding why a photo
+      ranked where it did.
+    </p>
+    <label class="toggle">
+      <input
+        type="checkbox"
+        checked={inspectionStore.enabled}
+        onchange={toggleInspection}
+        disabled={busy === "inspection"}
+        data-testid="ai-inspection-toggle"
+      />
+      <span>Enable AI Inspection</span>
+    </label>
+  </section>
 </section>
 
 <style>
@@ -176,4 +226,8 @@
   button.link { font-size: 9px; background: none; border: none; color: var(--text-secondary); text-decoration: underline; padding: 0; cursor: pointer; }
   .failures ul { list-style: none; padding: 0; font-size: 10px; line-height: 1.6; }
   .badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 9px; background: var(--bg-elevated); color: var(--text-muted); margin-right: 6px; }
+  .inspection { margin-top: 16px; padding: 10px 12px; background: var(--bg-surface); border-radius: 6px; }
+  .inspection h4 { margin: 0 0 4px 0; font-size: 12px; }
+  .inspection .muted { font-size: 10px; color: var(--text-muted); margin: 0 0 8px 0; line-height: 1.5; }
+  .toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer; }
 </style>

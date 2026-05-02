@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
+import { flushSync, tick } from "svelte";
 import SettingsAI from "./SettingsAI.svelte";
 import { aiHealthStore } from "../lib/ai/health.svelte";
+import { AIInspectionStore } from "../lib/ai/inspectionStore.svelte";
 import * as client from "../lib/ai/client";
 import type { AIHealth } from "../lib/ai/types";
 
@@ -72,5 +74,34 @@ describe("SettingsAI", () => {
     aiHealthStore.health = { ...base, paused_reason: "config_disabled" };
     render(SettingsAI);
     await waitFor(() => expect(screen.getByText(/AI is disabled in config\.toml/)).toBeTruthy());
+  });
+
+  it("toggling AI Inspection persists ai.inspection=true", async () => {
+    // The toggle calls inspectionStore.set(true) which PUTs the JSON
+    // boolean `true` to /api/v1/settings/user/ai.inspection. The test
+    // injects a stubbed client so the underlying PUT is observable;
+    // checking the post-click state of the store covers both the
+    // optimistic local update and the persistence call.
+    aiHealthStore.health = { ...base };
+    const PUT = vi.fn().mockResolvedValue({ error: undefined });
+    const GET = vi.fn().mockResolvedValue({ data: undefined, error: undefined });
+    const store = new AIInspectionStore({ GET, PUT } as never);
+    render(SettingsAI, { props: { inspectionStore: store } });
+    flushSync();
+    await tick();
+    const toggle = screen.getByTestId("ai-inspection-toggle") as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    await fireEvent.click(toggle);
+    // The local store reflects the new value optimistically; the PUT
+    // is observable on the mocked client. Together these confirm the
+    // toggle persists ai.inspection=true via the user-settings route.
+    expect(store.enabled).toBe(true);
+    expect(PUT).toHaveBeenCalledWith(
+      "/api/v1/settings/user/{key}",
+      expect.objectContaining({
+        params: { path: { key: "ai.inspection" } },
+        body: { value: "true" },
+      }),
+    );
   });
 });

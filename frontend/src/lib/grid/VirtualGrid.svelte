@@ -14,9 +14,14 @@
   // where dates aren't a meaningful axis. headerAction forwards a
   // per-month snippet (e.g. Task 7's GroupSelectButton) into each
   // MonthChunk's day-header in timeline mode.
+  // cellOverlay forwards a per-cell snippet that renders ON TOP of
+  // each MediaCell — the search page passes a DiagnosticsBadge slot
+  // here; other callers omit it and the cell renders bare. The overlay
+  // is positioned absolutely inside the cell's host div so it doesn't
+  // disturb the justified layout.
   let {
     months, onLoadMore, targetRowHeight = 200, timelineChrome = true,
-    headerAction, onOpenMedia,
+    headerAction, onOpenMedia, cellOverlay,
   }: {
     months: Month[];
     onLoadMore?: () => void;
@@ -24,6 +29,7 @@
     timelineChrome?: boolean;
     headerAction?: Snippet<[Month]>;
     onOpenMedia?: (id: string) => void;
+    cellOverlay?: Snippet<[Media]>;
   } = $props();
 
   let containerEl: HTMLDivElement | null = $state(null);
@@ -97,6 +103,19 @@
     return items.map((m) => ({ id: m.id, aspect: m.aspect, thumbUrl: m.thumbUrl }));
   }
 
+  // findFullMedia maps a MediaLite (the layout-sliced subset) back to
+  // the full Media row by id. Used by the cellOverlay snippet so the
+  // overlay can read fields beyond MediaLite's three (id/aspect/
+  // thumbUrl). Falls back to a tombstone Media when the lookup misses
+  // — the caller's snippet runs but reads no overlay-specific fields,
+  // which is the v2 search-grid fast path: cells without
+  // score_components render no badge.
+  function findFullMedia(items: Media[], id: string): Media {
+    const found = items.find((m) => m.id === id);
+    if (found) return found;
+    return { id, timestamp: "", aspect: 1, thumbUrl: "", taken: new Date(0), thumbVersion: 0 };
+  }
+
   // Memoize the flattened id list so shift-click doesn't re-allocate
   // O(n) strings + array on every click. Recomputes only when months
   // (the prop) changes.
@@ -149,8 +168,9 @@
                `{#snippet headerAction()}` body, the name `headerAction`
                binds to the snippet itself, not the prop. -->
           {@const action = headerAction}
+          {@const items = month.items}
           <MonthChunk
-            items={toLite(month.items)}
+            items={toLite(items)}
             label={month.key}
             options={{ containerWidth, targetRowHeight, gap: 4 }}
           >
@@ -158,25 +178,36 @@
               {@render action(month)}
             {/snippet}
             {#snippet renderCell(m)}
-              <MediaCell
-                media={m}
-                selected={selection.ids.has(m.id)}
-                onCellClick={(e) => handleCellClick(e, m.id)}
-              />
+              <div class="cell-host">
+                <MediaCell
+                  media={m}
+                  selected={selection.ids.has(m.id)}
+                  onCellClick={(e) => handleCellClick(e, m.id)}
+                />
+                {#if cellOverlay}
+                  <div class="cell-overlay">{@render cellOverlay(findFullMedia(items, m.id))}</div>
+                {/if}
+              </div>
             {/snippet}
           </MonthChunk>
         {:else}
+          {@const items = month.items}
           <MonthChunk
-            items={toLite(month.items)}
+            items={toLite(items)}
             label={month.key}
             options={{ containerWidth, targetRowHeight, gap: 4 }}
           >
             {#snippet renderCell(m)}
-              <MediaCell
-                media={m}
-                selected={selection.ids.has(m.id)}
-                onCellClick={(e) => handleCellClick(e, m.id)}
-              />
+              <div class="cell-host">
+                <MediaCell
+                  media={m}
+                  selected={selection.ids.has(m.id)}
+                  onCellClick={(e) => handleCellClick(e, m.id)}
+                />
+                {#if cellOverlay}
+                  <div class="cell-overlay">{@render cellOverlay(findFullMedia(items, m.id))}</div>
+                {/if}
+              </div>
             {/snippet}
           </MonthChunk>
         {/if}
@@ -185,16 +216,22 @@
              rejects label={undefined}) so MonthChunk skips the
              day-header altogether, and don't forward headerAction
              since there's no header to mount it on. -->
+        {@const items = month.items}
         <MonthChunk
-          items={toLite(month.items)}
+          items={toLite(items)}
           options={{ containerWidth, targetRowHeight, gap: 4 }}
         >
           {#snippet renderCell(m)}
-            <MediaCell
-              media={m}
-              selected={selection.ids.has(m.id)}
-              onCellClick={(e) => handleCellClick(e, m.id)}
-            />
+            <div class="cell-host">
+              <MediaCell
+                media={m}
+                selected={selection.ids.has(m.id)}
+                onCellClick={(e) => handleCellClick(e, m.id)}
+              />
+              {#if cellOverlay}
+                <div class="cell-overlay">{@render cellOverlay(findFullMedia(items, m.id))}</div>
+              {/if}
+            </div>
           {/snippet}
         </MonthChunk>
       {/if}
@@ -205,4 +242,13 @@
 
 <style>
   .grid { padding: 8px; }
+  .cell-host { position: relative; width: 100%; height: 100%; }
+  .cell-overlay {
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .cell-overlay :global(*) { pointer-events: auto; }
 </style>

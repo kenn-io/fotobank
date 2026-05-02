@@ -13,16 +13,19 @@
   import { createSearchStore, type SearchStore } from "../lib/search/searchStore.svelte";
   import { searchClient } from "../lib/search/client";
   import type { SearchClient } from "../lib/search/client";
-  import type { SearchFilters, SearchSort } from "../lib/search/types";
+  import type { SearchFilters, SearchSort, SearchScoreComponents } from "../lib/search/types";
   import SearchFiltersPopover from "../lib/search/SearchFiltersPopover.svelte";
   import SearchFilterChips from "../lib/search/SearchFilterChips.svelte";
   import SearchSortSegment from "../lib/search/SearchSortSegment.svelte";
   import IndexingStatusPill from "../lib/search/IndexingStatusPill.svelte";
   import IndexingStatusBanner from "../lib/search/IndexingStatusBanner.svelte";
+  import DiagnosticsBadge from "../lib/search/DiagnosticsBadge.svelte";
   import VirtualGrid from "../lib/grid/VirtualGrid.svelte";
   import type { Month, Media } from "../lib/media/mediaStore.svelte";
   import { router } from "../lib/router/router.svelte";
   import type { EventsStore } from "../lib/events/eventsStore.svelte";
+  import { AIInspectionStore } from "../lib/ai/inspectionStore.svelte";
+  import { api } from "../lib/api/client";
 
   // Tests inject a stub store via the optional `store` prop; production
   // callers omit it and the route constructs its own backed by the
@@ -34,14 +37,25 @@
   // stale). Tests omit it; isolated renders without an events bus
   // simply don't get the invalidation, which is harmless because
   // those tests don't drive a multi-request flow.
-  let { store, client = searchClient, events }: {
+  // inspectionStore exposes the per-user "AI Inspection" toggle. When
+  // on, every issued search includes explain=true; the page renders a
+  // DiagnosticsBadge overlay on each cell. Tests inject a stubbed
+  // store; production builds a real one, loads the persisted value
+  // (silently ignoring failures), and reads `enabled` reactively.
+  let { store, client = searchClient, events, inspectionStore = new AIInspectionStore(api) }: {
     store?: SearchStore;
     client?: SearchClient;
     events?: EventsStore;
+    inspectionStore?: AIInspectionStore;
   } = $props();
+  // svelte-ignore state_referenced_locally
+  void inspectionStore.load().catch(() => {});
 
   // svelte-ignore state_referenced_locally
-  const s: SearchStore = store ?? createSearchStore({ client });
+  const s: SearchStore = store ?? createSearchStore({
+    client,
+    explain: () => inspectionStore.enabled,
+  });
 
   // hydrated guards the URL-sync $effect from firing during the initial
   // hydration cycle (when the hydration effect writes the URL's params
@@ -211,6 +225,21 @@
     return [{ key: "search-results", items }];
   });
 
+  // scoreComponentsByMediaId is the per-cell lookup the cellOverlay
+  // snippet consults to decide whether to mount a DiagnosticsBadge.
+  // Built from s.results so a re-fetch (or a fresh request triggered
+  // by a generation-activated SSE) replaces the map atomically — the
+  // grid never reads a stale (id, scoreComponents) pairing across
+  // requests. Only populated when explain=true was honoured by the
+  // backend; absent rows render bare cells.
+  const scoreComponentsByMediaId: Map<string, SearchScoreComponents> = $derived.by(() => {
+    const m = new Map<string, SearchScoreComponents>();
+    for (const r of s.results) {
+      if (r.score_components) m.set(r.media_id, r.score_components);
+    }
+    return m;
+  });
+
   function onLoadMore(): void {
     void s.fetchNextPage();
   }
@@ -234,7 +263,14 @@
       {months}
       {onLoadMore}
       timelineChrome={false}
-    />
+    >
+      {#snippet cellOverlay(m)}
+        {@const comps = scoreComponentsByMediaId.get(m.id)}
+        {#if comps}
+          <DiagnosticsBadge components={comps} />
+        {/if}
+      {/snippet}
+    </VirtualGrid>
   {:else if s.loading}
     <div class="search-status">Searching…</div>
   {:else if s.query !== ""}

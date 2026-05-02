@@ -51,4 +51,44 @@ describe("LightboxMetadata", () => {
     await waitFor(() => expect(getByText("Dog")).toBeTruthy());
     expect(vi.mocked(client.getMediaAIView)).toHaveBeenCalledWith("m1");
   });
+
+  it("renders the Search relevance row when score_components is supplied", () => {
+    // V2 diagnostics-mode integration: when the search hit carries
+    // score_components (the explain=true gated payload), the metadata
+    // panel surfaces a Search relevance row that mirrors the
+    // DiagnosticsBadge breakdown — RRF on the first line, BM25 with
+    // its rank on the second, Vector with its rank on the third.
+    vi.mocked(client.getMediaAIView).mockResolvedValue({});
+    const scoreComponents = {
+      rrf: 0.0156,
+      bm25: 8.42,
+      vector: 0.81,
+      rank_bm25: 3,
+      rank_vector: 7,
+    };
+    const { getByText, getByTestId } = render(LightboxMetadata, {
+      props: { media: baseMedia, scoreComponents } as never,
+    });
+    expect(getByText("Search relevance")).toBeTruthy();
+    const block = getByTestId("search-relevance");
+    expect(block.textContent).toContain("RRF");
+    expect(block.textContent).toContain("0.0156");
+    expect(block.textContent).toContain("BM25");
+    expect(block.textContent).toContain("8.42");
+    expect(block.textContent).toContain("(rank 3)");
+    expect(block.textContent).toContain("Vector");
+    expect(block.textContent).toContain("0.81");
+    expect(block.textContent).toContain("(rank 7)");
+  });
+
+  it("omits the Search relevance row when scoreComponents is not supplied", () => {
+    // Existing callers (Library / Sessions / Albums lightbox) pass no
+    // score_components — the row must not render at all so the
+    // metadata panel stays unchanged for non-search contexts.
+    vi.mocked(client.getMediaAIView).mockResolvedValue({});
+    const { queryByText } = render(LightboxMetadata, {
+      props: { media: baseMedia } as never,
+    });
+    expect(queryByText("Search relevance")).toBeNull();
+  });
 });
