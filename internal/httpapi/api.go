@@ -101,6 +101,12 @@ type Deps struct {
 	// so the panel can show config_disabled without the AIService poking
 	// at config.
 	AIEnabled bool
+	// SharingEnabled is the [ui].sharing_enabled config flag at boot.
+	// Surfaced to the SPA via /api/v1/me.features.sharing_enabled so the
+	// frontend can hide share UI without the share data-plane changing
+	// shape. Backend share APIs and the `fotobank shares ...` CLI work
+	// regardless of this flag.
+	SharingEnabled bool
 	// Search backs GET /api/v1/search. Nil leaves the route unregistered
 	// so the OpenAPI dumper can pass an empty Deps without wiring a
 	// search service.

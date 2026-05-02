@@ -513,6 +513,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		AIService:       aiSvc,
 		AIVisionProbe:   aiProbe,
 		AIEnabled:       cfg.AI.Enabled,
+		SharingEnabled:  cfg.UI.SharingEnabled,
 		Search:          searchService,
 	})
 	if err != nil {
