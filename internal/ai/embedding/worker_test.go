@@ -726,6 +726,121 @@ func (f *flakyQueue) MarkBlocked(ctx context.Context, jobID string, claimedAt ti
 	return f.inner.MarkBlocked(ctx, jobID, claimedAt, reason)
 }
 
+// claimLostQueue wraps a real *jobs.Queue but forces every MarkFailed
+// call to return jobs.ErrClaimLost — simulating a sweep that reclaimed
+// the lease mid-flight. Used to assert recordTerminalFailure does not
+// write an ai_failures row when the lease is no longer ours.
+type claimLostQueue struct{ inner *jobs.Queue }
+
+func (c *claimLostQueue) ClaimBatch(ctx context.Context, task ai.Task, n int) ([]jobs.Claim, error) {
+	return c.inner.ClaimBatch(ctx, task, n)
+}
+
+func (c *claimLostQueue) PromoteThumbReadyBlocked(ctx context.Context, task ai.Task) (int, error) {
+	return c.inner.PromoteThumbReadyBlocked(ctx, task)
+}
+
+func (c *claimLostQueue) MarkFailed(_ context.Context, _ string, _ time.Time, _ ai.LastErrorKind, _ string) error {
+	return jobs.ErrClaimLost
+}
+
+func (c *claimLostQueue) MarkDone(ctx context.Context, jobID string, claimedAt time.Time) error {
+	return c.inner.MarkDone(ctx, jobID, claimedAt)
+}
+
+func (c *claimLostQueue) MarkBlocked(ctx context.Context, jobID string, claimedAt time.Time, reason string) error {
+	return c.inner.MarkBlocked(ctx, jobID, claimedAt, reason)
+}
+
+// TestWorker_FailureRecordSkippedWhenClaimLost verifies the
+// recordTerminalFailure gate: when MarkFailed returns ErrClaimLost,
+// the worker must NOT write an ai_failures row, because the claim is
+// owned by another worker that will record its own outcome. Without
+// the gate, two workers racing on a swept lease would both write
+// failure rows and the panel would double-count.
+func TestWorker_FailureRecordSkippedWhenClaimLost(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
+	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
+	client := &fakeEmbedClient{err: errors.New("HTTP 500: boom")}
+
+	realQ := jobs.NewQueue(d.WriteDB(), d.ReadDB())
+	clQ := &claimLostQueue{inner: realQ}
+	failR := failures.NewRepo(d.WriteDB(), d.ReadDB())
+	w := embedding.NewWorker(embedding.WorkerDeps{
+		Q:        clQ,
+		Gens:     embedding.NewGenerations(d.WriteDB(), d.ReadDB()),
+		Mapping:  embedding.NewMapping(d.WriteDB()),
+		Client:   client,
+		Resolver: resolver,
+		Cfg:      embedCfg(),
+		Events:   &recordingEmitter{},
+		DB:       d.WriteDB(),
+		Skipped:  skipped.NewRepo(d.WriteDB(), d.ReadDB()),
+		Failures: failR,
+	})
+
+	fp := embedFP()
+	r.NoError(realQ.Enqueue(ctx, mid, ai.TaskEmbed, fp))
+	r.NoError(w.RunOnce(ctx))
+
+	// MarkFailed returned ErrClaimLost → recordTerminalFailure must
+	// skip Failures.Record. ai_failures stays empty.
+	cnt, err := failR.CountForFingerprint(ctx, ai.TaskEmbed, fp)
+	r.NoError(err)
+	r.Equal(0, cnt, "ErrClaimLost on MarkFailed must not write ai_failures")
+}
+
+// TestWorker_MalformedFingerprintDoesNotRecordFailureRow covers the
+// other half of the recordTerminalFailure gate: when the claim's
+// fingerprint string is malformed and parseFingerprint fails, the
+// worker must MarkFailed the job (so the queue drains) but skip the
+// ai_failures row — writing one keyed on the zero-value fingerprint
+// would silently merge with every other malformed failure across the
+// system.
+func TestWorker_MalformedFingerprintDoesNotRecordFailureRow(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
+	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
+	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
+	w, q, _, failR := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+
+	// Bypass Enqueue's fingerprint validation by inserting an ai_jobs
+	// row directly with a malformed fingerprint string (only one
+	// separator instead of two). parseFingerprint rejects it, the
+	// worker takes the malformed-fp branch in processGroup.
+	_, err := d.WriteDB().ExecContext(ctx,
+		`INSERT INTO ai_jobs(id, media_id, task, fingerprint, status, attempts, enqueued_at)
+		 VALUES (?, ?, 'embed', ?, 'pending', 0, ?)`,
+		"job-malformed", mid, "bad-fp-no-separators", time.Now().UTC())
+	r.NoError(err)
+
+	r.NoError(w.RunOnce(ctx))
+
+	// Job must be marked failed so the queue drains.
+	r.Equal("failed", jobStatus(t, d, mid, ai.TaskEmbed))
+
+	// No ai_failures row should exist for ANY fingerprint — the worker
+	// has no canonical triple to key on, so it must skip Failures.Record.
+	var n int
+	r.NoError(d.ReadDB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ai_failures WHERE media_id = ?`, mid,
+	).Scan(&n))
+	r.Equal(0, n, "malformed fingerprint must not produce an ai_failures row")
+	// Sanity: no row for the legitimate fingerprint either.
+	cnt, err := failR.CountForFingerprint(ctx, ai.TaskEmbed, embedFP())
+	r.NoError(err)
+	r.Equal(0, cnt)
+	// Silence unused-var on q if the linter ever frowns on the shadow.
+	_ = q
+}
+
 // TestWorker_RunSurvivesTransientClaimError covers the loop-survival
 // contract: a non-cancel error from ClaimBatch must be logged and the
 // loop must continue. Without the fix, the worker returned on the

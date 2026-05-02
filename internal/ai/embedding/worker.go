@@ -330,17 +330,36 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 	return nil
 }
 
-// recordTerminalFailure marks the claim failed and records an
-// ai_failures row in lockstep with the chat worker's surface. The
-// failure event fires regardless of whether either side errored — the
-// emitter is async-best-effort and the queue is the source of truth
-// for the claim's terminal state.
+// recordTerminalFailure marks the claim failed and, on success,
+// records an ai_failures row alongside it. The Failures.Record call
+// and the failure-event emit are gated on MarkFailed succeeding so a
+// reclaimed lease (jobs.ErrClaimLost) doesn't write a stale failure
+// row under a claim some other worker now owns — that worker will
+// reach its own terminal state and write its own row.
+//
+// fp may be the zero value when this is called from the malformed
+// fingerprint branch in processGroup: the claim's fp string couldn't
+// be parsed, so there is no canonical (model, prompt, profile) triple
+// to key on. Skip Failures.Record in that case — an ai_failures row
+// keyed under empty model/prompt/profile would silently merge with
+// every other zero-fp failure across all media.
 func (w *Worker) recordTerminalFailure(ctx context.Context, c jobs.Claim, fp ai.Fingerprint, kind ai.LastErrorKind, msg string) {
-	_ = w.d.Q.MarkFailed(ctx, c.JobID, c.ClaimedAt, kind, msg)
-	if w.d.Failures != nil {
+	if err := w.d.Q.MarkFailed(ctx, c.JobID, c.ClaimedAt, kind, msg); err != nil {
+		if errors.Is(err, jobs.ErrClaimLost) {
+			// The lease was reclaimed mid-flight — another worker now
+			// owns the claim. Don't write a failure row under a claim
+			// we no longer hold.
+			return
+		}
+		slog.Default().Warn("embedding worker mark failed", "job", c.JobID, "err", err)
+		return
+	}
+	if w.d.Failures != nil && fp != (ai.Fingerprint{}) {
 		// attempt_count includes the just-failed run; mirrors
 		// internal/ai/worker/worker.go's markFailed.
-		_ = w.d.Failures.Record(ctx, c.MediaID, ai.TaskEmbed, fp, kind, msg, c.Attempts+1)
+		if err := w.d.Failures.Record(ctx, c.MediaID, ai.TaskEmbed, fp, kind, msg, c.Attempts+1); err != nil {
+			slog.Default().Warn("embedding worker record failure", "media", c.MediaID, "err", err)
+		}
 	}
 	w.d.Events.EmitAIEmbedFailed(c.MediaID, fp.String())
 }
