@@ -400,6 +400,77 @@ func TestSQLiteVec_FusedSearchFiltersANNCandidates(t *testing.T) {
 		"the hit must carry a vector score — proving ANN, not BM25, surfaced it")
 }
 
+// TestSQLiteVec_FusedSearchANNCappedPostFilter pins the post-filter
+// cap on the ANN CTE. ann_raw over-fetches at
+// k=KPerSignal*annOverfetchFactor to absorb owner-imbalance, but
+// the ann CTE itself is then capped at KPerSignal so the
+// over-fetched candidates never bleed into the fusion pool.
+//
+// Setup: a single owner with N=20 media whose BM25 corpus does NOT
+// match the query (so BM25Only would return zero hits) and whose
+// vectors all sit at the query baseline (distance 0; ann_raw picks
+// them all). With KPerSignal=5, the over-fetched ann_raw returns
+// up to 50 candidates — but the post-filter ann CTE must cap at 5,
+// and the final result set must therefore not exceed 5.
+//
+// If the LIMIT on ann is missing, every owner-scoped candidate
+// surfaces and the result count exceeds KPerSignal — failing the
+// assertion.
+func TestSQLiteVec_FusedSearchANNCappedPostFilter(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+
+	const N = 20
+	mids := make([]string, N)
+	for i := range mids {
+		mid := seedSearchMedia(t, d, owner)
+		mids[i] = mid
+		// FTS corpus that does NOT match the query — so BM25 carries
+		// no hits and the result set is purely ANN-driven.
+		mustWriteFTSCorpus(t, d, mid, ftsCorpus{
+			Caption: "irrelevant_caption",
+			Tags:    "irrelevant_tag",
+		})
+	}
+
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	fp := ai.Fingerprint{
+		ModelID:      "siglip2",
+		InputProfile: "search-anncap-" + t.Name(),
+	}
+	gen, err := g.FindOrCreateBuilding(ctx, fp, 768)
+	r.NoError(err)
+	mp := embedding.NewMapping(d.WriteDB())
+	queryBaseline := vecForText("baseline")
+	for _, mid := range mids {
+		_, err := mp.WriteVector(ctx, gen, mid, queryBaseline)
+		r.NoError(err)
+	}
+	r.NoError(g.Promote(ctx, gen.ID))
+	got, err := g.GetByID(ctx, gen.ID)
+	r.NoError(err)
+	b := index.NewSQLiteVecBackend(d.ReadDB(), *got)
+
+	const K = 5
+	hits, err := b.FusedSearch(ctx, index.SearchInput{
+		Query:       "tokens_that_match_no_caption",
+		QueryVector: queryBaseline,
+		Owner:       owner,
+		Filter:      noFilter(owner),
+		KPerSignal:  K,
+		RRFK:        60,
+		Limit:       100, // outer LIMIT > KPerSignal so the cap, not Limit, bounds the count
+	})
+	r.NoError(err)
+	r.LessOrEqual(len(hits), K,
+		"ann CTE must cap candidates at KPerSignal even when the filter is broad")
+	// Sanity: at least one ANN-driven hit surfaces (otherwise the test
+	// is degenerate).
+	r.NotEmpty(hits)
+}
+
 // TestSQLiteVec_EmptyFilterIsRejected pins the fail-closed contract:
 // every Backend call must arrive with an owner-conditioned
 // Filter.SQL. The earlier "scan-all-media SELECT" fallback was a

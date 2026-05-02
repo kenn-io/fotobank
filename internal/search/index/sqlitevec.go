@@ -120,6 +120,14 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	sb.WriteString("    FROM ann_raw\n")
 	sb.WriteString("    JOIN media_embedding_ids x ON x.generation_id = ? AND x.vec_id = ann_raw.vec_id\n")
 	sb.WriteString("    JOIN filter f ON f.id = x.media_id\n")
+	// Cap the post-filter ANN candidate pool at KPerSignal.
+	// Without this, the over-fetched ann_raw (k=KPerSignal *
+	// annOverfetchFactor) bleeds straight into the fusion pool when
+	// the filter doesn't shrink the slate — polluting RRF with
+	// candidates the plan never intended to fuse. The over-fetch
+	// stays in ann_raw to absorb owner-imbalance scenarios; ann
+	// then trims back down to KPerSignal post-filter.
+	sb.WriteString("    LIMIT ?\n")
 	sb.WriteString("  ),\n")
 	sb.WriteString("  fused AS (\n")
 	sb.WriteString("    SELECT b.id AS id, b.rank_bm25 AS rank_bm25, a.rank_vector AS rank_vector,\n")
@@ -138,7 +146,7 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	sb.WriteString("ORDER BY rrf DESC, m.id\n")
 	sb.WriteString("LIMIT ?")
 
-	args := make([]any, 0, len(in.Filter.Args)+8)
+	args := make([]any, 0, len(in.Filter.Args)+9)
 	args = append(args, in.Filter.Args...)
 	// bm25_raw: MATCH ? then LIMIT ?
 	args = append(args, in.Query, in.KPerSignal)
@@ -148,8 +156,8 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	// can come up empty if k=KPerSignal happens to be filled by other
 	// owners' vectors. Over-fetching gives the filter room to narrow.
 	args = append(args, embedding.VecToBlob(in.QueryVector), in.KPerSignal*annOverfetchFactor)
-	// ann: generation_id = ?
-	args = append(args, b.gen.ID)
+	// ann: generation_id = ?, then LIMIT KPerSignal (post-filter cap).
+	args = append(args, b.gen.ID, in.KPerSignal)
 	// SELECT: RRF k for BM25 then for vector, then outer LIMIT.
 	args = append(args, in.RRFK, in.RRFK, in.Limit)
 
