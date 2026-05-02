@@ -598,12 +598,20 @@ func newAIPromoteGenerationCmd() *cobra.Command {
 	return cmd
 }
 
-// runAIPromoteGeneration looks up id, warns when promoting a row
-// older than retain_retired_days (the row may already be a compactor
-// candidate), prompts for confirmation unless --yes was passed, then
-// flips the row to active via Generations.Promote. Promote retires
-// any current active row in the same tx so the partial-unique
-// embedding_generations_one_active never observes two active rows.
+// runAIPromoteGeneration looks up id, validates it is in the retired
+// state, warns when promoting a row older than retain_retired_days
+// (the row may already be a compactor candidate), prompts for
+// confirmation unless --yes was passed, then flips the row to active
+// via Generations.Promote. Promote retires any current active row in
+// the same tx so the partial-unique embedding_generations_one_active
+// never observes two active rows.
+//
+// promote-generation is the admin-override surface — its only sensible
+// target is a row that has already been retired but the operator wants
+// to bring back. Building rows belong to the activator (which uses
+// PromoteFromBuilding to defend against admin retire races), and the
+// already-active row is the no-op case. Rejecting both up front keeps
+// the surface honest and surfaces operator typos as clean errors.
 func runAIPromoteGeneration(cmd *cobra.Command, cfgPath string, id int64, yes bool) error {
 	ctx := cmd.Context()
 	c, err := loadAICtx(cfgPath)
@@ -616,8 +624,13 @@ func runAIPromoteGeneration(cmd *cobra.Command, cfgPath string, id int64, yes bo
 	if err != nil {
 		return fmt.Errorf("lookup generation %d: %w", id, err)
 	}
+	if row.State != "retired" {
+		return fmt.Errorf(
+			"promote-generation only valid on retired rows; generation %d is %s",
+			id, row.State)
+	}
 	stderr := cmd.ErrOrStderr()
-	if row.State == "retired" && row.RetiredAt != nil {
+	if row.RetiredAt != nil {
 		retainDays := c.cfg.Search.RetainRetiredDays
 		if retainDays > 0 {
 			window := time.Duration(retainDays) * 24 * time.Hour

@@ -302,6 +302,86 @@ func TestCLIAI_PromoteGeneration_AdminOverride(t *testing.T) {
 	r.Nil(retiredAt, "retired_at must be cleared on re-promotion")
 }
 
+// TestCLIAI_PromoteGeneration_RejectsBuildingState confirms that the
+// CLI refuses to promote a row that is still in the 'building' state.
+// Building rows are the activator's territory; admin-override should
+// only ever resurrect a retired generation.
+func TestCLIAI_PromoteGeneration_RejectsBuildingState(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeAIEmbedConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_CONFIG", cfgPath)
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	d, err := db.Open(dbPath)
+	r.NoError(err)
+	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	row, err := gens.FindOrCreateBuilding(context.Background(), embedTestFingerprint(), 8)
+	r.NoError(err)
+	_ = d.Close()
+
+	stdout, stderr, code := runAICLI(
+		"ai", "promote-generation", strconv.FormatInt(row.ID, 10), "--yes", "--config", cfgPath,
+	)
+	r.NotEqual(0, code, "promote on building row must fail; stdout=%s stderr=%s", stdout, stderr)
+	r.Contains(stderr, "retired",
+		"error must explain the retired-state requirement")
+	r.Contains(stderr, "building",
+		"error must surface the actual state of the row")
+
+	// The row must still be in 'building' — the rejected command did
+	// not flip its state.
+	d, err = db.Open(dbPath)
+	r.NoError(err)
+	defer func() { _ = d.Close() }()
+	var state string
+	r.NoError(d.ReadDB().QueryRowContext(context.Background(),
+		`SELECT state FROM embedding_generations WHERE id=?`, row.ID,
+	).Scan(&state))
+	r.Equal("building", state)
+}
+
+// TestCLIAI_PromoteGeneration_RejectsActiveState confirms the same
+// guard for already-active rows: promote-generation on an active row
+// is a no-op-shaped operator typo (the row is already where they want
+// it). Reject up front so the operator gets a clean error.
+func TestCLIAI_PromoteGeneration_RejectsActiveState(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeAIEmbedConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_CONFIG", cfgPath)
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	d, err := db.Open(dbPath)
+	r.NoError(err)
+	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	row, err := gens.FindOrCreateBuilding(context.Background(), embedTestFingerprint(), 8)
+	r.NoError(err)
+	r.NoError(gens.Promote(context.Background(), row.ID))
+	_ = d.Close()
+
+	stdout, stderr, code := runAICLI(
+		"ai", "promote-generation", strconv.FormatInt(row.ID, 10), "--yes", "--config", cfgPath,
+	)
+	r.NotEqual(0, code, "promote on active row must fail; stdout=%s stderr=%s", stdout, stderr)
+	r.Contains(stderr, "retired",
+		"error must explain the retired-state requirement")
+	r.Contains(stderr, "active",
+		"error must surface the actual state of the row")
+
+	// The row remains active.
+	d, err = db.Open(dbPath)
+	r.NoError(err)
+	defer func() { _ = d.Close() }()
+	var state string
+	r.NoError(d.ReadDB().QueryRowContext(context.Background(),
+		`SELECT state FROM embedding_generations WHERE id=?`, row.ID,
+	).Scan(&state))
+	r.Equal("active", state)
+}
+
 func TestCLIAI_CompactRetiredGenerationsDryRun(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
