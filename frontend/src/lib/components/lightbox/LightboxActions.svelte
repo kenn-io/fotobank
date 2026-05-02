@@ -36,7 +36,13 @@
     onDone: (op: "hide" | "unhide", succeeded: string[]) => void;
   } = $props();
 
-  const isUnhideContext = $derived(source.kind === "hidden");
+  // Unhide is shown whenever the row is hidden, regardless of which
+  // source kind the lightbox was opened from. This matters for
+  // from=map (E2) where a hidden photo can legitimately appear in
+  // the navIds when the snapshot was fetched under include_hidden=true:
+  // the user needs the Unhide button even though source.kind is "map",
+  // not "hidden".
+  const isUnhideContext = $derived(media.hidden_at != null);
 
   async function onHide(ids: string[]): Promise<void> {
     if (!window.confirm("Hide this photo?")) return;

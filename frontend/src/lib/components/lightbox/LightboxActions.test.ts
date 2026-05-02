@@ -72,3 +72,65 @@ describe("LightboxActions", () => {
     expect(onDone).toHaveBeenCalledWith("hide", ["m1"]);
   });
 });
+
+describe("LightboxActions — Unhide keyed on media.hidden_at", () => {
+  it("renders Unhide (not Share/Hide) when source is map AND media is hidden", () => {
+    const { props } = fakeStores();
+    lightboxSession.open({
+      source: { kind: "map" },
+      navIds: ["m1"],
+      selected: false,
+      scrollY: 0,
+      returnFocusMediaId: null,
+      returnHref: "/map?z=10&c=0,0&include_hidden=true",
+      includeHidden: true,
+    });
+    const hiddenMedia = { ...fakeMedia, hidden_at: "2026-05-02T00:00:00Z" };
+    const { queryByRole, getByRole } = render(LightboxActions, {
+      props: {
+        source: { kind: "map" },
+        media: hiddenMedia,
+        rawMedia,
+        ...props,
+        appConfig: defaultAppConfig(),
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+        onDone: vi.fn(),
+      } as never,
+    });
+    // Unhide present:
+    expect(getByRole("button", { name: /unhide/i })).toBeTruthy();
+    // Hide and Share suppressed (Hide because in unhide context;
+    // Share because (a) unhide context AND (b) sharing-disabled by default):
+    expect(queryByRole("button", { name: /^hide$/i })).toBeNull();
+    expect(queryByRole("button", { name: /share/i })).toBeNull();
+  });
+
+  it("renders Hide (not Unhide) when source is map AND media is NOT hidden", () => {
+    const { props } = fakeStores();
+    lightboxSession.open({
+      source: { kind: "map" },
+      navIds: ["m1"],
+      selected: false,
+      scrollY: 0,
+      returnFocusMediaId: null,
+      returnHref: "/map?z=10&c=0,0",
+    });
+    // fakeMedia has no hidden_at — explicitly set null for clarity.
+    const visibleMedia = { ...fakeMedia, hidden_at: null };
+    const { queryByRole, getByRole } = render(LightboxActions, {
+      props: {
+        source: { kind: "map" },
+        media: visibleMedia,
+        rawMedia,
+        ...props,
+        appConfig: defaultAppConfig(),
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+        onDone: vi.fn(),
+      } as never,
+    });
+    expect(getByRole("button", { name: /^hide$/i })).toBeTruthy();
+    expect(queryByRole("button", { name: /unhide/i })).toBeNull();
+  });
+});
