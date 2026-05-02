@@ -29,12 +29,15 @@ type PreviewResolver interface {
 // embeddings HTTP client. Tests substitute a fake that returns canned
 // vectors; the production impl is *embedding.Client.
 //
-// The model parameter is the per-call model the worker passes from
-// the claim's fingerprint.ModelID — see worker.processGroup. Routing
-// per claim rather than per worker is what keeps mid-rollout batches
-// (jobs claimed under both the prior and the new fingerprint) honest.
+// The model and dimension parameters are the per-call values the
+// worker passes from the claim's fingerprint.ModelID and the matched
+// generation row's Dimension — see worker.processGroup. Routing per
+// claim rather than per worker is what keeps mid-rollout batches
+// (jobs claimed under both the prior and the new fingerprint) honest:
+// a stale-fp claim must validate against its own dimension, not the
+// worker's currently-configured one.
 type ClientIface interface {
-	EmbedImages(ctx context.Context, model string, jpegs [][]byte) ([][]float32, error)
+	EmbedImages(ctx context.Context, model string, dimension int, jpegs [][]byte) ([][]float32, error)
 }
 
 // Compile-time check: *Client satisfies ClientIface. If the client's
@@ -345,12 +348,14 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 	}
 
 	// Issue one batched /v1/embeddings call for this fingerprint
-	// group, targeting the claim's model. An empty model in the
-	// fingerprint would fall back to cfg.Model on the client side —
-	// but the worker has already validated parseFingerprint's three
-	// parts, so ModelID is non-empty here unless the fingerprint
-	// itself is "||...".
-	vectors, callErr := w.d.Client.EmbedImages(ctx, fp.ModelID, jpegs)
+	// group, targeting the claim's model AND dimension. An empty
+	// model in the fingerprint would fall back to cfg.Model on the
+	// client side — but the worker has already validated
+	// parseFingerprint's three parts, so ModelID is non-empty here
+	// unless the fingerprint itself is "||...". Dimension comes from
+	// the matched generation row so a stale-fp claim is validated
+	// against its own dimension, not the currently-configured one.
+	vectors, callErr := w.d.Client.EmbedImages(ctx, fp.ModelID, gen.Dimension, jpegs)
 	if callErr != nil {
 		// Full-batch failure: classify once, mark every survivor
 		// failed with the same kind. Per-claim attribution is not

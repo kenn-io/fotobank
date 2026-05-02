@@ -65,7 +65,7 @@ func TestClient_BatchImagesReturnsVectorsByIndex(t *testing.T) {
 		Timeout:   5 * time.Second,
 	})
 
-	out, err := c.EmbedImages(context.Background(), "", [][]byte{[]byte("a-bytes"), []byte("b-bytes")})
+	out, err := c.EmbedImages(context.Background(), "", 0, [][]byte{[]byte("a-bytes"), []byte("b-bytes")})
 	r.NoError(err)
 	r.NoError(seen.err)
 	r.Equal("/v1/embeddings", seen.path)
@@ -104,7 +104,7 @@ func TestClient_ReordersOutOfOrderResponse(t *testing.T) {
 		Dimension: 768,
 		Timeout:   5 * time.Second,
 	})
-	out, err := c.EmbedImages(context.Background(), "",
+	out, err := c.EmbedImages(context.Background(), "", 0,
 		[][]byte{[]byte("a"), []byte("b"), []byte("c")})
 	r.NoError(err)
 	r.Len(out, 3)
@@ -129,7 +129,7 @@ func TestClient_RejectsDimensionMismatchAsMalformed(t *testing.T) {
 		Dimension: 768,
 		Timeout:   5 * time.Second,
 	})
-	_, err := c.EmbedImages(context.Background(), "", [][]byte{[]byte("x")})
+	_, err := c.EmbedImages(context.Background(), "", 0, [][]byte{[]byte("x")})
 	r.ErrorIs(err, embedding.ErrMalformed)
 }
 
@@ -149,7 +149,7 @@ func TestClient_4xxIsPermanent(t *testing.T) {
 		Timeout:    5 * time.Second,
 		MaxRetries: 3, // would-be retries: 4xx must NOT trigger them.
 	})
-	_, err := c.EmbedImages(context.Background(), "", [][]byte{[]byte("x")})
+	_, err := c.EmbedImages(context.Background(), "", 0, [][]byte{[]byte("x")})
 	r.ErrorIs(err, embedding.ErrProvider4xx)
 	r.EqualValues(1, hits.Load(), "no retries on 4xx")
 }
@@ -170,7 +170,7 @@ func TestClient_5xxRetriedAndEventuallyTransient(t *testing.T) {
 		Timeout:    5 * time.Second,
 		MaxRetries: 1,
 	})
-	_, err := c.EmbedImages(context.Background(), "", [][]byte{[]byte("x")})
+	_, err := c.EmbedImages(context.Background(), "", 0, [][]byte{[]byte("x")})
 	r.ErrorIs(err, embedding.ErrTransient)
 	r.GreaterOrEqual(hits.Load(), int32(2), "must retry once on 5xx")
 }
@@ -197,7 +197,7 @@ func TestClient_ContextCancelDoesNotWrapAsTransient(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := c.EmbedImages(ctx, "", [][]byte{[]byte("x")})
+	_, err := c.EmbedImages(ctx, "", 0, [][]byte{[]byte("x")})
 	r.Error(err)
 	r.ErrorIs(err, context.Canceled, "got %v", err)
 	r.NotErrorIs(err, embedding.ErrTransient, "must not be wrapped as transient")
@@ -234,7 +234,7 @@ func TestClient_ContextCanceledDuringBodyReadDoesNotWrapAsTransient(t *testing.T
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, err := c.EmbedImages(ctx, "", [][]byte{[]byte("x")})
+	_, err := c.EmbedImages(ctx, "", 0, [][]byte{[]byte("x")})
 	r.Error(err)
 	r.ErrorIs(err, context.DeadlineExceeded, "got %v", err)
 	r.NotErrorIs(err, embedding.ErrTransient, "must not be wrapped as transient")
@@ -259,7 +259,7 @@ func TestClient_DeadlineExceededDoesNotWrapAsTransient(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 	defer cancel()
-	_, err := c.EmbedImages(ctx, "", [][]byte{[]byte("x")})
+	_, err := c.EmbedImages(ctx, "", 0, [][]byte{[]byte("x")})
 	r.Error(err)
 	r.ErrorIs(err, context.DeadlineExceeded, "got %v", err)
 	r.NotErrorIs(err, embedding.ErrTransient, "must not be wrapped as transient")

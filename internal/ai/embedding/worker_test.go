@@ -49,9 +49,10 @@ func embedCfg() ai.EmbedConfig {
 // returns a fixed slate of vectors (one per call) or a configured error.
 // vectorsToReturn caps the response length so partial-failure cases can
 // be exercised by returning fewer vectors than the input batch size.
-// lastModel records the model the worker passed on the most recent
-// call, so per-fingerprint routing tests can confirm the worker
-// targets the claim's fingerprint.ModelID rather than cfg.Model.
+// lastModel and lastDim record the model and dimension the worker
+// passed on the most recent call, so per-fingerprint routing tests can
+// confirm the worker targets the claim's fingerprint.ModelID and the
+// matched generation row's Dimension rather than cfg.Model / cfg.Dimension.
 type fakeEmbedClient struct {
 	vectors         [][]float32
 	vectorsToReturn int // -1 means "match input length exactly"
@@ -60,13 +61,15 @@ type fakeEmbedClient struct {
 	lastInputCount  atomic.Int32
 	mu              sync.Mutex
 	lastModel       string
+	lastDim         int
 }
 
-func (f *fakeEmbedClient) EmbedImages(_ context.Context, model string, jpegs [][]byte) ([][]float32, error) {
+func (f *fakeEmbedClient) EmbedImages(_ context.Context, model string, dimension int, jpegs [][]byte) ([][]float32, error) {
 	f.calls.Add(1)
 	f.lastInputCount.Store(int32(len(jpegs)))
 	f.mu.Lock()
 	f.lastModel = model
+	f.lastDim = dimension
 	f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
@@ -471,22 +474,25 @@ func TestWorker_RunPromotesThumbReadyBlocked(t *testing.T) {
 // perCallEmbedClient returns a fresh slice of vectors per call,
 // indexed by call number. Used by tests where the worker is expected
 // to issue more than one EmbedImages call per RunOnce — e.g. one call
-// per fingerprint group. modelByCall captures the model passed on
-// each call so per-fingerprint routing tests can verify the worker
-// targets each group's fingerprint.ModelID.
+// per fingerprint group. modelByCall and dimByCall capture the model
+// and dimension passed on each call so per-fingerprint routing tests
+// can verify the worker targets each group's fingerprint.ModelID and
+// the matched generation row's Dimension.
 type perCallEmbedClient struct {
 	mu          sync.Mutex
 	calls       atomic.Int32
 	perCall     [][][]float32 // perCall[i] is the slice for the i-th call
 	inputCounts []int         // recorded len(jpegs) per call, in call order
 	modelByCall []string      // recorded model per call, in call order
+	dimByCall   []int         // recorded dimension per call, in call order
 }
 
-func (f *perCallEmbedClient) EmbedImages(_ context.Context, model string, jpegs [][]byte) ([][]float32, error) {
+func (f *perCallEmbedClient) EmbedImages(_ context.Context, model string, dimension int, jpegs [][]byte) ([][]float32, error) {
 	idx := int(f.calls.Add(1)) - 1
 	f.mu.Lock()
 	f.inputCounts = append(f.inputCounts, len(jpegs))
 	f.modelByCall = append(f.modelByCall, model)
+	f.dimByCall = append(f.dimByCall, dimension)
 	f.mu.Unlock()
 	if idx >= len(f.perCall) {
 		idx = len(f.perCall) - 1
@@ -597,13 +603,16 @@ func TestWorker_BatchWithMixedFingerprintsRoutesToCorrectGenerations(t *testing.
 // every EmbedImages call so the per-fp edge routing test can assert
 // the worker encoded each group at the edge derived from its
 // fingerprint.InputProfile (via EdgeFromInputProfile), not from
-// cfg.InputEdge.
+// cfg.InputEdge. callDims captures the dimension param the worker
+// passed on each call so the per-call dimension routing test can
+// confirm gen.Dimension is what's forwarded, not cfg.Dimension.
 type edgeRecordingClient struct {
 	mu         sync.Mutex
 	dimsByCall [][]int // dimsByCall[i] is the [maxDim per input] slice for the i-th call
+	callDims   []int   // callDims[i] is the dimension the worker passed on the i-th call
 }
 
-func (f *edgeRecordingClient) EmbedImages(_ context.Context, _ string, jpegs [][]byte) ([][]float32, error) {
+func (f *edgeRecordingClient) EmbedImages(_ context.Context, _ string, dimension int, jpegs [][]byte) ([][]float32, error) {
 	dims := make([]int, len(jpegs))
 	for i, b := range jpegs {
 		// Decode the JPEG to read its (resized) dimension. EncodeEmbed
@@ -619,6 +628,7 @@ func (f *edgeRecordingClient) EmbedImages(_ context.Context, _ string, jpegs [][
 	}
 	f.mu.Lock()
 	f.dimsByCall = append(f.dimsByCall, dims)
+	f.callDims = append(f.callDims, dimension)
 	f.mu.Unlock()
 	out := make([][]float32, len(jpegs))
 	for i := range out {
@@ -690,6 +700,17 @@ func TestWorker_PerFingerprintRequestUsesClaimFingerprint(t *testing.T) {
 	}
 	r.ElementsMatch([]int{256, 512}, flat,
 		"each fingerprint group must encode at its InputProfile's edge")
+
+	// Per-call dimension routing: every call must have received the
+	// matched generation row's Dimension. Both gens were created via
+	// FindOrCreateBuilding(cfg.Dimension=768), so each call carries
+	// dim=768. The assertion proves the worker reads gen.Dimension
+	// rather than cfg.Dimension when it routes the request — a stale
+	// claim that lands on a row created at a different dimension would
+	// be validated against that row's value, not the worker's current
+	// configuration.
+	r.Equal([]int{embedCfg().Dimension, embedCfg().Dimension}, client.callDims,
+		"each call must carry the matched generation's Dimension")
 }
 
 // TestWorker_RepeatedFailuresAccumulateAttemptCount covers the
