@@ -121,6 +121,62 @@ func TestNewMetrics_AIMetricsExposed(t *testing.T) {
 	r.Contains(out, `fotobank_ai_acknowledgement_required 0`)
 }
 
+// TestMetrics_AIJobsDepthEmbedLabel verifies the AIJobsDepth pull-source
+// gauge accepts task="embed" alongside the existing "tag" / "caption"
+// labels (R1 plan: "Existing AI metrics extend with task=\"embed\""
+// — the label set already accepts arbitrary string values, but the
+// boot-time loop has to register the gauge so a closure exists for the
+// scrape side to invoke).
+func TestMetrics_AIJobsDepthEmbedLabel(t *testing.T) {
+	r := require.New(t)
+	m := NewMetrics(MetricSources{
+		AIJobsDepth: func(task, status string) int64 {
+			if task == "embed" && status == "pending" {
+				return 42
+			}
+			return 0
+		},
+	}, BuildInfo{})
+
+	var buf bytes.Buffer
+	m.WritePrometheus(&buf)
+	out := buf.String()
+
+	// Embed task is registered for all three statuses; the closure
+	// returns the canned 42 for {embed, pending} only, and zero for the
+	// other two — both flavours assert the label gauge exists.
+	r.Contains(out, `fotobank_ai_jobs_depth{task="embed",status="pending"} 42`)
+	r.Contains(out, `fotobank_ai_jobs_depth{task="embed",status="working"} 0`)
+	r.Contains(out, `fotobank_ai_jobs_depth{task="embed",status="blocked"} 0`)
+}
+
+// TestMetrics_SearchRequestsTotal exercises the search-request counter
+// at multiple (mode, sort) label combos so a regression that drops
+// either dimension lights up. The labels come from the engine's
+// post-coercion mode and effective sort.
+func TestMetrics_SearchRequestsTotal(t *testing.T) {
+	r := require.New(t)
+	m := NewTestMetrics()
+
+	// Three increments across distinct (mode, sort) tuples so the
+	// counter assertion can distinguish per-tuple state.
+	m.SearchRequests("hybrid", "relevance").Inc()
+	m.SearchRequests("hybrid", "relevance").Inc()
+	m.SearchRequests("bm25_only", "newest").Inc()
+	m.SearchRequests("filter_only", "oldest").Inc()
+
+	r.EqualValues(2, m.SearchRequests("hybrid", "relevance").Get())
+	r.EqualValues(1, m.SearchRequests("bm25_only", "newest").Get())
+	r.EqualValues(1, m.SearchRequests("filter_only", "oldest").Get())
+
+	var buf bytes.Buffer
+	m.WritePrometheus(&buf)
+	out := buf.String()
+	r.Contains(out, `fotobank_search_requests_total{mode="hybrid",sort="relevance"} 2`)
+	r.Contains(out, `fotobank_search_requests_total{mode="bm25_only",sort="newest"} 1`)
+	r.Contains(out, `fotobank_search_requests_total{mode="filter_only",sort="oldest"} 1`)
+}
+
 func TestNewMetrics_PullSourceClosuresArePerState(t *testing.T) {
 	r := require.New(t)
 	thumbCalls := make(map[string]int)

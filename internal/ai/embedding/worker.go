@@ -15,6 +15,7 @@ import (
 	"github.com/wesm/fotobank/internal/ai/imginput/encode"
 	"github.com/wesm/fotobank/internal/ai/jobs"
 	"github.com/wesm/fotobank/internal/ai/skipped"
+	"github.com/wesm/fotobank/internal/obs"
 )
 
 // PreviewResolver is the minimal surface the embed worker needs from
@@ -137,6 +138,11 @@ type WorkerDeps struct {
 	// embed the worker clears any prior row in the same tx that writes
 	// the mapping. Mirrors the chat worker's failure surface.
 	Failures *failures.Repo
+	// Metrics, when non-nil, receives the per-batch AIEmbedBatchSize
+	// observation each time processGroup issues a /v1/embeddings call.
+	// Nil-safe — every metric emit is guarded so tests and embedding-
+	// only deployments without an observability registry stay terse.
+	Metrics *obs.Metrics
 }
 
 // Worker batches pending TaskEmbed jobs into one /v1/embeddings call
@@ -406,6 +412,11 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 	// unless the fingerprint itself is "||...". Dimension comes from
 	// the matched generation row so a stale-fp claim is validated
 	// against its own dimension, not the currently-configured one.
+	if w.d.Metrics != nil {
+		// Observe pre-call: a downstream failure still tells the
+		// operator how big the batch was when it failed.
+		w.d.Metrics.AIEmbedBatchSize().Update(float64(len(jpegs)))
+	}
 	vectors, callErr := w.d.Client.EmbedImages(ctx, fp.ModelID, gen.Dimension, jpegs)
 	if callErr != nil {
 		// Full-batch failure: classify once, mark every survivor

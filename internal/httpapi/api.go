@@ -179,7 +179,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerHiddenAuth(api, deps.HiddenAuth, cookieCfg)
 	registerHiddenMedia(api, deps.MediaService, deps.HiddenAuth)
 	registerAIRoutes(api, deps.AIService, deps.AIVisionProbe, deps.AIEnabled)
-	registerSearchRoutes(api, deps.Search)
+	registerSearchRoutes(api, deps.Search, deps.Metrics)
 	return mux, api
 }
 

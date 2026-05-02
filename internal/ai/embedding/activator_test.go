@@ -86,7 +86,7 @@ func newActivator(
 	t.Helper()
 	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
 	ackS := ack.New(d.WriteDB(), d.ReadDB())
-	a := embedding.NewActivator(d.ReadDB(), gens, ackS, emitter, embedding.ActivatorCfg{
+	a := embedding.NewActivator(d.ReadDB(), gens, ackS, emitter, nil, embedding.ActivatorCfg{
 		Principal:    owner,
 		ThresholdPct: thresholdPct,
 		Tick:         50 * time.Millisecond,

@@ -16,6 +16,7 @@ import (
 
 	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/errs"
+	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/search/index"
 	searchsvc "github.com/wesm/fotobank/internal/service/search"
 )
@@ -48,8 +49,9 @@ const autocompleteMaxLimit = 50
 // registerSearchRoutes mounts the search surface on api. svc==nil
 // leaves every route unregistered (no handlers, no schemas) so the
 // OpenAPI dumper can pass Deps{} unchanged. Production wiring supplies
-// a fully-built *search.Service.
-func registerSearchRoutes(api huma.API, svc *searchsvc.Service) {
+// a fully-built *search.Service. m may be nil; the handler skips
+// metric emits when so.
+func registerSearchRoutes(api huma.API, svc *searchsvc.Service, m *obs.Metrics) {
 	if svc == nil {
 		return
 	}
@@ -59,7 +61,7 @@ func registerSearchRoutes(api huma.API, svc *searchsvc.Service) {
 		Path:        "/api/v1/search",
 		Summary:     "Hybrid search across the caller's library",
 	}, func(ctx context.Context, in *searchInput) (*searchOutput, error) {
-		return handleSearch(ctx, svc, in)
+		return handleSearch(ctx, svc, m, in)
 	})
 	registerSearchAutocompleteTags(api, svc)
 	registerSearchAutocompleteLocations(api, svc)
@@ -176,12 +178,20 @@ func handleAutocompleteLocations(ctx context.Context, svc *searchsvc.Service, in
 // handleSearch implements the search endpoint logic split out from the
 // huma.Register closure so it remains test-readable. The shape mirrors
 // the AI handlers: identity → service call → translate → DTO assembly.
-func handleSearch(ctx context.Context, svc *searchsvc.Service, in *searchInput) (*searchOutput, error) {
+//
+// m may be nil; the handler skips metric emits in that case so unit
+// tests that pass Deps without a Metrics registry stay terse. When
+// non-nil, the handler observes one SearchLatencySeconds bucket and
+// one SearchRequestsTotal increment per *successful* engine response —
+// failures (auth, translate) short-circuit before we know the engine
+// mode and so don't fan out into per-mode counters.
+func handleSearch(ctx context.Context, svc *searchsvc.Service, m *obs.Metrics, in *searchInput) (*searchOutput, error) {
 	id, ok := IdentityFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
 	}
 	caller := id.Principal.OwnersPrincipal()
+	start := time.Now()
 
 	req := searchsvc.Request{
 		Query:         in.Q,
@@ -243,6 +253,24 @@ func handleSearch(ctx context.Context, svc *searchsvc.Service, in *searchInput) 
 	resp, err := svc.Search(ctx, caller, req)
 	if err != nil {
 		return nil, Translate(err)
+	}
+	if m != nil {
+		// Stamp per-mode counters and the latency observation. The
+		// engine's resp.EngineMode reflects the *taken* path (a
+		// hybrid-eligible request that fell back to BM25 reports
+		// "bm25_only"), which is what the dashboard needs to detect
+		// silent degradation. effective_sort comes from resp, not
+		// the raw input — the engine coerces relevance+empty-Q to
+		// newest, and the metric should reflect what ran.
+		mode := resp.EngineMode
+		if mode == "" {
+			// Defensive: an engine that forgot to stamp EngineMode
+			// shouldn't strand the request without a label. "unknown"
+			// surfaces the bug at the dashboard level.
+			mode = "unknown"
+		}
+		m.SearchRequests(mode, resp.EffectiveSort).Inc()
+		m.SearchLatency(mode).Update(time.Since(start).Seconds())
 	}
 
 	// EmbeddingCompleteness is a separate read so the result can render

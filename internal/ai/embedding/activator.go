@@ -10,6 +10,7 @@ import (
 
 	"github.com/wesm/fotobank/internal/ai/ack"
 	"github.com/wesm/fotobank/internal/errs"
+	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/owners"
 )
 
@@ -52,11 +53,12 @@ type ActivatorCfg struct {
 // one activator per server. H2's Run loop preserves that contract by
 // awaiting each Tick before scheduling the next.
 type Activator struct {
-	ro     *sql.DB
-	gens   *Generations
-	ack    *ack.Store
-	cfg    ActivatorCfg
-	events EventEmitter
+	ro      *sql.DB
+	gens    *Generations
+	ack     *ack.Store
+	cfg     ActivatorCfg
+	events  EventEmitter
+	metrics *obs.Metrics
 }
 
 // NewActivator constructs an Activator. The rw pool is consumed
@@ -64,16 +66,20 @@ type Activator struct {
 // activator's own queries are read-only and route to ro. events
 // defaults to NoopEmitter when nil so the simplest test wiring stays
 // terse — the worker uses the same convention.
-func NewActivator(ro *sql.DB, gens *Generations, a *ack.Store, events EventEmitter, cfg ActivatorCfg) *Activator {
+//
+// metrics may be nil for tests and embedding-only deployments without
+// an observability registry; every metric emit is guarded.
+func NewActivator(ro *sql.DB, gens *Generations, a *ack.Store, events EventEmitter, metrics *obs.Metrics, cfg ActivatorCfg) *Activator {
 	if events == nil {
 		events = NoopEmitter{}
 	}
 	return &Activator{
-		ro:     ro,
-		gens:   gens,
-		ack:    a,
-		cfg:    cfg,
-		events: events,
+		ro:      ro,
+		gens:    gens,
+		ack:     a,
+		cfg:     cfg,
+		events:  events,
+		metrics: metrics,
 	}
 }
 
@@ -207,7 +213,66 @@ func (a *Activator) Tick(ctx context.Context) error {
 		return fmt.Errorf("promote %d: %w", building.ID, err)
 	}
 	a.events.EmitAIEmbedGenerationActivated(building.ID, building.Fingerprint)
+
+	// Refresh the per-state generation gauges and the eligible/embedded
+	// counts so the rollout dashboard reflects the post-promotion
+	// state without polling. Failure here is logged-and-ignored: a
+	// transient SQL error must not undo the promote we just committed.
+	a.refreshMetrics(ctx, eligible, embedded)
 	return nil
+}
+
+// refreshMetrics is the post-promote metric refresh. It re-reads the
+// per-state generation counts and Sets the {building, active, retired}
+// gauges, and stamps the freshly-recomputed eligible/embedded numbers
+// onto the embedding-count gauges. All emits are nil-safe (a missing
+// metrics registry skips the whole refresh).
+//
+// Failure paths are logged-only — the activator's success contract is
+// the Promote call, not the dashboard update. A SQL hiccup here must
+// not bubble up and force the caller to treat the tick as failed.
+func (a *Activator) refreshMetrics(ctx context.Context, eligible, embedded int) {
+	if a.metrics == nil {
+		return
+	}
+	a.metrics.AIEmbeddingCount("eligible").Set(float64(eligible))
+	a.metrics.AIEmbeddingCount("embedded").Set(float64(embedded))
+	counts, err := a.generationStateCounts(ctx)
+	if err != nil {
+		slog.Default().Warn("embedding activator metric refresh: state counts failed", "err", err)
+		return
+	}
+	for _, state := range []string{"building", "active", "retired"} {
+		a.metrics.AIEmbeddingGenerations(state).Set(float64(counts[state]))
+	}
+}
+
+// generationStateCounts runs one GROUP BY over embedding_generations.state
+// and returns a map keyed by state. States with zero rows are absent
+// from the map; the caller's loop substitutes 0 for any missing state
+// when stamping the gauges so a freshly-promoted generation that
+// drained the 'building' bucket reports zero rather than the stale
+// previous value.
+func (a *Activator) generationStateCounts(ctx context.Context) (map[string]int, error) {
+	rows, err := a.ro.QueryContext(ctx,
+		`SELECT state, COUNT(*) FROM embedding_generations GROUP BY state`)
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]int{}
+	for rows.Next() {
+		var state string
+		var n int
+		if err := rows.Scan(&state, &n); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		out[state] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iter: %w", err)
+	}
+	return out, nil
 }
 
 // EligibleCount returns the eligible-media count under the §6.6 hidden

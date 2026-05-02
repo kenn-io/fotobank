@@ -141,7 +141,7 @@ func embedHealthFixture(t *testing.T) (*aiservice.Service, owners.Principal, *sq
 	gs := gapscanner.New(roDB, q, resR, skipR)
 
 	gens := embedding.NewGenerations(rwDB, roDB)
-	activator := embedding.NewActivator(roDB, gens, ackS, nil, embedding.ActivatorCfg{
+	activator := embedding.NewActivator(roDB, gens, ackS, nil, nil, embedding.ActivatorCfg{
 		Principal: owner, ThresholdPct: 95, Tick: 50 * time.Millisecond,
 	})
 

@@ -84,6 +84,13 @@ type Response struct {
 	SemanticUnavailable       bool
 	SemanticUnavailableReason string
 	Explain                   bool
+	// EngineMode is the routing decision the engine ended up taking
+	// for this request: one of {"hybrid", "bm25_only", "filter_only"}.
+	// Surfaced so observability callers (HTTP handler's metric emit)
+	// can label by the degraded path, not the raw request shape — a
+	// hybrid-eligible request that fell back to BM25 reports
+	// mode="bm25_only".
+	EngineMode string
 }
 
 // engine-mode labels populated into Response.EffectiveSort and the
@@ -264,6 +271,15 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 		RRFK:          e.cfg.RRFK,
 		Limit:         req.Limit,
 	}
+	// TODO(R1): emit obs.Metrics.SearchPoolSaturated.Inc() when the
+	// per-signal candidate pool was filled to KPerSignal. The current
+	// backend SQL caps both the BM25 and ANN CTEs at KPerSignal but
+	// does not surface the pre-cap count to the engine — the post-fusion
+	// hit set is bounded by Limit, not KPerSignal, so len(hits) ==
+	// KPerSignal is not a reliable saturation signal. Plumb a per-signal
+	// `count_pre_cap` value out of FusedSearch / BM25Only (e.g. via a
+	// supplementary CTE that COUNT(*)s the raw candidates) and emit
+	// the metric when count_pre_cap >= KPerSignal here.
 
 	if !semanticUnavailable && len(queryVec) > 0 {
 		if err := validateCursor(req, effSort, engineModeHybrid); err != nil {
@@ -368,6 +384,7 @@ func (e *Engine) buildResponse(req Request, hits []index.Hit, effSort, mode stri
 		SemanticUnavailable:       semanticUnavailable,
 		SemanticUnavailableReason: semanticReason,
 		Explain:                   req.Explain,
+		EngineMode:                mode,
 	}
 
 	if req.Limit > 0 && len(hits) == req.Limit {

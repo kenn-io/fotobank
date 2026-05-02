@@ -91,7 +91,7 @@ func NewMetrics(src MetricSources, build BuildInfo) *Metrics {
 			return float64(src.SharePendingByOp(op))
 		})
 	}
-	for _, task := range []string{"tag", "caption"} {
+	for _, task := range []string{"tag", "caption", "embed"} {
 		for _, status := range []string{"pending", "working", "blocked"} {
 			t, s := task, status // capture for closure
 			m.set.NewGauge(`fotobank_ai_jobs_depth{task="`+t+`",status="`+s+`"}`, func() float64 {
@@ -249,6 +249,72 @@ func (m *Metrics) AIRequestDuration(task, outcome string) *metrics.PrometheusHis
 		map[string]string{"task": task, "outcome": outcome},
 		workerDurationBuckets,
 	)
+}
+
+// AIEmbedBatchSize records the per-call batch size at the embed worker.
+// Updated once per /v1/embeddings call from worker.processGroup, after
+// fingerprint partitioning, with the count of survivor claims about to
+// be sent in one HTTP body. The auto-bucketed Histogram (vs the
+// le-pinned PrometheusHistogram) is sufficient here — the operator
+// reads quantiles to spot under-batching, not strict SLO buckets.
+func (m *Metrics) AIEmbedBatchSize() *metrics.Histogram {
+	return m.set.GetOrCreateHistogram(`fotobank_ai_embed_batch_size`)
+}
+
+// AIEmbeddingGenerations is the per-state count of embedding_generations
+// rows. state ∈ {"building", "active", "retired"}. Recomputed and Set
+// from the activator tick after a successful promote so the rollout
+// dashboard reflects the post-promotion state without polling.
+//
+// Backed by GetOrCreateGauge with nil callback so the Gauge supports
+// .Set; the upstream library forbids calling Set on a callback-driven
+// gauge.
+func (m *Metrics) AIEmbeddingGenerations(state string) *metrics.Gauge {
+	return m.set.GetOrCreateGauge(
+		`fotobank_ai_embedding_generations{state="`+escapeLabel(state)+`"}`, nil)
+}
+
+// AIEmbeddingCount is the per-state media count under the active
+// embedding rollout. state ∈ {"eligible", "embedded"}. Refreshed by
+// the activator alongside AIEmbeddingGenerations so the panel can
+// surface "embedded / eligible" as the rollout completeness ratio.
+func (m *Metrics) AIEmbeddingCount(state string) *metrics.Gauge {
+	return m.set.GetOrCreateGauge(
+		`fotobank_ai_embedding_count{state="`+escapeLabel(state)+`"}`, nil)
+}
+
+// SearchRequests counts /api/v1/search requests by engine mode and
+// effective sort. mode ∈ {"hybrid", "bm25_only", "filter_only"};
+// effective_sort ∈ {"relevance", "newest", "oldest"} (post-coercion,
+// not the raw user input). Incremented from the HTTP handler after
+// the engine response is in hand so the mode/sort labels reflect the
+// degraded path the request actually took.
+func (m *Metrics) SearchRequests(mode, effectiveSort string) *metrics.Counter {
+	return m.set.GetOrCreateCounter(`fotobank_search_requests_total{mode="` +
+		escapeLabel(mode) + `",sort="` + escapeLabel(effectiveSort) + `"}`)
+}
+
+// SearchLatency is the per-mode end-to-end search histogram. mode
+// matches SearchRequests' mode label; uses httpDurationBuckets because
+// the search route is user-facing latency (skews fast). Observed from
+// the HTTP handler in seconds.
+func (m *Metrics) SearchLatency(mode string) *metrics.PrometheusHistogram {
+	return m.getOrCreatePrometheusHistogram(
+		`fotobank_search_latency_seconds`,
+		map[string]string{"mode": mode},
+		httpDurationBuckets,
+	)
+}
+
+// SearchPoolSaturated counts requests where the engine's per-signal
+// candidate pool was filled to KPerSignal (i.e. the cap likely cut off
+// matches the user might have wanted). Detection from outside the SQL
+// is awkward — the post-fusion hit set is bounded by Limit, not
+// KPerSignal — so v1 leaves this counter as a hook rather than wiring
+// an emit site. See engine.go:Search for the TODO; once the backends
+// surface a per-signal candidate count this accessor's call site lands.
+func (m *Metrics) SearchPoolSaturated() *metrics.Counter {
+	return m.set.GetOrCreateCounter(`fotobank_search_pool_saturated_total`)
 }
 
 // SetAIVisionReachable flips the fotobank_ai_endpoint_reachable{kind="vision"} gauge.
