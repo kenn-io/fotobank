@@ -636,6 +636,26 @@ enabled = true
 	require.Contains(t, err.Error(), "ai.tag.model")
 }
 
+func TestConfig_UI_SharingEnabled_DefaultsFalse(t *testing.T) {
+	cfg, err := config.Load(filepath.Join("..", "..", "testdata", "config", "minimal.toml"))
+	require.NoError(t, err)
+	require.False(t, cfg.UI.SharingEnabled, "sharing_enabled defaults to false")
+}
+
+func TestConfig_UI_SharingEnabled_ParsesTrue(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[ui]
+sharing_enabled = true
+`), 0o600))
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	require.True(t, cfg.UI.SharingEnabled)
+}
+
 func TestObservabilityRejectsBadFormatAndLevel(t *testing.T) {
 	for _, body := range []string{
 		`[observability.logging]

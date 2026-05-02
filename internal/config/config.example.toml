@@ -87,3 +87,8 @@ mode = "stub"
 # keep_15min = 4                     # last hour of 15-min slots
 # keep_hourly = 24                   # last day of hourly slots
 # keep_daily = 7                     # last week of daily slots
+
+[ui]
+# Hide the in-app sharing UI. Backend share APIs and the
+# `fotobank shares ...` CLI work either way. Default: false.
+sharing_enabled = false

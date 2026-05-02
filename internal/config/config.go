@@ -69,6 +69,11 @@ type Config struct {
 	Observability Observability `toml:"observability"`
 	AI            ai.Config     `toml:"ai"`
 	Search        search.Config `toml:"search"`
+	UI            UI            `toml:"ui"`
+}
+
+type UI struct {
+	SharingEnabled bool `toml:"sharing_enabled"`
 }
 
 type Flash struct {
