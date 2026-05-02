@@ -2,6 +2,15 @@ import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import LightboxActions from "./LightboxActions.svelte";
 import { lightboxSession } from "../../lightbox/lightboxSession.svelte";
+import { AppConfigStore } from "../../app/appConfig.svelte";
+import type { Client } from "../../api/client";
+
+function defaultAppConfig(): AppConfigStore {
+  const c = {
+    GET: async () => ({ data: undefined, error: { status: 0 } }),
+  } as unknown as Pick<Client, "GET">;
+  return new AppConfigStore(c);
+}
 
 const fakeMedia = {
   id: "m1",
@@ -50,6 +59,7 @@ describe("LightboxActions", () => {
         media: fakeMedia,
         rawMedia,
         ...props,
+        appConfig: defaultAppConfig(),
         onAdd: vi.fn(),
         onShare: vi.fn(),
         onDone,

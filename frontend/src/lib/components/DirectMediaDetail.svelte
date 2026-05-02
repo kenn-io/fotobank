@@ -10,15 +10,17 @@
   import type { AlbumsStore } from "../albums/albumsStore.svelte";
   import type { HiddenStore } from "../hidden/hiddenStore.svelte";
   import type { ToastStore } from "../toasts/toastStore.svelte";
+  import type { AppConfigStore } from "../app/appConfig.svelte";
   import type { CreateShareBody } from "../share/shareTypes";
   import { api } from "../api/client";
 
-  let { id, mediaStore, albumsStore, hiddenStore, toastStore, backHref, onClose }: {
+  let { id, mediaStore, albumsStore, hiddenStore, toastStore, appConfig, backHref, onClose }: {
     id: string;
     mediaStore: MediaStore;
     albumsStore: AlbumsStore;
     hiddenStore: HiddenStore;
     toastStore: ToastStore;
+    appConfig: AppConfigStore;
     backHref?: string;
     onClose?: () => void;
   } = $props();
@@ -293,6 +295,7 @@
         context="media-detail"
         {isHidden}
         hiddenConfigured={hiddenStore.configured}
+        {appConfig}
         onAdd={openAdd}
         onShare={openShare}
         {onHide}

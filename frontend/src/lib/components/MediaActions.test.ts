@@ -1,11 +1,38 @@
 import { render, fireEvent } from "@testing-library/svelte";
 import { describe, it, expect, vi } from "vitest";
 import MediaActions from "./MediaActions.svelte";
+import { AppConfigStore } from "../app/appConfig.svelte";
+import type { Client } from "../api/client";
+
+async function makeAppConfig(sharingEnabled: boolean): Promise<AppConfigStore> {
+  const client = {
+    GET: async () => ({
+      data: {
+        principal: { hub: "h", user_id: "u", handle: "" },
+        scopes: [],
+        features: { sharing_enabled: sharingEnabled },
+      },
+    }),
+  } as unknown as Pick<Client, "GET">;
+  const cfg = new AppConfigStore(client);
+  await cfg.load();
+  return cfg;
+}
+
+function defaultAppConfig(): AppConfigStore {
+  // Defaults to sharingEnabled=false. Useful when a test wants the gate
+  // closed without an extra await.
+  const client = {
+    GET: async () => ({ data: undefined, error: { status: 0 } }),
+  } as unknown as Pick<Client, "GET">;
+  return new AppConfigStore(client);
+}
 
 describe("MediaActions", () => {
-  it("renders Add to album and Share buttons by default", () => {
+  it("renders Add to album and Share buttons by default", async () => {
+    const appConfig = await makeAppConfig(true);
     const { getByRole } = render(MediaActions, {
-      props: { mediaIds: ["m1"], onAdd: vi.fn(), onShare: vi.fn() },
+      props: { mediaIds: ["m1"], appConfig, onAdd: vi.fn(), onShare: vi.fn() },
     });
     expect(getByRole("button", { name: "Add to album" })).not.toBeNull();
     expect(getByRole("button", { name: "Share" })).not.toBeNull();
@@ -17,6 +44,7 @@ describe("MediaActions", () => {
         mediaIds: ["m1"],
         context: "album",
         albumId: "a1",
+        appConfig: defaultAppConfig(),
         onAdd: vi.fn(),
         onShare: vi.fn(),
         onRemove: vi.fn(),
@@ -27,7 +55,7 @@ describe("MediaActions", () => {
 
   it("does NOT render Remove when context!=album", () => {
     const { queryByRole } = render(MediaActions, {
-      props: { mediaIds: ["m1"], onAdd: vi.fn(), onShare: vi.fn() },
+      props: { mediaIds: ["m1"], appConfig: defaultAppConfig(), onAdd: vi.fn(), onShare: vi.fn() },
     });
     expect(queryByRole("button", { name: "Remove from this album" })).toBeNull();
   });
@@ -35,7 +63,7 @@ describe("MediaActions", () => {
   it("clicking Add invokes onAdd with mediaIds", async () => {
     const onAdd = vi.fn();
     const { getByRole } = render(MediaActions, {
-      props: { mediaIds: ["m1", "m2"], onAdd, onShare: vi.fn() },
+      props: { mediaIds: ["m1", "m2"], appConfig: defaultAppConfig(), onAdd, onShare: vi.fn() },
     });
     await fireEvent.click(getByRole("button", { name: "Add to album" }));
     expect(onAdd).toHaveBeenCalledWith(["m1", "m2"]);
@@ -43,8 +71,9 @@ describe("MediaActions", () => {
 
   it("clicking Share invokes onShare with mediaIds", async () => {
     const onShare = vi.fn();
+    const appConfig = await makeAppConfig(true);
     const { getByRole } = render(MediaActions, {
-      props: { mediaIds: ["m1"], onAdd: vi.fn(), onShare },
+      props: { mediaIds: ["m1"], appConfig, onAdd: vi.fn(), onShare },
     });
     await fireEvent.click(getByRole("button", { name: "Share" }));
     expect(onShare).toHaveBeenCalledWith(["m1"]);
@@ -52,7 +81,7 @@ describe("MediaActions", () => {
 
   it("hides all buttons when mediaIds is empty (defense)", () => {
     const { queryByRole } = render(MediaActions, {
-      props: { mediaIds: [], onAdd: vi.fn(), onShare: vi.fn() },
+      props: { mediaIds: [], appConfig: defaultAppConfig(), onAdd: vi.fn(), onShare: vi.fn() },
     });
     expect(queryByRole("button", { name: "Add to album" })).toBeNull();
     expect(queryByRole("button", { name: "Share" })).toBeNull();
@@ -60,12 +89,14 @@ describe("MediaActions", () => {
 
   // --- Hide/Unhide button matrix ---
 
-  it("shows Hide button in library context when hiddenConfigured=true", () => {
+  it("shows Hide button in library context when hiddenConfigured=true", async () => {
+    const appConfig = await makeAppConfig(true);
     const { getByRole, queryByRole } = render(MediaActions, {
       props: {
         mediaIds: ["m1"],
         context: "library",
         hiddenConfigured: true,
+        appConfig,
         onAdd: vi.fn(),
         onShare: vi.fn(),
         onHide: vi.fn(),
@@ -82,6 +113,7 @@ describe("MediaActions", () => {
         mediaIds: ["m1"],
         context: "session",
         hiddenConfigured: true,
+        appConfig: defaultAppConfig(),
         onAdd: vi.fn(),
         onShare: vi.fn(),
         onHide: vi.fn(),
@@ -97,6 +129,7 @@ describe("MediaActions", () => {
         context: "album",
         albumId: "a1",
         hiddenConfigured: true,
+        appConfig: defaultAppConfig(),
         onAdd: vi.fn(),
         onShare: vi.fn(),
         onHide: vi.fn(),
@@ -112,6 +145,7 @@ describe("MediaActions", () => {
         context: "media-detail",
         hiddenConfigured: true,
         isHidden: false,
+        appConfig: defaultAppConfig(),
         onAdd: vi.fn(),
         onShare: vi.fn(),
         onHide: vi.fn(),
@@ -126,6 +160,7 @@ describe("MediaActions", () => {
         mediaIds: ["m1"],
         context: "library",
         hiddenConfigured: false,
+        appConfig: defaultAppConfig(),
         onAdd: vi.fn(),
         onShare: vi.fn(),
       },
@@ -138,6 +173,7 @@ describe("MediaActions", () => {
       props: {
         mediaIds: ["m1"],
         context: "library",
+        appConfig: defaultAppConfig(),
         onAdd: vi.fn(),
         onShare: vi.fn(),
       },
@@ -150,6 +186,7 @@ describe("MediaActions", () => {
       props: {
         mediaIds: ["m1"],
         context: "hidden",
+        appConfig: defaultAppConfig(),
         onAdd: vi.fn(),
         onShare: vi.fn(),
         onUnhide: vi.fn(),
@@ -168,6 +205,7 @@ describe("MediaActions", () => {
         context: "media-detail",
         isHidden: true,
         hiddenConfigured: true,
+        appConfig: defaultAppConfig(),
         onAdd: vi.fn(),
         onShare: vi.fn(),
         onUnhide: vi.fn(),
@@ -186,6 +224,7 @@ describe("MediaActions", () => {
         mediaIds: ["m1"],
         context: "library",
         hiddenConfigured: true,
+        appConfig: defaultAppConfig(),
         onAdd: vi.fn(),
         onShare: vi.fn(),
         onHide,
@@ -201,6 +240,7 @@ describe("MediaActions", () => {
       props: {
         mediaIds: ["m1"],
         context: "hidden",
+        appConfig: defaultAppConfig(),
         onAdd: vi.fn(),
         onShare: vi.fn(),
         onUnhide,
@@ -211,13 +251,42 @@ describe("MediaActions", () => {
   });
 
   // Backwards-compat: no context prop behaves like library (no hide)
-  it("no context prop: backward-compatible, shows Add and Share", () => {
+  it("no context prop: backward-compatible, shows Add and Share", async () => {
+    const appConfig = await makeAppConfig(true);
     const { getByRole, queryByRole } = render(MediaActions, {
-      props: { mediaIds: ["m1"], onAdd: vi.fn(), onShare: vi.fn() },
+      props: { mediaIds: ["m1"], appConfig, onAdd: vi.fn(), onShare: vi.fn() },
     });
     expect(getByRole("button", { name: "Add to album" })).not.toBeNull();
     expect(getByRole("button", { name: "Share" })).not.toBeNull();
     expect(queryByRole("button", { name: "Hide" })).toBeNull();
     expect(queryByRole("button", { name: "Unhide" })).toBeNull();
+  });
+
+  // --- Sharing-enabled gate ---
+
+  it("hides Share when appConfig.sharingEnabled is false (gate)", () => {
+    const { queryByRole } = render(MediaActions, {
+      props: {
+        mediaIds: ["m1"],
+        appConfig: defaultAppConfig(),
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+      },
+    });
+    expect(queryByRole("button", { name: "Share" })).toBeNull();
+    expect(queryByRole("button", { name: "Add to album" })).not.toBeNull();
+  });
+
+  it("shows Share when appConfig.sharingEnabled is true", async () => {
+    const cfg = await makeAppConfig(true);
+    const { getByRole } = render(MediaActions, {
+      props: {
+        mediaIds: ["m1"],
+        appConfig: cfg,
+        onAdd: vi.fn(),
+        onShare: vi.fn(),
+      },
+    });
+    expect(getByRole("button", { name: "Share" })).not.toBeNull();
   });
 });

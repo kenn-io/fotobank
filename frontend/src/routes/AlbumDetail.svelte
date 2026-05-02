@@ -15,15 +15,17 @@
   import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
   import type { HiddenStore } from "../lib/hidden/hiddenStore.svelte";
   import type { ToastStore } from "../lib/toasts/toastStore.svelte";
+  import type { AppConfigStore } from "../lib/app/appConfig.svelte";
   import type { CreateShareBody } from "../lib/share/shareTypes";
   import { router, handleInternalLinkClick } from "../lib/router/router.svelte";
 
-  let { id, mediaStore, albumsStore, hiddenStore, toastStore }: {
+  let { id, mediaStore, albumsStore, hiddenStore, toastStore, appConfig }: {
     id: string;
     mediaStore: MediaStore;
     albumsStore: AlbumsStore;
     hiddenStore: HiddenStore;
     toastStore: ToastStore;
+    appConfig: AppConfigStore;
   } = $props();
 
   // AlbumDetailStore needs a stable MediaStore reference for its
@@ -288,6 +290,7 @@
         context="album"
         albumId={id}
         hiddenConfigured={hiddenStore.configured}
+        {appConfig}
         onAdd={openAdd}
         onShare={openShare}
         {onRemove}

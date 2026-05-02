@@ -5,6 +5,15 @@ import { MediaStore } from "../lib/media/mediaStore.svelte";
 import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
 import type { HiddenStore } from "../lib/hidden/hiddenStore.svelte";
 import type { ToastStore } from "../lib/toasts/toastStore.svelte";
+import { AppConfigStore } from "../lib/app/appConfig.svelte";
+import type { Client } from "../lib/api/client";
+
+function defaultAppConfig(): AppConfigStore {
+  const c = {
+    GET: async () => ({ data: undefined, error: { status: 0 } }),
+  } as unknown as Pick<Client, "GET">;
+  return new AppConfigStore(c);
+}
 
 // AlbumDetail creates AlbumDetailStore with the real `api` singleton.
 // We mock the module so tests can control what GET returns.
@@ -114,6 +123,7 @@ describe("AlbumDetail header hidden chip", () => {
         albumsStore: makeAlbumsStore(),
         hiddenStore: makeHiddenStore(),
         toastStore: makeToastStore(),
+        appConfig: defaultAppConfig(),
       },
     });
     await new Promise((r) => setTimeout(r, 0));
@@ -134,6 +144,7 @@ describe("AlbumDetail header hidden chip", () => {
         albumsStore: makeAlbumsStore(),
         hiddenStore: makeHiddenStore(),
         toastStore: makeToastStore(),
+        appConfig: defaultAppConfig(),
       },
     });
     await new Promise((r) => setTimeout(r, 0));

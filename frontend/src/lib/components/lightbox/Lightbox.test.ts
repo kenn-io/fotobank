@@ -3,6 +3,15 @@ import { render, waitFor } from "@testing-library/svelte";
 import Lightbox from "./Lightbox.svelte";
 import { lightboxSession } from "../../lightbox/lightboxSession.svelte";
 import * as aiClient from "../../ai/client";
+import { AppConfigStore } from "../../app/appConfig.svelte";
+import type { Client } from "../../api/client";
+
+function defaultAppConfig(): AppConfigStore {
+  const c = {
+    GET: async () => ({ data: undefined, error: { status: 0 } }),
+  } as unknown as Pick<Client, "GET">;
+  return new AppConfigStore(c);
+}
 
 // panzoom mounts on the <img> when LightboxImage mounts. jsdom can't
 // drive its measurement code, so stub the entire module.
@@ -98,6 +107,7 @@ describe("Lightbox reconstruction", () => {
         albumsStore: { markStale: vi.fn() } as never,
         hiddenStore: { configured: true } as never,
         toastStore: { push: vi.fn() } as never,
+        appConfig: defaultAppConfig(),
       } as never,
     });
     // Wait for the reconstruction effect to drain: fetch resolves with
@@ -129,6 +139,7 @@ describe("Lightbox (snapshot path)", () => {
         albumsStore: { markStale: vi.fn() } as never,
         hiddenStore: { configured: true } as never,
         toastStore: { push: vi.fn() } as never,
+        appConfig: defaultAppConfig(),
       } as never,
     });
     expect(container.querySelector(".lb-backdrop")).toBeTruthy();
@@ -161,6 +172,7 @@ describe("Lightbox (snapshot path)", () => {
         albumsStore: { markStale: vi.fn() } as never,
         hiddenStore: { configured: true } as never,
         toastStore: { push: vi.fn() } as never,
+        appConfig: defaultAppConfig(),
       } as never,
     });
     const ta = document.createElement("textarea");
@@ -228,6 +240,7 @@ describe("Lightbox (snapshot path)", () => {
         albumsStore: { markStale: vi.fn() } as never,
         hiddenStore: { configured: true } as never,
         toastStore: { push: vi.fn() } as never,
+        appConfig: defaultAppConfig(),
       } as never,
     });
 
@@ -320,6 +333,7 @@ describe("Lightbox (snapshot path)", () => {
         albumsStore: { markStale: vi.fn() } as never,
         hiddenStore: { configured: true } as never,
         toastStore: { push: vi.fn() } as never,
+        appConfig: defaultAppConfig(),
       } as never,
     });
     // The reconstruction effect runs synchronously and flips state to
@@ -360,6 +374,7 @@ describe("Lightbox (snapshot path)", () => {
         albumsStore: { markStale: vi.fn() } as never,
         hiddenStore: { configured: true } as never,
         toastStore: { push: vi.fn() } as never,
+        appConfig: defaultAppConfig(),
       } as never,
     });
     const ev = new KeyboardEvent("keydown", { key: "i", bubbles: true });

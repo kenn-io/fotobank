@@ -17,6 +17,7 @@
   import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
   import type { HiddenStore } from "../lib/hidden/hiddenStore.svelte";
   import type { ToastStore } from "../lib/toasts/toastStore.svelte";
+  import type { AppConfigStore } from "../lib/app/appConfig.svelte";
   import type { CreateShareBody } from "../lib/share/shareTypes";
   import { api } from "../lib/api/client";
 
@@ -25,11 +26,13 @@
     albumsStore,
     hiddenStore,
     toastStore,
+    appConfig,
   }: {
     mediaStore: MediaStore;
     albumsStore: AlbumsStore;
     hiddenStore: HiddenStore;
     toastStore: ToastStore;
+    appConfig: AppConfigStore;
   } = $props();
 
   const density = new DensityStore(api, "library");
@@ -141,6 +144,7 @@
       mediaIds={Array.from(selection.ids)}
       context="library"
       hiddenConfigured={hiddenStore.configured}
+      {appConfig}
       onAdd={openAdd}
       onShare={openShare}
       {onHide}

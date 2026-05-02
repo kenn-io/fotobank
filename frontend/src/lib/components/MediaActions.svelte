@@ -1,10 +1,13 @@
 <script lang="ts">
+  import type { AppConfigStore } from "../app/appConfig.svelte";
+
   let {
     mediaIds,
     context = "library",
     albumId,
     hiddenConfigured = false,
     isHidden = false,
+    appConfig,
     onAdd,
     onShare,
     onRemove,
@@ -16,6 +19,7 @@
     albumId?: string;
     hiddenConfigured?: boolean;
     isHidden?: boolean;
+    appConfig: AppConfigStore;
     onAdd: (ids: string[]) => void;
     onShare: (ids: string[]) => void;
     onRemove?: (ids: string[]) => void;
@@ -31,8 +35,8 @@
     context === "hidden" || (context === "media-detail" && isHidden),
   );
 
-  // Show Share only outside the unhide context.
-  const showShare = $derived(!isUnhideContext);
+  // Show Share only outside the unhide context AND when sharing UI is enabled.
+  const showShare = $derived(!isUnhideContext && appConfig.sharingEnabled);
 
   // Show Hide when hiddenConfigured and we're not in unhide context.
   const showHide = $derived(hiddenConfigured && !isUnhideContext);

@@ -24,6 +24,7 @@
   import type { AlbumsStore } from "../../albums/albumsStore.svelte";
   import type { HiddenStore } from "../../hidden/hiddenStore.svelte";
   import type { ToastStore } from "../../toasts/toastStore.svelte";
+  import type { AppConfigStore } from "../../app/appConfig.svelte";
   import { toMedia } from "../../media/mediaStore.svelte";
   import { lightboxSession } from "../../lightbox/lightboxSession.svelte";
   import type { LightboxSource } from "../../lightbox/lightboxSession.svelte";
@@ -55,6 +56,7 @@
     albumsStore,
     hiddenStore,
     toastStore,
+    appConfig,
   }: {
     id: string;
     from: string;
@@ -62,6 +64,7 @@
     albumsStore: AlbumsStore;
     hiddenStore: HiddenStore;
     toastStore: ToastStore;
+    appConfig: AppConfigStore;
   } = $props();
 
   // ---- Modal stack registration ----------------------------------
@@ -594,6 +597,7 @@
             {albumsStore}
             {hiddenStore}
             {toastStore}
+            {appConfig}
             onAdd={openAdd}
             onShare={openShare}
             onDone={onActionDone}
@@ -617,6 +621,7 @@
         {albumsStore}
         {hiddenStore}
         {toastStore}
+        {appConfig}
         backHref={returnHref}
         onClose={close}
       />

@@ -17,6 +17,7 @@
   import { HiddenMediaStore } from "../lib/hidden/hiddenMediaStore.svelte";
   import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
   import type { ToastStore } from "../lib/toasts/toastStore.svelte";
+  import type { AppConfigStore } from "../lib/app/appConfig.svelte";
   import { router } from "../lib/router/router.svelte";
   import { api } from "../lib/api/client";
 
@@ -24,6 +25,7 @@
     hiddenStore,
     albumsStore,
     toastStore,
+    appConfig,
     // Optional override for testing. When omitted, the route constructs
     // its own route-scoped store backed by the live api client.
     hiddenMediaStore = new HiddenMediaStore(api),
@@ -31,6 +33,7 @@
     hiddenStore: HiddenStore;
     albumsStore: AlbumsStore;
     toastStore: ToastStore;
+    appConfig: AppConfigStore;
     hiddenMediaStore?: HiddenMediaStore;
   } = $props();
 
@@ -165,6 +168,7 @@
         <MediaActions
           mediaIds={selectedInHidden}
           context="hidden"
+          {appConfig}
           onAdd={openAdd}
           onShare={() => {}}
           {onUnhide}

@@ -5,6 +5,15 @@ import type { HiddenStore } from "../lib/hidden/hiddenStore.svelte";
 import type { HiddenMediaStore } from "../lib/hidden/hiddenMediaStore.svelte";
 import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
 import type { ToastStore } from "../lib/toasts/toastStore.svelte";
+import { AppConfigStore } from "../lib/app/appConfig.svelte";
+import type { Client } from "../lib/api/client";
+
+function defaultAppConfig(): AppConfigStore {
+  const c = {
+    GET: async () => ({ data: undefined, error: { status: 0 } }),
+  } as unknown as Pick<Client, "GET">;
+  return new AppConfigStore(c);
+}
 
 // VirtualGrid uses ResizeObserver + IntersectionObserver in $effect blocks;
 // jsdom doesn't ship them so we stub no-ops, same pattern as VirtualGrid.flat.test.ts.
@@ -85,6 +94,7 @@ function makeToastStore(): ToastStore {
 const DEFAULT_PROPS = {
   albumsStore: makeAlbumsStore(),
   toastStore: makeToastStore(),
+  appConfig: defaultAppConfig(),
 };
 
 describe("HiddenLibrary", () => {
@@ -163,7 +173,7 @@ describe("HiddenLibrary", () => {
     // Verify that the Unhide handler on the component calls unhide correctly
     // by checking the function is wired (stub confirms return value).
     render(HiddenLibrary, {
-      props: { hiddenStore: store, hiddenMediaStore: mediaStore, albumsStore, toastStore },
+      props: { hiddenStore: store, hiddenMediaStore: mediaStore, albumsStore, toastStore, appConfig: defaultAppConfig() },
     });
     // Direct call verification: unhide mock should be accessible
     expect(typeof unhide).toBe("function");
@@ -183,6 +193,7 @@ describe("HiddenLibrary", () => {
         hiddenMediaStore: makeMediaStore(),
         albumsStore: makeAlbumsStore(),
         toastStore,
+        appConfig: defaultAppConfig(),
       },
     });
     // Verify toast store was passed and is reachable

@@ -5,6 +5,15 @@ import { MediaStore } from "../media/mediaStore.svelte";
 import type { AlbumsStore } from "../albums/albumsStore.svelte";
 import type { HiddenStore } from "../hidden/hiddenStore.svelte";
 import type { ToastStore } from "../toasts/toastStore.svelte";
+import { AppConfigStore } from "../app/appConfig.svelte";
+import type { Client } from "../api/client";
+
+function defaultAppConfig(): AppConfigStore {
+  const client = {
+    GET: async () => ({ data: undefined, error: { status: 0 } }),
+  } as unknown as Pick<Client, "GET">;
+  return new AppConfigStore(client);
+}
 
 function storeWith(raw: Record<string, unknown>): MediaStore {
   const s = new MediaStore({ GET: vi.fn() } as never);
@@ -81,6 +90,7 @@ describe("DirectMediaDetail", () => {
         albumsStore: makeAlbumsStore(),
         hiddenStore: makeHiddenStore(),
         toastStore: makeToastStore(),
+        appConfig: defaultAppConfig(),
       },
     });
     expect(getByText("Location")).toBeTruthy();
@@ -97,6 +107,7 @@ describe("DirectMediaDetail", () => {
         albumsStore: makeAlbumsStore(),
         hiddenStore: makeHiddenStore(),
         toastStore: makeToastStore(),
+        appConfig: defaultAppConfig(),
       },
     });
     expect(getByText("Location")).toBeTruthy();
@@ -113,6 +124,7 @@ describe("DirectMediaDetail", () => {
         albumsStore: makeAlbumsStore(),
         hiddenStore: makeHiddenStore(),
         toastStore: makeToastStore(),
+        appConfig: defaultAppConfig(),
       },
     });
     expect(queryByText("Location")).toBeNull();
@@ -149,16 +161,17 @@ describe("DirectMediaDetail", () => {
     const albumsStore = makeAlbumsStore();
     const hiddenStore = makeHiddenStore();
     const toastStore = makeToastStore();
+    const appConfig = defaultAppConfig();
     // First nav: id=first, no cached row → triggers fetch.
     const first = render(DirectMediaDetail, {
-      props: { id: "first", mediaStore: store, albumsStore, hiddenStore, toastStore },
+      props: { id: "first", mediaStore: store, albumsStore, hiddenStore, toastStore, appConfig },
     });
     // Wait for the first fetch to settle.
     await new Promise((r) => setTimeout(r, 0));
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/media/first");
     fetchMock.mockClear();
     // Second nav: id=second, also uncached → must trigger another fetch.
-    await first.rerender({ id: "second", mediaStore: store, albumsStore, hiddenStore, toastStore });
+    await first.rerender({ id: "second", mediaStore: store, albumsStore, hiddenStore, toastStore, appConfig });
     await new Promise((r) => setTimeout(r, 0));
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/media/second");
     fetchMock.mockRestore();
@@ -175,6 +188,7 @@ describe("DirectMediaDetail", () => {
         albumsStore: makeAlbumsStore(),
         hiddenStore: makeHiddenStore({ configured: true }),
         toastStore: makeToastStore(),
+        appConfig: defaultAppConfig(),
       },
     });
     expect(getByRole("button", { name: "Hide" })).not.toBeNull();
@@ -189,6 +203,7 @@ describe("DirectMediaDetail", () => {
         albumsStore: makeAlbumsStore(),
         hiddenStore: makeHiddenStore({ configured: true }),
         toastStore: makeToastStore(),
+        appConfig: defaultAppConfig(),
       },
     });
     expect(queryByRole("button", { name: "Unhide" })).toBeNull();
@@ -204,6 +219,7 @@ describe("DirectMediaDetail", () => {
         albumsStore: makeAlbumsStore(),
         hiddenStore: makeHiddenStore({ configured: true, hide }),
         toastStore: makeToastStore(),
+        appConfig: defaultAppConfig(),
       },
     });
     vi.stubGlobal("confirm", () => true);
@@ -241,6 +257,7 @@ describe("DirectMediaDetail", () => {
         albumsStore: makeAlbumsStore(),
         hiddenStore: makeHiddenStore({ configured: true, unlocked: true, unhide }),
         toastStore: makeToastStore(),
+        appConfig: defaultAppConfig(),
       },
     });
 

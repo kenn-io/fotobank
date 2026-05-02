@@ -5,6 +5,7 @@
   import type { AlbumsStore } from "../../albums/albumsStore.svelte";
   import type { HiddenStore } from "../../hidden/hiddenStore.svelte";
   import type { ToastStore } from "../../toasts/toastStore.svelte";
+  import type { AppConfigStore } from "../../app/appConfig.svelte";
   import type { LightboxSource } from "../../lightbox/lightboxSession.svelte";
   import { lightboxSession } from "../../lightbox/lightboxSession.svelte";
 
@@ -16,6 +17,7 @@
     albumsStore,
     hiddenStore,
     toastStore,
+    appConfig,
     onAdd,
     onShare,
     onDone,
@@ -27,6 +29,7 @@
     albumsStore: AlbumsStore;
     hiddenStore: HiddenStore;
     toastStore: ToastStore;
+    appConfig: AppConfigStore;
     onAdd: (ids: string[]) => void;
     onShare: (ids: string[]) => void;
     /** Called after a successful hide/unhide — Lightbox parent advances or closes. */
@@ -136,6 +139,7 @@
   context="media-detail"
   isHidden={isUnhideContext}
   hiddenConfigured={hiddenStore.configured}
+  {appConfig}
   {onAdd}
   {onShare}
   {onHide}
