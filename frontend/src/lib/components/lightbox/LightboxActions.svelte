@@ -66,6 +66,7 @@
         case "library":
         case "sessions":
         case "search":
+        case "map":  // E1 stub; visible-verb selection lands in E3.
           // Hide from a search-context lightbox: the hidden row drops
           // out of the visible mediaStore for any other surface that
           // shares the cache. The search store's own results array

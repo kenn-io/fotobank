@@ -112,7 +112,15 @@ function parseMediaType(raw: string | null): "photo" | "video" | null {
 // from at all (the lightbox treats absent from as direct-detail).
 function parseFrom(raw: string | null): string | null {
   if (raw === null) return null;
-  if (raw === "library" || raw === "sessions" || raw === "hidden" || raw === "search") return raw;
+  if (
+    raw === "library" ||
+    raw === "sessions" ||
+    raw === "hidden" ||
+    raw === "search" ||
+    raw === "map"
+  ) {
+    return raw;
+  }
   if (raw.startsWith("album:") && raw.length > "album:".length) return raw;
   return null;
 }

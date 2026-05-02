@@ -13,7 +13,8 @@ export type LightboxSource =
   | { kind: "sessions" }
   | { kind: "album"; albumId: string }
   | { kind: "hidden" }
-  | { kind: "search" };
+  | { kind: "search" }
+  | { kind: "map" };
 
 // scoreComponentsById is the per-media diagnostics payload threaded
 // from the Search route into the lightbox. Only the search source
@@ -44,6 +45,13 @@ export type LightboxSnapshot = {
   scrollY: number;
   returnFocusMediaId: string | null;
   returnHref: string;
+  // includeHidden is set when navIds came from a hidden-aware fetch
+  // (currently only produced by the map page when the user has the
+  // Include-hidden toggle on AND has a valid unlock claim). Other
+  // sources leave it undefined/false. The lightbox uses it (in E2) to
+  // avoid treating a hidden row in a snapshot as a cross-context leak
+  // when the snapshot was fetched under explicit include_hidden=true.
+  includeHidden?: boolean;
   scoreComponentsById?: Map<string, SearchScoreComponents>;
   qHash?: string;
 };

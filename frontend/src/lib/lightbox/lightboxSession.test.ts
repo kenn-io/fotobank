@@ -118,3 +118,34 @@ describe("LightboxSessionStore", () => {
     expect(s.snapshot?.navIds).not.toBe(navIds);
   });
 });
+
+describe("LightboxSessionStore — map source", () => {
+  it("accepts a map source variant with includeHidden", () => {
+    const s = new LightboxSessionStore();
+    s.open({
+      source: { kind: "map" },
+      navIds: ["a", "b", "c"],
+      selected: false,
+      scrollY: 0,
+      returnFocusMediaId: null,
+      returnHref: "/map?z=10&c=37,-122",
+      includeHidden: false,
+    });
+    expect(s.snapshot?.source.kind).toBe("map");
+    expect(s.snapshot?.includeHidden).toBe(false);
+  });
+
+  it("preserves includeHidden=true when the map snapshot was hidden-aware", () => {
+    const s = new LightboxSessionStore();
+    s.open({
+      source: { kind: "map" },
+      navIds: ["x"],
+      selected: false,
+      scrollY: 0,
+      returnFocusMediaId: null,
+      returnHref: "/map?z=14&c=0,0&include_hidden=true",
+      includeHidden: true,
+    });
+    expect(s.snapshot?.includeHidden).toBe(true);
+  });
+});

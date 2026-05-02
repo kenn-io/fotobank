@@ -339,6 +339,32 @@ describe("RouterStore.syncFromLocation depth restore (finding #12)", () => {
   });
 });
 
+describe("RouterStore — from=map", () => {
+  beforeEach(() => setLocation("/"));
+
+  it("accepts from=map on the media route", () => {
+    setLocation("/media/abc?from=map");
+    const r = new RouterStore();
+    const cur = r.current;
+    expect(cur.route).toBe("media");
+    if (cur.route === "media") {
+      expect(cur.from).toBe("map");
+    }
+  });
+
+  it("ignores garbage from values (drops the field)", () => {
+    setLocation("/media/abc?from=garbage");
+    const r = new RouterStore();
+    const cur = r.current;
+    expect(cur.route).toBe("media");
+    if (cur.route === "media") {
+      // Per existing parseFrom contract: unknown values fall through
+      // to undefined so the field is omitted entirely.
+      expect(cur.from).toBeUndefined();
+    }
+  });
+});
+
 describe("handleInternalLinkClick", () => {
   it("preventDefaults and navigates on plain left click", () => {
     setLocation("/");

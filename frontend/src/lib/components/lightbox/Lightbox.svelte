@@ -121,6 +121,9 @@
         if (session.qHash === undefined) return false;
         return urlQHash === session.qHash;
       }
+      // E1 stub; richer hiddenCrossContext semantics land in E2.
+      case "map":
+        return from === "map";
       default: {
         const _exhaustive: never = src;
         void _exhaustive;
