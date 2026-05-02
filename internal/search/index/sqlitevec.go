@@ -27,6 +27,21 @@ func NewSQLiteVecBackend(ro *sql.DB, gen embedding.Row) *SQLiteVecBackend {
 	return &SQLiteVecBackend{ro: ro, gen: gen}
 }
 
+// filterSQL returns the SQL body the WITH filter AS (...) CTE will
+// splice. When in.Filter.SQL is empty (e.g. a test that hasn't wired
+// M1's resolver) we substitute a default scan-all-media SELECT so the
+// CTE remains syntactically valid. The default has no owner scoping,
+// so production callers must always set Filter.SQL — M1's Resolve
+// always emits an owner-conditioned body. The default exists only to
+// keep development and unit tests free of a syntax error from an
+// empty CTE, not to relax the security contract.
+func filterSQL(in SearchInput) string {
+	if in.Filter.SQL == "" {
+		return "SELECT id, timestamp, imported_at FROM media"
+	}
+	return in.Filter.SQL
+}
+
 // FusedSearch runs the composed BM25 + ANN + filter intersection +
 // RRF fusion. The skeleton lives in the plan; this is the concrete
 // SQL with both CTEs intersected against the filter CTE.
@@ -59,7 +74,7 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	var sb strings.Builder
 	sb.WriteString("WITH\n")
 	sb.WriteString("  filter AS (")
-	sb.WriteString(in.Filter.SQL)
+	sb.WriteString(filterSQL(in))
 	sb.WriteString("),\n")
 	sb.WriteString("  bm25_raw AS (\n")
 	sb.WriteString("    SELECT mf.media_id AS id, bm25(media_fts) AS score\n")
@@ -132,7 +147,7 @@ func (b *SQLiteVecBackend) BM25Only(ctx context.Context, in SearchInput) ([]Hit,
 	var sb strings.Builder
 	sb.WriteString("WITH\n")
 	sb.WriteString("  filter AS (")
-	sb.WriteString(in.Filter.SQL)
+	sb.WriteString(filterSQL(in))
 	sb.WriteString("),\n")
 	sb.WriteString("  bm25_raw AS (\n")
 	sb.WriteString("    SELECT mf.media_id AS id, bm25(media_fts) AS score\n")
@@ -207,7 +222,7 @@ func (b *SQLiteVecBackend) BM25Only(ctx context.Context, in SearchInput) ([]Hit,
 func (b *SQLiteVecBackend) FilterOnly(ctx context.Context, in SearchInput) ([]Hit, error) {
 	var sb strings.Builder
 	sb.WriteString("WITH filter AS (")
-	sb.WriteString(in.Filter.SQL)
+	sb.WriteString(filterSQL(in))
 	sb.WriteString(")\n")
 	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version\n")
 	sb.WriteString("FROM filter f JOIN media m ON m.id = f.id\n")

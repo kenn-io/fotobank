@@ -303,6 +303,57 @@ func TestSQLiteVec_FilterOnly_NoQueryNoVector(t *testing.T) {
 	r.Equal(mids[2], hits[2].MediaID)
 }
 
+// TestSQLiteVec_EmptyFilterIsValidSQL ensures that all three Backend
+// methods substitute a default scan-all-media SELECT when in.Filter.SQL
+// is the empty string. Without the fallback, the WITH filter AS ()
+// CTE would be empty and SQLite would reject the statement at parse
+// time. The default has no owner scoping — production callers always
+// pass an M1-resolved filter — so this test is a syntax guard, not a
+// security check.
+func TestSQLiteVec_EmptyFilterIsValidSQL(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	mid := seedSearchMedia(t, d, owner)
+	mustWriteFTSCorpus(t, d, mid, ftsCorpus{Caption: "dog beach", Tags: "dog beach"})
+
+	gen := mustCreateActiveGenWithVectors(t, d, 768, map[string][]float32{
+		mid: vecForText("dog beach"),
+	})
+	b := index.NewSQLiteVecBackend(d.ReadDB(), gen)
+
+	// FilterOnly with empty Filter.SQL: must not return a parse error.
+	_, err := b.FilterOnly(ctx, index.SearchInput{
+		Owner:  owner,
+		Filter: index.FilterCTE{},
+		Limit:  10,
+	})
+	r.NoError(err, "FilterOnly must accept empty Filter.SQL via fallback")
+
+	// BM25Only with empty Filter.SQL: must not return a parse error.
+	_, err = b.BM25Only(ctx, index.SearchInput{
+		Query:      "dog",
+		Owner:      owner,
+		Filter:     index.FilterCTE{},
+		KPerSignal: 10,
+		Limit:      10,
+	})
+	r.NoError(err, "BM25Only must accept empty Filter.SQL via fallback")
+
+	// FusedSearch with empty Filter.SQL: must not return a parse error.
+	_, err = b.FusedSearch(ctx, index.SearchInput{
+		Query:       "dog",
+		QueryVector: vecForText("dog beach"),
+		Owner:       owner,
+		Filter:      index.FilterCTE{},
+		KPerSignal:  10,
+		RRFK:        60,
+		Limit:       10,
+	})
+	r.NoError(err, "FusedSearch must accept empty Filter.SQL via fallback")
+}
+
 // TestVecToBlob_RoundTrip cross-checks that VecToBlob produces the same
 // little-endian float32 byte layout the embedding package writes via
 // vec_f32(?). The backend reuses VecToBlob for the query-time vector,
