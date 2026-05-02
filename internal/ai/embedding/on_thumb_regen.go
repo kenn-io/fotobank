@@ -114,6 +114,8 @@ func OnThumbRegen(ctx context.Context, tx *sql.Tx, mediaID string) error {
 		invalidated++
 	}
 
+	now := time.Now().UTC()
+
 	// Always supersede working in-flight workers. A worker that has
 	// already CLAIMED an embed job (status='working') has resolved
 	// the prior preview JPEG and is mid-flight on the encode/embed
@@ -126,16 +128,18 @@ func OnThumbRegen(ctx context.Context, tx *sql.Tx, mediaID string) error {
 	// claimed_at=?) sees status='superseded' here and the
 	// rows-affected check returns ErrClaimLost — which rolls back
 	// the worker's own tx. attempt_count is preserved so the panel
-	// doesn't lose the prior accumulation; completed_at is left
-	// unset so the row reads as "never completed" rather than
-	// pretending to have finished now.
+	// doesn't lose the prior accumulation; completed_at is stamped
+	// to mirror the pending/blocked branch so terminal-state rows
+	// always carry a completion timestamp regardless of which path
+	// retired them.
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE ai_jobs
 		    SET status='superseded',
+		        completed_at=?,
 		        last_error_kind=?,
 		        last_error='thumb_regenerated'
 		  WHERE media_id=? AND task='embed' AND status='working'`,
-		string(ai.ErrKindSuperseded), mediaID,
+		now, string(ai.ErrKindSuperseded), mediaID,
 	); err != nil {
 		return fmt.Errorf("supersede working embed jobs: %w", err)
 	}
@@ -158,7 +162,7 @@ func OnThumbRegen(ctx context.Context, tx *sql.Tx, mediaID string) error {
 			        last_error_kind=?,
 			        last_error='thumb_regenerated'
 			  WHERE media_id=? AND task='embed' AND status IN ('pending','blocked')`,
-			time.Now().UTC(), string(ai.ErrKindSuperseded), mediaID,
+			now, string(ai.ErrKindSuperseded), mediaID,
 		); err != nil {
 			return fmt.Errorf("supersede pending/blocked embed jobs: %w", err)
 		}

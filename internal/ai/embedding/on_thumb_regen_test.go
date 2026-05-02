@@ -358,6 +358,17 @@ func TestOnThumbRegen_SupersedesInFlightEmbedJobs(t *testing.T) {
 				"non-embed task must NOT be superseded")
 			r.Equal("done", statusOf("j-done"),
 				"terminal embed row must remain done")
+
+			// Superseded is a terminal status — completed_at must be
+			// stamped regardless of whether the prior status was
+			// pending/blocked or working. Before the fix the working
+			// branch left completed_at NULL.
+			var completedAt sql.NullTime
+			r.NoError(d.ReadDB().QueryRowContext(ctx,
+				`SELECT completed_at FROM ai_jobs WHERE id=?`, "j-mid",
+			).Scan(&completedAt))
+			r.True(completedAt.Valid,
+				"superseded %s job must carry completed_at", status)
 		})
 	}
 }
@@ -398,11 +409,14 @@ func TestOnThumbRegen_SupersedesWorkingJobEvenIfNoMappings(t *testing.T) {
 	}))
 
 	var status string
+	var completedAt sql.NullTime
 	r.NoError(d.ReadDB().QueryRowContext(ctx,
-		`SELECT status FROM ai_jobs WHERE id=?`, "j-working",
-	).Scan(&status))
+		`SELECT status, completed_at FROM ai_jobs WHERE id=?`, "j-working",
+	).Scan(&status, &completedAt))
 	r.Equal("superseded", status,
 		"working embed job must be superseded even when no mapping existed yet")
+	r.True(completedAt.Valid,
+		"superseded working job must carry completed_at, like the pending/blocked branch")
 }
 
 // TestOnThumbRegen_FirstThumbDoesNotSupersedePendingEmbed pins the
