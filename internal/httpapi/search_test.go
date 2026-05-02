@@ -404,6 +404,28 @@ func TestRoute_Search_ExplainTrueIncludesScoreComponents(t *testing.T) {
 	r.InDelta(rrf, body.Results[0].ScoreComponents.RRF, 1e-9)
 }
 
+// TestRoute_Search_LimitTooLargeReturns400 pins the page-size cap:
+// limit=10000 (well above the 200 max) must surface as a 4xx error
+// from huma's `maximum:` validation (the framework emits 422
+// Unprocessable Entity for query-binding violations). The cap
+// protects the server from a client that asks for a huge page that
+// would consume server memory and bandwidth.
+func TestRoute_Search_LimitTooLargeReturns400(t *testing.T) {
+	r := require.New(t)
+	fx := newSearchAPIFixture(t)
+
+	q := url.Values{}
+	q.Set("q", "puppy")
+	q.Set("limit", "10000")
+
+	resp, _ := doGetSearch(t, fx, q)
+	// huma surfaces query-binding validation errors as 422; the cap
+	// being enforced at all is what matters, not the exact 4xx code.
+	r.GreaterOrEqual(resp.StatusCode, 400)
+	r.Less(resp.StatusCode, 500,
+		"limit above the cap must surface as a 4xx, not 200/5xx")
+}
+
 // TestRoute_Search_CursorRoundTrip — first page returns a non-empty
 // next_cursor; reusing the same cursor with the same request shape
 // returns 200 (the v1 engine validates the hash matches but doesn't

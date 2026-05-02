@@ -7,6 +7,7 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -20,9 +21,17 @@ import (
 
 // searchDefaultLimit matches the v1 plan's "60" default page size and
 // is what the SPA assumes when it issues an unconfigured first page.
-// Callers can override with ?limit=...; the engine itself imposes no
-// upper bound.
+// Callers can override with ?limit=...; the upper bound is set by
+// searchMaxLimit so a confused or hostile client can't request a
+// huge page that consumes server memory and bandwidth.
 const searchDefaultLimit = 60
+
+// searchMaxLimit is the inclusive upper bound on ?limit. Above this
+// value the route returns 400 BadRequest. The cap is enforced via
+// huma's `maximum:` tag on searchInput so the request fails before
+// any service / engine code runs; the runtime clamp below is a
+// defense-in-depth fallback for the same boundary.
+const searchMaxLimit = 200
 
 // registerSearchRoutes mounts GET /api/v1/search on api. svc==nil
 // leaves the route unregistered (no handlers, no schemas) so the
@@ -85,6 +94,14 @@ func handleSearch(ctx context.Context, svc *searchsvc.Service, in *searchInput) 
 	if in.Limit <= 0 {
 		req.Limit = searchDefaultLimit
 	}
+	// Defense-in-depth: huma's `maximum:` tag on the bound input
+	// already 400s requests above searchMaxLimit, but the runtime
+	// check guards the (unlikely) case where the framework's tag
+	// handling drifts or a future caller bypasses query binding.
+	if req.Limit > searchMaxLimit {
+		return nil, huma.Error400BadRequest(
+			fmt.Sprintf("limit must be in 1..%d", searchMaxLimit))
+	}
 	// IncludeHidden=true requires a valid unlock claim in context. The
 	// service performs the validity check via its HiddenChecker; we
 	// merely surface the claim. A nil claim with IncludeHidden=true
@@ -145,7 +162,7 @@ type searchInput struct {
 	Tag           []string  `query:"tag,explode" doc:"repeatable; each value is a tag label resolved server-side"`
 	Location      string    `query:"location" doc:"exact location label"`
 	MediaType     string    `query:"media_type" enum:"photo,video" doc:"restrict to photos or videos"`
-	Limit         int       `query:"limit" doc:"page size; default 60"`
+	Limit         int       `query:"limit" minimum:"0" maximum:"200" doc:"page size; default 60, max 200"`
 	Cursor        string    `query:"cursor" doc:"opaque next-page token from a previous response"`
 	IncludeHidden bool      `query:"include_hidden" doc:"include hidden media; requires a hidden-unlock cookie"`
 	Explain       bool      `query:"explain" doc:"return per-signal score components; gated on the AI Inspection setting"`
