@@ -92,6 +92,60 @@ func TestCompactor_DropsRetiredOlderThanWindow(t *testing.T) {
 	requireTableDoesNotExist(t, d, row.VecTableName)
 }
 
+// TestCompactor_SkipsRowRePromotedBetweenSelectAndDelete is the
+// state-aware-DELETE regression. SweepOnce reads candidates in phase
+// 1 and acts on them in phase 2; an admin who re-promotes a retired
+// generation in that window would, under the old code, lose the vec0
+// table along with the registry row in the next sweep tick. The
+// post-fix DELETE is guarded by state='retired' AND retired_at<cutoff,
+// so a row whose state was flipped to 'active' between phases is
+// matched zero times and the DROP TABLE is skipped.
+//
+// The race is simulated by inserting an old retired row, then
+// updating its state to 'active' BEFORE SweepOnce runs. The phase-1
+// SELECT in the post-fix code re-checks state inside the per-target
+// tx, so the ordering still proves the guard works even though we
+// can't easily race between phases in a single-threaded test.
+func TestCompactor_SkipsRowRePromotedBetweenSelectAndDelete(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+
+	retainWindow := 30 * 24 * time.Hour
+	retiredAt := time.Now().Add(-31 * 24 * time.Hour) // outside the window
+	row := mustCreateRetiredGenAt(t, d, 768, retiredAt)
+
+	// Simulate the race: re-promote the row to 'active' between the
+	// admin's intent and the compactor's tx. Both retired_at fields
+	// stay populated — only state changes — which mirrors the panel
+	// UI's "promote retired back to active" flow.
+	_, err := d.WriteDB().ExecContext(ctx,
+		`UPDATE embedding_generations SET state='active' WHERE id=?`,
+		row.ID,
+	)
+	r.NoError(err)
+
+	c := embedding.NewCompactor(d.WriteDB(), retainWindow)
+	dropped, err := c.SweepOnce(ctx)
+	r.NoError(err)
+	r.Equal(0, dropped, "re-promoted row must NOT count as compacted")
+
+	// Registry row is untouched.
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	got, err := g.GetByID(ctx, row.ID)
+	r.NoError(err)
+	r.NotNil(got)
+	r.Equal("active", got.State, "row state must remain 'active'")
+
+	// Vec0 table is untouched.
+	var count int
+	r.NoError(d.ReadDB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`,
+		row.VecTableName,
+	).Scan(&count))
+	r.Equal(1, count, "vec0 table must remain because the row was re-promoted")
+}
+
 // TestCompactor_LeavesRecentRetiredAlone exercises the negative path:
 // a retired generation inside the retain-retired window must be left
 // untouched, so an admin can still inspect or re-promote it.

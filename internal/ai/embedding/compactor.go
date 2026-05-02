@@ -94,22 +94,36 @@ func (c *Compactor) SweepOnce(ctx context.Context) (int, error) {
 	// Phase 2: drop each target inside its own tx. Per-target failure
 	// halts the sweep but does NOT roll back already-compacted earlier
 	// targets — those are committed and gone. The next tick re-evaluates
-	// the residue.
+	// the residue. dropOne returns dropped=false when the row was
+	// re-promoted between phase 1 and phase 2 (the state-aware DELETE
+	// matches zero rows); the sweep skips the DROP TABLE in that case
+	// and moves on without counting the target as compacted.
 	dropped := 0
 	for _, t := range targets {
-		if err := c.dropOne(ctx, t.id, t.vecTableName); err != nil {
+		ok, err := c.dropOne(ctx, t.id, t.vecTableName, cutoff)
+		if err != nil {
 			return dropped, fmt.Errorf("drop generation %d: %w", t.id, err)
 		}
-		dropped++
+		if ok {
+			dropped++
+		}
 	}
 	return dropped, nil
 }
 
-// dropOne removes one retired generation: DROP TABLE on its vec0
-// virtual table, then DELETE on the registry row. Both run inside a
-// single tx — symmetric with FindOrCreateBuilding's CREATE VIRTUAL
-// TABLE + INSERT, which is also done in one tx so a rollback unwinds
-// both together.
+// dropOne removes one retired generation: DELETE the registry row
+// guarded by state='retired' AND retired_at<cutoff, then DROP TABLE on
+// its vec0 virtual table — but only if the DELETE actually affected
+// a row. Returns (true, nil) when the registry row was removed AND
+// the table dropped; (false, nil) when the row no longer matches the
+// guard (re-promoted between phase 1 and phase 2 of SweepOnce).
+//
+// Order matters: DELETE first with the state guard, then DROP. If
+// the DELETE matches zero rows, the operator has re-promoted the
+// generation (state='active' or 'building') in the window between
+// the SELECT and the DELETE — keeping the vec0 table is correct in
+// that case. Both statements run inside one tx so a rollback
+// undoes the DELETE if the DROP fails.
 //
 // The vec_table_name column is application-derived
 // ("media_embeddings_g{id}") at insert time and never user-supplied,
@@ -117,29 +131,46 @@ func (c *Compactor) SweepOnce(ctx context.Context) (int, error) {
 // EXISTS is idempotent — a missing vec0 table (e.g. from a prior
 // half-compacted target where the registry row never made it to
 // disk) does not fail the tx.
-func (c *Compactor) dropOne(ctx context.Context, id int64, vecTableName string) error {
+//
+// FK ON DELETE CASCADE on media_embedding_ids drops the mapping
+// rows in the same statement as the registry DELETE. PRAGMA
+// foreign_keys=ON is set in the DSN (internal/db/db.go), so the
+// cascade is reliable.
+func (c *Compactor) dropOne(ctx context.Context, id int64, vecTableName string, cutoff time.Time) (bool, error) {
 	tx, err := c.rw.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+		return false, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	dropSQL := fmt.Sprintf(`DROP TABLE IF EXISTS %s`, vecTableName)
-	if _, err := tx.ExecContext(ctx, dropSQL); err != nil {
-		return fmt.Errorf("drop vec table %s: %w", vecTableName, err)
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM embedding_generations
+		  WHERE id = ? AND state = 'retired' AND retired_at < ?`,
+		id, cutoff,
+	)
+	if err != nil {
+		return false, fmt.Errorf("delete generation row: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		// Row was re-promoted (state != 'retired') or its retired_at
+		// shifted forward past cutoff between phase 1 and phase 2 of
+		// SweepOnce. Don't drop the vec table — its data is back in
+		// service. Commit (or roll back) the empty tx and report
+		// "not dropped" so the caller doesn't increment its counter.
+		return false, nil
 	}
 
-	// FK ON DELETE CASCADE on media_embedding_ids drops the mapping
-	// rows in the same statement. PRAGMA foreign_keys=ON is set in the
-	// DSN (internal/db/db.go), so the cascade is reliable.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM embedding_generations WHERE id = ?`, id,
-	); err != nil {
-		return fmt.Errorf("delete generation row: %w", err)
+	dropSQL := fmt.Sprintf(`DROP TABLE IF EXISTS %s`, vecTableName)
+	if _, err := tx.ExecContext(ctx, dropSQL); err != nil {
+		return false, fmt.Errorf("drop vec table %s: %w", vecTableName, err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return false, fmt.Errorf("commit: %w", err)
 	}
-	return nil
+	return true, nil
 }
