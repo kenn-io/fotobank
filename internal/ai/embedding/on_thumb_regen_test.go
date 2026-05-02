@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -262,4 +263,88 @@ func TestOnThumbRegen_NoGenerationsIsNoOp(t *testing.T) {
 	r.NoError(withTx(d, func(tx *sql.Tx) error {
 		return embedding.OnThumbRegen(ctx, tx, mid)
 	}))
+}
+
+// TestOnThumbRegen_SupersedesInFlightEmbedJobs pins the supersede
+// contract: any pending/working/blocked embed job for the regenerated
+// media must be flipped to status='superseded' so a worker mid-flight
+// rolls back instead of writing a vector keyed to the prior preview.
+// Other tasks (tag, caption) and other media's embed jobs must be
+// untouched. The schema's ai_jobs_active_idx allows at most one
+// in-flight row per (media, task), so this test parameterises over the
+// three live statuses with one media each — proving the supersede
+// targets all three independently.
+func TestOnThumbRegen_SupersedesInFlightEmbedJobs(t *testing.T) {
+	for _, status := range []string{"pending", "working", "blocked"} {
+		t.Run(status, func(t *testing.T) {
+			r := require.New(t)
+			ctx := context.Background()
+			d := testutil.OpenTestDB(t)
+			owner := testutil.SeedOwner(t, d.WriteDB(), "hub", "alice")
+			mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
+			otherMid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p2")
+
+			// In-flight embed for mid in the loop's status. 'working'
+			// requires claimed_at (NOT NULL not enforced but the
+			// worker's claim-fence keys on it, so populate for realism).
+			now := time.Now().UTC()
+			var err error
+			if status == "working" {
+				_, err = d.WriteDB().ExecContext(ctx, `
+					INSERT INTO ai_jobs(id, media_id, task, fingerprint, status, attempts, enqueued_at, claimed_at)
+					VALUES ('j-mid', ?, 'embed', 'fp', ?, 0, ?, ?)`,
+					mid, status, now, now)
+			} else {
+				_, err = d.WriteDB().ExecContext(ctx, `
+					INSERT INTO ai_jobs(id, media_id, task, fingerprint, status, attempts, enqueued_at)
+					VALUES ('j-mid', ?, 'embed', 'fp', ?, 0, ?)`,
+					mid, status, now)
+			}
+			r.NoError(err)
+
+			// Pending embed for OTHER media (must stay untouched).
+			_, err = d.WriteDB().ExecContext(ctx, `
+				INSERT INTO ai_jobs(id, media_id, task, fingerprint, status, attempts, enqueued_at)
+				VALUES ('j-other', ?, 'embed', 'fp', 'pending', 0, ?)`,
+				otherMid, now)
+			r.NoError(err)
+
+			// Pending TAG for mid (must stay untouched — only embed
+			// supersedes on thumb regen; tag/caption aren't pixel-
+			// dependent in the same way).
+			_, err = d.WriteDB().ExecContext(ctx, `
+				INSERT INTO ai_jobs(id, media_id, task, fingerprint, status, attempts, enqueued_at)
+				VALUES ('j-tag', ?, 'tag', 'fp', 'pending', 0, ?)`,
+				mid, now)
+			r.NoError(err)
+
+			// Already-done embed for mid (terminal — must stay 'done').
+			_, err = d.WriteDB().ExecContext(ctx, `
+				INSERT INTO ai_jobs(id, media_id, task, fingerprint, status, attempts, enqueued_at, completed_at)
+				VALUES ('j-done', ?, 'embed', 'fp', 'done', 0, ?, ?)`,
+				mid, now, now)
+			r.NoError(err)
+
+			r.NoError(withTx(d, func(tx *sql.Tx) error {
+				return embedding.OnThumbRegen(ctx, tx, mid)
+			}))
+
+			statusOf := func(jobID string) string {
+				t.Helper()
+				var s string
+				r.NoError(d.ReadDB().QueryRowContext(ctx,
+					`SELECT status FROM ai_jobs WHERE id=?`, jobID,
+				).Scan(&s))
+				return s
+			}
+			r.Equal("superseded", statusOf("j-mid"),
+				"%s embed for regenerated media must be superseded", status)
+			r.Equal("pending", statusOf("j-other"),
+				"another media's embed must NOT be superseded")
+			r.Equal("pending", statusOf("j-tag"),
+				"non-embed task must NOT be superseded")
+			r.Equal("done", statusOf("j-done"),
+				"terminal embed row must remain done")
+		})
+	}
 }

@@ -5,19 +5,32 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
+
+	"github.com/wesm/fotobank/internal/ai"
 )
 
-// OnThumbRegen drops every (gen, media) mapping in non-retired generations,
-// drops the corresponding vec0 row, and decrements each affected gen's
-// cached embedded_count. The gap scanner re-enqueues embed jobs on its
-// next tick — OnThumbRegen does NOT enqueue inside this transaction
-// because the spec keeps the regen→re-embed boundary clean.
+// OnThumbRegen drops every (gen, media) mapping in non-retired
+// generations, drops the corresponding vec0 row, decrements each
+// affected gen's cached embedded_count, AND supersedes any in-flight
+// embed jobs for this media so a worker mid-flight on the prior
+// (now-stale) preview rolls back its commit instead of writing a
+// vector keyed to a thumbnail that no longer exists. The supersede
+// flips ai_jobs rows to status='superseded', which the worker's
+// markDoneTx claim-fence (status='working' AND claimed_at=?) catches
+// — the rows-affected=0 path returns ErrClaimLost and the worker's
+// outer tx rolls back.
+//
+// The gap scanner re-enqueues embed jobs on its next tick —
+// OnThumbRegen does NOT enqueue inside this transaction because the
+// spec keeps the regen→re-embed boundary clean.
 //
 // Must be called inside the same write transaction that finalises a
-// regenerated thumbnail (i.e. the MarkReady UPDATE). The 'retired' state
-// is intentionally excluded: retired generations are frozen and never
-// re-embedded, so leaving their stale (older-thumb) vectors in place is
-// correct — those rows are scheduled for compaction by Task K1.
+// regenerated thumbnail (i.e. the MarkReady UPDATE). The 'retired'
+// state is intentionally excluded for the mapping drop: retired
+// generations are frozen and never re-embedded, so leaving their
+// stale (older-thumb) vectors in place is correct — those rows are
+// scheduled for compaction by Task K1.
 func OnThumbRegen(ctx context.Context, tx *sql.Tx, mediaID string) error {
 	// List non-retired generations. We hold the rows open just long
 	// enough to copy ids + table names — the per-gen DELETEs below run
@@ -98,5 +111,28 @@ func OnThumbRegen(ctx context.Context, tx *sql.Tx, mediaID string) error {
 			return fmt.Errorf("dec embedded_count gen %d: %w", tgt.id, err)
 		}
 	}
+
+	// Supersede any in-flight embed jobs for this media so a worker
+	// mid-flight on the prior preview rolls back its commit. The
+	// worker's markDoneTx claim-fence (status='working' AND
+	// claimed_at=?) sees status='superseded' here and the rows-affected
+	// check returns ErrClaimLost — which rolls back the worker's own
+	// tx. Targets pending/working/blocked because all three are
+	// "in-flight enough" that completing them with stale-thumb input
+	// would write a wrong vector. The completed_at and last_error_kind
+	// columns mirror jobs.Queue.SupersedeAll so the panel surfaces the
+	// reason consistently.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE ai_jobs
+		    SET status='superseded',
+		        completed_at=?,
+		        last_error_kind=?,
+		        last_error='thumb_regenerated'
+		  WHERE media_id=? AND task='embed' AND status IN ('pending','working','blocked')`,
+		time.Now().UTC(), string(ai.ErrKindSuperseded), mediaID,
+	); err != nil {
+		return fmt.Errorf("supersede in-flight embed jobs: %w", err)
+	}
+
 	return nil
 }
