@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/wesm/fotobank/internal/ai/embedding"
 	"github.com/wesm/fotobank/internal/owners"
 )
 
@@ -71,6 +72,17 @@ type SearchInput struct {
 	// means first page. The L1 backend does not consult Cursor — M3
 	// adds the encode/decode logic and the WHERE-clause shaping.
 	Cursor *Cursor
+	// Gen is the active embedding generation resolved for THIS request.
+	// FusedSearch uses it to look up the per-generation vec0 table; when
+	// nil, the backend falls back to its construction-time generation
+	// (the legacy behaviour). The engine populates Gen per-request from
+	// embedding.Generations.FindActive so a promote/retire that lands
+	// between server boot and the request takes effect immediately —
+	// the construction-time row goes stale otherwise.
+	//
+	// Required for FusedSearch when the construction-time generation is
+	// the zero value; BM25Only and FilterOnly never consult it.
+	Gen *embedding.Row
 }
 
 // Hit is the per-result row the Backend returns. Width / Height /

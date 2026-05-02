@@ -438,3 +438,46 @@ func TestEngine_HasMoreSetWhenLimitFilled(t *testing.T) {
 	r.Equal("m2", c.ID)
 	r.NotEmpty(c.ReqHash)
 }
+
+// TestEngine_FusedSearchUsesActiveGenerationFromRequest pins the
+// per-request generation override. The engine resolves the active
+// generation via FindActive each request and stamps it onto
+// SearchInput.Gen — that's the field the production-wired backend
+// consults (its construction-time gen is the zero-value Row). The
+// fakeBackend captures the SearchInput so this test can assert
+// SearchInput.Gen is the freshly-resolved row.
+//
+// Without the per-request stamp, FusedSearch in production would
+// fail with "FusedSearch requires an active embedding generation"
+// because the backend was constructed with embedding.Row{}. That
+// pre-fix posture isn't observable through the engine's fakeBackend
+// (no SQL is executed), so this test pins the contract at the
+// SearchInput level.
+func TestEngine_FusedSearchUsesActiveGenerationFromRequest(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	gen := seedActiveGeneration(t, gens)
+
+	be := &fakeBackend{hits: []index.Hit{{MediaID: "m1"}}}
+	tc := &fakeTextClient{vec: make([]float32, 768)}
+	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+
+	resp, err := eng.Search(context.Background(), hybrid.Request{
+		Owner: engineTestOwner,
+		Query: "puppy",
+		Sort:  "relevance",
+		Limit: 50,
+	})
+	r.NoError(err)
+	r.Equal(int32(1), be.fusedCalls.Load(), "FusedSearch should fire on hybrid path")
+	r.False(resp.SemanticUnavailable)
+
+	// The engine must populate SearchInput.Gen with the active row so
+	// the production SQLiteVecBackend (constructed with a zero-value
+	// gen) can route queries to the per-generation vec0 table.
+	r.NotNil(be.lastFusedIn.Gen,
+		"engine must populate SearchInput.Gen so the backend can route to the right vec0 table")
+	r.Equal(gen.ID, be.lastFusedIn.Gen.ID)
+	r.Equal(gen.VecTableName, be.lastFusedIn.Gen.VecTableName)
+}

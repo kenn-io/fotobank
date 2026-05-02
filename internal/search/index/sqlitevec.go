@@ -110,8 +110,19 @@ func validateFilter(in SearchInput) error {
 // The vec_table_name segment is interpolated via fmt.Sprintf because
 // it's application-derived from gen.ID and never user input. Every
 // other value is parameterised with `?`.
+//
+// Per-request generation: when in.Gen is non-nil it overrides the
+// construction-time b.gen. The server wires the backend with a
+// zero-value Row and lets the engine populate Gen per-request from
+// FindActive — that way a promote/retire that lands between boot and
+// the request takes effect on the next query without re-creating the
+// backend.
 func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]Hit, error) {
-	if b.gen.ID == 0 || b.gen.VecTableName == "" {
+	gen := b.gen
+	if in.Gen != nil {
+		gen = *in.Gen
+	}
+	if gen.ID == 0 || gen.VecTableName == "" {
 		return nil, fmt.Errorf("FusedSearch requires an active embedding generation")
 	}
 	if len(in.QueryVector) == 0 {
@@ -149,7 +160,7 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	sb.WriteString("  ),\n")
 	sb.WriteString("  ann_raw AS (\n")
 	sb.WriteString("    SELECT v.vec_id, v.distance\n")
-	fmt.Fprintf(&sb, "    FROM %s v\n", b.gen.VecTableName)
+	fmt.Fprintf(&sb, "    FROM %s v\n", gen.VecTableName)
 	sb.WriteString("    WHERE v.embedding MATCH vec_f32(?) AND v.k = ?\n")
 	sb.WriteString("  ),\n")
 	sb.WriteString("  ann AS (\n")
@@ -211,7 +222,7 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	// owners' vectors. Over-fetching gives the filter room to narrow.
 	args = append(args, embedding.VecToBlob(in.QueryVector), in.KPerSignal*annOverfetchFactor)
 	// ann: generation_id = ?, then LIMIT KPerSignal (post-filter cap).
-	args = append(args, b.gen.ID, in.KPerSignal)
+	args = append(args, gen.ID, in.KPerSignal)
 	// SELECT: RRF k for BM25 then for vector, then outer LIMIT.
 	args = append(args, in.RRFK, in.RRFK, in.Limit)
 

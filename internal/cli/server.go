@@ -466,9 +466,13 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		// Search service: backend + engine + auth-scoped wrapper.
 		// Backend is constructed with embedding.Row{} (zero value); the
 		// engine probes for the active generation per request via
-		// embedGens.FindActive and routes BM25Only / FilterOnly when
-		// none exists — neither path consults the backend's baked-in
-		// generation row.
+		// embedGens.FindActive and stamps the resolved row onto
+		// SearchInput.Gen, which FusedSearch reads in preference to
+		// the construction-time gen. BM25Only / FilterOnly never
+		// consult the gen at all, so the zero-value baseline is safe
+		// across all three modes — and a promote/retire that lands
+		// between server boot and any given request takes effect on
+		// the next query without re-creating the backend.
 		searchBackend := index.NewSQLiteVecBackend(d.ReadDB(), embedding.Row{})
 		searchEngine := hybrid.NewEngine(searchBackend, embedClient, embedGens, cfg.Search)
 		searchService = searchsvc.New(

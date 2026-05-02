@@ -197,6 +197,68 @@ func TestSQLiteVec_FusedSearch_HappyPath(t *testing.T) {
 	}
 }
 
+// TestSQLiteVec_FusedSearch_UsesPerRequestGen pins the per-request
+// generation override. The backend is constructed with the
+// zero-value Row (the production server-wired posture); the engine
+// is expected to populate SearchInput.Gen from FindActive each
+// request. With the override path working, FusedSearch must
+// successfully read the per-generation vec0 table named in
+// SearchInput.Gen.VecTableName even though b.gen is empty.
+//
+// Without the per-request override, FusedSearch with b.gen.ID == 0
+// returns the "FusedSearch requires an active embedding generation"
+// error — that's the regression this test catches.
+func TestSQLiteVec_FusedSearch_UsesPerRequestGen(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+
+	mid := seedSearchMedia(t, d, owner)
+	mustWriteFTSCorpus(t, d, mid, ftsCorpus{
+		Caption: "puppy",
+		Tags:    "puppy",
+	})
+
+	// Active generation seeded through the repo, not handed to the
+	// backend constructor.
+	gen := mustCreateActiveGenWithVectors(t, d, 768, map[string][]float32{
+		mid: vecForText("puppy"),
+	})
+
+	// Production-shaped construction: zero-value gen.
+	b := index.NewSQLiteVecBackend(d.ReadDB(), embedding.Row{})
+
+	// First, prove the backend without per-request Gen surfaces the
+	// "no active generation" failure — this is the pre-fix posture.
+	_, err := b.FusedSearch(ctx, index.SearchInput{
+		Query:       "puppy",
+		QueryVector: vecForText("puppy"),
+		Owner:       owner,
+		Filter:      noFilter(owner),
+		KPerSignal:  10,
+		RRFK:        60,
+		Limit:       10,
+	})
+	r.Error(err, "FusedSearch must reject when neither b.gen nor SearchInput.Gen is set")
+
+	// With Gen populated, the request routes to the per-generation
+	// vec0 table and surfaces the seeded media.
+	hits, err := b.FusedSearch(ctx, index.SearchInput{
+		Query:       "puppy",
+		QueryVector: vecForText("puppy"),
+		Owner:       owner,
+		Filter:      noFilter(owner),
+		KPerSignal:  10,
+		RRFK:        60,
+		Limit:       10,
+		Gen:         &gen,
+	})
+	r.NoError(err)
+	r.Len(hits, 1)
+	r.Equal(mid, hits[0].MediaID)
+}
+
 func TestSQLiteVec_BM25Only_RanksByBM25(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()

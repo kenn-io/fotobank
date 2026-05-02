@@ -270,6 +270,15 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 		KPerSignal:    e.cfg.KPerSignal,
 		RRFK:          e.cfg.RRFK,
 		Limit:         req.Limit,
+		// Gen is populated per-request from FindActive above; the
+		// SQLiteVecBackend in production is constructed with a
+		// zero-value Row, so this is the only path through which
+		// FusedSearch learns which generation's vec0 table to read.
+		// activeGen may be nil here even though semanticUnavailable
+		// is false (e.g. an embed call returned vectors but the gen
+		// row is nil — guarded by activeGen-nil checks above), so
+		// guard the assignment to avoid stamping an empty Row.
+		Gen: activeGen,
 	}
 	// TODO(R1): emit obs.Metrics.SearchPoolSaturated.Inc() when the
 	// per-signal candidate pool was filled to KPerSignal. The current
