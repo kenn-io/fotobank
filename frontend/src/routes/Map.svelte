@@ -29,6 +29,8 @@
     focus,
     geoStore,
     mediaStore,
+    hiddenStore,
+    toastStore,
   }: {
     z: number | undefined;
     c: [number, number] | undefined;
@@ -126,9 +128,36 @@
     clusterIds = ids;
   }
 
+  // includeHiddenToggle is the source of truth for whether the geo set
+  // includes hidden rows. F8 will surface this as a header checkbox;
+  // F7 only flips it on automatically when ?focus=<id> targets a hidden
+  // photo and the user has unlocked hidden. The toggle is also read by
+  // currentMapReturnHref → snapshot.includeHidden so the lightbox knows
+  // the navIds may include hidden rows.
+  let includeHiddenToggle = $state(false);
+
   onMount(() => {
-    void geoStore.load(false);
+    void initialLoad();
   });
+
+  // initialLoad runs the visible-only fetch first; if ?focus=<id> isn't
+  // present in the result and the user has unlocked hidden, retry with
+  // include_hidden=true. The retry only fires once per mount — if the
+  // photo still isn't there, we toast and stop.
+  async function initialLoad(): Promise<void> {
+    await geoStore.load(false);
+    if (
+      focus !== undefined
+      && geoStore.findById(focus) === undefined
+      && hiddenStore.unlocked
+    ) {
+      includeHiddenToggle = true;
+      await geoStore.load(true);
+      if (geoStore.findById(focus) === undefined) {
+        toastStore.push({ kind: "info", message: "Photo not found on map." });
+      }
+    }
+  }
 
   // Drop the in-flight URL writer if the route unmounts mid-debounce
   // — replaceState() on the next route's pathname would corrupt history.
