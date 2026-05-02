@@ -63,6 +63,7 @@ func OnThumbRegen(ctx context.Context, tx *sql.Tx, mediaID string) error {
 		return fmt.Errorf("close generation cursor: %w", err)
 	}
 
+	invalidated := 0
 	for _, tgt := range targets {
 		// Drop the mapping row and capture the prior vec_id (if any).
 		// DELETE ... RETURNING with no matching rows surfaces as
@@ -110,11 +111,21 @@ func OnThumbRegen(ctx context.Context, tx *sql.Tx, mediaID string) error {
 		); err != nil {
 			return fmt.Errorf("dec embedded_count gen %d: %w", tgt.id, err)
 		}
+		invalidated++
 	}
 
-	// Supersede any in-flight embed jobs for this media so a worker
-	// mid-flight on the prior preview rolls back its commit. The
-	// worker's markDoneTx claim-fence (status='working' AND
+	// Supersede any in-flight embed jobs ONLY when at least one mapping
+	// was actually invalidated. The first thumb-ready transition reaches
+	// here too — the importer enqueues the embed job upfront and the
+	// thumb worker fires this hook on the initial 'ready' MarkReady,
+	// just like it does on a regen. In the first-thumb case there are
+	// no mappings yet to invalidate; superseding the legitimate pending
+	// embed job at that moment would force the gap scanner to re-enqueue
+	// it. Gating on invalidated > 0 leaves the first-time embed pipeline
+	// untouched while still rolling back stale in-flight work after a
+	// real regeneration.
+	//
+	// The worker's markDoneTx claim-fence (status='working' AND
 	// claimed_at=?) sees status='superseded' here and the rows-affected
 	// check returns ErrClaimLost — which rolls back the worker's own
 	// tx. Targets pending/working/blocked because all three are
@@ -122,16 +133,18 @@ func OnThumbRegen(ctx context.Context, tx *sql.Tx, mediaID string) error {
 	// would write a wrong vector. The completed_at and last_error_kind
 	// columns mirror jobs.Queue.SupersedeAll so the panel surfaces the
 	// reason consistently.
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE ai_jobs
-		    SET status='superseded',
-		        completed_at=?,
-		        last_error_kind=?,
-		        last_error='thumb_regenerated'
-		  WHERE media_id=? AND task='embed' AND status IN ('pending','working','blocked')`,
-		time.Now().UTC(), string(ai.ErrKindSuperseded), mediaID,
-	); err != nil {
-		return fmt.Errorf("supersede in-flight embed jobs: %w", err)
+	if invalidated > 0 {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE ai_jobs
+			    SET status='superseded',
+			        completed_at=?,
+			        last_error_kind=?,
+			        last_error='thumb_regenerated'
+			  WHERE media_id=? AND task='embed' AND status IN ('pending','working','blocked')`,
+			time.Now().UTC(), string(ai.ErrKindSuperseded), mediaID,
+		); err != nil {
+			return fmt.Errorf("supersede in-flight embed jobs: %w", err)
+		}
 	}
 
 	return nil
