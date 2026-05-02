@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
@@ -27,11 +28,14 @@ const (
 )
 
 // reconcileFixture wires a DB, a registered owner, and a NAS root with
-// the owner's storage_key subdirectory already created.
+// the owner's storage_key subdirectory already created. The db handle
+// is exposed so tests that read derived tables (e.g. media_fts) can
+// inspect them directly.
 type reconcileFixture struct {
 	ctx       context.Context
 	owner     owners.Principal
 	repo      *media.Repo
+	db        *db.DB
 	nasRoot   string
 	ownerRoot string
 }
@@ -58,6 +62,7 @@ func newReconcileFixture(t *testing.T) *reconcileFixture {
 		ctx:       ctx,
 		owner:     owner,
 		repo:      repo,
+		db:        d,
 		nasRoot:   nasRoot,
 		ownerRoot: ownerRoot,
 	}
@@ -318,4 +323,34 @@ func TestReconcileBackfillsLensModelWhenNull(t *testing.T) {
 	rep2, err := reconcile.Reconcile(f.ctx, f.repo, f.defaultOptions())
 	r.NoError(err)
 	r.Zero(rep2.LensModelBackfilled)
+}
+
+// TestReconcileBackfillLensModelRefreshesFTS pins the J2 contract for
+// the reconcile-side wiring: when backfillLensModel writes a new
+// lens_model value into a row, the media_fts row's lens column
+// reflects the same value in the same write transaction. Without the
+// wiring, the row would be filled in but lexical search by lens
+// vendor would miss it until the next caption/tag promotion or the
+// next service-side write reached the row.
+func TestReconcileBackfillLensModelRefreshesFTS(t *testing.T) {
+	r := require.New(t)
+	f := newReconcileFixture(t)
+
+	const lens = "EF 35mm f/1.4L II USM"
+	jpeg := buildJPEGWithLensModel(t, lens)
+	withFile := f.seedMedia(t, "2024/lens.jpg", "cs-fts-lens", int64(len(jpeg)))
+	f.writeFile(t, "2024/lens.jpg", jpeg)
+
+	// Pre-fact: the row has no FTS row yet (the importer would have
+	// written one on import, but the test seeds rows directly via the
+	// repo). Reconcile's backfill is the write that populates FTS for
+	// this row.
+	rep, err := reconcile.Reconcile(f.ctx, f.repo, f.defaultOptions())
+	r.NoError(err)
+	r.Equal(1, rep.LensModelBackfilled)
+
+	var lensCol string
+	r.NoError(f.db.ReadDB().QueryRowContext(f.ctx,
+		`SELECT lens FROM media_fts WHERE media_id = ?`, withFile.ID).Scan(&lensCol))
+	r.Equal(lens, lensCol, "lens corpus column must reflect the just-backfilled lens_model")
 }

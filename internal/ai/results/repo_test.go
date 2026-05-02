@@ -2,6 +2,8 @@ package results_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -70,6 +72,81 @@ func TestRerunStaleAndPromoteAtomic(t *testing.T) {
 	r.True(found)
 	r.Equal("Second.", cap.Text)
 	r.Equal("m2", cap.ModelID)
+}
+
+// readFTSRowSnapshot returns the caption_text and tag_label columns of
+// the media_fts row for mediaID. Tests that exercise the J2 wiring use
+// it to assert that the FTS row reflects the row the promotion just
+// wrote, not the prior active. Returns ("", "") when no row exists.
+func readFTSRowSnapshot(t *testing.T, rw *sql.DB, mediaID string) (caption, tags string) {
+	t.Helper()
+	r := require.New(t)
+	err := rw.QueryRowContext(context.Background(),
+		`SELECT caption_text, tag_label FROM media_fts WHERE media_id = ?`, mediaID,
+	).Scan(&caption, &tags)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ""
+	}
+	r.NoError(err)
+	return caption, tags
+}
+
+// TestResults_PromoteCaptionRefreshesFTS pins the J2 contract for the
+// caption-promotion path: after WriteCaptionResult commits, the
+// media_fts row's caption_text reflects the active caption text. A
+// second promotion replaces the first.
+func TestResults_PromoteCaptionRefreshesFTS(t *testing.T) {
+	r := require.New(t)
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	repo := results.NewRepo(rw, ro)
+	ctx := context.Background()
+	fp := ai.Fingerprint{ModelID: "m", PromptVersion: "caption-v1", InputProfile: "ip"}
+
+	r.NoError(repo.WriteCaptionResult(ctx, mid, fp, "h1", "small dog on a beach"))
+
+	cap, tags := readFTSRowSnapshot(t, rw, mid)
+	r.Equal("small dog on a beach", cap)
+	r.Empty(tags, "tag corpus must be empty until a tag promotion runs")
+
+	// Re-promote with a new model — the FTS row must reflect the new
+	// caption, not the stale one.
+	fp2 := ai.Fingerprint{ModelID: "m2", PromptVersion: "caption-v1", InputProfile: "ip"}
+	r.NoError(repo.WriteCaptionResult(ctx, mid, fp2, "h2", "second caption"))
+	cap2, _ := readFTSRowSnapshot(t, rw, mid)
+	r.Equal("second caption", cap2)
+}
+
+// TestResults_PromoteTagRefreshesFTS pins the J2 contract for the
+// tag-promotion path: after WriteTagResult commits, the media_fts
+// row's tag_label is the space-joined active tag-label set in rank
+// order.
+func TestResults_PromoteTagRefreshesFTS(t *testing.T) {
+	r := require.New(t)
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	repo := results.NewRepo(rw, ro)
+	ctx := context.Background()
+	fp := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+
+	r.NoError(repo.WriteTagResult(ctx, mid, fp, "h", []parse.Tag{
+		{Key: "dog", Label: "Dog", Rank: 1},
+		{Key: "beach", Label: "Beach", Rank: 2},
+	}))
+
+	cap, tags := readFTSRowSnapshot(t, rw, mid)
+	r.Empty(cap, "caption corpus must be empty until a caption promotion runs")
+	r.Equal("Dog Beach", tags)
+
+	// Re-promote with different tags — the FTS row must reflect the
+	// new active set, not the stale one.
+	r.NoError(repo.WriteTagResult(ctx, mid, fp, "h", []parse.Tag{
+		{Key: "cat", Label: "Cat", Rank: 1},
+	}))
+	_, tags2 := readFTSRowSnapshot(t, rw, mid)
+	r.Equal("Cat", tags2)
 }
 
 func TestDoneCounter(t *testing.T) {

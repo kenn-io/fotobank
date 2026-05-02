@@ -222,6 +222,35 @@ func TestMediaServiceUpdateGPSMissingRowReturnsNotFound(t *testing.T) {
 	r.ErrorIs(err, errs.ErrNotFound)
 }
 
+// TestMediaServiceUpdateGPSRefreshesFTS pins the J2 wiring contract on
+// the service-side write path: when UpdateGPS commits, the media_fts
+// row's location_label column reflects the just-written value. The
+// label is part of the FTS corpus, so without this refresh lexical
+// search by city / region would lag the row's columnar value.
+func TestMediaServiceUpdateGPSRefreshesFTS(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	m := insertTestMedia(t, fx.repo, fx.owner, "2024/loc.jpg", "cs-loc")
+
+	lat, lon := 48.8566, 2.3522
+	gpsAt := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	r.NoError(fx.svc.UpdateGPS(ctx, fx.owner, m.ID, &lat, &lon, &gpsAt, "Paris, France"))
+
+	var loc string
+	r.NoError(fx.rw.QueryRowContext(ctx,
+		`SELECT location_label FROM media_fts WHERE media_id = ?`, m.ID).Scan(&loc))
+	r.Equal("Paris, France", loc)
+
+	// Clearing the row clears the FTS row's location column too, so
+	// the corpus stays in lock-step with the columnar value.
+	r.NoError(fx.svc.UpdateGPS(ctx, fx.owner, m.ID, nil, nil, nil, ""))
+	r.NoError(fx.rw.QueryRowContext(ctx,
+		`SELECT location_label FROM media_fts WHERE media_id = ?`, m.ID).Scan(&loc))
+	r.Empty(loc)
+}
+
 func TestMediaServiceListHidesSidecarsByDefault(t *testing.T) {
 	r := require.New(t)
 	fx := newMediaServiceTest(t)

@@ -6,6 +6,7 @@ package reconcile
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io/fs"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/wesm/fotobank/internal/exifread"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
+	"github.com/wesm/fotobank/internal/search/index"
 	"github.com/wesm/fotobank/internal/storage"
 )
 
@@ -178,6 +180,11 @@ func Reconcile(ctx context.Context, mediaRepo *media.Repo, opts Options) (Report
 // this is safe because the UPDATE statement is gated on
 // `lens_model IS NULL`, so no work is done after the first successful
 // fill for a given row.
+//
+// Each successful UPDATE bundles a media_fts refresh in the same write
+// transaction so search reads always see the lens column the row
+// carries (lens_model is part of the FTS corpus). A mid-tx failure
+// rolls both writes back and the row stays uncounted.
 func backfillLensModel(
 	ctx context.Context,
 	mediaRepo *media.Repo,
@@ -201,7 +208,20 @@ func backfillLensModel(
 		if err != nil || meta.LensModel == "" {
 			continue
 		}
-		ok, err := mediaRepo.UpdateLensModelIfNull(ctx, m.ID, meta.LensModel)
+		var ok bool
+		err = mediaRepo.WithWriteTx(ctx, func(tx *sql.Tx) error {
+			var innerErr error
+			ok, innerErr = mediaRepo.UpdateLensModelIfNullTx(ctx, tx, m.ID, meta.LensModel)
+			if innerErr != nil {
+				return innerErr
+			}
+			if !ok {
+				// Nothing changed (id unknown or column already set);
+				// skip the FTS refresh to keep the no-op cheap.
+				return nil
+			}
+			return index.RefreshMediaFTS(ctx, tx, m.ID)
+		})
 		if err != nil || !ok {
 			continue
 		}

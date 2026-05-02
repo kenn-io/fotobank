@@ -648,6 +648,47 @@ func TestImporter_EnqueuesEmbedJobAlongsideTagCaption(t *testing.T) {
 	}
 }
 
+// TestImporter_PopulatesFTSImmediately pins the J2 wiring contract on
+// the importer side: after a successful import, the media_fts row for
+// the just-imported media exists and carries the corpus columns
+// derived from the media row. caption_text and tag_label are empty
+// because no AI promotion has run yet — the importer alone seeds the
+// FTS row's filename / camera / lens / location_label surface.
+func TestImporter_PopulatesFTSImmediately(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	fx := newImporterFixture(t)
+	imp := ingest.NewImporter(fx.store, fx.repo, nil)
+
+	src := seedSource(t, "photo-with-timestamp.jpg")
+	res, err := imp.ImportDirectory(ctx, src,
+		ingest.Options{Owner: fx.owner, ConcurrentWorkers: 1})
+	r.NoError(err)
+	r.Equal(1, res.Imported)
+	r.Empty(res.Failures)
+
+	rows, err := fx.repo.List(ctx, media.ListFilter{Owner: fx.owner})
+	r.NoError(err)
+	r.Len(rows, 1)
+	mid := rows[0].ID
+
+	var captionText, tagLabel, filename, camera, lens, locationLabel string
+	r.NoError(fx.db.ReadDB().QueryRowContext(ctx,
+		`SELECT caption_text, tag_label, filename, camera, lens, location_label
+		   FROM media_fts WHERE media_id = ?`, mid,
+	).Scan(&captionText, &tagLabel, &filename, &camera, &lens, &locationLabel))
+
+	// Filename mirrors the source basename; caption_text and tag_label
+	// stay empty until AI promotion runs. Camera is derived from the
+	// EXIF Make+Model on the fixture; the test fixture is known to have
+	// a Make at minimum — assert non-empty rather than pinning the exact
+	// vendor string.
+	r.Equal("photo-with-timestamp.jpg", filename)
+	r.Empty(captionText, "caption is empty until AI promotion runs")
+	r.Empty(tagLabel, "tag corpus is empty until AI promotion runs")
+	r.NotEmpty(camera, "camera is derived from EXIF make/model on import")
+}
+
 // TestImporter_VideoImportSkipsAllThreeTasksWhenEmbedEnabled mirrors
 // the photo path for videos: when embed is wired, importing a video
 // records ai_skipped rows for tag, caption, AND embed. The embed gap

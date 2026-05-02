@@ -76,6 +76,30 @@ const mediaInsert = `INSERT INTO media (
 	hidden_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
+// WithWriteTx runs fn inside a transaction on the writer pool. The
+// closure can call any of the repo's *Tx methods (Insert is not yet
+// tx-aware) and combine them with cross-package writes (e.g. an FTS
+// refresh in internal/search/index). Commits when fn returns nil;
+// rolls back otherwise.
+//
+// This is the public escape hatch around the repo's private writer
+// handle so callers in other packages can compose write transactions
+// without forcing the repo to import their packages.
+func (r *Repo) WithWriteTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("media repo: begin tx: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("media repo: commit: %w", err)
+	}
+	return nil
+}
+
 // Insert stores a new media row. Returns errs.ErrAlreadyExists (wrapped)
 // if a row already exists with the same (owner, checksum) or (owner, path).
 // Returns errs.ErrInvalidArgument if Latitude and Longitude are not both
@@ -392,6 +416,11 @@ const (
 // backfill CLI; the importer uses Insert. Returns errs.ErrNotFound if
 // the row is gone, or errs.ErrInvalidArgument if exactly one of lat/lon
 // is set (the pair is atomic — both set or both nil).
+//
+// This is the auto-commit wrapper around UpdateGPSTx; callers that need
+// to bundle the update with another write (e.g. service.MediaService
+// pairing the UPDATE with a media_fts refresh) should use the Tx
+// variant directly.
 func (r *Repo) UpdateGPS(
 	ctx context.Context,
 	id string,
@@ -402,7 +431,36 @@ func (r *Repo) UpdateGPS(
 	if err := validateGPSPair(lat, lon); err != nil {
 		return fmt.Errorf("update media gps: %w", err)
 	}
-	res, err := r.rw.ExecContext(ctx,
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("update media gps: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := r.UpdateGPSTx(ctx, tx, id, lat, lon, gpsAt, label); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("update media gps: commit: %w", err)
+	}
+	return nil
+}
+
+// UpdateGPSTx is the in-tx variant of UpdateGPS. The caller owns the
+// transaction so the UPDATE can be bundled with a media_fts refresh
+// (location_label is part of the FTS corpus). Same validation and
+// not-found semantics as UpdateGPS.
+func (r *Repo) UpdateGPSTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	id string,
+	lat, lon *float64,
+	gpsAt *time.Time,
+	label string,
+) error {
+	if err := validateGPSPair(lat, lon); err != nil {
+		return fmt.Errorf("update media gps: %w", err)
+	}
+	res, err := tx.ExecContext(ctx,
 		`UPDATE media
 		    SET latitude = ?, longitude = ?, gps_at = ?, location_label = ?
 		  WHERE id = ?`,
@@ -733,11 +791,43 @@ WHERE owner_hub = ? AND owner_user_id = ?
 // (true, nil) when the row was updated, (false, nil) when no row
 // changed (either the id was unknown or lens_model was already set),
 // and a wrapped error on any DB failure.
+//
+// This is the auto-commit wrapper around UpdateLensModelIfNullTx;
+// callers that need to bundle the update with a media_fts refresh
+// (lens_model is part of the FTS corpus) should use the Tx variant.
 func (r *Repo) UpdateLensModelIfNull(ctx context.Context, id, lensModel string) (bool, error) {
 	if lensModel == "" {
 		return false, nil
 	}
-	res, err := r.rw.ExecContext(ctx,
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("update lens_model: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	updated, err := r.UpdateLensModelIfNullTx(ctx, tx, id, lensModel)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("update lens_model: commit: %w", err)
+	}
+	return updated, nil
+}
+
+// UpdateLensModelIfNullTx is the in-tx variant of UpdateLensModelIfNull.
+// The caller owns the transaction so the conditional UPDATE can be
+// bundled with a media_fts refresh (lens_model is part of the FTS
+// corpus). The empty-lensModel guard mirrors the auto-commit wrapper
+// to keep behaviour identical.
+func (r *Repo) UpdateLensModelIfNullTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	id, lensModel string,
+) (bool, error) {
+	if lensModel == "" {
+		return false, nil
+	}
+	res, err := tx.ExecContext(ctx,
 		`UPDATE media SET lens_model = ? WHERE id = ? AND lens_model IS NULL`,
 		lensModel, id,
 	)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/ai/parse"
+	"github.com/wesm/fotobank/internal/search/index"
 )
 
 // Repo is the DB-only handle.
@@ -64,9 +65,11 @@ func (r *Repo) WriteCaptionResult(ctx context.Context, mediaID string, fp ai.Fin
 
 // WriteTagResultTx is the in-tx variant of WriteTagResult. The caller
 // owns commit/rollback. Used by the worker to combine result write +
-// claim finalization in a single transaction.
+// claim finalization in a single transaction. The FTS corpus row is
+// refreshed at the end of the same tx so the active-tag set the
+// promotion just wrote is what search reads.
 func (r *Repo) WriteTagResultTx(ctx context.Context, tx *sql.Tx, mediaID string, fp ai.Fingerprint, promptHash string, tags []parse.Tag) error {
-	return writeWithChildrenTx(ctx, tx, mediaID, ai.TaskTag, fp, promptHash, func(ctx context.Context, tx *sql.Tx, resultID string) error {
+	if err := writeWithChildrenTx(ctx, tx, mediaID, ai.TaskTag, fp, promptHash, func(ctx context.Context, tx *sql.Tx, resultID string) error {
 		for _, t := range tags {
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO media_tags(result_id, tag_key, tag_label, rank) VALUES (?,?,?,?)`,
@@ -75,16 +78,30 @@ func (r *Repo) WriteTagResultTx(ctx context.Context, tx *sql.Tx, mediaID string,
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	if err := index.RefreshMediaFTS(ctx, tx, mediaID); err != nil {
+		return fmt.Errorf("refresh media fts: %w", err)
+	}
+	return nil
 }
 
-// WriteCaptionResultTx is the in-tx variant of WriteCaptionResult.
+// WriteCaptionResultTx is the in-tx variant of WriteCaptionResult. The
+// FTS corpus row is refreshed at the end of the same tx so the active
+// caption the promotion just wrote is what search reads.
 func (r *Repo) WriteCaptionResultTx(ctx context.Context, tx *sql.Tx, mediaID string, fp ai.Fingerprint, promptHash, text string) error {
-	return writeWithChildrenTx(ctx, tx, mediaID, ai.TaskCaption, fp, promptHash, func(ctx context.Context, tx *sql.Tx, resultID string) error {
+	if err := writeWithChildrenTx(ctx, tx, mediaID, ai.TaskCaption, fp, promptHash, func(ctx context.Context, tx *sql.Tx, resultID string) error {
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO media_captions(result_id, text) VALUES (?, ?)`, resultID, text)
 		return err
-	})
+	}); err != nil {
+		return err
+	}
+	if err := index.RefreshMediaFTS(ctx, tx, mediaID); err != nil {
+		return fmt.Errorf("refresh media fts: %w", err)
+	}
+	return nil
 }
 
 func writeWithChildrenTx(

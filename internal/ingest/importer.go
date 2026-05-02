@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"crypto/md5"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/wesm/fotobank/internal/exifread"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
+	"github.com/wesm/fotobank/internal/search/index"
 	"github.com/wesm/fotobank/internal/storage"
 )
 
@@ -80,6 +82,27 @@ func NewImporter(store storage.Store, repo *media.Repo, places PlaceResolver) *I
 // after the AI subsystem is initialized; CLIs that don't run the AI
 // pipeline leave the default NoopAIEnqueuer in place.
 func (imp *Importer) SetAIEnqueuer(e AIEnqueuer) { imp.ai = e }
+
+// refreshFTS rebuilds the media_fts row for mediaID after a successful
+// import. The refresh runs in its own write transaction (separate from
+// the auto-commit Insert that just landed the row) — a failure here is
+// logged and swallowed because the row is already in place and the
+// next reconcile pass / AI promotion will heal the FTS row.
+//
+// Atomicity with the media INSERT is intentionally not required for
+// the importer: the FTS corpus is a derived projection of the media
+// row, not a write that the importer must commit-or-rollback together.
+// AI promotion uses the same-tx pattern (see WriteCaptionResultTx) for
+// the cases where atomicity matters.
+func (imp *Importer) refreshFTS(ctx context.Context, mediaID string) {
+	err := imp.repo.WithWriteTx(ctx, func(tx *sql.Tx) error {
+		return index.RefreshMediaFTS(ctx, tx, mediaID)
+	})
+	if err != nil {
+		slog.Default().Warn("ingest: refresh media_fts failed",
+			"media_id", mediaID, "err", err)
+	}
+}
 
 // candidateOutcome is what a worker reports per candidate. id is set
 // only when imported is true; the post-barrier pairing pass collects
@@ -295,6 +318,7 @@ func (imp *Importer) processPhoto(ctx context.Context, c Candidate, owner owners
 		m := buildMediaRow(c, owner, landed, checksum, size, meta, imp.now(), imp.places, sourceRoot)
 		switch err := imp.repo.Insert(ctx, m); {
 		case err == nil:
+			imp.refreshFTS(ctx, m.ID)
 			if aiErr := imp.ai.EnqueueForPhoto(ctx, m.ID); aiErr != nil {
 				slog.Default().Warn("ai enqueue for photo failed",
 					"media_id", m.ID, "err", aiErr)
@@ -344,6 +368,7 @@ func (imp *Importer) processVideo(ctx context.Context, c Candidate, owner owners
 	m := buildMediaRow(c, owner, landed, checksum, size, meta, imp.now(), imp.places, sourceRoot)
 	switch err := imp.repo.Insert(ctx, m); {
 	case err == nil:
+		imp.refreshFTS(ctx, m.ID)
 		if aiErr := imp.ai.RecordVideoSkip(ctx, m.ID); aiErr != nil {
 			slog.Default().Warn("ai video skip record failed",
 				"media_id", m.ID, "err", aiErr)

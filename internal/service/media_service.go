@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
+	"github.com/wesm/fotobank/internal/search/index"
 	"github.com/wesm/fotobank/internal/storage"
 )
 
@@ -89,6 +91,10 @@ func (s *MediaService) List(ctx context.Context, f media.ListFilter, caller owne
 // the service layer stays simple and auth-scoped. Returns
 // errs.ErrInvalidArgument (from the repo) if exactly one of lat/lon is
 // set — the GPS coordinate pair is atomic.
+//
+// The UPDATE and the media_fts refresh run in the same write
+// transaction so search reads always see the location_label that the
+// row carries; a mid-update failure rolls both writes back together.
 func (s *MediaService) UpdateGPS(
 	ctx context.Context,
 	caller owners.Principal,
@@ -100,7 +106,12 @@ func (s *MediaService) UpdateGPS(
 	if _, err := s.Get(ctx, id, caller); err != nil {
 		return err
 	}
-	return s.repo.UpdateGPS(ctx, id, lat, lon, gpsAt, label)
+	return s.repo.WithWriteTx(ctx, func(tx *sql.Tx) error {
+		if err := s.repo.UpdateGPSTx(ctx, tx, id, lat, lon, gpsAt, label); err != nil {
+			return err
+		}
+		return index.RefreshMediaFTS(ctx, tx, id)
+	})
 }
 
 // GetSidecars returns the sidecars of the primary identified by
