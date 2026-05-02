@@ -243,12 +243,16 @@ export function createSearchStore(opts: CreateSearchStoreOptions): SearchStore {
   // ranking — the prior cursor's ReqHash no longer matches a fresh
   // request, and any cached results should be considered stale. We
   // clear requestHash so the next interaction (re-issue, navigation
-  // back to /search) recognises the staleness; we deliberately do
-  // NOT reissue the request here because the user may have navigated
-  // away. The SearchPage's effect will re-run when requestHash
-  // transitions to null.
+  // back to /search) recognises the staleness; we also clear cursor
+  // and hasMore so a load-more after activation cannot issue with the
+  // now-stale cursor (fetchNextPage reads cursor directly). We
+  // deliberately do NOT reissue the request here because the user may
+  // have navigated away. The SearchPage's effect will re-run when
+  // requestHash transitions to null.
   function onGenerationActivated(): void {
     requestHash = null;
+    cursor = null;
+    hasMore = false;
   }
 
   return {

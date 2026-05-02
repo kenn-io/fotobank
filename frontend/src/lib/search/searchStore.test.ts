@@ -96,6 +96,25 @@ describe("searchStore", () => {
     expect(store.requestHash).toBeNull();
   });
 
+  it("onGenerationActivated clears cursor and hasMore", async () => {
+    // fetchNextPage reads cursor directly, so leaving it set after a
+    // generation flip would issue a load-more with the stale cursor —
+    // exactly the ReqHash-mismatch the activation is meant to avoid.
+    // Drive a request that returns a cursor with has_more=true so the
+    // store has both fields populated, then fire the activation and
+    // assert cursor/hasMore reset.
+    const { client } = makeClient([
+      canned({ results: [], next_cursor: "c1", has_more: true }),
+    ]);
+    const store = createSearchStore({ client });
+    await store.setQuery("dogs");
+    expect(store.cursor).toBe("c1");
+    expect(store.hasMore).toBe(true);
+    store.onGenerationActivated();
+    expect(store.cursor).toBeNull();
+    expect(store.hasMore).toBe(false);
+  });
+
   it("cursor mismatch (server returns 400) restarts pagination from null", async () => {
     // Page 1 succeeds and gives us a cursor. fetchNextPage with that
     // cursor 400s (cursor-mismatch). The store must clear the cursor
