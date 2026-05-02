@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/wesm/fotobank/internal/ai/embedding"
+	"github.com/wesm/fotobank/internal/errs"
 )
 
 // annOverfetchFactor controls how many extra ANN candidates the backend
@@ -44,19 +45,20 @@ func NewSQLiteVecBackend(ro *sql.DB, gen embedding.Row) *SQLiteVecBackend {
 	return &SQLiteVecBackend{ro: ro, gen: gen}
 }
 
-// filterSQL returns the SQL body the WITH filter AS (...) CTE will
-// splice. When in.Filter.SQL is empty (e.g. a test that hasn't wired
-// M1's resolver) we substitute a default scan-all-media SELECT so the
-// CTE remains syntactically valid. The default has no owner scoping,
-// so production callers must always set Filter.SQL — M1's Resolve
-// always emits an owner-conditioned body. The default exists only to
-// keep development and unit tests free of a syntax error from an
-// empty CTE, not to relax the security contract.
-func filterSQL(in SearchInput) string {
+// validateFilter enforces the security contract that every Backend
+// call must arrive with an owner-conditioned filter CTE. Earlier
+// revisions silently substituted a scan-all-media SELECT when
+// Filter.SQL was empty — convenient for tests but a cross-owner
+// data-leak risk if the engine path ever forwarded a SearchInput
+// with an unset Filter.SQL into production. Fail closed instead:
+// callers (engine, tests) must always supply an explicit filter
+// (M1's Resolve emits an owner-scoped body even when the request
+// has no other filters).
+func validateFilter(in SearchInput) error {
 	if in.Filter.SQL == "" {
-		return "SELECT id, timestamp, imported_at FROM media"
+		return fmt.Errorf("Filter.SQL required: %w", errs.ErrInvalidArgument)
 	}
-	return in.Filter.SQL
+	return nil
 }
 
 // FusedSearch runs the composed BM25 + ANN + filter intersection +
@@ -80,6 +82,9 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	if in.Query == "" {
 		return nil, fmt.Errorf("FusedSearch requires a non-empty Query")
 	}
+	if err := validateFilter(in); err != nil {
+		return nil, err
+	}
 
 	// SQL skeleton documented in the plan. Inline the CTE bodies in
 	// the order: filter, bm25_raw + bm25 (FTS5 disallows bm25() inside
@@ -91,7 +96,7 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	var sb strings.Builder
 	sb.WriteString("WITH\n")
 	sb.WriteString("  filter AS (")
-	sb.WriteString(filterSQL(in))
+	sb.WriteString(in.Filter.SQL)
 	sb.WriteString("),\n")
 	sb.WriteString("  bm25_raw AS (\n")
 	sb.WriteString("    SELECT mf.media_id AS id, bm25(media_fts) AS score\n")
@@ -164,11 +169,14 @@ func (b *SQLiteVecBackend) BM25Only(ctx context.Context, in SearchInput) ([]Hit,
 	if in.Query == "" {
 		return nil, fmt.Errorf("BM25Only requires a non-empty Query")
 	}
+	if err := validateFilter(in); err != nil {
+		return nil, err
+	}
 
 	var sb strings.Builder
 	sb.WriteString("WITH\n")
 	sb.WriteString("  filter AS (")
-	sb.WriteString(filterSQL(in))
+	sb.WriteString(in.Filter.SQL)
 	sb.WriteString("),\n")
 	sb.WriteString("  bm25_raw AS (\n")
 	sb.WriteString("    SELECT mf.media_id AS id, bm25(media_fts) AS score\n")
@@ -241,9 +249,12 @@ func (b *SQLiteVecBackend) BM25Only(ctx context.Context, in SearchInput) ([]Hit,
 // reverses both, SortRelevance falls through to SortNewest because
 // "relevance" has no meaning without a query signal.
 func (b *SQLiteVecBackend) FilterOnly(ctx context.Context, in SearchInput) ([]Hit, error) {
+	if err := validateFilter(in); err != nil {
+		return nil, err
+	}
 	var sb strings.Builder
 	sb.WriteString("WITH filter AS (")
-	sb.WriteString(filterSQL(in))
+	sb.WriteString(in.Filter.SQL)
 	sb.WriteString(")\n")
 	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version\n")
 	sb.WriteString("FROM filter f JOIN media m ON m.id = f.id\n")

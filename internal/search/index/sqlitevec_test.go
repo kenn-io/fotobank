@@ -16,6 +16,7 @@ import (
 	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/ai/embedding"
 	"github.com/wesm/fotobank/internal/db"
+	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/search/index"
 	"github.com/wesm/fotobank/internal/testutil"
@@ -399,14 +400,14 @@ func TestSQLiteVec_FusedSearchFiltersANNCandidates(t *testing.T) {
 		"the hit must carry a vector score — proving ANN, not BM25, surfaced it")
 }
 
-// TestSQLiteVec_EmptyFilterIsValidSQL ensures that all three Backend
-// methods substitute a default scan-all-media SELECT when in.Filter.SQL
-// is the empty string. Without the fallback, the WITH filter AS ()
-// CTE would be empty and SQLite would reject the statement at parse
-// time. The default has no owner scoping — production callers always
-// pass an M1-resolved filter — so this test is a syntax guard, not a
-// security check.
-func TestSQLiteVec_EmptyFilterIsValidSQL(t *testing.T) {
+// TestSQLiteVec_EmptyFilterIsRejected pins the fail-closed contract:
+// every Backend call must arrive with an owner-conditioned
+// Filter.SQL. The earlier "scan-all-media SELECT" fallback was a
+// debugging convenience that turned into a cross-owner data-leak
+// risk if any production path forwarded a SearchInput with an unset
+// Filter.SQL. The post-fix backend rejects such calls with
+// errs.ErrInvalidArgument.
+func TestSQLiteVec_EmptyFilterIsRejected(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
@@ -419,15 +420,16 @@ func TestSQLiteVec_EmptyFilterIsValidSQL(t *testing.T) {
 	})
 	b := index.NewSQLiteVecBackend(d.ReadDB(), gen)
 
-	// FilterOnly with empty Filter.SQL: must not return a parse error.
+	// FilterOnly with empty Filter.SQL: must surface ErrInvalidArgument.
 	_, err := b.FilterOnly(ctx, index.SearchInput{
 		Owner:  owner,
 		Filter: index.FilterCTE{},
 		Limit:  10,
 	})
-	r.NoError(err, "FilterOnly must accept empty Filter.SQL via fallback")
+	r.ErrorIs(err, errs.ErrInvalidArgument,
+		"FilterOnly must reject empty Filter.SQL")
 
-	// BM25Only with empty Filter.SQL: must not return a parse error.
+	// BM25Only with empty Filter.SQL: same reject.
 	_, err = b.BM25Only(ctx, index.SearchInput{
 		Query:      "dog",
 		Owner:      owner,
@@ -435,9 +437,10 @@ func TestSQLiteVec_EmptyFilterIsValidSQL(t *testing.T) {
 		KPerSignal: 10,
 		Limit:      10,
 	})
-	r.NoError(err, "BM25Only must accept empty Filter.SQL via fallback")
+	r.ErrorIs(err, errs.ErrInvalidArgument,
+		"BM25Only must reject empty Filter.SQL")
 
-	// FusedSearch with empty Filter.SQL: must not return a parse error.
+	// FusedSearch with empty Filter.SQL: same reject.
 	_, err = b.FusedSearch(ctx, index.SearchInput{
 		Query:       "dog",
 		QueryVector: vecForText("dog beach"),
@@ -447,7 +450,8 @@ func TestSQLiteVec_EmptyFilterIsValidSQL(t *testing.T) {
 		RRFK:        60,
 		Limit:       10,
 	})
-	r.NoError(err, "FusedSearch must accept empty Filter.SQL via fallback")
+	r.ErrorIs(err, errs.ErrInvalidArgument,
+		"FusedSearch must reject empty Filter.SQL")
 }
 
 // TestVecToBlob_RoundTrip cross-checks that VecToBlob produces the same
