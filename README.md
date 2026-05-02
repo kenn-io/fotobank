@@ -1,60 +1,192 @@
 # fotobank
 
-A self-hosted photo archive tool: deduplicates on import, gives files
-consistent date-based names, maintains a SQLite metadata registry, and
-(in progress) serves thumbnails and albums over a small HTTP API.
+Fotobank is a self-hosted photo archive and browsing app for people who want
+ordinary files on their own storage to remain the source of truth.
 
-Your photos stay on your storage. Fotobank coexists with Lightroom Classic by organizing the files on disk; Lightroom can watch the same directory.
+It imports photos and videos into a predictable NAS-backed directory layout,
+keeps a SQLite metadata registry, generates thumbnails, and serves a web
+library for browsing, albums, sharing, hidden photos, and AI-assisted search.
+It is being built around one real operating environment: a personal/family
+photo archive on NAS, with optional local flash caching and coexistence with
+Lightroom Classic.
+
+Fotobank is not trying to be every photo product for every household. It is a
+small, inspectable archive manager optimized for my own storage topology,
+workflow, and preferences.
 
 ## Status
 
-Early development. The CLI imports, reconciles, and generates thumbnails. The HTTP API serves media metadata, originals, and thumbnails. Albums are in design. Sharing is deferred.
+Pre-alpha. This repository is public-looking code, but the project is not yet
+ready for broad public use.
 
-## Build
+Expect schema changes, incomplete operator documentation, rough upgrade paths,
+and implementation details that still assume a developer/operator who is
+comfortable reading the code. The README is written to explain where the
+project is headed, not to promise a stable install experience today.
 
-Requires Go 1.26+. Pure Go, no CGO.
+## Why This Exists
 
-```shell
-make build          # → bin/fotobank
-make install        # copies bin/fotobank to ~/.local/bin or $GOBIN
-```
+Fotobank is built around a few opinions:
 
-Or directly:
+- **The filesystem matters.** Originals are imported into ordinary
+  date-oriented directories with stable names. The library should remain
+  inspectable with shell tools, Finder, Lightroom Classic, backup software, and
+  future migration scripts.
+- **NAS is authoritative.** Durable bytes live on NAS. Local flash is a cache
+  for performance, not the place where irreplaceable data lives.
+- **SQLite is enough for the metadata core.** The app is meant to be simple to
+  run, snapshot, inspect, and restore.
+- **The CLI and web app should share one write path.** Humans use the web UI;
+  scripts and agents use the CLI. Both go through the same service layer.
+- **Sharing is metadata, not file movement.** Shares are scopes over albums or
+  media sets. Creating or revoking a share does not copy or rearrange original
+  files.
+- **AI is optional and provenance-aware.** AI workers are disabled by default,
+  send downscaled metadata-stripped images to the configured endpoint, and keep
+  model/input provenance for generated tags, captions, and embeddings.
 
-```shell
-go build -o bin/fotobank ./cmd/fotobank
-```
+## What Works Today
 
-## Configuration
+The codebase currently includes:
 
-Copy `testdata/config.example.yaml` (if present) or write one by hand. The loader looks for `--config <path>` first, then `FOTOBANK_CONFIG`, then `$XDG_CONFIG_HOME/fotobank/config.yaml`. Minimum config:
+- CLI import with owner-scoped deduplication, EXIF/GPS metadata extraction,
+  date-based storage, reconcile support, and thumbnail generation.
+- A Svelte web app with library browsing, sessions, media detail pages,
+  lightbox viewing, albums, shares, hidden media, AI settings, and search.
+- Album CRUD and album membership through both HTTP and CLI surfaces.
+- Scope-based sharing with owner-side management, grantee-side read endpoints,
+  download permissions, and a stub or exec-backed broker adapter.
+- Hidden media as app-level privacy: passcode-gated owner access, default
+  exclusion from library/search/share surfaces, and sidecar-aware hide/unhide.
+  This is not encryption.
+- Optional AI tagging, captioning, and hybrid search using OpenAI-compatible
+  endpoints, SQLite FTS5, and sqlite-vec embeddings.
+- Operational basics: backup snapshots and restore, structured logging,
+  readiness checks, Prometheus metrics, OpenAPI generation, and frontend tests.
 
-```yaml
-identity:
-  mode: stub
-  stub:
-    hub: local
-    user_id: me
+This list describes the development state, not a support guarantee.
 
-flash:
-  root: /srv/fotobank/flash
+## Fotobank And Immich
 
-storage:
-  nas_root: /srv/fotobank/archive
-  thumbs_cache_enabled: true
-```
+[Immich](https://github.com/immich-app/immich) is a much larger and much more
+mature self-hosted photo and video management project. Its official feature
+list includes mobile backup apps, multi-user support, albums, sharing, RAW
+support, metadata and map views, search, facial recognition, CLIP search,
+external libraries, storage templates, and many other features. If you want a
+polished self-hosted Google Photos-style experience today, Immich is the first
+project I would look at.
 
-## Commands
+Fotobank is different because it is narrower and more personal. I wanted a
+system where:
 
-```shell
-fotobank server                          # HTTP API + background workers
-fotobank import /path/to/source          # import photos/videos into the archive
-fotobank reconcile                       # reconcile on-disk files with the DB
-fotobank thumbs regenerate --all         # enqueue rows for thumbnail rebuild
-```
+- import-time filesystem organization is central, not incidental;
+- NAS remains the authoritative archive and local flash remains disposable;
+- Lightroom Classic can continue to watch the same organized tree;
+- one Go binary owns both the CLI and server write paths;
+- SQLite is the primary metadata store;
+- sharing can be mediated by an external identity/grant broker; and
+- AI/search features expose their provenance and respect hidden-photo
+  boundaries.
+
+So this is not "Immich, but smaller." It is a personal archive manager with a
+web viewer, built for a particular workflow. Immich is a serious, established
+project; Fotobank exists because I wanted to explore a different set of
+trade-offs for my own library.
+
+Useful Immich references for comparison:
+
+- [Immich README](https://github.com/immich-app/immich)
+- [Mobile Backup](https://docs.immich.app/features/mobile-backup/)
+- [External Libraries](https://docs.immich.app/features/libraries)
+- [Storage Templates](https://docs.immich.app/administration/storage-template)
 
 ## Architecture
 
-See [`CLAUDE.md`](CLAUDE.md) for the package layout and layering rules.
+Fotobank is a Go application with a Svelte frontend embedded into the server
+binary.
 
-Design docs are under `docs/superpowers/specs/`, implementation plans under `docs/superpowers/plans/`.
+- `cmd/fotobank` is the CLI entry point.
+- `internal/cli` contains commands such as `server`, `import`, `reconcile`,
+  `thumbs`, `albums`, `shares`, `hidden`, `ai`, and `backup`.
+- `internal/httpapi` exposes the REST API and byte-streaming routes.
+- `internal/service` is the auth-scoped service layer used by both CLI and
+  HTTP transports.
+- `internal/media`, `internal/album`, `internal/share`, `internal/thumb`,
+  `internal/search`, and `internal/ai` hold the domain packages.
+- `frontend/` is the Svelte app built into `internal/web/dist`.
+
+Storage is split into:
+
+- **NAS:** authoritative originals, thumbnails, and backup snapshots.
+- **Flash:** local SQLite database plus optional cache for thumbnails and
+  recent originals.
+
+Identity supports local stub mode for development and header mode for
+deployment behind a trusted identity-aware reverse proxy.
+
+## Getting Started
+
+The setup path is still developer-oriented.
+
+Requirements:
+
+- Go 1.26+
+- A C compiler, because SQLite uses `mattn/go-sqlite3`, FTS5, and sqlite-vec
+- Bun 1.3+ for frontend builds
+- A writable NAS/archive directory
+
+Build:
+
+```sh
+make build
+```
+
+This builds the frontend and writes the binary to `bin/fotobank`.
+
+Create a config:
+
+```sh
+mkdir -p ~/.config/fotobank
+cp internal/config/config.example.toml ~/.config/fotobank/config.toml
+```
+
+At minimum, edit `[nas].root` in `config.toml`. The default stub identity is
+usable for local development.
+
+Validate and run:
+
+```sh
+bin/fotobank config validate
+bin/fotobank import /path/to/source
+bin/fotobank server
+```
+
+By default the server listens on `127.0.0.1:8090`.
+
+Common commands:
+
+```sh
+bin/fotobank config path
+bin/fotobank reconcile
+bin/fotobank thumbs regenerate --all
+bin/fotobank albums list
+bin/fotobank shares list
+bin/fotobank backup snapshot
+```
+
+## Development
+
+Useful targets:
+
+```sh
+make test             # Go test suite with sqlite_fts5 tag
+make test-short       # Short Go tests
+make frontend-check   # Svelte typecheck and frontend unit tests
+make test-e2e         # Playwright e2e suite
+make lint             # golangci-lint plus local testify helper check
+make api-generate     # regenerate OpenAPI and TypeScript schema
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
