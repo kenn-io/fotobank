@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -413,6 +414,94 @@ func TestWorker_RunDrainsQueueAndExitsOnCancel(t *testing.T) {
 	select {
 	case err := <-done:
 		r.NoError(err, "Run should return nil on context cancel")
+	case <-time.After(2 * time.Second):
+		r.Fail("Run did not return after cancel within 2s")
+	}
+}
+
+// TestWorker_RunDrainsBacklogInOneTick pins the per-tick drain
+// contract: when N=BatchSize*3 jobs are enqueued and IdlePoll is
+// short, Run must process all N within the first drain pass rather
+// than splitting the work across IdlePoll cycles. The pre-fix loop
+// did one ClaimBatch+process per IdlePoll, so a steady-state
+// backlog larger than BatchSize would sit partially-claimed across
+// multiple ticks — observable as throughput stalling at
+// BatchSize/IdlePoll items/second.
+//
+// The assertion completes well under the cycle count the pre-fix
+// loop would have needed: with BatchSize=4 and N=12, the pre-fix
+// loop required at least 3 IdlePoll ticks to drain. The test's
+// timeout of 200ms with IdlePoll=10ms still gives the post-fix
+// drain plenty of room without permitting the pre-fix posture to
+// pass.
+func TestWorker_RunDrainsBacklogInOneTick(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+
+	cfg := embedCfg()
+	cfg.BatchSize = 4
+	const N = 12 // BatchSize*3 — three claims required to drain.
+
+	mids := make([]string, N)
+	for i := range mids {
+		mids[i] = testutil.SeedPhoto(t, d.WriteDB(), owner, "p"+strconv.Itoa(i))
+	}
+
+	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
+	client := &fakeEmbedClient{vectors: dim768N(N), vectorsToReturn: -1}
+	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
+	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	w := embedding.NewWorker(embedding.WorkerDeps{
+		Q:        q,
+		Gens:     gens,
+		Mapping:  embedding.NewMapping(d.WriteDB()),
+		Client:   client,
+		Resolver: resolver,
+		Cfg:      cfg,
+		Events:   &recordingEmitter{},
+		DB:       d.WriteDB(),
+		Skipped:  skipped.NewRepo(d.WriteDB(), d.ReadDB()),
+		Failures: failures.NewRepo(d.WriteDB(), d.ReadDB()),
+	})
+
+	fp := embedFP()
+	for _, m := range mids {
+		r.NoError(q.Enqueue(ctx, m, ai.TaskEmbed, fp))
+	}
+
+	gen, err := gens.FindOrCreateBuilding(ctx, fp, cfg.Dimension)
+	r.NoError(err)
+
+	ctx2, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx2) }()
+
+	// All N must drain inside one tick — i.e. before the inner drain
+	// loop yields to the outer ticker. The post-fix loop calls
+	// ClaimBatch in a tight loop while jobs remain; pre-fix called
+	// it exactly once per tick so this assertion would fail without
+	// the drain.
+	r.Eventually(func() bool {
+		var n int
+		require.NoError(t, d.ReadDB().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM ai_jobs WHERE task='embed' AND status='done'`,
+		).Scan(&n))
+		return n == N
+	}, 2*time.Second, 10*time.Millisecond,
+		"Run must drain the full backlog inside the first tick's drain loop")
+
+	// Sanity: every mapping landed in the resolved generation.
+	for _, m := range mids {
+		r.True(mappingExists(t, d, gen.ID, m), "media %s missing mapping", m)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		r.NoError(err)
 	case <-time.After(2 * time.Second):
 		r.Fail("Run did not return after cancel within 2s")
 	}

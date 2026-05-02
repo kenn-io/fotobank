@@ -152,19 +152,27 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 
 // Run is the long-running loop driver: each tick it promotes any
 // blocked-by-thumb embed jobs whose source media has reached
-// thumb_status='ready', then claims and processes a batch.
+// thumb_status='ready', then drains the claim queue until empty
+// before sleeping on IdlePoll.
 //
 // Returns nil on ctx cancellation (graceful shutdown). The error
 // posture splits queue-side errors from process-side errors:
 //
 //   - Queue/SQL errors from PromoteThumbReadyBlocked and ClaimBatch
-//     are logged and the loop continues. The queue is the source of
-//     truth; a one-off contention spike must not tear the worker down,
-//     and the next tick re-evaluates from scratch.
+//     are logged and the inner drain loop breaks back out to the
+//     ticker so the next tick re-evaluates from scratch. The queue
+//     is the source of truth; a one-off contention spike must not
+//     tear the worker down.
 //   - Errors from process (the worker logic itself) propagate. Those
 //     usually indicate programming bugs, and a continue-and-log loop
 //     would mask them indefinitely. The chat worker takes a similar
 //     posture (see internal/ai/worker/worker.go::Run).
+//
+// The drain loop ensures a backlog enqueued between ticks is fully
+// processed in the current tick rather than leaked across IdlePoll
+// cycles — critical when BatchSize doesn't cover the whole queue
+// and a single ticker fire would otherwise process at most one
+// batch.
 //
 // The cancellation check on every error keeps a deliberate shutdown
 // from being misclassified as either kind.
@@ -172,24 +180,37 @@ func (w *Worker) Run(ctx context.Context) error {
 	t := time.NewTicker(w.d.Cfg.IdlePoll)
 	defer t.Stop()
 	for {
-		// Promote any rows that the chat-style "thumb blocked" sweep
-		// would otherwise leave parked. The embed worker owns its own
-		// task's promotion because the chat worker only iterates over
-		// its configured task (tag or caption) — there is no central
-		// housekeeping site that knows about ai.TaskEmbed.
-		if _, err := w.d.Q.PromoteThumbReadyBlocked(ctx, ai.TaskEmbed); err != nil &&
-			!errors.Is(err, context.Canceled) {
-			slog.Default().Warn("embedding worker promote thumb-ready blocked", "err", err)
-		}
+		// Drain inner loop: keep promoting + claiming + processing
+		// until either the queue is empty or a process error escapes.
+		// Queue errors break out to the outer ticker so the next tick
+		// retries from scratch.
+		for {
+			// Promote any rows that the chat-style "thumb blocked"
+			// sweep would otherwise leave parked. The embed worker
+			// owns its own task's promotion because the chat worker
+			// only iterates over its configured task (tag or caption)
+			// — there is no central housekeeping site that knows
+			// about ai.TaskEmbed.
+			if _, err := w.d.Q.PromoteThumbReadyBlocked(ctx, ai.TaskEmbed); err != nil &&
+				!errors.Is(err, context.Canceled) {
+				slog.Default().Warn("embedding worker promote thumb-ready blocked", "err", err)
+			}
 
-		// Claim/process split: queue errors continue-and-log, process
-		// errors propagate so programming bugs surface instead of being
-		// masked by an infinite log-and-retry loop.
-		batch, claimErr := w.d.Q.ClaimBatch(ctx, ai.TaskEmbed, w.d.Cfg.BatchSize)
-		if claimErr != nil && !errors.Is(claimErr, context.Canceled) {
-			slog.Default().Warn("embedding worker claim batch", "err", claimErr)
-		} else if claimErr == nil && len(batch) > 0 {
-			if perr := w.process(ctx, batch); perr != nil && !errors.Is(perr, context.Canceled) {
+			batch, claimErr := w.d.Q.ClaimBatch(ctx, ai.TaskEmbed, w.d.Cfg.BatchSize)
+			if claimErr != nil {
+				if errors.Is(claimErr, context.Canceled) {
+					return nil
+				}
+				slog.Default().Warn("embedding worker claim batch", "err", claimErr)
+				break
+			}
+			if len(batch) == 0 {
+				break
+			}
+			if perr := w.process(ctx, batch); perr != nil {
+				if errors.Is(perr, context.Canceled) {
+					return nil
+				}
 				return fmt.Errorf("process: %w", perr)
 			}
 		}
