@@ -156,8 +156,67 @@ UPDATE media
 // MarkReady transitions a claimed row to 'ready'. Returns ErrClaimLost
 // if the (id, version, token) triple no longer matches — typically
 // because a sweep bumped the version or an Enqueue re-queued the row.
+//
+// Equivalent to MarkReadyWithHook(ctx, id, version, token, nil) — the
+// hookless form remains for callers (notably queue tests) that don't
+// need the embed-mapping invalidation that lands inside MarkReadyWithHook.
 func (q *Queue) MarkReady(ctx context.Context, id string, version int, token time.Time) error {
-	return q.finalize(ctx, markReadySQL, id, version, token)
+	return q.MarkReadyWithHook(ctx, id, version, token, nil)
+}
+
+// MarkReadyHook runs inside the MarkReady write transaction after the
+// row UPDATE has applied (and only when the UPDATE actually transitioned
+// the row — i.e. the claim fence held). Returning a non-nil error rolls
+// back the entire MarkReady, so the row stays 'working' and a subsequent
+// sweep will re-queue it.
+//
+// Used by the worker to attach side effects that must observe the same
+// "this regen actually finalised" guarantee as the status transition —
+// notably embedding.OnThumbRegen, which invalidates stale vec mappings
+// across non-retired generations.
+type MarkReadyHook func(ctx context.Context, tx *sql.Tx) error
+
+// MarkReadyWithHook is the transaction-bound MarkReady: the UPDATE and
+// hook execute inside one write tx so a hook error rolls back the row
+// transition. ErrClaimLost is returned (with no hook invocation) when
+// the (id, version, token) fence misses, matching MarkReady's contract.
+//
+// hook may be nil, in which case behaviour is identical to MarkReady's
+// single-statement variant — same atomicity guarantees, same error
+// surface.
+func (q *Queue) MarkReadyWithHook(
+	ctx context.Context,
+	id string,
+	version int,
+	token time.Time,
+	hook MarkReadyHook,
+) error {
+	tx, err := q.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("mark ready %s begin: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, markReadySQL, time.Now().UTC(), id, version, token)
+	if err != nil {
+		return fmt.Errorf("mark ready %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("mark ready %s rows affected: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: id=%s version=%d", ErrClaimLost, id, version)
+	}
+	if hook != nil {
+		if err := hook(ctx, tx); err != nil {
+			return fmt.Errorf("mark ready %s hook: %w", id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("mark ready %s commit: %w", id, err)
+	}
+	return nil
 }
 
 const markNoPreviewSQL = `

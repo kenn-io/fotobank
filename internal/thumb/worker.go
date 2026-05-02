@@ -3,6 +3,7 @@ package thumb
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"image"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wesm/fotobank/internal/ai/embedding"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/storage"
@@ -245,7 +247,15 @@ func (w *Worker) processOne(ctx context.Context, c Claim) {
 		w.finalizeFailed(ctx, c, err, start)
 		return
 	}
-	if err := w.q.MarkReady(ctx, m.ID, m.ThumbVersion, c.ClaimedAt); err != nil {
+	// Invalidate any cached embeddings for this media in non-retired
+	// generations: the new thumb_version means the preview that fed the
+	// vec is now stale. The hook runs inside the same write tx as the
+	// status='ready' transition, so a hook error rolls back both — the
+	// row stays 'working' and a sweep will re-queue it.
+	hook := func(hctx context.Context, tx *sql.Tx) error {
+		return embedding.OnThumbRegen(hctx, tx, m.ID)
+	}
+	if err := w.q.MarkReadyWithHook(ctx, m.ID, m.ThumbVersion, c.ClaimedAt, hook); err != nil {
 		w.logClaimFinalize("mark ready", m.ID, err)
 	}
 	if w.cfg.Metrics != nil {

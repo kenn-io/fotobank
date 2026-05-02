@@ -289,6 +289,24 @@ func (g *Generations) FindActive(ctx context.Context) (*Row, error) {
 	return &row, nil
 }
 
+// GetByID returns the generation row with the given id. Returns
+// errs.ErrNotFound when no row matches. Reads through the ro pool so
+// callers refreshing a row after a writer commit see the latest state
+// (WAL guarantees the read sees the writer's prior commit).
+func (g *Generations) GetByID(ctx context.Context, id int64) (*Row, error) {
+	row, err := scanGeneration(g.ro.QueryRowContext(ctx,
+		`SELECT `+generationColumns+` FROM embedding_generations WHERE id = ?`,
+		id,
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("get generation %d: %w", id, errs.ErrNotFound)
+		}
+		return nil, fmt.Errorf("get generation %d: %w", id, err)
+	}
+	return &row, nil
+}
+
 // FindBuilding returns the oldest currently-building generation, or nil
 // if none. Multiple building rows can coexist transiently — e.g. when an
 // operator switches the embed model mid-rollout the prior building row
