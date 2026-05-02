@@ -41,3 +41,45 @@ func TestFingerprint_DifferentEdgeProducesDifferentProfile(t *testing.T) {
 	b := embedding.Fingerprint(ai.EmbedConfig{Model: "m", InputEdge: 384})
 	r.NotEqual(a.InputProfile, b.InputProfile)
 }
+
+// TestEdgeFromInputProfile_AcceptsCanonical pins that a well-formed
+// profile string round-trips through the parser unchanged.
+func TestEdgeFromInputProfile_AcceptsCanonical(t *testing.T) {
+	r := require.New(t)
+	edge, err := embedding.EdgeFromInputProfile("jpeg-384-q85-metadata-stripped-embed-v1")
+	r.NoError(err)
+	r.Equal(384, edge)
+
+	edge, err = embedding.EdgeFromInputProfile("jpeg-256-q85-metadata-stripped-embed-v1")
+	r.NoError(err)
+	r.Equal(256, edge)
+}
+
+// TestEdgeFromInputProfile_RejectsAnchorViolations is the regression
+// test for the anchor fix: prior to the regexp parse, fmt.Sscanf
+// silently accepted "v10" (and any other trailing garbage) as if it
+// were v1, which would route a future profile bump through the
+// current pipeline. The new parser must reject these strictly.
+func TestEdgeFromInputProfile_RejectsAnchorViolations(t *testing.T) {
+	r := require.New(t)
+	bad := []string{
+		// Trailing garbage — the legacy Sscanf parse accepted these.
+		"jpeg-384-q85-metadata-stripped-embed-v10",
+		"jpeg-384-q85-metadata-stripped-embed-v1-extra",
+		"jpeg-384-q85-metadata-stripped-embed-v1\n",
+		// Leading garbage — must match from the start.
+		" jpeg-384-q85-metadata-stripped-embed-v1",
+		"prefix-jpeg-384-q85-metadata-stripped-embed-v1",
+		// Wrong shape entirely.
+		"jpeg-384-embed",
+		"",
+		"random",
+		// Edge digit missing or zero.
+		"jpeg--q85-metadata-stripped-embed-v1",
+		"jpeg-0-q85-metadata-stripped-embed-v1",
+	}
+	for _, s := range bad {
+		_, err := embedding.EdgeFromInputProfile(s)
+		r.Errorf(err, "input %q must be rejected", s)
+	}
+}

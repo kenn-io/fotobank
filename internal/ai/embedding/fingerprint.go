@@ -2,9 +2,18 @@ package embedding
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 
 	"github.com/wesm/fotobank/internal/ai"
 )
+
+// embedProfileRE anchors the canonical embed input profile shape so the
+// parse rejects trailing or leading garbage. Without anchors, Sscanf
+// would accept "jpeg-384-q85-metadata-stripped-embed-v10" as
+// edge=384 because it stops scanning at the first format mismatch —
+// silently treating a bumped revision as the original v1 profile.
+var embedProfileRE = regexp.MustCompile(`^jpeg-(\d+)-q85-metadata-stripped-embed-v1$`)
 
 // Fingerprint returns the canonical (model, prompt, profile) triple for
 // the embed task under cfg. PromptVersion is intentionally empty — the
@@ -37,11 +46,19 @@ func Fingerprint(cfg ai.EmbedConfig) ai.Fingerprint {
 // encoded to that fingerprint's edge — not to cfg.InputEdge — or the
 // resulting vector lives under the wrong InputProfile and search-time
 // queries that share the active fingerprint can't find it.
+//
+// The regex is anchored at both ends so a future profile bump (e.g.
+// "embed-v10") is rejected here rather than silently treated as v1
+// with a parsed edge — which would route a v10 vector through the v1
+// pipeline and quietly corrupt the index.
 func EdgeFromInputProfile(profile string) (int, error) {
-	var edge int
-	n, err := fmt.Sscanf(profile, "jpeg-%d-q85-metadata-stripped-embed-v1", &edge)
-	if err != nil || n != 1 || edge <= 0 {
+	m := embedProfileRE.FindStringSubmatch(profile)
+	if m == nil {
 		return 0, fmt.Errorf("invalid embed input profile %q", profile)
+	}
+	edge, err := strconv.Atoi(m[1])
+	if err != nil || edge <= 0 {
+		return 0, fmt.Errorf("invalid edge in input profile %q", profile)
 	}
 	return edge, nil
 }
