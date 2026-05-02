@@ -164,6 +164,14 @@
   onDestroy(() => {
     if (writeTimer !== undefined) clearTimeout(writeTimer);
   });
+
+  // The toggle is session-only — never persisted to the URL. Spec choice:
+  // "Include hidden" is a privacy-sensitive view; surfacing it in a
+  // shareable link risks leaking the toggle state into bookmarks.
+  async function onToggleHidden(next: boolean): Promise<void> {
+    includeHiddenToggle = next;
+    await geoStore.load(next);
+  }
 </script>
 
 <section class="map-page" data-testid="map-page">
@@ -179,6 +187,18 @@
       No geotagged photos in your library yet. Photos with GPS metadata will appear here as you import.
     </div>
   {:else}
+    {#if hiddenStore.unlocked}
+      <header class="map-page-header">
+        <label class="hidden-toggle">
+          <input
+            type="checkbox"
+            checked={includeHiddenToggle}
+            onchange={(e) => onToggleHidden(e.currentTarget.checked)}
+          />
+          Include hidden
+        </label>
+      </header>
+    {/if}
     <div class="map-page-grid" data-testid="map-loaded">
       <div class="map-side">
         <MapPane
@@ -208,7 +228,8 @@
 
 <style>
   .map-page {
-    display: block;
+    display: flex;
+    flex-direction: column;
     height: calc(100vh - var(--header-height, 56px));
   }
   .loading,
@@ -217,10 +238,26 @@
     padding: 24px;
     color: var(--text-secondary, #6b7280);
   }
+  .map-page-header {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+    flex: 0 0 auto;
+  }
+  .hidden-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-secondary, #6b7280);
+    cursor: pointer;
+  }
   .map-page-grid {
     display: grid;
     grid-template-columns: 60% 40%;
-    height: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
   }
   .map-side,
   .grid-side {

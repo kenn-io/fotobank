@@ -173,3 +173,48 @@ describe("Map page focus retry", () => {
     });
   });
 });
+
+describe("Map page hidden-include toggle", () => {
+  const visibleItem = {
+    id: "v1",
+    timestamp: "2024-06-15T14:30:22Z",
+    width: 1,
+    height: 1,
+    thumb_version: 0,
+    latitude: 1,
+    longitude: 2,
+  };
+
+  it("does not render the hidden toggle when locked", async () => {
+    const geoStore = makeGeoStore([visibleItem]);
+    render(Map, {
+      props: { ...mapProps(geoStore), hiddenStore: stubHiddenStore(false) },
+    });
+    await waitFor(() => expect(screen.getByTestId("map-loaded")).toBeTruthy());
+    expect(screen.queryByLabelText(/include hidden/i)).toBeNull();
+  });
+
+  it("renders the hidden toggle when unlocked", async () => {
+    const geoStore = makeGeoStore([visibleItem]);
+    const { findByLabelText } = render(Map, {
+      props: { ...mapProps(geoStore), hiddenStore: stubHiddenStore(true) },
+    });
+    expect(await findByLabelText(/include hidden/i)).toBeTruthy();
+  });
+
+  it("re-fetches with include_hidden=true when the toggle flips on", async () => {
+    const { store, calls } = makeSequencedGeoStore([
+      { items: [visibleItem] },
+      { items: [visibleItem] },
+    ]);
+    const { findByLabelText } = render(Map, {
+      props: { ...mapProps(store), hiddenStore: stubHiddenStore(true) },
+    });
+    const cb = (await findByLabelText(/include hidden/i)) as HTMLInputElement;
+    expect(calls.length).toBe(1);
+    expect(calls[0]?.params).toBeUndefined();
+    cb.click();
+    await waitFor(() => expect(calls.length).toBe(2));
+    expect(calls[1]?.params).toMatchObject({ query: { include_hidden: true } });
+  });
+});
