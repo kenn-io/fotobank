@@ -218,3 +218,36 @@ describe("Map page hidden-include toggle", () => {
     expect(calls[1]?.params).toMatchObject({ query: { include_hidden: true } });
   });
 });
+
+describe("Map page mobile tabs", () => {
+  const visibleItem = {
+    id: "v1",
+    timestamp: "2024-06-15T14:30:22Z",
+    width: 1,
+    height: 1,
+    thumb_version: 0,
+    latitude: 1,
+    longitude: 2,
+  };
+
+  it("renders both tabs and switches active state on click", async () => {
+    const geoStore = makeGeoStore([visibleItem]);
+    const { findByRole } = render(Map, { props: mapProps(geoStore) });
+    const mapTab = await findByRole("button", { name: /^map$/i });
+    const photosTab = await findByRole("button", { name: /^photos$/i });
+    expect(mapTab.classList.contains("active")).toBe(true);
+    expect(photosTab.classList.contains("active")).toBe(false);
+    photosTab.click();
+    await waitFor(() => expect(photosTab.classList.contains("active")).toBe(true));
+    expect(mapTab.classList.contains("active")).toBe(false);
+  });
+
+  it("seeds activeTab from the ?tab= prop when present", async () => {
+    const geoStore = makeGeoStore([visibleItem]);
+    const { findByRole } = render(Map, {
+      props: { ...mapProps(geoStore), tab: "photos" as const },
+    });
+    const photosTab = await findByRole("button", { name: /^photos$/i });
+    expect(photosTab.classList.contains("active")).toBe(true);
+  });
+});

@@ -27,6 +27,7 @@
     z,
     c,
     focus,
+    tab,
     geoStore,
     mediaStore,
     hiddenStore,
@@ -136,6 +137,26 @@
   // the navIds may include hidden rows.
   let includeHiddenToggle = $state(false);
 
+  // F9 mobile tabs. activeTab seeded from the route's `?tab=` param
+  // (lets the user share a /map?tab=photos URL); defaults to "map" so
+  // first-load on mobile shows the map. mapPaneEl exposes
+  // invalidateSize(), which Leaflet needs after a hidden→visible
+  // transition (the map caches its container size at mount and renders
+  // a clipped tile grid otherwise).
+  // svelte-ignore state_referenced_locally
+  let activeTab = $state<"map" | "photos">(tab ?? "map");
+  let mapPaneEl: { invalidateSize: () => void } | null = $state(null);
+
+  function setTab(next: "map" | "photos"): void {
+    activeTab = next;
+    // requestAnimationFrame waits for the next paint so the now-visible
+    // .map-side has its real width. Calling invalidateSize() synchronously
+    // would still see the old (display:none) bounding box.
+    if (next === "map") {
+      requestAnimationFrame(() => mapPaneEl?.invalidateSize());
+    }
+  }
+
   onMount(() => {
     void initialLoad();
   });
@@ -187,8 +208,20 @@
       No geotagged photos in your library yet. Photos with GPS metadata will appear here as you import.
     </div>
   {:else}
-    {#if hiddenStore.unlocked}
-      <header class="map-page-header">
+    <header class="map-page-header">
+      <nav class="tabs" aria-label="Map view">
+        <button
+          type="button"
+          class:active={activeTab === "map"}
+          onclick={() => setTab("map")}
+        >Map</button>
+        <button
+          type="button"
+          class:active={activeTab === "photos"}
+          onclick={() => setTab("photos")}
+        >Photos</button>
+      </nav>
+      {#if hiddenStore.unlocked}
         <label class="hidden-toggle">
           <input
             type="checkbox"
@@ -197,11 +230,16 @@
           />
           Include hidden
         </label>
-      </header>
-    {/if}
-    <div class="map-page-grid" data-testid="map-loaded">
+      {/if}
+    </header>
+    <div
+      class="map-page-grid"
+      data-testid="map-loaded"
+      data-active={activeTab}
+    >
       <div class="map-side">
         <MapPane
+          bind:this={mapPaneEl}
           items={geoStore.items}
           initialZoom={z}
           initialCenter={c}
@@ -241,6 +279,7 @@
   .map-page-header {
     display: flex;
     align-items: center;
+    gap: 16px;
     padding: 8px 12px;
     border-bottom: 1px solid var(--border, #e5e7eb);
     flex: 0 0 auto;
@@ -252,6 +291,25 @@
     font-size: 13px;
     color: var(--text-secondary, #6b7280);
     cursor: pointer;
+    margin-left: auto;
+  }
+  .tabs {
+    display: none;
+    gap: 4px;
+  }
+  .tabs button {
+    background: transparent;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 12px;
+    padding: 4px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text-secondary, #6b7280);
+  }
+  .tabs button.active {
+    background: var(--accent, #2563eb);
+    border-color: var(--accent, #2563eb);
+    color: #fff;
   }
   .map-page-grid {
     display: grid;
@@ -265,10 +323,16 @@
     overflow: hidden;
   }
   @media (max-width: 1023px) {
+    .tabs {
+      display: flex;
+    }
     .map-page-grid {
       grid-template-columns: 1fr;
     }
-    .grid-side {
+    .map-page-grid[data-active="map"] .grid-side {
+      display: none;
+    }
+    .map-page-grid[data-active="photos"] .map-side {
       display: none;
     }
   }
