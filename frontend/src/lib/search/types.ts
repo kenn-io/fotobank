@@ -15,12 +15,16 @@ export type SearchSort = "relevance" | "newest" | "oldest";
 // SearchFilters mirrors the bound query-string surface of GET
 // /api/v1/search. tags is always an array (omitting it sends no `tag`
 // params); the rest are optional and only forwarded when set.
+// includeHidden is a boolean toggle that opts the request into the
+// hidden library; the wire param is `include_hidden=true` (absent or
+// `false` is treated identically by the engine).
 export interface SearchFilters {
   dateAfter?: string;
   dateBefore?: string;
   tags: { tag_key: string; tag_label: string }[];
   location?: { location_label: string };
   mediaType?: "photo" | "video";
+  includeHidden?: boolean;
 }
 
 // SearchScoreComponents is the diagnostics-mode payload. RRF is the

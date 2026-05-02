@@ -245,6 +245,43 @@ describe("SearchFiltersPopover", () => {
     expect(client.autocompleteTags).toHaveBeenCalledWith({ prefix: "dog" });
   });
 
+  it("toggling include-hidden commits includeHidden=true through onChange", async () => {
+    // The include-hidden checkbox is opt-in: checked → emit
+    // includeHidden=true; unchecked → emit with the field removed so
+    // the wire serializer drops it (the engine's default is exclusion).
+    const onChange = vi.fn();
+    const client = makeClient();
+    const { container, rerender } = render(SearchFiltersPopover, {
+      props: { filters: emptyFilters(), onChange, client },
+    });
+    const toggle = container.querySelector(
+      "input[data-testid='search-filter-include-hidden']",
+    ) as HTMLInputElement;
+    expect(toggle).toBeTruthy();
+    expect(toggle.checked).toBe(false);
+
+    await fireEvent.change(toggle, { target: { checked: true } });
+    expect(onChange).toHaveBeenLastCalledWith({
+      tags: [],
+      includeHidden: true,
+    });
+
+    // Re-render with the flag applied so unchecking flows through.
+    await rerender({
+      filters: { tags: [], includeHidden: true },
+      onChange,
+      client,
+    });
+    const toggle2 = container.querySelector(
+      "input[data-testid='search-filter-include-hidden']",
+    ) as HTMLInputElement;
+    expect(toggle2.checked).toBe(true);
+    await fireEvent.change(toggle2, { target: { checked: false } });
+    const last = onChange.mock.calls[onChange.mock.calls.length - 1]![0] as SearchFilters;
+    expect(last.includeHidden).toBeUndefined();
+    expect(last.tags).toEqual([]);
+  });
+
   it("clearing the tag input after typing cancels suggestions without an autocomplete call", async () => {
     const client = makeClient();
     const { container } = render(SearchFiltersPopover, {

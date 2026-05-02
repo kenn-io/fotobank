@@ -156,6 +156,22 @@
     }
     emit(next);
   }
+
+  // toggleIncludeHidden flips the includeHidden flag on the filters.
+  // The toggle is opt-in: when checked the request asks the backend to
+  // include hidden media in results; when unchecked the field is
+  // removed entirely so the wire shape drops it (the engine's default
+  // is exclusion).
+  function toggleIncludeHidden(ev: Event): void {
+    const checked = (ev.target as HTMLInputElement).checked;
+    const next: SearchFilters = { ...filters };
+    if (checked) {
+      next.includeHidden = true;
+    } else {
+      delete next.includeHidden;
+    }
+    emit(next);
+  }
 </script>
 
 <div class="filters-popover" data-testid="search-filters-popover">
@@ -257,6 +273,18 @@
       onclick={() => setMediaType("video")}
     >Videos</button>
   </div>
+
+  <div class="filter-row">
+    <label class="filter-toggle">
+      <input
+        type="checkbox"
+        data-testid="search-filter-include-hidden"
+        checked={filters.includeHidden === true}
+        onchange={toggleIncludeHidden}
+      />
+      <span>Include hidden media</span>
+    </label>
+  </div>
 </div>
 
 <style>
@@ -340,5 +368,12 @@
   .segment[aria-pressed="true"] {
     background: var(--bg-elevated);
     font-weight: 600;
+  }
+  .filter-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
   }
 </style>

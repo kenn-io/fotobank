@@ -51,6 +51,12 @@
     emit(next);
   }
 
+  function removeIncludeHidden(): void {
+    const next: SearchFilters = { ...filters };
+    delete next.includeHidden;
+    emit(next);
+  }
+
   // mediaTypeLabel surfaces the user-friendly form of the wire value.
   // Photos / Videos in plural for consistency with the segmented
   // control's button labels.
@@ -117,6 +123,18 @@
         data-testid="chip-remove"
         aria-label="Remove media-type filter"
         onclick={removeMediaType}
+      >×</button>
+    </span>
+  {/if}
+  {#if filters.includeHidden === true}
+    <span class="chip" data-testid="chip-include-hidden">
+      <span class="chip-text">Include hidden</span>
+      <button
+        type="button"
+        class="chip-remove"
+        data-testid="chip-remove"
+        aria-label="Remove include-hidden filter"
+        onclick={removeIncludeHidden}
       >×</button>
     </span>
   {/if}

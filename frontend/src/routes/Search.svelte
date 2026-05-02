@@ -67,6 +67,7 @@
     }
     if (m.location !== undefined) out.location = { location_label: m.location };
     if (m.media_type !== undefined) out.mediaType = m.media_type;
+    if (m.include_hidden === true) out.includeHidden = true;
     return out;
   }
 
@@ -137,6 +138,7 @@
       params.set("location", s.filters.location.location_label);
     }
     if (s.filters.mediaType !== undefined) params.set("media_type", s.filters.mediaType);
+    if (s.filters.includeHidden === true) params.set("include_hidden", "true");
     const qs = params.toString();
     const target = qs.length > 0 ? `/search?${qs}` : "/search";
     // replace: true so typing into a filter doesn't fill the back stack.

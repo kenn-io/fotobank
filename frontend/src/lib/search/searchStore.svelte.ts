@@ -54,6 +54,7 @@ function computeRequestHash(query: string, sort: SearchSort, filters: SearchFilt
     tk: tagKeys,
     loc: filters.location?.location_label ?? "",
     mt: filters.mediaType ?? "",
+    ih: filters.includeHidden ?? false,
   });
 }
 
@@ -82,6 +83,7 @@ function buildParams(
     params.location = filters.location.location_label;
   }
   if (filters.mediaType !== undefined) params.media_type = filters.mediaType;
+  if (filters.includeHidden === true) params.include_hidden = true;
   if (cursor !== null) params.cursor = cursor;
   return params;
 }
