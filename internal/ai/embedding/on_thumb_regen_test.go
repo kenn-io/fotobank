@@ -362,15 +362,62 @@ func TestOnThumbRegen_SupersedesInFlightEmbedJobs(t *testing.T) {
 	}
 }
 
+// TestOnThumbRegen_SupersedesWorkingJobEvenIfNoMappings pins the
+// "always supersede working" posture: a worker that has CLAIMED an
+// embed job (status='working') has resolved the prior preview JPEG
+// and is mid-flight on the encode/embed call. Even when no
+// mappings exist yet (a first-time embed concurrent with the first
+// thumb regen), letting that worker commit its vector keyed to the
+// stale preview would write the wrong vector.
+//
+// The fix supersedes working unconditionally; pending/blocked still
+// gate on invalidated > 0 so the first-thumb pending-embed case
+// (covered by TestOnThumbRegen_FirstThumbDoesNotSupersedePendingEmbed)
+// is preserved.
+func TestOnThumbRegen_SupersedesWorkingJobEvenIfNoMappings(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "hub", "alice")
+	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
+
+	// Active gen exists but no mapping for mid — the first-time
+	// embed has not committed yet. A worker has, however, already
+	// claimed the row and is in mid-flight (status='working').
+	_ = mustCreateActiveGen(t, d, 768)
+
+	now := time.Now().UTC()
+	_, err := d.WriteDB().ExecContext(ctx, `
+		INSERT INTO ai_jobs(id, media_id, task, fingerprint, status, attempts, enqueued_at, claimed_at)
+		VALUES ('j-working', ?, 'embed', 'fp', 'working', 0, ?, ?)`,
+		mid, now, now)
+	r.NoError(err)
+
+	r.NoError(withTx(d, func(tx *sql.Tx) error {
+		return embedding.OnThumbRegen(ctx, tx, mid)
+	}))
+
+	var status string
+	r.NoError(d.ReadDB().QueryRowContext(ctx,
+		`SELECT status FROM ai_jobs WHERE id=?`, "j-working",
+	).Scan(&status))
+	r.Equal("superseded", status,
+		"working embed job must be superseded even when no mapping existed yet")
+}
+
 // TestOnThumbRegen_FirstThumbDoesNotSupersedePendingEmbed pins the
 // post-fix posture: when no mappings exist in any non-retired
 // generation (the first thumb-ready transition), OnThumbRegen must
-// leave any pending/working/blocked embed jobs alone. The importer
+// leave any pending/blocked embed jobs alone. The importer
 // enqueues the embed job at the same moment the thumb worker is
 // queued; the thumb worker invokes OnThumbRegen on the FIRST 'ready'
 // MarkReady too, not just on a real regen. Superseding that
 // legitimate pending job would force the gap scanner to re-enqueue
 // it — the post-fix gate (invalidated > 0) avoids that churn.
+//
+// Working jobs are superseded unconditionally — see
+// TestOnThumbRegen_SupersedesWorkingJobEvenIfNoMappings — so this
+// test seeds only a pending row.
 func TestOnThumbRegen_FirstThumbDoesNotSupersedePendingEmbed(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()

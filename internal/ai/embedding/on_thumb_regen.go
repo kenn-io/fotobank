@@ -114,25 +114,42 @@ func OnThumbRegen(ctx context.Context, tx *sql.Tx, mediaID string) error {
 		invalidated++
 	}
 
-	// Supersede any in-flight embed jobs ONLY when at least one mapping
-	// was actually invalidated. The first thumb-ready transition reaches
-	// here too — the importer enqueues the embed job upfront and the
-	// thumb worker fires this hook on the initial 'ready' MarkReady,
-	// just like it does on a regen. In the first-thumb case there are
-	// no mappings yet to invalidate; superseding the legitimate pending
-	// embed job at that moment would force the gap scanner to re-enqueue
-	// it. Gating on invalidated > 0 leaves the first-time embed pipeline
-	// untouched while still rolling back stale in-flight work after a
-	// real regeneration.
+	// Always supersede working in-flight workers. A worker that has
+	// already CLAIMED an embed job (status='working') has resolved
+	// the prior preview JPEG and is mid-flight on the encode/embed
+	// call; even when no mappings existed yet (first-time embed
+	// during the first thumb regen), letting that worker commit its
+	// vector keyed to the now-stale preview would write the wrong
+	// vector into the active generation.
 	//
 	// The worker's markDoneTx claim-fence (status='working' AND
-	// claimed_at=?) sees status='superseded' here and the rows-affected
-	// check returns ErrClaimLost — which rolls back the worker's own
-	// tx. Targets pending/working/blocked because all three are
-	// "in-flight enough" that completing them with stale-thumb input
-	// would write a wrong vector. The completed_at and last_error_kind
-	// columns mirror jobs.Queue.SupersedeAll so the panel surfaces the
-	// reason consistently.
+	// claimed_at=?) sees status='superseded' here and the
+	// rows-affected check returns ErrClaimLost — which rolls back
+	// the worker's own tx. attempt_count is preserved so the panel
+	// doesn't lose the prior accumulation; completed_at is left
+	// unset so the row reads as "never completed" rather than
+	// pretending to have finished now.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE ai_jobs
+		    SET status='superseded',
+		        last_error_kind=?,
+		        last_error='thumb_regenerated'
+		  WHERE media_id=? AND task='embed' AND status='working'`,
+		string(ai.ErrKindSuperseded), mediaID,
+	); err != nil {
+		return fmt.Errorf("supersede working embed jobs: %w", err)
+	}
+
+	// Supersede pending/blocked rows ONLY when at least one mapping
+	// was actually invalidated. The first thumb-ready transition
+	// reaches here too — the importer enqueues the embed job upfront
+	// and the thumb worker fires this hook on the initial 'ready'
+	// MarkReady, just like it does on a regen. In the first-thumb
+	// case there are no mappings yet to invalidate; superseding the
+	// legitimate pending embed job at that moment would force the
+	// gap scanner to re-enqueue it. Gating on invalidated > 0 leaves
+	// the first-time embed pipeline untouched while still rolling
+	// back stale not-yet-claimed work after a real regeneration.
 	if invalidated > 0 {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE ai_jobs
@@ -140,10 +157,10 @@ func OnThumbRegen(ctx context.Context, tx *sql.Tx, mediaID string) error {
 			        completed_at=?,
 			        last_error_kind=?,
 			        last_error='thumb_regenerated'
-			  WHERE media_id=? AND task='embed' AND status IN ('pending','working','blocked')`,
+			  WHERE media_id=? AND task='embed' AND status IN ('pending','blocked')`,
 			time.Now().UTC(), string(ai.ErrKindSuperseded), mediaID,
 		); err != nil {
-			return fmt.Errorf("supersede in-flight embed jobs: %w", err)
+			return fmt.Errorf("supersede pending/blocked embed jobs: %w", err)
 		}
 	}
 
