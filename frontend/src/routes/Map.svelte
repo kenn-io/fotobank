@@ -83,11 +83,13 @@
     return q ? `/map?${q}` : "/map";
   }
 
-  function onClusterClick(ids: string[], bounds: L.LatLngBounds): void {
-    // F5 will set clusterIds = ids here so the right-grid filters to
-    // the cluster contents. Today it logs so the prop has a concrete
-    // handler shape.
-    console.debug("[map] cluster click", ids.length, bounds);
+  function onClusterClick(ids: string[], _bounds: L.LatLngBounds): void {
+    // Cluster click filters the right-grid to the cluster's children.
+    // Leaflet's default cluster behavior also zooms in; we let that run
+    // and only update the grid filter here. The user clears the filter
+    // either via the grid's "× Clear filter" chip or by clicking
+    // empty map space (MapPane wires that to onClearClusterFilter).
+    clusterIds = ids;
   }
 
   onMount(() => {
