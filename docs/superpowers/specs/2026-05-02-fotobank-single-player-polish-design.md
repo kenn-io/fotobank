@@ -137,7 +137,7 @@ scrollY            = grid pane scrollY (the grid is the scrollable
 
 ### 3.3 Lightbox map pin
 
-New component `frontend/src/lib/components/lightbox/LightboxMapPin.svelte`. Rendered inside `LightboxMetadata` only when `media.latitude !== null && media.longitude !== null` (truthiness check would drop coordinates of `0` — equator and prime meridian).
+New component `frontend/src/lib/components/lightbox/LightboxMapPin.svelte`. Rendered inside `LightboxMetadata` only when `media.latitude != null && media.longitude != null` (i.e. `typeof media.latitude === "number" && typeof media.longitude === "number"`). The frontend `Media` type marks these fields optional, so a strict `!== null` check leaves `undefined` slipping through; truthiness check (`media.latitude && …`) wrongly drops coordinates of `0` (equator / prime meridian). Loose `!= null` covers both null and undefined.
 
 - ~160×100px static Leaflet preview. `interactive: false`, `dragging: false`, `scrollWheelZoom: false`, no zoom controls, no clusters.
 - One circular marker at `(latitude, longitude)`; map auto-fitted to a small radius (default zoom 14).
@@ -183,7 +183,8 @@ if in.IncludeHidden {
     if !ok {
         return nil, huma.Error403Forbidden("unlock cookie required")
     }
-    if claim.Principal != identity.Principal {
+    caller := id.Principal.OwnersPrincipal()
+    if claim.Principal != caller {
         return nil, huma.Error403Forbidden("unlock cookie required")
     }
 }
@@ -384,7 +385,7 @@ Out of scope for this README pass: tile-server / map-page operator notes, archit
 - `frontend/src/lib/components/MediaActions.test.ts` — Share button hidden.
 - `frontend/src/routes/AlbumDetail.test.ts` — Share Album button hidden; delete-blocked copy renders without UUID assumption.
 - `frontend/src/lib/map/tiles.test.ts` — `tileUrl()` returns the OSM URL pattern; `attribution()` returns the OSM attribution string.
-- `frontend/src/lib/components/lightbox/LightboxMapPin.test.ts` — renders only when both lat and lon are non-null (regression for coordinate `0`); `<a href="/map?focus=…">` SPA-navigates on click; cmd-click is intercepted by `handleInternalLinkClick`.
+- `frontend/src/lib/components/lightbox/LightboxMapPin.test.ts` — renders when both lat and lon are numbers (regressions: omits when either is `null`/`undefined`; renders when either is exactly `0`); `<a href="/map?focus=…">` is SPA-navigated on plain click via `handleInternalLinkClick`; cmd/ctrl-click and middle-click are **not** intercepted (open-in-new-tab works).
 - `frontend/src/routes/Map.test.ts` — auto-fit on initial load, marker click opens lightbox snapshot with `from=map` and the expected `navIds`/`returnHref`, cluster click filters grid, "Include hidden" toggle is present iff `hiddenStore.unlocked`, focus retry triggers a second geo fetch with `include_hidden=true` when the first response misses the focus id and the user is unlocked.
 
 ### 6.2 Playwright e2e
@@ -420,7 +421,7 @@ Out of scope for this README pass: tile-server / map-page operator notes, archit
 
 ## 7. Open questions (resolve during planning, not blocking spec)
 
-1. **Marker color.** Spec says "owner accent color" for individual markers and red for clusters. We do not have an existing accent color token in the SPA. Pick during plan-writing — likely fall back to the existing `--color-accent` CSS var if present, otherwise plain `#2563eb`.
+1. **Marker color.** Spec says "owner accent color" for individual markers and red for clusters. The SPA's accent token is `--accent`. Use `var(--accent)` for individual markers; cluster red can be a literal (e.g., `#dc2626`) since it's a status color, not a theme color. Plan-time decision: confirm `--accent` is defined at `:root` for non-component contexts (Leaflet inserts markers outside the Svelte tree).
 2. **`density.map` initial value.** Default to whatever `density.library` defaults to, or pick a denser default since the grid pane is narrower. Probably "match library default" for v1.
 3. **Tab transition animation on mobile.** Hard-cut vs cross-fade. Default: hard cut to keep the bundle light.
 
