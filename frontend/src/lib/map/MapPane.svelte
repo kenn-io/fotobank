@@ -132,13 +132,17 @@
     buildMarkers();
 
     // Initial view priority (per spec §3.1):
-    //   1. focusId       → zoom 14 at that photo
+    //   1. focusId       → zoom 14 at that photo (regardless of z=)
     //   2. z + c         → use those
     //   3. otherwise     → fitBounds to all markers
     if (focusId !== undefined) {
       const found = items.find((m) => m.id === focusId);
       if (found && found.latitude != null && found.longitude != null) {
-        map.setView([found.latitude, found.longitude], initialZoom ?? 14, { animate: false });
+        // Spec choice: focus= always lands at zoom 14 even when the URL
+        // also carries ?z=. The `z` param represents the user's last
+        // viewport for back-button restoration; focus= represents an
+        // explicit "show me this photo" intent that overrides it.
+        map.setView([found.latitude, found.longitude], 14, { animate: false });
         viewReady = true;
       } else if (initialCenter !== undefined && initialZoom !== undefined) {
         map.setView(initialCenter, initialZoom, { animate: false });
@@ -188,9 +192,5 @@
   .map-pane {
     width: 100%;
     height: 100%;
-  }
-  /* Leaflet markers fall outside the Svelte tree, so theme them at :root. */
-  :global(.leaflet-marker-icon.fb-marker-default) {
-    background-color: var(--accent);
   }
 </style>

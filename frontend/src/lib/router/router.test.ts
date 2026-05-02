@@ -339,6 +339,43 @@ describe("RouterStore.syncFromLocation depth restore (finding #12)", () => {
   });
 });
 
+describe("RouterStore — /map query parsing", () => {
+  beforeEach(() => setLocation("/"));
+
+  it("drops empty z and c tokens (Number('') is 0, must not coerce)", () => {
+    setLocation("/map?z=&c=,&focus=");
+    const r = new RouterStore();
+    const cur = r.current;
+    expect(cur.route).toBe("map");
+    if (cur.route === "map") {
+      expect(cur.z).toBeUndefined();
+      expect(cur.c).toBeUndefined();
+      expect(cur.focus).toBeUndefined();
+    }
+  });
+
+  it("drops c when only one of the two coordinates is present", () => {
+    setLocation("/map?c=40.7,");
+    const r = new RouterStore();
+    const cur = r.current;
+    expect(cur.route).toBe("map");
+    if (cur.route === "map") {
+      expect(cur.c).toBeUndefined();
+    }
+  });
+
+  it("accepts well-formed z and c", () => {
+    setLocation("/map?z=10&c=40.7,-74.0");
+    const r = new RouterStore();
+    const cur = r.current;
+    expect(cur.route).toBe("map");
+    if (cur.route === "map") {
+      expect(cur.z).toBe(10);
+      expect(cur.c).toEqual([40.7, -74.0]);
+    }
+  });
+});
+
 describe("RouterStore — from=map", () => {
   beforeEach(() => setLocation("/"));
 

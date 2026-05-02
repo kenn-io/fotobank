@@ -77,8 +77,13 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
     const cRaw = sp.get("c");
     const focusRaw = sp.get("focus");
     const tabRaw = sp.get("tab");
-    const z = zRaw !== null ? Number(zRaw) : NaN;
-    const cParts = cRaw !== null ? cRaw.split(",").map(Number) : [];
+    // toFiniteNumber rejects empty/whitespace tokens because Number("") and
+    // Number(" ") both return 0, which would silently coerce ?z= to z:0
+    // and ?c=, to c:[0,0] — meaningful coordinates we never intended.
+    const z = toFiniteNumber(zRaw);
+    const cParts = cRaw !== null
+      ? cRaw.split(",").map((s) => toFiniteNumber(s))
+      : [];
     const tab = tabRaw === "photos" || tabRaw === "map" ? tabRaw : null;
     return {
       route: "map" as const,
@@ -120,6 +125,20 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
     };
   } },
 ];
+
+// toFiniteNumber returns a finite number from a query token, or NaN
+// for empty/whitespace/non-numeric input. Plain Number("") is 0 and
+// Number(" ") is 0, so callers using `Number(raw) → finite check`
+// would silently accept blank tokens as zero coordinates. This wrapper
+// rejects them so /map?z=&c=, falls through to fitToAll instead of
+// centering on lat=0,lng=0,zoom=0 (the Atlantic, fully zoomed out).
+function toFiniteNumber(raw: string | null): number {
+  if (raw === null) return Number.NaN;
+  const trimmed = raw.trim();
+  if (trimmed === "") return Number.NaN;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : Number.NaN;
+}
 
 // parseSearchSort narrows ?sort= to the known SearchSort union. Unknown
 // values fall through to null so the route omits the field entirely.

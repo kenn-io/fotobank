@@ -34,8 +34,12 @@ function makeSequencedGeoStore(
   return { store: new GeoStore(client), calls };
 }
 
-function stubMediaStore(): MediaStore {
-  return {} as unknown as MediaStore;
+function stubMediaStore(): MediaStore & { mergeRaw: ReturnType<typeof vi.fn> } {
+  return {
+    mergeRaw: vi.fn(),
+    get: () => undefined,
+    months: [],
+  } as unknown as MediaStore & { mergeRaw: ReturnType<typeof vi.fn> };
 }
 function stubHiddenStore(unlocked = false): HiddenStore {
   return { configured: unlocked, unlocked } as unknown as HiddenStore;
@@ -249,5 +253,34 @@ describe("Map page mobile tabs", () => {
     });
     const photosTab = await findByRole("button", { name: /^photos$/i });
     expect(photosTab.classList.contains("active")).toBe(true);
+  });
+});
+
+describe("Map page mediaStore merge", () => {
+  // Regression: MapGridPane filters activeIds via mediaStore.get(id) and
+  // silently drops misses. /media/geo returns every geotagged primary,
+  // but those rows aren't loaded into MediaStore until the library
+  // timeline pages them in. Without this merge, the right-side grid
+  // appears blank for IDs outside the loaded library page even though
+  // their markers are on the map.
+  const visibleItem = {
+    id: "v1",
+    timestamp: "2024-06-15T14:30:22Z",
+    width: 1,
+    height: 1,
+    thumb_version: 0,
+    latitude: 1,
+    longitude: 2,
+  };
+
+  it("merges geoStore.rawItems into mediaStore after the initial load", async () => {
+    const geoStore = makeGeoStore([visibleItem]);
+    const mediaStore = stubMediaStore();
+    const { findByTestId } = render(Map, {
+      props: { ...mapProps(geoStore), mediaStore },
+    });
+    await findByTestId("map-loaded");
+    await waitFor(() => expect(mediaStore.mergeRaw).toHaveBeenCalled());
+    expect(mediaStore.mergeRaw).toHaveBeenCalledWith([visibleItem]);
   });
 });

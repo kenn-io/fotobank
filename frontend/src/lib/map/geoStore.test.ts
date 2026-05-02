@@ -73,4 +73,43 @@ describe("GeoStore", () => {
     expect(s.error).not.toBeNull();
     expect(s.ready).toBe(false);
   });
+
+  it("ignores stale responses when a newer load() is in flight", async () => {
+    // Two queued resolvers: the first call resolves AFTER the second so
+    // the older request's response would clobber the newer one without
+    // a request-token guard.
+    let resolveOld: (v: { data: { items: unknown[] } }) => void = () => {};
+    let resolveNew: (v: { data: { items: unknown[] } }) => void = () => {};
+    let call = 0;
+    const client = {
+      GET: () => {
+        call++;
+        if (call === 1) return new Promise((r) => (resolveOld = r));
+        return new Promise((r) => (resolveNew = r));
+      },
+    } as unknown as Pick<Client, "GET">;
+    const s = new GeoStore(client);
+    const oldP = s.load(false);
+    const newP = s.load(true);
+    // Newer call resolves first with the include_hidden dataset.
+    resolveNew({ data: { items: [{ ...sampleItem, id: "new", hidden_at: "x" }] } });
+    await newP;
+    expect(s.items.map((m) => m.id)).toEqual(["new"]);
+    expect(s.includedHiddenAtFetch).toBe(true);
+    // Older call resolves now with stale data — must be discarded.
+    resolveOld({ data: { items: [{ ...sampleItem, id: "old" }] } });
+    await oldP;
+    expect(s.items.map((m) => m.id)).toEqual(["new"]);
+    expect(s.includedHiddenAtFetch).toBe(true);
+  });
+
+  it("retains raw items so callers can mergeRaw into MediaStore", async () => {
+    const raw = { ...sampleItem, id: "r1" };
+    const client = makeClient({
+      "/api/v1/media/geo": { data: { items: [raw] } },
+    });
+    const s = new GeoStore(client as unknown as Pick<Client, "GET">);
+    await s.load(false);
+    expect(s.rawItems).toEqual([raw]);
+  });
 });

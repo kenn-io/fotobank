@@ -165,8 +165,15 @@
   // present in the result and the user has unlocked hidden, retry with
   // include_hidden=true. The retry only fires once per mount — if the
   // photo still isn't there, we toast and stop.
+  //
+  // After each successful load we merge the geo rows into MediaStore so
+  // MapGridPane's mediaStore.get(id) lookup resolves for IDs that
+  // haven't been paged in by the library timeline. /media/geo returns
+  // every geotagged primary the user owns, so without this the right
+  // grid would silently drop rows whose page-in hasn't happened yet.
   async function initialLoad(): Promise<void> {
     await geoStore.load(false);
+    mediaStore.mergeRaw(geoStore.rawItems);
     if (
       focus !== undefined
       && geoStore.findById(focus) === undefined
@@ -174,6 +181,7 @@
     ) {
       includeHiddenToggle = true;
       await geoStore.load(true);
+      mediaStore.mergeRaw(geoStore.rawItems);
       if (geoStore.findById(focus) === undefined) {
         toastStore.push({ kind: "info", message: "Photo not found on map." });
       }
@@ -192,6 +200,7 @@
   async function onToggleHidden(next: boolean): Promise<void> {
     includeHiddenToggle = next;
     await geoStore.load(next);
+    mediaStore.mergeRaw(geoStore.rawItems);
   }
 </script>
 
@@ -322,7 +331,13 @@
     height: 100%;
     overflow: hidden;
   }
-  @media (max-width: 1023px) {
+  /* Split view requires the main pane (viewport minus the 220px sidebar)
+     to be wide enough that 60% leaves enough room for the map AND 40%
+     leaves enough room for ~3 grid columns. Below 1240px the main pane
+     is < 1020px and 40% of that fits only one and a half thumbnails;
+     fall back to tabs. The sidebar doesn't collapse on mobile, so a
+     viewport-relative breakpoint here matches actual main-pane width. */
+  @media (max-width: 1239px) {
     .tabs {
       display: flex;
     }
