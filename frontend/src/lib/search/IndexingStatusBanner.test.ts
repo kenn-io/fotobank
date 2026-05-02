@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import { flushSync, tick } from "svelte";
 import IndexingStatusBanner from "./IndexingStatusBanner.svelte";
@@ -148,6 +148,55 @@ describe("IndexingStatusBanner", () => {
       },
     });
     expect(second.container.querySelector(".banner")).toBeNull();
+  });
+
+  it("HandlesThrowingStorage", async () => {
+    // Browsers can expose Storage but throw SecurityError on access
+    // (private mode quirks, third-party-cookie blocking, sandboxed
+    // iframes). The component's try/catch wrappers must swallow those
+    // throws so the banner still renders normally — the dismissal is
+    // a non-critical preference. Mock both getItem and setItem to
+    // throw; assert the banner renders (not dismissed) and clicking
+    // Dismiss completes without error and still hides the banner via
+    // local component state.
+    const getSpy = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(() => {
+        throw new DOMException("blocked", "SecurityError");
+      });
+    const setSpy = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new DOMException("blocked", "SecurityError");
+      });
+    try {
+      const { container, getByText } = render(IndexingStatusBanner, {
+        props: {
+          completeness: 0,
+          semanticUnavailable: true,
+          reason: "no_active_generation",
+          hasQuery: false,
+        },
+      });
+      // Banner renders despite the throwing getItem. The hydration
+      // path treats the read as null (no prior dismissal), and the
+      // showNoGen $derived gates the banner on `!dismissed` which
+      // is therefore false → banner shown.
+      expect(container.querySelector(".banner")).not.toBeNull();
+      expect(getSpy).toHaveBeenCalled();
+
+      // Clicking Dismiss must not crash even though setItem throws.
+      // Local `dismissed` $state still flips, so the banner is hidden
+      // for the lifetime of this mount.
+      await fireEvent.click(getByText("Dismiss"));
+      flushSync();
+      await tick();
+      expect(container.querySelector(".banner")).toBeNull();
+      expect(setSpy).toHaveBeenCalled();
+    } finally {
+      getSpy.mockRestore();
+      setSpy.mockRestore();
+    }
   });
 
   it("query_embedding_failed banner auto-dismisses when reason transitions back to ''", async () => {

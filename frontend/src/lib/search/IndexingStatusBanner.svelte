@@ -44,11 +44,33 @@
   // query_embedding_failed auto-clears when reason transitions to "").
   const NO_GEN_DISMISS_KEY = "fotobank.search.banner.no_active_generation";
 
-  // hasSessionStorage guards against SSR / non-browser environments
-  // where sessionStorage is undefined. The component renders both
-  // server- and client-side, so the lookup must be defensive.
-  function hasSessionStorage(): boolean {
-    return typeof sessionStorage !== "undefined";
+  // readStored / writeStored wrap sessionStorage in try/catch.
+  // typeof sessionStorage !== "undefined" alone isn't sufficient:
+  // browsers can expose Storage but throw SecurityError when blocked
+  // (private mode quirks, third-party-cookie blocking, sandboxed
+  // iframes). The dismissal is a non-critical UX preference, so we
+  // swallow failures and fall back to a fresh banner — matching the
+  // "no sessionStorage" code path. Defining these as inline helpers
+  // keeps the call sites short while still putting the try/catch on
+  // each individual access; reads and writes can fail independently
+  // on some browsers, so a single guard around both isn't enough.
+  function readStored(key: string): string | null {
+    try {
+      if (typeof sessionStorage === "undefined") return null;
+      return sessionStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function writeStored(key: string, value: string): void {
+    try {
+      if (typeof sessionStorage === "undefined") return;
+      sessionStorage.setItem(key, value);
+    } catch {
+      // Swallow — non-critical preference. The user sees a banner on
+      // remount but nothing else breaks.
+    }
   }
 
   // dismissed gates the no_active_generation banner only. Hydrated
@@ -62,16 +84,11 @@
   // initial `reason` value (Svelte warns about that pattern; the
   // showNoGen $derived gates the actual render against the live
   // reason prop, so reason transitions are handled correctly).
-  let dismissed = $state(
-    hasSessionStorage() &&
-      sessionStorage.getItem(NO_GEN_DISMISS_KEY) === "true",
-  );
+  let dismissed = $state(readStored(NO_GEN_DISMISS_KEY) === "true");
 
   function dismiss() {
     dismissed = true;
-    if (hasSessionStorage()) {
-      sessionStorage.setItem(NO_GEN_DISMISS_KEY, "true");
-    }
+    writeStored(NO_GEN_DISMISS_KEY, "true");
   }
 
   // Three guards, mutually exclusive in the {#if/:else if} chain.
