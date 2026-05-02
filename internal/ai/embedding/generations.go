@@ -240,10 +240,17 @@ func (g *Generations) FindOrCreateBuilding(ctx context.Context, fp ai.Fingerprin
 // retire can't make us emit a phantom retired event under an id that
 // some other writer already moved.
 //
+// promotingID is the id about to be re-activated by the caller. When
+// the prior active and the promotion target are the same row (an
+// idempotent re-promote), the row is reactivated before commit and the
+// retired event would be misleading — retired is forced to false in
+// that case so no listener sees a "retired" announcement for an id that
+// is once again active.
+//
 // Used by Promote and PromoteFromBuilding so the lifecycle event fires
 // in lockstep with the schema change — emit only when n > 0, with the
 // id/fingerprint captured before the row was retired.
-func retirePriorActiveTx(ctx context.Context, tx *sql.Tx, now time.Time) (int64, string, bool, error) {
+func retirePriorActiveTx(ctx context.Context, tx *sql.Tx, now time.Time, promotingID int64) (int64, string, bool, error) {
 	var (
 		priorID int64
 		priorFP string
@@ -277,7 +284,10 @@ func retirePriorActiveTx(ctx context.Context, tx *sql.Tx, now time.Time) (int64,
 	// UPDATE matched. Either side alone could mean a concurrent
 	// transition snuck through under WAL between the SELECT and the
 	// UPDATE, in which case the other writer owns the announcement.
-	retired := priorID != 0 && n > 0
+	// Suppress the retired flag when the prior active is the same row
+	// the caller is about to reactivate — the row will commit as
+	// 'active' again, so emitting "retired" for it would be a lie.
+	retired := priorID != 0 && n > 0 && priorID != promotingID
 	return priorID, priorFP, retired, nil
 }
 
@@ -304,7 +314,7 @@ func (g *Generations) Promote(ctx context.Context, id int64) error {
 	defer func() { _ = tx.Rollback() }()
 
 	now := time.Now().UTC()
-	priorID, priorFP, retired, err := retirePriorActiveTx(ctx, tx, now)
+	priorID, priorFP, retired, err := retirePriorActiveTx(ctx, tx, now, id)
 	if err != nil {
 		return err
 	}
@@ -364,7 +374,7 @@ func (g *Generations) PromoteFromBuilding(ctx context.Context, id int64) error {
 	defer func() { _ = tx.Rollback() }()
 
 	now := time.Now().UTC()
-	priorID, priorFP, retired, err := retirePriorActiveTx(ctx, tx, now)
+	priorID, priorFP, retired, err := retirePriorActiveTx(ctx, tx, now, id)
 	if err != nil {
 		return err
 	}

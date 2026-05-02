@@ -395,6 +395,43 @@ func TestGenerations_Promote_EmitsRetiredOnlyWhenPriorActive(t *testing.T) {
 		"second promote must retire v1 and emit exactly one retired event")
 }
 
+// TestGenerations_PromoteAlreadyActiveDoesNotEmitRetiredForSelf covers
+// the idempotent re-promote path: when Promote is called on the row
+// that is already active, the retire-prior-active UPDATE flips the row
+// to 'retired' and the activation UPDATE flips it back to 'active' in
+// the same tx. The post-commit retired event would announce a row that
+// is once again active — misleading. retirePriorActiveTx must suppress
+// the retired flag when priorID == promotingID.
+func TestGenerations_PromoteAlreadyActiveDoesNotEmitRetiredForSelf(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	emitter := &recordingEmitter{}
+	g.SetEmitter(emitter)
+
+	row, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, row.ID))
+	r.EqualValues(0, emitter.retired.Load(),
+		"first promote had no prior active so no retired event")
+
+	// Re-promote the same row — it's already active. The retire-prior
+	// UPDATE matches it (it's the active row), but the subsequent
+	// activation UPDATE puts it back to active before commit. No
+	// retired event must fire for this id.
+	r.NoError(g.Promote(ctx, row.ID))
+	r.EqualValues(0, emitter.retired.Load(),
+		"re-promoting the already-active row must not emit retired for itself")
+
+	// The row remains active.
+	active, err := g.FindActive(ctx)
+	r.NoError(err)
+	r.NotNil(active)
+	r.Equal(row.ID, active.ID)
+}
+
 // TestGenerations_PromoteFromBuilding_EmitsRetired covers the same
 // retired-emit gating on the activator-side path (PromoteFromBuilding).
 // The retired emit fires only when a prior active exists.
