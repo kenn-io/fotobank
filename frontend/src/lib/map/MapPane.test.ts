@@ -27,6 +27,7 @@ function emptyMapPaneProps() {
     onMarkerClick: vi.fn(),
     onClusterClick: vi.fn(),
     onViewportChange: vi.fn(),
+    onViewState: vi.fn(),
     onClearClusterFilter: vi.fn(),
   };
 }

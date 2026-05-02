@@ -31,6 +31,7 @@
     onMarkerClick,
     onClusterClick,
     onViewportChange,
+    onViewState,
     onClearClusterFilter,
   }: {
     items: Media[];
@@ -40,6 +41,7 @@
     onMarkerClick: (id: string) => void;
     onClusterClick: (ids: string[], bounds: L.LatLngBounds) => void;
     onViewportChange: (visibleIds: string[]) => void;
+    onViewState: (state: { z: number; c: [number, number] }) => void;
     onClearClusterFilter: () => void;
   } = $props();
 
@@ -66,6 +68,17 @@
       if (bounds.contains(marker.getLatLng())) visible.push(id);
     }
     onViewportChange(visible);
+  }
+
+  // Single moveend/zoomend handler so onViewportChange and onViewState
+  // share one Leaflet event subscription. emitViewState skips while
+  // viewReady is false because getCenter()/getZoom() throw before a
+  // view is applied.
+  function onMoveOrZoom(): void {
+    emitViewportVisible();
+    if (map === null || !viewReady) return;
+    const center = map.getCenter();
+    onViewState({ z: map.getZoom(), c: [center.lat, center.lng] });
   }
 
   function buildMarkers(): void {
@@ -113,7 +126,7 @@
     });
     map.addLayer(cluster);
 
-    map.on("moveend zoomend", emitViewportVisible);
+    map.on("moveend zoomend", onMoveOrZoom);
     map.on("click", () => onClearClusterFilter());
 
     buildMarkers();
