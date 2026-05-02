@@ -411,6 +411,50 @@ func TestRoute_Search_ExplainTrueIncludesScoreComponents(t *testing.T) {
 	r.InDelta(rrf, body.Results[0].ScoreComponents.RRF, 1e-9)
 }
 
+// TestRoute_Search_ExplainTrueWithInspectionOffOmitsScoreComponents
+// pins the second half of the explain gate: a request with explain=true
+// against a fixture where AI Inspection is OFF must STILL omit
+// score_components. The service downgrades the request's diagnostics
+// flag before passing it to the engine, and the route's DTO converter
+// keys on the resolved post-service flag — not the raw query param.
+// Without this gate, a curious user could flip explain=true on the URL
+// and force the diagnostics payload through even when their account
+// hasn't opted into it.
+func TestRoute_Search_ExplainTrueWithInspectionOffOmitsScoreComponents(t *testing.T) {
+	r := require.New(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	rrf := 0.5
+	bm25 := -1.5
+	rankBM25 := 1
+	// Default settings: AI Inspection OFF (the same fixture as
+	// TestRoute_Search_ExplainFalseHidesScoreComponents).
+	fx := newSearchAPIFixtureWith(t, &searchFixtureOpts{
+		hits: []index.Hit{{
+			MediaID:    "m1",
+			MediaType:  "photo",
+			ImportedAt: now,
+			Score:      rrf,
+			ScoreComponents: &index.ScoreComponents{
+				RRF:      &rrf,
+				BM25:     &bm25,
+				RankBM25: &rankBM25,
+			},
+		}},
+	})
+
+	q := url.Values{}
+	q.Set("q", "puppy")
+	q.Set("sort", "relevance")
+	q.Set("explain", "true") // user-supplied — must be downgraded by the service.
+
+	resp, body := doGetSearch(t, fx, q)
+	r.Equal(http.StatusOK, resp.StatusCode)
+	r.NotNil(body)
+	r.Len(body.Results, 1)
+	r.Nil(body.Results[0].ScoreComponents,
+		"explain=true with inspection OFF must omit score_components — settings outrank the query param")
+}
+
 // TestRoute_Search_LimitTooLargeReturns400 pins the page-size cap:
 // limit=10000 (well above the 200 max) must surface as a 4xx error
 // from huma's `maximum:` validation (the framework emits 422
