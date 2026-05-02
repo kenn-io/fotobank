@@ -994,6 +994,85 @@ func TestWorker_MalformedFingerprintDoesNotRecordFailureRow(t *testing.T) {
 	_ = q
 }
 
+// blockingMarkQueue wraps a real *jobs.Queue and forces every
+// MarkBlocked call to return a sentinel error. classify in process
+// invokes MarkBlocked when the resolver reports thumb_status='pending'
+// (or other not-yet-ready states), so a failing MarkBlocked is one of
+// the simplest ways to make process return an error without faking a
+// programming bug at a deeper layer.
+type blockingMarkQueue struct {
+	inner *jobs.Queue
+	err   error
+}
+
+func (b *blockingMarkQueue) ClaimBatch(ctx context.Context, task ai.Task, n int) ([]jobs.Claim, error) {
+	return b.inner.ClaimBatch(ctx, task, n)
+}
+
+func (b *blockingMarkQueue) PromoteThumbReadyBlocked(ctx context.Context, task ai.Task) (int, error) {
+	return b.inner.PromoteThumbReadyBlocked(ctx, task)
+}
+
+func (b *blockingMarkQueue) MarkFailed(ctx context.Context, jobID string, claimedAt time.Time, kind ai.LastErrorKind, errMsg string) error {
+	return b.inner.MarkFailed(ctx, jobID, claimedAt, kind, errMsg)
+}
+
+func (b *blockingMarkQueue) MarkDone(ctx context.Context, jobID string, claimedAt time.Time) error {
+	return b.inner.MarkDone(ctx, jobID, claimedAt)
+}
+
+func (b *blockingMarkQueue) MarkBlocked(_ context.Context, _ string, _ time.Time, _ string) error {
+	return b.err
+}
+
+// TestWorker_RunPropagatesProcessError pins the post-fix posture: a
+// non-cancel error returned by process (the worker logic, not the
+// queue's claim path) propagates out of Run instead of being logged
+// and retried. Programming bugs and deep invariant violations must
+// surface; an infinite log-and-retry loop would mask them.
+func TestWorker_RunPropagatesProcessError(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
+	// Resolver reports 'pending' so classify hits the MarkBlocked path,
+	// which the wrapped queue stub forces to fail.
+	resolver := &fakeResolver{defaultStatus: "pending"}
+	client := &fakeEmbedClient{vectors: dim768N(1)}
+
+	realQ := jobs.NewQueue(d.WriteDB(), d.ReadDB())
+	bq := &blockingMarkQueue{inner: realQ, err: errors.New("simulated process error")}
+	w := embedding.NewWorker(embedding.WorkerDeps{
+		Q:        bq,
+		Gens:     embedding.NewGenerations(d.WriteDB(), d.ReadDB()),
+		Mapping:  embedding.NewMapping(d.WriteDB()),
+		Client:   client,
+		Resolver: resolver,
+		Cfg:      embedCfg(),
+		Events:   &recordingEmitter{},
+		DB:       d.WriteDB(),
+		Skipped:  skipped.NewRepo(d.WriteDB(), d.ReadDB()),
+		Failures: failures.NewRepo(d.WriteDB(), d.ReadDB()),
+	})
+
+	fp := embedFP()
+	r.NoError(realQ.Enqueue(ctx, mid, ai.TaskEmbed, fp))
+
+	ctx2, cancel := context.WithTimeout(ctx, 2*time.Second)
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx2) }()
+
+	select {
+	case err := <-done:
+		r.Error(err, "Run must return the process error rather than swallow it")
+		r.Contains(err.Error(), "simulated process error")
+	case <-time.After(2 * time.Second):
+		r.Fail("Run did not return after process error within 2s")
+	}
+}
+
 // TestWorker_RunSurvivesTransientClaimError covers the loop-survival
 // contract: a non-cancel error from ClaimBatch must be logged and the
 // loop must continue. Without the fix, the worker returned on the

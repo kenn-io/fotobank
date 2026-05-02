@@ -149,18 +149,22 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 
 // Run is the long-running loop driver: each tick it promotes any
 // blocked-by-thumb embed jobs whose source media has reached
-// thumb_status='ready', then drains the queue via RunOnce. The ticker
-// fires every Cfg.IdlePoll on an empty queue so newly enqueued jobs
-// are picked up promptly without a constant SQL hammer when idle.
+// thumb_status='ready', then claims and processes a batch.
 //
-// Returns nil on ctx cancellation (graceful shutdown). Transient
-// errors from PromoteThumbReadyBlocked or RunOnce are logged and the
-// loop continues — the chat worker takes the same posture (see
-// internal/ai/worker/worker.go::Run). A return on the first SQL hiccup
-// would tear down the worker on any one-off contention spike, which is
-// the wrong behaviour: the queue is the source of truth, the next tick
-// re-evaluates from scratch, and the lease sweep recovers any rows
-// abandoned in 'working'.
+// Returns nil on ctx cancellation (graceful shutdown). The error
+// posture splits queue-side errors from process-side errors:
+//
+//   - Queue/SQL errors from PromoteThumbReadyBlocked and ClaimBatch
+//     are logged and the loop continues. The queue is the source of
+//     truth; a one-off contention spike must not tear the worker down,
+//     and the next tick re-evaluates from scratch.
+//   - Errors from process (the worker logic itself) propagate. Those
+//     usually indicate programming bugs, and a continue-and-log loop
+//     would mask them indefinitely. The chat worker takes a similar
+//     posture (see internal/ai/worker/worker.go::Run).
+//
+// The cancellation check on every error keeps a deliberate shutdown
+// from being misclassified as either kind.
 func (w *Worker) Run(ctx context.Context) error {
 	t := time.NewTicker(w.d.Cfg.IdlePoll)
 	defer t.Stop()
@@ -174,9 +178,19 @@ func (w *Worker) Run(ctx context.Context) error {
 			!errors.Is(err, context.Canceled) {
 			slog.Default().Warn("embedding worker promote thumb-ready blocked", "err", err)
 		}
-		if err := w.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			slog.Default().Warn("embedding worker RunOnce", "err", err)
+
+		// Claim/process split: queue errors continue-and-log, process
+		// errors propagate so programming bugs surface instead of being
+		// masked by an infinite log-and-retry loop.
+		batch, claimErr := w.d.Q.ClaimBatch(ctx, ai.TaskEmbed, w.d.Cfg.BatchSize)
+		if claimErr != nil && !errors.Is(claimErr, context.Canceled) {
+			slog.Default().Warn("embedding worker claim batch", "err", claimErr)
+		} else if claimErr == nil && len(batch) > 0 {
+			if perr := w.process(ctx, batch); perr != nil && !errors.Is(perr, context.Canceled) {
+				return fmt.Errorf("process: %w", perr)
+			}
 		}
+
 		select {
 		case <-ctx.Done():
 			return nil
