@@ -259,10 +259,12 @@ func TestGenerations_PromoteRetiredRowClearsRetiredAt(t *testing.T) {
 // the just-committed row and short-circuits without retrying the
 // INSERT (which would fail the fingerprint_hash UNIQUE constraint).
 //
-// `start` is closed only after every goroutine is spawned, so the
-// FindOrCreateBuilding calls all attempt to begin transactions at
-// roughly the same instant. Without the barrier, fast spawn-then-run
-// goroutines could naturally serialise (g0 finishes before g1 starts),
+// Two-phase barrier: each goroutine signals on `ready` when it has
+// physically reached the start gate, then blocks on `start`. The main
+// goroutine drains N ready signals — proving every goroutine is at the
+// barrier — before closing `start` to release them simultaneously.
+// Without the ready handshake, a fast spawn-then-run goroutine could
+// naturally serialise (g0 finishes before g1 even reaches the gate),
 // hiding any correctness regression in the rw-contention path.
 func TestGenerations_FindOrCreateBuilding_ConcurrentSafety(t *testing.T) {
 	r := require.New(t)
@@ -274,16 +276,23 @@ func TestGenerations_FindOrCreateBuilding_ConcurrentSafety(t *testing.T) {
 	const N = 8
 	ids := make([]int64, N)
 	errs := make([]error, N)
-	start := make(chan struct{})
+	ready := make(chan struct{}, N) // each goroutine signals on arrival
+	start := make(chan struct{})    // main closes once all N have signaled
 	var wg sync.WaitGroup
 	wg.Add(N)
 	for i := range N {
 		go func() {
 			defer wg.Done()
-			<-start // barrier — all goroutines released together
+			ready <- struct{}{} // signal arrived at barrier
+			<-start             // block until main releases all goroutines
 			row, err := g.FindOrCreateBuilding(ctx, fp, 768)
 			ids[i], errs[i] = row.ID, err
 		}()
+	}
+	// Drain N ready signals, THEN release. This guarantees every
+	// goroutine is physically at <-start before any can proceed.
+	for range N {
+		<-ready
 	}
 	close(start) // release barrier
 	wg.Wait()
