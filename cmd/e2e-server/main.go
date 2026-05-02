@@ -165,6 +165,13 @@ func run() error {
 		}
 	}
 
+	// Default the sharing UI to ON so the broad Playwright suite — which
+	// asserts share buttons, modals, and the /shares route — runs against
+	// the same surface the production binary exposes when an operator
+	// opts in. The sharing-disabled variant (I3) sets
+	// FOTOBANK_E2E_SHARING_ENABLED=false to verify the gated SPA.
+	sharingEnabled := os.Getenv("FOTOBANK_E2E_SHARING_ENABLED") != "false"
+
 	cfg := fmt.Sprintf(`
 [nas]
 root = "%s"
@@ -177,6 +184,8 @@ hub = "%s"
 user_id = "%s"
 handle = "Alice"
 storage_key = "%s"
+[ui]
+sharing_enabled = %t
 [http]
 listen_address = "127.0.0.1:%s"
 # dev_insecure_cookies must be true for the e2e server: the __Host- prefix
@@ -223,6 +232,7 @@ batch_size = 8
 # mid-run (defense-in-depth — the seed inserts active directly).
 activation_threshold = 50
 `, nasRoot, flashRoot, e2eOwnerHub, e2eOwnerUserID, e2eOwnerStorageK,
+		sharingEnabled,
 		e2ePort(), filepath.Join(tmp, "import.lock"),
 		vlmURL, e2eVisionModelID, e2eVisionModelID,
 		e2eEmbedModelID, embedURL, e2eEmbedDim, e2eEmbedEdge)
@@ -477,6 +487,41 @@ func seedFixtures(dbPath, nasRoot string) error {
 	}
 	if err := repo.Insert(ctx, gpsRow); err != nil {
 		return fmt.Errorf("seed gps fixture: %w", err)
+	}
+
+	// Map clustering fixtures: two San Francisco rows close enough to
+	// cluster at low zoom + one NYC row that always renders as a
+	// separate marker. Used by the /map Playwright suite to verify
+	// cluster click → grid filter behavior.
+	geoFixtures := []struct {
+		id    string
+		lat   float64
+		lon   float64
+		label string
+	}{
+		{"geo-photo-a", 37.7749, -122.4194, "San Francisco, California, USA"},
+		{"geo-photo-b", 37.7750, -122.4195, "San Francisco, California, USA"},
+		{"geo-photo-c", 40.7128, -74.0060, "New York, New York, USA"},
+	}
+	for _, g := range geoFixtures {
+		latP, lonP := g.lat, g.lon
+		row := media.Media{
+			ID:            g.id,
+			Owner:         owner,
+			Type:          media.TypePhoto,
+			MimeType:      "image/jpeg",
+			Path:          g.id + ".jpg",
+			ImportedAt:    now,
+			Size:          1,
+			Checksum:      "checksum-" + g.id,
+			Latitude:      &latP,
+			Longitude:     &lonP,
+			LocationLabel: g.label,
+			ThumbStatus:   "pending",
+		}
+		if err := repo.Insert(ctx, row); err != nil {
+			return fmt.Errorf("seed map cluster fixture %s: %w", g.id, err)
+		}
 	}
 	noGPSRow := media.Media{
 		ID:          "no-gps-fixture-1",
