@@ -879,11 +879,15 @@ func registerMediaGeo(api huma.API, svc *service.MediaService, hiddenAuth *hidde
 }
 ```
 
-Edit `internal/httpapi/api.go::buildAPI` to register the new route. Place the call between the existing `registerHiddenMedia` and `registerAIRoutes` lines:
+Edit `internal/httpapi/api.go::buildAPI` to register the new route. **Order matters:** `registerMediaGeo` MUST be called BEFORE `registerMedia` so the literal `/api/v1/media/geo` route shadows the parametric `/api/v1/media/{id}`. With the current Go 1.22+ ServeMux specificity rules the literal pattern wins regardless of order, but huma's route table iterates in registration order, so registering geo first is the safe and explicit choice. Place the call immediately above `registerMedia`:
 
 ```go
-    registerHiddenMedia(api, deps.MediaService, deps.HiddenAuth)
     registerMediaGeo(api, deps.MediaService, deps.HiddenAuth)
+    registerMedia(api, deps.MediaService)
+    registerMediaOriginal(mux, deps.MediaService)
+    registerMediaThumb(mux, deps.ThumbService)
+    // ... existing registrations unchanged ...
+    registerHiddenMedia(api, deps.MediaService, deps.HiddenAuth)
     registerAIRoutes(api, deps.AIService, deps.AIVisionProbe, deps.AIEnabled)
 ```
 
@@ -955,13 +959,22 @@ describe("AppConfigStore", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/me");
   });
 
-  it("treats a /me failure as default-disabled", async () => {
+  it("treats a /me failure as resolved-disabled (so /shares redirect can fire)", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
     const s = new AppConfigStore();
     await s.load();
-    // Failed loads do NOT flip ready=true; the SPA continues to render
-    // the safer default (sharing UI hidden).
-    expect(s.ready).toBe(false);
+    // ready flips to true on BOTH success and failure so route guards
+    // (e.g. the /shares redirect in D5) fire even when /me is down.
+    // The default sharingEnabled=false means "treat failure as disabled".
+    expect(s.ready).toBe(true);
+    expect(s.sharingEnabled).toBe(false);
+  });
+
+  it("treats a network error as resolved-disabled", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network")));
+    const s = new AppConfigStore();
+    await s.load();
+    expect(s.ready).toBe(true);
     expect(s.sharingEnabled).toBe(false);
   });
 
@@ -995,9 +1008,11 @@ Create `frontend/src/lib/app/appConfig.svelte.ts`:
 // reactively to gate UI surfaces (Sidebar, MediaActions, Album CTAs,
 // /shares route).
 //
-// Defensive defaults: sharingEnabled=false, ready=false. A failed or
-// pending load leaves the SPA on the safer default (sharing UI hidden),
-// not the more permissive one.
+// Defensive defaults: sharingEnabled=false, ready=false. After load()
+// returns, ready is ALWAYS true — even on HTTP or network failure —
+// because the safe behavior is "treat failure as sharing disabled" so
+// route guards (e.g. /shares redirect) can fire predictably. A pending
+// load leaves the SPA on the safer default (sharing UI hidden).
 
 export class AppConfigStore {
   private _sharingEnabled = $state(false);
@@ -1014,15 +1029,21 @@ export class AppConfigStore {
   async load(): Promise<void> {
     try {
       const resp = await fetch("/api/v1/me");
-      if (!resp.ok) return;
+      if (!resp.ok) {
+        // Treat HTTP failure as resolved-disabled so guards can fire.
+        this._sharingEnabled = false;
+        this._ready = true;
+        return;
+      }
       const body = (await resp.json()) as {
         features?: { sharing_enabled?: boolean };
       };
       this._sharingEnabled = body?.features?.sharing_enabled === true;
       this._ready = true;
     } catch {
-      // Network failure on app boot leaves ready=false; the next
-      // call to load() (e.g. via a manual reload) will retry.
+      // Network failure: same treatment as HTTP failure.
+      this._sharingEnabled = false;
+      this._ready = true;
     }
   }
 }
@@ -2718,10 +2739,11 @@ git commit -m "feat(frontend/map): persist ?z/?c via debounced replaceState"
 
 - [ ] **Step 1: Add the focus retry effect**
 
-Edit `frontend/src/routes/Map.svelte`. Replace the existing `onMount(() => { void geo.load(false); })` with a richer effect that handles the retry:
+Edit `frontend/src/routes/Map.svelte`. Replace the existing `onMount(() => { void geo.load(false); })` with a richer effect that handles the retry. **Important:** F2 already destructures `hiddenStore` as a prop on `Map.svelte` — do NOT add an `import { hiddenStore } from ...` line here. That would shadow the prop and break tests that inject `props.hiddenStore: stubHiddenStore()`. Reference the existing prop directly.
 
 ```ts
-  import { hiddenStore } from "../lib/hidden/hiddenStore.svelte";
+  // The `hiddenStore` symbol below refers to the prop destructured in
+  // F2's `let { ..., hiddenStore } = $props()`. No import.
 
   let includeHiddenToggle = $state(false);
 
@@ -3066,7 +3088,7 @@ Create `frontend/src/lib/components/lightbox/LightboxMapPin.svelte`:
   import L from "leaflet";
   import "leaflet/dist/leaflet.css";
   import { tileUrl, attribution, defaultMaxZoom } from "../../map/tiles";
-  import { handleInternalLinkClick, router } from "../../router/router.svelte";
+  import { router } from "../../router/router.svelte";
 
   let {
     media,
@@ -3110,12 +3132,15 @@ Create `frontend/src/lib/components/lightbox/LightboxMapPin.svelte`:
   );
 
   function onClick(e: MouseEvent): void {
-    handleInternalLinkClick(e, href);
-    // handleInternalLinkClick already runs router.navigate when it
-    // intercepts; injectable `navigate` is used by tests for assertions
-    // about whether navigation happened. Forward the call so tests can
-    // observe it without hooking into the global router.
-    if (e.defaultPrevented) navigate(href);
+    // Inline modifier-key check rather than calling
+    // handleInternalLinkClick, which would invoke router.navigate via the
+    // global router AND defaultPrevent the event — combined with the
+    // injected `navigate` prop below, that produces a double navigation
+    // on plain clicks. Use a single navigation path through the prop.
+    if (e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    navigate(href);
   }
 </script>
 
