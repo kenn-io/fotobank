@@ -121,7 +121,13 @@
         if (session.qHash === undefined) return false;
         return urlQHash === session.qHash;
       }
-      // E1 stub; richer hiddenCrossContext semantics land in E2.
+      // TODO(F4): mirror the search-source qhash pattern. A stale map
+      // snapshot can leak today: user clicks photo X on /map (snapshot
+      // saved with that cluster's navIds), pans away, then reopens
+      // /media/X?from=map via browser-back — the old navIds get reused
+      // for prev/next. Practical impact is small for v1 (slightly-wrong
+      // adjacent navigation in a rare flow), so we accept the risk and
+      // add the binding when /map state matures.
       case "map":
         return from === "map";
       default: {
