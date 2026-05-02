@@ -1,6 +1,7 @@
-// Package httpapi — /api/v1/search route is split into this file so
-// the search surface can evolve independently of the rest of the API.
-// The route is only registered when a *search.Service is wired into
+// Package httpapi — the /api/v1/search* surface (search proper plus
+// the two autocomplete endpoints) is split into this file so the
+// search surface can evolve independently of the rest of the API.
+// Routes are only registered when a *search.Service is wired into
 // Deps; the OpenAPI dumper passes Deps{} so the search surface is
 // absent from the dumped spec until the runtime wires it in.
 package httpapi
@@ -33,8 +34,19 @@ const searchDefaultLimit = 60
 // defense-in-depth fallback for the same boundary.
 const searchMaxLimit = 200
 
-// registerSearchRoutes mounts GET /api/v1/search on api. svc==nil
-// leaves the route unregistered (no handlers, no schemas) so the
+// autocompleteDefaultLimit is the default page size for the two
+// autocomplete endpoints when the client omits ?limit. Matches the
+// SPA chip popover's default visible-row count (10).
+const autocompleteDefaultLimit = 10
+
+// autocompleteMaxLimit is the inclusive upper bound on the
+// autocomplete endpoints' ?limit parameter. Smaller than searchMaxLimit
+// because the chip popover never wants more than a couple dozen
+// suggestions; the cap protects the DB from a forgetful caller.
+const autocompleteMaxLimit = 50
+
+// registerSearchRoutes mounts the search surface on api. svc==nil
+// leaves every route unregistered (no handlers, no schemas) so the
 // OpenAPI dumper can pass Deps{} unchanged. Production wiring supplies
 // a fully-built *search.Service.
 func registerSearchRoutes(api huma.API, svc *searchsvc.Service) {
@@ -49,6 +61,116 @@ func registerSearchRoutes(api huma.API, svc *searchsvc.Service) {
 	}, func(ctx context.Context, in *searchInput) (*searchOutput, error) {
 		return handleSearch(ctx, svc, in)
 	})
+	registerSearchAutocompleteTags(api, svc)
+	registerSearchAutocompleteLocations(api, svc)
+}
+
+// registerSearchAutocompleteTags mounts GET /api/v1/search/autocomplete/tags.
+// Owner-scoped prefix-match autocomplete over media_tags.tag_label;
+// owner / hidden gating is enforced by Service.AutocompleteTags.
+func registerSearchAutocompleteTags(api huma.API, svc *searchsvc.Service) {
+	huma.Register(api, huma.Operation{
+		OperationID: "search-autocomplete-tags",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/search/autocomplete/tags",
+		Summary:     "Prefix-match tag-label autocomplete for the caller's library",
+	}, func(ctx context.Context, in *autocompleteTagsInput) (*autocompleteTagsOutput, error) {
+		return handleAutocompleteTags(ctx, svc, in)
+	})
+}
+
+// registerSearchAutocompleteLocations mounts
+// GET /api/v1/search/autocomplete/locations. Substring-match autocomplete
+// over media.location_label; owner / hidden gating is enforced by
+// Service.AutocompleteLocations.
+func registerSearchAutocompleteLocations(api huma.API, svc *searchsvc.Service) {
+	huma.Register(api, huma.Operation{
+		OperationID: "search-autocomplete-locations",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/search/autocomplete/locations",
+		Summary:     "Substring-match location-label autocomplete for the caller's library",
+	}, func(ctx context.Context, in *autocompleteLocationsInput) (*autocompleteLocationsOutput, error) {
+		return handleAutocompleteLocations(ctx, svc, in)
+	})
+}
+
+// handleAutocompleteTags identity-resolves the caller, surfaces any
+// unlock claim in context, and delegates to Service.AutocompleteTags.
+// Mirrors handleSearch's structure: identity → claim plumbing →
+// service call → DTO assembly.
+func handleAutocompleteTags(ctx context.Context, svc *searchsvc.Service, in *autocompleteTagsInput) (*autocompleteTagsOutput, error) {
+	id, ok := IdentityFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
+	}
+	caller := id.Principal.OwnersPrincipal()
+
+	limit := in.Limit
+	if limit <= 0 {
+		limit = autocompleteDefaultLimit
+	}
+	// Defense-in-depth against a caller bypassing huma binding. The
+	// `maximum:` tag on the input also surfaces 4xx for above-cap
+	// values; this guard keeps the runtime contract honest.
+	if limit > autocompleteMaxLimit {
+		return nil, huma.Error400BadRequest(
+			fmt.Sprintf("limit must be in 1..%d", autocompleteMaxLimit))
+	}
+
+	var claim *hidden.UnlockClaim
+	if c, hasClaim := hidden.UnlockClaimFromContext(ctx); hasClaim && c.Principal == caller {
+		claimCopy := c
+		claim = &claimCopy
+	}
+
+	suggestions, err := svc.AutocompleteTags(ctx, caller, in.Prefix, limit, in.IncludeHidden, claim)
+	if err != nil {
+		return nil, Translate(err)
+	}
+
+	out := autocompleteTagsBody{Tags: make([]tagSuggestionDTO, 0, len(suggestions))}
+	for _, s := range suggestions {
+		out.Tags = append(out.Tags, tagSuggestionDTO{Key: s.Key, Label: s.Label, Count: s.Count})
+	}
+	return &autocompleteTagsOutput{Body: out}, nil
+}
+
+// handleAutocompleteLocations is the location-side twin of
+// handleAutocompleteTags. Substring matching is the only behavioural
+// difference; everything else (identity, hidden claim, limit clamp,
+// translate) is identical.
+func handleAutocompleteLocations(ctx context.Context, svc *searchsvc.Service, in *autocompleteLocationsInput) (*autocompleteLocationsOutput, error) {
+	id, ok := IdentityFromContext(ctx)
+	if !ok {
+		return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
+	}
+	caller := id.Principal.OwnersPrincipal()
+
+	limit := in.Limit
+	if limit <= 0 {
+		limit = autocompleteDefaultLimit
+	}
+	if limit > autocompleteMaxLimit {
+		return nil, huma.Error400BadRequest(
+			fmt.Sprintf("limit must be in 1..%d", autocompleteMaxLimit))
+	}
+
+	var claim *hidden.UnlockClaim
+	if c, hasClaim := hidden.UnlockClaimFromContext(ctx); hasClaim && c.Principal == caller {
+		claimCopy := c
+		claim = &claimCopy
+	}
+
+	suggestions, err := svc.AutocompleteLocations(ctx, caller, in.Substring, limit, in.IncludeHidden, claim)
+	if err != nil {
+		return nil, Translate(err)
+	}
+
+	out := autocompleteLocationsBody{Locations: make([]locationSuggestionDTO, 0, len(suggestions))}
+	for _, s := range suggestions {
+		out.Locations = append(out.Locations, locationSuggestionDTO{Label: s.Label, Count: s.Count})
+	}
+	return &autocompleteLocationsOutput{Body: out}, nil
 }
 
 // handleSearch implements the search endpoint logic split out from the
@@ -268,4 +390,72 @@ func toSearchResultDTO(h index.Hit, explain bool) searchResultDTO {
 		dto.ScoreComponents = sc
 	}
 	return dto
+}
+
+// autocompleteTagsInput is the bound query-string surface for
+// GET /api/v1/search/autocomplete/tags. Prefix is the user's typed
+// fragment; the service appends the trailing % wildcard. include_hidden
+// requires a hidden-unlock cookie (the service enforces; the route
+// merely surfaces the claim).
+type autocompleteTagsInput struct {
+	Prefix        string `query:"prefix" doc:"prefix fragment; matched against tag_label with LIKE prefix%"`
+	Limit         int    `query:"limit" minimum:"0" maximum:"50" doc:"page size; default 10, max 50"`
+	IncludeHidden bool   `query:"include_hidden" doc:"include tags attached only to hidden media; requires a hidden-unlock cookie"`
+}
+
+// autocompleteTagsOutput wraps the response body so huma can document it.
+type autocompleteTagsOutput struct {
+	Body autocompleteTagsBody
+}
+
+// autocompleteTagsBody is the wire shape: a list of tag suggestions
+// keyed by canonical tag_key, each with the display label and the
+// number of caller-visible media that carry it. Length-preserving;
+// nil-safe (empty input yields a non-nil empty slice so the JSON shape
+// is `"tags":[]` not `null`).
+type autocompleteTagsBody struct {
+	Tags []tagSuggestionDTO `json:"tags"`
+}
+
+// tagSuggestionDTO is the per-row wire shape for the tags surface.
+// Mirrors searchsvc.TagSuggestion with explicit JSON tags so the spec
+// is stable against domain renames.
+type tagSuggestionDTO struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+// autocompleteLocationsInput is the bound query-string surface for
+// GET /api/v1/search/autocomplete/locations. Substring is the user's
+// typed fragment; the service wraps it in % markers on both sides for
+// substring matching (locations are typically structured as
+// "City, Region, Country" so users frequently type a country or
+// region name rather than the full prefix).
+type autocompleteLocationsInput struct {
+	Substring     string `query:"substring" doc:"substring fragment; matched against location_label with LIKE %substring%"`
+	Limit         int    `query:"limit" minimum:"0" maximum:"50" doc:"page size; default 10, max 50"`
+	IncludeHidden bool   `query:"include_hidden" doc:"include locations attached only to hidden media; requires a hidden-unlock cookie"`
+}
+
+// autocompleteLocationsOutput wraps the response body so huma can
+// document it.
+type autocompleteLocationsOutput struct {
+	Body autocompleteLocationsBody
+}
+
+// autocompleteLocationsBody is the wire shape: a list of location
+// suggestions, each with the label and the number of caller-visible
+// media that carry it. Length-preserving; nil-safe.
+type autocompleteLocationsBody struct {
+	Locations []locationSuggestionDTO `json:"locations"`
+}
+
+// locationSuggestionDTO is the per-row wire shape for the locations
+// surface. Mirrors searchsvc.LocationSuggestion with explicit JSON tags.
+// Locations don't carry a canonical key (the engine matches on the
+// label directly) so the wire shape is (label, count) only.
+type locationSuggestionDTO struct {
+	Label string `json:"label"`
+	Count int    `json:"count"`
 }

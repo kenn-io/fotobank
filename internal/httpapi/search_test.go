@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/wesm/fotobank/internal/ai"
@@ -122,6 +124,10 @@ type searchAPIFixture struct {
 	backend *searchFakeBackend
 	text    *searchFakeText
 	checker *searchFakeChecker
+	// rw is exposed so the autocomplete smoke test can seed tag rows
+	// against the same DB the service reads from. Search tests do not
+	// need it; nil fields are fine.
+	rw *sql.DB
 }
 
 func newSearchAPIFixture(t *testing.T) searchAPIFixture {
@@ -188,6 +194,7 @@ func newSearchAPIFixtureWithSettings(t *testing.T, inspectionOn bool, opts *sear
 		backend: be,
 		text:    tc,
 		checker: checker,
+		rw:      rw,
 	}
 }
 
@@ -479,4 +486,94 @@ func TestRoute_Search_CursorRoundTrip(t *testing.T) {
 
 	resp3, _ := doGetSearch(t, fx, q3)
 	r.Equal(http.StatusBadRequest, resp3.StatusCode, "tampered cursor must surface as 400")
+}
+
+// autocompleteTagsBodyDTO mirrors the wire shape of the
+// /autocomplete/tags response so tests can decode JSON without
+// reaching into the unexported types in search.go. Field names mirror
+// the JSON tags on autocompleteTagsBody.
+type autocompleteTagsBodyDTO struct {
+	Tags []struct {
+		Key   string `json:"key"`
+		Label string `json:"label"`
+		Count int    `json:"count"`
+	} `json:"tags"`
+}
+
+// autocompleteLocationsBodyDTO mirrors the wire shape of the
+// /autocomplete/locations response.
+type autocompleteLocationsBodyDTO struct {
+	Locations []struct {
+		Label string `json:"label"`
+		Count int    `json:"count"`
+	} `json:"locations"`
+}
+
+// seedAutocompleteTag inserts an active ai_results + media_tags row
+// against the fixture's DB. The fixture's owner is pinned so the
+// route's owner-scoped query surfaces the row for the test caller.
+func seedAutocompleteTag(t *testing.T, rw *sql.DB, mediaID, tagKey, tagLabel string) {
+	t.Helper()
+	resultID := uuid.NewString()
+	ctx := context.Background()
+	_, err := rw.ExecContext(ctx,
+		`INSERT INTO ai_results(id, media_id, task, model_id, prompt_version, prompt_hash,
+		 input_profile, status, generated_at) VALUES (?,?, 'tag', ?, ?, ?, ?, 'active', ?)`,
+		resultID, mediaID, "test-model", "tag-v1", "test-hash", "test-profile", time.Now().UTC())
+	require.NoError(t, err)
+	_, err = rw.ExecContext(ctx,
+		`INSERT INTO media_tags(result_id, tag_key, tag_label, rank) VALUES (?,?,?,?)`,
+		resultID, tagKey, tagLabel, 1)
+	require.NoError(t, err)
+}
+
+// TestRoute_SearchAutocomplete is the HTTP-level smoke test pinning
+// the contract for both autocomplete endpoints in one go: tags
+// surface on the /tags route and locations surface on the /locations
+// route, both 200 + non-empty JSON. End-to-end coverage of identity,
+// query binding, service call, and DTO assembly. The service-level
+// tests cover the unlock-claim, escape, and ownership invariants;
+// this test pins that the wiring is intact.
+func TestRoute_SearchAutocomplete(t *testing.T) {
+	r := require.New(t)
+	fx := newSearchAPIFixture(t)
+
+	// Seed one tag and one location for the fixture owner. The
+	// fixture's SeedOwner runs against rw, and the service reads from
+	// the same DB's ro pool.
+	mid1 := testutil.SeedPhoto(t, fx.rw, fx.owner, "p1")
+	mid2 := testutil.SeedPhoto(t, fx.rw, fx.owner, "p2")
+	seedAutocompleteTag(t, fx.rw, mid1, "dog", "Dog")
+	seedAutocompleteTag(t, fx.rw, mid2, "doggo", "Doggo")
+	_, err := fx.rw.ExecContext(context.Background(),
+		`UPDATE media SET location_label = ? WHERE id = ?`, "Paris, France", mid1)
+	r.NoError(err)
+
+	// Tags surface.
+	q := url.Values{}
+	q.Set("prefix", "dog")
+	resp, err := fx.srv.Client().Get(fx.srv.URL + "/api/v1/search/autocomplete/tags?" + q.Encode())
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	r.NoError(err)
+	var tagsBody autocompleteTagsBodyDTO
+	r.NoError(json.Unmarshal(body, &tagsBody))
+	r.Len(tagsBody.Tags, 2)
+
+	// Locations surface.
+	q2 := url.Values{}
+	q2.Set("substring", "Paris")
+	resp2, err := fx.srv.Client().Get(fx.srv.URL + "/api/v1/search/autocomplete/locations?" + q2.Encode())
+	r.NoError(err)
+	defer func() { _ = resp2.Body.Close() }()
+	r.Equal(http.StatusOK, resp2.StatusCode)
+	body2, err := io.ReadAll(resp2.Body)
+	r.NoError(err)
+	var locsBody autocompleteLocationsBodyDTO
+	r.NoError(json.Unmarshal(body2, &locsBody))
+	r.Len(locsBody.Locations, 1)
+	r.Equal("Paris, France", locsBody.Locations[0].Label)
+	r.Equal(1, locsBody.Locations[0].Count)
 }
