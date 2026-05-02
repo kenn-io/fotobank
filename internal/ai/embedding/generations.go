@@ -258,6 +258,60 @@ func (g *Generations) Promote(ctx context.Context, id int64) error {
 	return nil
 }
 
+// PromoteFromBuilding promotes id only if it is currently in the
+// 'building' state. Returns errs.ErrNotFound if no row matches —
+// either the id doesn't exist, or the row was retired or already
+// promoted concurrently. The activator uses this instead of Promote()
+// to defend against a race where an admin retires the building
+// generation between the activator's FindBuilding and Promote calls;
+// without the state filter, the unconditional UPDATE on Promote could
+// undo that retirement.
+//
+// Identical to Promote in every other respect: any prior active row is
+// retired in the same tx, retired_at is cleared on the activated row,
+// and the partial unique index embedding_generations_one_active never
+// observes two active rows at once.
+func (g *Generations) PromoteFromBuilding(ctx context.Context, id int64) error {
+	tx, err := g.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE embedding_generations
+		    SET state='retired', retired_at=?
+		  WHERE state='active'`,
+		now,
+	); err != nil {
+		return fmt.Errorf("retire prior active: %w", err)
+	}
+	res, err := tx.ExecContext(ctx,
+		`UPDATE embedding_generations
+		    SET state='active', activated_at=?, retired_at=NULL
+		  WHERE id=? AND state='building'`,
+		now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("promote from building: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("promote from building rows affected: %w", err)
+	}
+	if n == 0 {
+		// Roll back so a concurrent retire is preserved and any prior
+		// active row stays active. The caller treats ErrNotFound as a
+		// no-op — the row is no longer a promotion candidate.
+		return fmt.Errorf("promote from building id %d: %w", id, errs.ErrNotFound)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
 // Retire transitions id to the retired state and stamps retired_at.
 // The vec0 table is left in place — the compactor drops it once the
 // retain_retired_days window elapses (see Plan K1).

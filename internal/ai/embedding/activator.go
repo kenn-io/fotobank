@@ -193,13 +193,14 @@ func (a *Activator) Tick(ctx context.Context) error {
 		return nil
 	}
 
-	// 5. Promote. Promote is idempotent under a normal racing
-	// activator (a second tick after promotion finds the row
-	// already-active and FindBuilding returns nil), but a
-	// concurrent Retire on the same id between FindBuilding and
-	// Promote would surface as ErrNotFound — treat that as a no-op
-	// because the row is no longer a promotion candidate.
-	if err := a.gens.Promote(ctx, building.ID); err != nil {
+	// 5. Promote, gated on the row still being 'building'. Using the
+	// state-aware variant is what keeps a concurrent admin retire
+	// honest: an unconditional UPDATE on `id=?` would silently undo
+	// the retirement. PromoteFromBuilding's WHERE clause filters on
+	// state='building' so the retired row stays retired and the
+	// activator returns ErrNotFound — treated as a no-op because the
+	// row is no longer a promotion candidate.
+	if err := a.gens.PromoteFromBuilding(ctx, building.ID); err != nil {
 		if errors.Is(err, errs.ErrNotFound) {
 			return nil
 		}

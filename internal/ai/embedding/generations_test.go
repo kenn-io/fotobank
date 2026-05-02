@@ -217,6 +217,67 @@ func TestGenerations_PromoteUnknownIDFails(t *testing.T) {
 	r.Nil(active.RetiredAt, "prior active must not carry a retired_at after rollback")
 }
 
+// TestGenerations_PromoteFromBuilding_RetiredRowFails covers the
+// state-aware promotion path the activator relies on. If an admin
+// retires a building generation between the activator's FindBuilding
+// and Promote calls, PromoteFromBuilding must NOT undo that retirement
+// — it must instead return ErrNotFound and leave the row retired.
+func TestGenerations_PromoteFromBuilding_RetiredRowFails(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	row, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+
+	// Simulate a concurrent admin retire between FindBuilding and
+	// PromoteFromBuilding. The state filter must catch this.
+	r.NoError(g.Retire(ctx, row.ID))
+
+	err = g.PromoteFromBuilding(ctx, row.ID)
+	r.ErrorIs(err, errs.ErrNotFound, "retired row must not be re-activated by PromoteFromBuilding")
+
+	// Row must still be retired (the state-filter rolled back the UPDATE).
+	got, err := g.GetByID(ctx, row.ID)
+	r.NoError(err)
+	r.NotNil(got)
+	r.Equal("retired", got.State)
+	r.NotNil(got.RetiredAt)
+}
+
+// TestGenerations_PromoteFromBuilding_HappyPath confirms a building
+// row promotes normally and any prior active is retired in one tx —
+// matching the contract Promote already provides.
+func TestGenerations_PromoteFromBuilding_HappyPath(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	a, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, a.ID))
+
+	b, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v2", InputProfile: "p2"}, 768)
+	r.NoError(err)
+
+	r.NoError(g.PromoteFromBuilding(ctx, b.ID))
+
+	active, err := g.FindActive(ctx)
+	r.NoError(err)
+	r.NotNil(active)
+	r.Equal(b.ID, active.ID, "PromoteFromBuilding must activate the building row")
+
+	rows, err := g.List(ctx, "retired")
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.Equal(a.ID, rows[0].ID, "prior active must be retired in the same tx")
+}
+
 // TestGenerations_PromoteRetiredRowClearsRetiredAt covers the second
 // half of Promote's contract: when re-promoting a row that was
 // previously retired, the activation UPDATE must clear retired_at so
