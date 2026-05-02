@@ -1079,6 +1079,53 @@ func (r *Repo) ListHidden(
 	return out, nil
 }
 
+// ListGeo returns primary and standalone rows for owner that have GPS
+// coordinates. Sidecars (paired_with_id IS NOT NULL) and rows missing
+// either latitude or longitude are excluded. When IncludeHidden is
+// false (default), hidden rows are also excluded; when true, all rows
+// — visible and hidden — are returned (the handler is expected to
+// have validated an unlock claim before calling).
+//
+// Sort order: timestamp DESC NULLS LAST, imported_at DESC, id DESC.
+// The SQL itself uses the SQLite-portable `IS NULL ASC, timestamp DESC`
+// idiom matching ListHidden so rows with a non-NULL timestamp appear
+// before NULL-timestamp rows.
+func (r *Repo) ListGeo(ctx context.Context, f ListGeoFilter) ([]Media, error) {
+	var q string
+	if f.IncludeHidden {
+		q = mediaSelect + `
+ WHERE owner_hub = ? AND owner_user_id = ?
+   AND latitude IS NOT NULL AND longitude IS NOT NULL
+   AND paired_with_id IS NULL
+ ORDER BY timestamp IS NULL ASC, timestamp DESC, imported_at DESC, id DESC`
+	} else {
+		q = mediaSelect + `
+ WHERE owner_hub = ? AND owner_user_id = ?
+   AND latitude IS NOT NULL AND longitude IS NOT NULL
+   AND paired_with_id IS NULL
+   AND hidden_at IS NULL
+ ORDER BY timestamp IS NULL ASC, timestamp DESC, imported_at DESC, id DESC`
+	}
+	rows, err := r.ro.QueryContext(ctx, q, f.Owner.Hub, f.Owner.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("list geo: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]Media, 0)
+	for rows.Next() {
+		m, err := scanMedia(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan geo: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate geo: %w", err)
+	}
+	return out, nil
+}
+
 // uniqueViolationKind inspects a SQLite error and returns the matching
 // sentinel (ErrDuplicateChecksum or ErrDuplicatePath) when the error is
 // a UNIQUE constraint violation on the media table. It returns nil for

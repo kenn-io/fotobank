@@ -59,6 +59,54 @@ func seedOneMedia(t *testing.T, repo *media.Repo, p owners.Principal) string {
 	return id
 }
 
+// insertMediaGPS inserts a primary photo with the given GPS coords (or
+// nil for both). Uses a fresh UUID and a checksum derived from the id
+// so multiple calls in the same test don't collide on the (owner,
+// checksum) or (owner, path) unique indexes.
+func insertMediaGPS(t *testing.T, repo *media.Repo, p owners.Principal, name string, lat, lon *float64) media.Media {
+	t.Helper()
+	id := uuid.NewString()
+	cs := "cs-" + id
+	m := media.Media{
+		ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "2024/" + cs + "/" + name, OriginalFilename: name,
+		ImportedAt: time.Now().UTC().Truncate(time.Second),
+		Size:       100, Checksum: cs, ThumbStatus: "pending",
+		Latitude:  lat,
+		Longitude: lon,
+	}
+	require.NoError(t, repo.Insert(context.Background(), m))
+	return m
+}
+
+// insertMediaGPSAt is like insertMediaGPS but lets the caller pin the
+// timestamp (use nil for NULL).
+func insertMediaGPSAt(t *testing.T, repo *media.Repo, p owners.Principal, name string, lat, lon *float64, ts *time.Time) media.Media {
+	t.Helper()
+	id := uuid.NewString()
+	cs := "cs-" + id
+	m := media.Media{
+		ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "2024/" + cs + "/" + name, OriginalFilename: name,
+		ImportedAt: time.Now().UTC().Truncate(time.Second),
+		Size:       100, Checksum: cs, ThumbStatus: "pending",
+		Latitude:  lat,
+		Longitude: lon,
+	}
+	if ts != nil {
+		m.Timestamp = ts
+	}
+	require.NoError(t, repo.Insert(context.Background(), m))
+	return m
+}
+
+// pairSidecar marks `sidecar` as paired with `primaryID`. Uses
+// repo.UpdatePairedWithID.
+func pairSidecar(t *testing.T, repo *media.Repo, sidecar media.Media, primaryID string) {
+	t.Helper()
+	require.NoError(t, repo.UpdatePairedWithID(context.Background(), sidecar.ID, &primaryID))
+}
+
 func TestMediaInsertAndGet(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
@@ -1513,4 +1561,126 @@ func TestRepoLensModelRoundTrip(t *testing.T) {
 	r.Len(multi, 2)
 	r.Equal(lens, multi[0].LensModel)
 	r.Empty(multi[1].LensModel)
+}
+
+func TestRepo_ListGeo_OwnerScoped(t *testing.T) {
+	t.Helper()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	ownerA := owners.Principal{Hub: "h", UserID: "a"}
+	ownerB := owners.Principal{Hub: "h", UserID: "b"}
+	seedOwner(t, d.WriteDB(), ownerA, "a")
+	seedOwner(t, d.WriteDB(), ownerB, "b")
+	insertMediaGPS(t, repo, ownerA, "p1.jpg", new(40.0), new(-105.0))
+	insertMediaGPS(t, repo, ownerB, "p2.jpg", new(35.0), new(-115.0))
+
+	rows, err := repo.ListGeo(context.Background(), media.ListGeoFilter{Owner: ownerA})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "p1.jpg", rows[0].OriginalFilename)
+}
+
+func TestRepo_ListGeo_ExcludesSidecars(t *testing.T) {
+	t.Helper()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), owner, "u")
+	primary := insertMediaGPS(t, repo, owner, "primary.jpg", new(10.0), new(20.0))
+	sidecar := insertMediaGPS(t, repo, owner, "primary.arw", new(10.0), new(20.0))
+	pairSidecar(t, repo, sidecar, primary.ID)
+
+	rows, err := repo.ListGeo(context.Background(), media.ListGeoFilter{Owner: owner})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, primary.ID, rows[0].ID)
+}
+
+func TestRepo_ListGeo_ExcludesHiddenByDefault(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), owner, "u")
+	visible := insertMediaGPS(t, repo, owner, "v.jpg", new(0.0), new(0.0))
+	hidden := insertMediaGPS(t, repo, owner, "h.jpg", new(1.0), new(1.0))
+	r.NoError(repo.SetHiddenCascade(context.Background(), owner, []string{hidden.ID}, time.Now()))
+
+	rows, err := repo.ListGeo(context.Background(), media.ListGeoFilter{Owner: owner, IncludeHidden: false})
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.Equal(visible.ID, rows[0].ID)
+}
+
+func TestRepo_ListGeo_IncludesHiddenWhenRequested(t *testing.T) {
+	t.Helper()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), owner, "u")
+	visible := insertMediaGPS(t, repo, owner, "v.jpg", new(0.0), new(0.0))
+	hidden := insertMediaGPS(t, repo, owner, "h.jpg", new(1.0), new(1.0))
+	require.NoError(t, repo.SetHiddenCascade(context.Background(), owner, []string{hidden.ID}, time.Now()))
+
+	rows, err := repo.ListGeo(context.Background(), media.ListGeoFilter{Owner: owner, IncludeHidden: true})
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	_ = visible
+}
+
+func TestRepo_ListGeo_OmitsRowsWithoutGPS(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), owner, "u")
+	insertMediaGPS(t, repo, owner, "with-gps.jpg", new(40.0), new(-105.0))
+	insertMediaGPS(t, repo, owner, "no-gps.jpg", nil, nil)
+
+	// Direct SQL: insert a row with lat set but lon NULL. Repo.Insert
+	// rejects partial pairs, so we bypass it for this regression seed.
+	_, err := d.WriteDB().Exec(`
+        INSERT INTO media (id, owner_hub, owner_user_id, media_type, mime_type, path,
+                            imported_at, size, checksum, latitude, longitude, thumb_status, thumb_version)
+        VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, ?, 1, ?, 50.0, NULL, 'pending', 0)
+    `, "00000000-0000-0000-0000-0000000000aa", owner.Hub, owner.UserID, "partial.jpg",
+		time.Now(), "deadbeef-partial")
+	r.NoError(err)
+
+	rows, err := repo.ListGeo(context.Background(), media.ListGeoFilter{Owner: owner})
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.Equal("with-gps.jpg", rows[0].OriginalFilename)
+}
+
+func TestRepo_ListGeo_OrderingTimestampDescThenImportedDescThenIDDesc(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), owner, "u")
+	t1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	older := insertMediaGPSAt(t, repo, owner, "older.jpg", new(10.0), new(20.0), &t1)
+	newer := insertMediaGPSAt(t, repo, owner, "newer.jpg", new(10.0), new(20.0), &t2)
+	nullTS := insertMediaGPSAt(t, repo, owner, "null.jpg", new(10.0), new(20.0), nil)
+
+	rows, err := repo.ListGeo(context.Background(), media.ListGeoFilter{Owner: owner})
+	r.NoError(err)
+	r.Len(rows, 3)
+	r.Equal(newer.ID, rows[0].ID)
+	r.Equal(older.ID, rows[1].ID)
+	r.Equal(nullTS.ID, rows[2].ID)
+}
+
+func TestRepo_ListGeo_EmptyReturnsEmptySlice(t *testing.T) {
+	t.Helper()
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), owner, "u")
+
+	rows, err := repo.ListGeo(context.Background(), media.ListGeoFilter{Owner: owner})
+	require.NoError(t, err)
+	require.Empty(t, rows)
 }

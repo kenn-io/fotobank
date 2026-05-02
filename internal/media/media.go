@@ -90,3 +90,12 @@ type ListFilter struct {
 	// the hidden-management service layer).
 	IncludeHidden bool
 }
+
+// ListGeoFilter scopes a ListGeo query.
+type ListGeoFilter struct {
+	Owner owners.Principal
+	// IncludeHidden, when false (default), excludes rows whose
+	// hidden_at IS NOT NULL. Set true only by callers that have
+	// validated an unlock claim before calling.
+	IncludeHidden bool
+}
