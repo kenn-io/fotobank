@@ -690,3 +690,100 @@ func TestWorker_TransientErrorMarksAllFailed(t *testing.T) {
 	r.Equal(0, embeddedCount(t, d, gen.ID))
 	r.Equal("failed", jobStatus(t, d, mid, ai.TaskEmbed))
 }
+
+// flakyQueue wraps a real *jobs.Queue and fails the first ClaimBatch
+// call with a sentinel transient error, then delegates straight through
+// on every subsequent call. The Run-loop survival test uses it to
+// confirm a one-off claim error is logged and the next tick still
+// drains the queued job — a regression of "return on first non-cancel
+// error" would surface as the test never seeing the mapping written.
+type flakyQueue struct {
+	inner          *jobs.Queue
+	failClaimsLeft atomic.Int32
+}
+
+func (f *flakyQueue) ClaimBatch(ctx context.Context, task ai.Task, n int) ([]jobs.Claim, error) {
+	if f.failClaimsLeft.Load() > 0 {
+		f.failClaimsLeft.Add(-1)
+		return nil, errors.New("flaky: simulated transient claim failure")
+	}
+	return f.inner.ClaimBatch(ctx, task, n)
+}
+
+func (f *flakyQueue) PromoteThumbReadyBlocked(ctx context.Context, task ai.Task) (int, error) {
+	return f.inner.PromoteThumbReadyBlocked(ctx, task)
+}
+
+func (f *flakyQueue) MarkFailed(ctx context.Context, jobID string, claimedAt time.Time, kind ai.LastErrorKind, errMsg string) error {
+	return f.inner.MarkFailed(ctx, jobID, claimedAt, kind, errMsg)
+}
+
+func (f *flakyQueue) MarkDone(ctx context.Context, jobID string, claimedAt time.Time) error {
+	return f.inner.MarkDone(ctx, jobID, claimedAt)
+}
+
+func (f *flakyQueue) MarkBlocked(ctx context.Context, jobID string, claimedAt time.Time, reason string) error {
+	return f.inner.MarkBlocked(ctx, jobID, claimedAt, reason)
+}
+
+// TestWorker_RunSurvivesTransientClaimError covers the loop-survival
+// contract: a non-cancel error from ClaimBatch must be logged and the
+// loop must continue. Without the fix, the worker returned on the
+// first transient SQL hiccup, taking the embedder offline until a
+// process restart — which the chat worker (internal/ai/worker)
+// explicitly avoids.
+func TestWorker_RunSurvivesTransientClaimError(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
+	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
+	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
+
+	realQ := jobs.NewQueue(d.WriteDB(), d.ReadDB())
+	fq := &flakyQueue{inner: realQ}
+	fq.failClaimsLeft.Store(1) // first ClaimBatch fails, all subsequent succeed
+
+	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	w := embedding.NewWorker(embedding.WorkerDeps{
+		Q:        fq,
+		Gens:     gens,
+		Mapping:  embedding.NewMapping(d.WriteDB()),
+		Client:   client,
+		Resolver: resolver,
+		Cfg:      embedCfg(),
+		Events:   &recordingEmitter{},
+		DB:       d.WriteDB(),
+		Skipped:  skipped.NewRepo(d.WriteDB(), d.ReadDB()),
+		Failures: failures.NewRepo(d.WriteDB(), d.ReadDB()),
+	})
+
+	fp := embedFP()
+	r.NoError(realQ.Enqueue(ctx, mid, ai.TaskEmbed, fp))
+
+	gen, err := gens.FindOrCreateBuilding(ctx, fp, embedCfg().Dimension)
+	r.NoError(err)
+
+	ctx2, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx2) }()
+
+	// First tick fails ClaimBatch (logged, not returned). A subsequent
+	// tick (cfg.IdlePoll = 10ms) must succeed and drain the queued job.
+	r.Eventually(func() bool {
+		return mappingExists(t, d, gen.ID, mid)
+	}, 5*time.Second, 25*time.Millisecond,
+		"Run must continue past a one-off ClaimBatch error and drain on a later tick")
+
+	cancel()
+	select {
+	case err := <-done:
+		r.NoError(err, "Run must return nil on context cancellation, even after a transient error")
+	case <-time.After(2 * time.Second):
+		r.Fail("Run did not return after cancel within 2s")
+	}
+	// Sanity: at least one transient claim error did occur.
+	r.EqualValues(0, fq.failClaimsLeft.Load(), "the first ClaimBatch call must have failed")
+}

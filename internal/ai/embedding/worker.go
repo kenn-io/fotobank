@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,22 @@ type ClientIface interface {
 // EmbedImages signature drifts (e.g. an extra arg) this assertion
 // catches it at compile time rather than at the worker's first call.
 var _ ClientIface = (*Client)(nil)
+
+// QueueIface is the subset of *jobs.Queue the embed worker calls. The
+// interface exists so tests can inject a one-shot fault (e.g. a queue
+// that fails ClaimBatch the first time and succeeds after) without
+// having to fault the underlying SQLite handle. Production wires
+// *jobs.Queue, which already satisfies the interface.
+type QueueIface interface {
+	ClaimBatch(ctx context.Context, task ai.Task, n int) ([]jobs.Claim, error)
+	PromoteThumbReadyBlocked(ctx context.Context, task ai.Task) (int, error)
+	MarkFailed(ctx context.Context, jobID string, claimedAt time.Time, kind ai.LastErrorKind, errMsg string) error
+	MarkDone(ctx context.Context, jobID string, claimedAt time.Time) error
+	MarkBlocked(ctx context.Context, jobID string, claimedAt time.Time, reason string) error
+}
+
+// Compile-time check: *jobs.Queue satisfies QueueIface.
+var _ QueueIface = (*jobs.Queue)(nil)
 
 // EventEmitter is the post-commit notification hook. F1 ships with a
 // no-op default; the real bus is wired up in Task P1 once the event
@@ -67,7 +84,7 @@ func (NoopEmitter) EmitAIEmbedGenerationActivated(_ int64, _ string) {}
 // WorkerDeps is the fully-wired dependency set the worker requires.
 // Construct via NewWorker — there is no zero-value worker.
 type WorkerDeps struct {
-	Q        *jobs.Queue
+	Q        QueueIface
 	Gens     *Generations
 	Mapping  *Mapping
 	Client   ClientIface
@@ -131,10 +148,14 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 // fires every Cfg.IdlePoll on an empty queue so newly enqueued jobs
 // are picked up promptly without a constant SQL hammer when idle.
 //
-// Returns nil on ctx cancellation (graceful shutdown). RunOnce errors
-// that wrap context.Canceled are treated as cancellation; any other
-// error is propagated to the caller so a misconfiguration surfaces
-// rather than getting swallowed by the loop.
+// Returns nil on ctx cancellation (graceful shutdown). Transient
+// errors from PromoteThumbReadyBlocked or RunOnce are logged and the
+// loop continues — the chat worker takes the same posture (see
+// internal/ai/worker/worker.go::Run). A return on the first SQL hiccup
+// would tear down the worker on any one-off contention spike, which is
+// the wrong behaviour: the queue is the source of truth, the next tick
+// re-evaluates from scratch, and the lease sweep recovers any rows
+// abandoned in 'working'.
 func (w *Worker) Run(ctx context.Context) error {
 	t := time.NewTicker(w.d.Cfg.IdlePoll)
 	defer t.Stop()
@@ -144,17 +165,12 @@ func (w *Worker) Run(ctx context.Context) error {
 		// task's promotion because the chat worker only iterates over
 		// its configured task (tag or caption) — there is no central
 		// housekeeping site that knows about ai.TaskEmbed.
-		if _, err := w.d.Q.PromoteThumbReadyBlocked(ctx, ai.TaskEmbed); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return nil
-			}
-			return fmt.Errorf("promote thumb-ready blocked: %w", err)
+		if _, err := w.d.Q.PromoteThumbReadyBlocked(ctx, ai.TaskEmbed); err != nil &&
+			!errors.Is(err, context.Canceled) {
+			slog.Default().Warn("embedding worker promote thumb-ready blocked", "err", err)
 		}
-		if err := w.RunOnce(ctx); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return nil
-			}
-			return fmt.Errorf("RunOnce: %w", err)
+		if err := w.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Default().Warn("embedding worker RunOnce", "err", err)
 		}
 		select {
 		case <-ctx.Done():
