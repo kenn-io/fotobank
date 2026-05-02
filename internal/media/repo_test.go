@@ -1564,7 +1564,6 @@ func TestRepoLensModelRoundTrip(t *testing.T) {
 }
 
 func TestRepo_ListGeo_OwnerScoped(t *testing.T) {
-	t.Helper()
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	ownerA := owners.Principal{Hub: "h", UserID: "a"}
@@ -1581,7 +1580,6 @@ func TestRepo_ListGeo_OwnerScoped(t *testing.T) {
 }
 
 func TestRepo_ListGeo_ExcludesSidecars(t *testing.T) {
-	t.Helper()
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := owners.Principal{Hub: "h", UserID: "u"}
@@ -1613,19 +1611,20 @@ func TestRepo_ListGeo_ExcludesHiddenByDefault(t *testing.T) {
 }
 
 func TestRepo_ListGeo_IncludesHiddenWhenRequested(t *testing.T) {
-	t.Helper()
+	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	seedOwner(t, d.WriteDB(), owner, "u")
 	visible := insertMediaGPS(t, repo, owner, "v.jpg", new(0.0), new(0.0))
 	hidden := insertMediaGPS(t, repo, owner, "h.jpg", new(1.0), new(1.0))
-	require.NoError(t, repo.SetHiddenCascade(context.Background(), owner, []string{hidden.ID}, time.Now()))
+	r.NoError(repo.SetHiddenCascade(context.Background(), owner, []string{hidden.ID}, time.Now()))
 
 	rows, err := repo.ListGeo(context.Background(), media.ListGeoFilter{Owner: owner, IncludeHidden: true})
-	require.NoError(t, err)
-	require.Len(t, rows, 2)
-	_ = visible
+	r.NoError(err)
+	r.Len(rows, 2)
+	got := []string{rows[0].ID, rows[1].ID}
+	r.ElementsMatch([]string{visible.ID, hidden.ID}, got)
 }
 
 func TestRepo_ListGeo_OmitsRowsWithoutGPS(t *testing.T) {
@@ -1674,7 +1673,6 @@ func TestRepo_ListGeo_OrderingTimestampDescThenImportedDescThenIDDesc(t *testing
 }
 
 func TestRepo_ListGeo_EmptyReturnsEmptySlice(t *testing.T) {
-	t.Helper()
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := owners.Principal{Hub: "h", UserID: "u"}
