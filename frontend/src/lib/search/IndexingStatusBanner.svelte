@@ -9,10 +9,12 @@
           ranking what it has). Suppressed once semanticUnavailable=
           true so the more specific banners take precedence.
        2. no_active_generation — semantic search has never been
-          activated for this library. Dismissable per session via a
-          local state flag; remounting the component (page navigation)
-          resets the dismissal — this is intentional, the dismiss is
-          for the current view, not a persistent preference.
+          activated for this library. Dismissable per browser-tab
+          session via sessionStorage so navigating away from /search
+          and back doesn't resurface the banner. Cleared when the tab
+          closes (sessionStorage scope), which matches the plan's
+          "per session" semantics — the dismiss is a current-session
+          preference, not a persistent one.
        3. query_embedding_failed — the engine had an active generation
           but the per-query embedding call failed. Auto-dismisses on
           the next successful query because reason transitions back
@@ -36,14 +38,41 @@
     hasQuery: boolean;
   } = $props();
 
-  // dismissed gates the no_active_generation banner only. The
-  // under-80% banner has no dismiss (it's contextual to the current
-  // query and disappears when completeness crosses 0.80 or when the
-  // query clears); query_embedding_failed has no dismiss (auto-clears
-  // when reason transitions to ""). Local $state — resets on remount,
-  // which matches the plan's "per session" semantics for free
-  // because Svelte routes recreate the component on navigation.
-  let dismissed = $state(false);
+  // sessionStorage key for the no_active_generation dismissal. Scoped
+  // to that reason because it's the only banner with a Dismiss button
+  // (under-80% auto-clears on completeness/query change;
+  // query_embedding_failed auto-clears when reason transitions to "").
+  const NO_GEN_DISMISS_KEY = "fotobank.search.banner.no_active_generation";
+
+  // hasSessionStorage guards against SSR / non-browser environments
+  // where sessionStorage is undefined. The component renders both
+  // server- and client-side, so the lookup must be defensive.
+  function hasSessionStorage(): boolean {
+    return typeof sessionStorage !== "undefined";
+  }
+
+  // dismissed gates the no_active_generation banner only. Hydrated
+  // synchronously from sessionStorage at component init so a remount
+  // (e.g. navigating away from /search and back within the same tab
+  // session) preserves a previous dismissal. sessionStorage clears
+  // when the tab closes, which matches the "per browser-tab session"
+  // semantics the plan calls for. The hydration is unconditional on
+  // `reason` because the storage key is reason-specific anyway —
+  // reading it for any mount is harmless, and avoids capturing the
+  // initial `reason` value (Svelte warns about that pattern; the
+  // showNoGen $derived gates the actual render against the live
+  // reason prop, so reason transitions are handled correctly).
+  let dismissed = $state(
+    hasSessionStorage() &&
+      sessionStorage.getItem(NO_GEN_DISMISS_KEY) === "true",
+  );
+
+  function dismiss() {
+    dismissed = true;
+    if (hasSessionStorage()) {
+      sessionStorage.setItem(NO_GEN_DISMISS_KEY, "true");
+    }
+  }
 
   // Three guards, mutually exclusive in the {#if/:else if} chain.
   // showUnderEighty deliberately requires hasQuery and
@@ -76,7 +105,7 @@
       type="button"
       class="dismiss"
       data-testid="indexing-status-banner-dismiss"
-      onclick={() => (dismissed = true)}
+      onclick={dismiss}
     >Dismiss</button>
   </div>
 {:else if showQueryEmbedFailed}

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import { flushSync, tick } from "svelte";
 import IndexingStatusBanner from "./IndexingStatusBanner.svelte";
@@ -13,9 +13,10 @@ import IndexingStatusBanner from "./IndexingStatusBanner.svelte";
 //      ranking what it has). Suppressed once semanticUnavailable=true
 //      so the more specific banners take precedence.
 //   2. no_active_generation — semantic search has never been activated
-//      for this library. Dismissable per session via a local state
-//      flag; remounting the component resets the dismissal (per-page
-//      navigation is implicitly per-session).
+//      for this library. Dismissable per browser-tab session via
+//      sessionStorage so a /search ↔ other-route navigation cycle
+//      preserves the dismissal. Tab close clears sessionStorage,
+//      surfacing the banner again on the next session.
 //   3. query_embedding_failed — the engine had an active generation
 //      but the per-query embedding call failed for the latest request.
 //      Auto-dismisses on the next successful query because `reason`
@@ -23,6 +24,15 @@ import IndexingStatusBanner from "./IndexingStatusBanner.svelte";
 //      state to reset.
 
 describe("IndexingStatusBanner", () => {
+  // Per-test isolation: the no_active_generation dismissal persists in
+  // sessionStorage. Without a clear, the DismissalPersistsAcrossRemount
+  // test would leak into the "is dismissable per session" test (which
+  // expects the banner to render initially).
+  beforeEach(() => {
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.clear();
+    }
+  });
   it("under-80% banner shows when q != '' && completeness < 0.80 && !semanticUnavailable", () => {
     // Plan acceptance: the 80% threshold matches the activator's
     // EmbeddingThreshold (the search engine's hybrid pivot). Below it,
@@ -96,6 +106,48 @@ describe("IndexingStatusBanner", () => {
     flushSync();
     await tick();
     expect(container.querySelector(".banner")).toBeNull();
+  });
+
+  it("DismissalPersistsAcrossRemount", async () => {
+    // Plan acceptance: the no_active_generation Dismiss is scoped to
+    // the browser-tab session, not the component lifetime. Navigating
+    // away from /search and back (which remounts the component) must
+    // preserve the dismissal. This test simulates that by mounting,
+    // dismissing, unmounting, then remounting with the same reason —
+    // the second mount must hydrate `dismissed=true` from
+    // sessionStorage and skip the banner.
+    const first = render(IndexingStatusBanner, {
+      props: {
+        completeness: 0,
+        semanticUnavailable: true,
+        reason: "no_active_generation",
+        hasQuery: false,
+      },
+    });
+    expect(first.container.querySelector(".banner")).not.toBeNull();
+    await fireEvent.click(first.getByText("Dismiss"));
+    flushSync();
+    await tick();
+    expect(first.container.querySelector(".banner")).toBeNull();
+    // sessionStorage should now hold the dismissal flag.
+    expect(
+      sessionStorage.getItem("fotobank.search.banner.no_active_generation"),
+    ).toBe("true");
+    // Tear down the first instance (Svelte route navigation away).
+    first.unmount();
+
+    // Remount with the same reason — emulates returning to /search in
+    // the same tab. The component must hydrate dismissed=true from
+    // sessionStorage and stay collapsed.
+    const second = render(IndexingStatusBanner, {
+      props: {
+        completeness: 0,
+        semanticUnavailable: true,
+        reason: "no_active_generation",
+        hasQuery: false,
+      },
+    });
+    expect(second.container.querySelector(".banner")).toBeNull();
   });
 
   it("query_embedding_failed banner auto-dismisses when reason transitions back to ''", async () => {
