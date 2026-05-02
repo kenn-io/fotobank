@@ -70,6 +70,28 @@ func insertTestMedia(t *testing.T, repo *media.Repo, p owners.Principal, path, c
 	return m
 }
 
+// insertTestMediaGPS inserts a primary with the given GPS coordinates.
+// Use insertTestMedia for non-GPS rows.
+func insertTestMediaGPS(t *testing.T, repo *media.Repo, p owners.Principal, path, checksum string, lat, lon float64) media.Media {
+	t.Helper()
+	m := media.Media{
+		ID:               uuid.NewString(),
+		Owner:            p,
+		Type:             media.TypePhoto,
+		MimeType:         "image/jpeg",
+		Path:             path,
+		OriginalFilename: "x.jpg",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Size:             100,
+		Checksum:         checksum,
+		ThumbStatus:      "pending",
+		Latitude:         &lat,
+		Longitude:        &lon,
+	}
+	require.NoError(t, repo.Insert(context.Background(), m))
+	return m
+}
+
 func TestMediaServiceGetReturnsCallerRow(t *testing.T) {
 	r := require.New(t)
 	fx := newMediaServiceTest(t)
@@ -509,4 +531,47 @@ func TestMediaServiceClearAllHiddenForOwner(t *testing.T) {
 	got2, err := fx.repo.GetByID(ctx, m2.ID)
 	r.NoError(err)
 	r.Nil(got2.HiddenAt)
+}
+
+func TestMediaService_ListGeo_OwnerScoped(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	// Seed a second owner B alongside fx.owner.
+	ownerB := owners.Principal{Hub: "h", UserID: "b"}
+	_, err := fx.rw.ExecContext(ctx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		ownerB.Hub, ownerB.UserID, "sk-b", time.Now().UTC(),
+	)
+	r.NoError(err)
+
+	insertTestMediaGPS(t, fx.repo, fx.owner, "2024/p1.jpg", "cs-a", 10.0, 20.0)
+	insertTestMediaGPS(t, fx.repo, ownerB, "2024/p2.jpg", "cs-b", 30.0, 40.0)
+
+	rows, err := fx.svc.ListGeo(ctx, fx.owner, false)
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.Equal("2024/p1.jpg", rows[0].Path)
+}
+
+func TestMediaService_ListGeo_PropagatesIncludeHidden(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaServiceTest(t)
+	ctx := context.Background()
+
+	visible := insertTestMediaGPS(t, fx.repo, fx.owner, "2024/v.jpg", "cs-vis", 10.0, 20.0)
+	hidden := insertTestMediaGPS(t, fx.repo, fx.owner, "2024/h.jpg", "cs-hid", 30.0, 40.0)
+	markHidden(t, fx.rw, hidden.ID)
+
+	visOnly, err := fx.svc.ListGeo(ctx, fx.owner, false)
+	r.NoError(err)
+	r.Len(visOnly, 1)
+	r.Equal(visible.ID, visOnly[0].ID)
+
+	all, err := fx.svc.ListGeo(ctx, fx.owner, true)
+	r.NoError(err)
+	r.Len(all, 2)
+	ids := []string{all[0].ID, all[1].ID}
+	r.ElementsMatch([]string{visible.ID, hidden.ID}, ids)
 }

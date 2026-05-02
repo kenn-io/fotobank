@@ -260,3 +260,21 @@ func (s *MediaService) ListHidden(
 ) ([]media.Media, error) {
 	return s.repo.ListHidden(ctx, caller, limit, offset)
 }
+
+// ListGeo returns geotagged primaries owned by caller. When
+// includeHidden is true, hidden rows are included; the handler is
+// expected to have validated an unlock claim before calling.
+//
+// The service does not enforce the unlock-claim gate — the gate is in
+// httpapi.registerMediaGeo so the 403 response shape stays inside the
+// transport layer (matching list-hidden-media).
+func (s *MediaService) ListGeo(
+	ctx context.Context,
+	caller owners.Principal,
+	includeHidden bool,
+) ([]media.Media, error) {
+	return s.repo.ListGeo(ctx, media.ListGeoFilter{
+		Owner:         caller,
+		IncludeHidden: includeHidden,
+	})
+}
