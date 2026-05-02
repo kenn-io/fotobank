@@ -611,6 +611,20 @@ func seedFixtures(dbPath, nasRoot string) error {
 		return fmt.Errorf("seed active share: %w", err)
 	}
 
+	// Album-targeted share for the sharing-disabled e2e test, which
+	// exercises the AlbumDetail delete-blocked CLI-aware copy: deleting
+	// an album with active shares returns 409, and the SPA must surface
+	// the CLI command (`fotobank shares list --album <id>`) regardless
+	// of the sharing UI flag because the CLI works regardless of it.
+	if _, err := shareSvc.Create(ctx, service.CreateShareRequest{
+		TargetType: share.TargetAlbumLive,
+		AlbumID:    seededAlbum.ID,
+		Grantee:    owners.Principal{Hub: "noop", UserID: "e2e-album"},
+		Label:      "Active album e2e share",
+	}, owner); err != nil {
+		return fmt.Errorf("seed active album share: %w", err)
+	}
+
 	// F2.4 hidden privacy fixtures.
 
 	// hidden-prehidden-1: already hidden at seed time — used by gate-render

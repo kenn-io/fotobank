@@ -23,6 +23,11 @@ const port = resolvePort();
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  // The sharing-disabled variant runs under playwright-e2e-sharing-disabled.config.ts
+  // with its own e2e-server on a different port. Excluding it here keeps
+  // the broad suite from running it under the default sharing-enabled
+  // server (which would fail the assertions).
+  testIgnore: ["sharing-disabled.spec.ts"],
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
