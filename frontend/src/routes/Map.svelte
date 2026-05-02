@@ -1,20 +1,24 @@
 <!-- frontend/src/routes/Map.svelte
      Route component for /map. F3 mounts MapPane in a 60/40 split-view;
-     F4 will fill the right-side grid (.grid-side). The component
-     receives geoStore as a prop so tests can construct the store with
-     a fake typed-client without stubbing global fetch.
+     F4 fills the right-side grid (.grid-side) with MapGridPane and
+     wires marker/photo clicks through a shared lightbox handoff. The
+     component receives geoStore as a prop so tests can construct the
+     store with a fake typed-client without stubbing global fetch.
 -->
 <script lang="ts">
   import { onMount } from "svelte";
   import type L from "leaflet";
   import MapPane from "../lib/map/MapPane.svelte";
+  import MapGridPane from "../lib/map/MapGridPane.svelte";
   import type { GeoStore } from "../lib/map/geoStore.svelte";
   import type { MediaStore } from "../lib/media/mediaStore.svelte";
   import type { ToastStore } from "../lib/toasts/toastStore.svelte";
   import type { HiddenStore } from "../lib/hidden/hiddenStore.svelte";
+  import { router } from "../lib/router/router.svelte";
+  import { lightboxSession } from "../lib/lightbox/lightboxSession.svelte";
 
   // F3 consumes geoStore plus the route-derived params (z/c/focus). The
-  // remaining props are typed up-front so F4-F9 can wire them in
+  // remaining props are typed up-front so F5-F9 can wire them in
   // without changing the call site in App.svelte. The route params use
   // `T | undefined` (not `?:`) because exactOptionalPropertyTypes:true
   // rejects assigning `undefined` to a `?` optional, and the router can
@@ -24,6 +28,7 @@
     c,
     focus,
     geoStore,
+    mediaStore,
   }: {
     z: number | undefined;
     c: [number, number] | undefined;
@@ -35,20 +40,53 @@
     toastStore: ToastStore;
   } = $props();
 
-  // viewportIds and clusterIds are populated by MapPane callbacks.
-  // F4 reads viewportIds to filter the right-grid; F5 reads clusterIds
-  // to override the filter when a cluster is clicked. Today they're
-  // declared so the MapPane callbacks have somewhere to write.
+  // viewportIds is populated by MapPane's onViewportChange callback;
+  // clusterIds is set by F5 when the user clicks a cluster (today it's
+  // only cleared by MapPane.onClearClusterFilter and MapGridPane's
+  // clear-chip). MapGridPane reads clusterIds-or-viewportIds to drive
+  // the grid.
   let viewportIds = $state<string[]>([]);
   let clusterIds = $state<string[] | null>(null);
 
-  // F4 will navigate to /m/:id with from=map; F5 will set clusterIds
-  // and the right-grid will filter to those rows. Today these are
-  // logging stubs so the props have a concrete handler shape to bind to.
-  function onMarkerClick(id: string): void {
-    console.debug("[map] marker click", id);
+  // openMedia is the shared lightbox-handoff entry point. Both the
+  // Leaflet marker click and the MapGridPane photo click route through
+  // it so the lightbox always sees the same snapshot regardless of
+  // which surface launched it. The active id list mirrors what the
+  // grid is rendering — clusterIds when filtered, viewportIds
+  // otherwise — so prev/next inside the lightbox walks the same set
+  // the user just saw.
+  function openMedia(id: string): void {
+    const orderedIds = clusterIds !== null ? clusterIds : viewportIds;
+    lightboxSession.open({
+      source: { kind: "map" },
+      navIds: [...orderedIds],
+      selected: false,
+      scrollY: 0,
+      returnFocusMediaId: id,
+      returnHref: currentMapReturnHref(),
+      includeHidden: geoStore.includedHiddenAtFetch,
+    });
+    router.navigate(`/media/${id}?from=map`);
   }
+
+  // currentMapReturnHref preserves the route-level zoom/center query
+  // params on the snapshot's returnHref so the lightbox's back/close
+  // path lands on the same map view the user launched from. F6 will
+  // also debounce-write these to the URL on viewport changes; today
+  // they only enter the URL when the user navigates here directly
+  // (e.g. shared link, browser refresh).
+  function currentMapReturnHref(): string {
+    const sp = new URLSearchParams();
+    if (z !== undefined) sp.set("z", String(z));
+    if (c !== undefined) sp.set("c", `${c[0]},${c[1]}`);
+    const q = sp.toString();
+    return q ? `/map?${q}` : "/map";
+  }
+
   function onClusterClick(ids: string[], bounds: L.LatLngBounds): void {
+    // F5 will set clusterIds = ids here so the right-grid filters to
+    // the cluster contents. Today it logs so the prop has a concrete
+    // handler shape.
     console.debug("[map] cluster click", ids.length, bounds);
   }
 
@@ -77,14 +115,20 @@
           initialZoom={z}
           initialCenter={c}
           focusId={focus}
-          onMarkerClick={(id) => onMarkerClick(id)}
+          onMarkerClick={(id) => openMedia(id)}
           onClusterClick={(ids, bounds) => onClusterClick(ids, bounds)}
           onViewportChange={(ids) => (viewportIds = ids)}
           onClearClusterFilter={() => (clusterIds = null)}
         />
       </div>
       <div class="grid-side">
-        <!-- Filled in F4 -->
+        <MapGridPane
+          visibleIds={viewportIds}
+          {clusterIds}
+          {mediaStore}
+          onPhotoClick={(id) => openMedia(id)}
+          onClearClusterFilter={() => (clusterIds = null)}
+        />
       </div>
     </div>
   {/if}
