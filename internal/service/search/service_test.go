@@ -105,8 +105,11 @@ func newFixture() svcFixture {
 	st := &fakeSettings{on: false}
 	tr := &fakeTagResolver{mapping: map[string]string{}}
 	hc := &fakeHiddenChecker{valid: false}
+	// gens and ro are nil — Search never consults either, so the
+	// existing routing-pipeline tests don't need a real DB. The
+	// completeness tests in completeness_test.go wire real values.
 	return svcFixture{
-		svc:      searchsvc.New(eng, st, tr, hc),
+		svc:      searchsvc.New(eng, st, tr, hc, nil, nil),
 		engine:   eng,
 		settings: st,
 		tags:     tr,

@@ -15,9 +15,11 @@ package search
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
+	"github.com/wesm/fotobank/internal/ai/embedding"
 	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/owners"
@@ -76,20 +78,40 @@ type HiddenChecker interface {
 // the production wiring assembles at boot. Engine, hiddenChecker, and
 // the two repos are all required; passing nil dereferences at call
 // time on the dependent code path.
+//
+// gens and ro back EmbeddingCompleteness: gens resolves the active
+// generation row (the numerator's generation_id bind), ro runs the two
+// COUNT queries against the read pool. The Search path does not consult
+// either field — tests targeting the routing pipeline can pass nil for
+// both. EmbeddingCompleteness dereferences gens, so its tests must wire
+// a real *embedding.Generations.
 type Service struct {
 	engine        EngineIface
 	usersettings  UserSettingsRepo
 	tagResolver   TagResolver
 	hiddenChecker HiddenChecker
+	gens          *embedding.Generations
+	ro            *sql.DB
 }
 
-// New constructs a Service from its collaborators.
-func New(engine EngineIface, settings UserSettingsRepo, tags TagResolver, hc HiddenChecker) *Service {
+// New constructs a Service from its collaborators. gens and ro are
+// only consulted by EmbeddingCompleteness; callers that exercise only
+// Search may pass nil for both. Production wiring supplies all six.
+func New(
+	engine EngineIface,
+	settings UserSettingsRepo,
+	tags TagResolver,
+	hc HiddenChecker,
+	gens *embedding.Generations,
+	ro *sql.DB,
+) *Service {
 	return &Service{
 		engine:        engine,
 		usersettings:  settings,
 		tagResolver:   tags,
 		hiddenChecker: hc,
+		gens:          gens,
+		ro:            ro,
 	}
 }
 

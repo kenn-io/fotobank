@@ -1,0 +1,83 @@
+package search
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/wesm/fotobank/internal/owners"
+)
+
+// EmbeddingCompleteness returns the embedded/eligible fraction for the
+// caller's library under the active generation, evaluated against the
+// supplied includeHidden predicate. The result is in [0, 1].
+//
+// The hidden predicate flows identically into both queries — the
+// numerator (embedded) and denominator (eligible) must observe the
+// same hidden gate or the pill leaks per-context progress. v1's
+// invariant (search-design.md §6.6): the request's hidden context is
+// the only knob the user sees; the activator's separate
+// ackAllowsHidden=false measure is internal and never surfaced through
+// this method.
+//
+// Sentinel returns:
+//   - active generation absent → (0, nil). The pill renders 0% in this
+//     state; treating it as an error would force every caller to
+//     branch on a not-yet-ready library.
+//   - eligible == 0 → (0, nil). Empty library or every photo
+//     ai_skipped(embed) — divide-by-zero avoided, and the pill correctly
+//     shows "0 indexed" rather than NaN.
+//
+// Eligibility predicate (matches the activator's gap-fill predicate
+// minus the per-generation mapping check):
+//   - thumb_status='ready' (only encoded media can be embedded)
+//   - hidden_at IS NULL OR includeHidden=true (hidden gate)
+//   - NOT EXISTS ai_skipped(embed) (videos and unsupported formats)
+//
+// The numerator additionally requires a media_embedding_ids row in the
+// active generation. Both queries route through the read pool (s.ro);
+// the JOIN to media on the embedded query is what keeps the count
+// honest across thumb-regen invalidations and hidden-flag flips.
+func (s *Service) EmbeddingCompleteness(ctx context.Context, caller owners.Principal, includeHidden bool) (float64, error) {
+	active, err := s.gens.FindActive(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("find active generation: %w", err)
+	}
+	if active == nil {
+		return 0, nil
+	}
+
+	const eligibleSQL = `
+SELECT COUNT(*) FROM media m
+ WHERE m.owner_hub = ? AND m.owner_user_id = ?
+   AND m.thumb_status = 'ready'
+   AND (m.hidden_at IS NULL OR ?)
+   AND NOT EXISTS (
+     SELECT 1 FROM ai_skipped sk WHERE sk.media_id = m.id AND sk.task = 'embed'
+   )`
+	const embeddedSQL = `
+SELECT COUNT(*) FROM media_embedding_ids x
+  JOIN media m ON m.id = x.media_id
+ WHERE x.generation_id = ?
+   AND m.owner_hub = ? AND m.owner_user_id = ?
+   AND m.thumb_status = 'ready'
+   AND (m.hidden_at IS NULL OR ?)
+   AND NOT EXISTS (
+     SELECT 1 FROM ai_skipped sk WHERE sk.media_id = m.id AND sk.task = 'embed'
+   )`
+
+	var eligible, embedded int
+	if err := s.ro.QueryRowContext(ctx, eligibleSQL,
+		caller.Hub, caller.UserID, includeHidden,
+	).Scan(&eligible); err != nil {
+		return 0, fmt.Errorf("eligible count: %w", err)
+	}
+	if eligible == 0 {
+		return 0, nil
+	}
+	if err := s.ro.QueryRowContext(ctx, embeddedSQL,
+		active.ID, caller.Hub, caller.UserID, includeHidden,
+	).Scan(&embedded); err != nil {
+		return 0, fmt.Errorf("embedded count: %w", err)
+	}
+	return float64(embedded) / float64(eligible), nil
+}
