@@ -1,11 +1,17 @@
 package hybrid_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/wesm/fotobank/internal/ai"
+	"github.com/wesm/fotobank/internal/ai/embedding"
+	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/search/hybrid"
+	"github.com/wesm/fotobank/internal/search/index"
+	"github.com/wesm/fotobank/internal/testutil"
 )
 
 // TestCursor_RoundTrip pins the encode/decode contract: every field
@@ -113,4 +119,67 @@ func TestCursor_ReqHashUsesEffectiveSort(t *testing.T) {
 		Filter:        map[string]string{"media_type": "photo"},
 	}
 	r.NotEqual(hybrid.NormalizedHash(a), hybrid.NormalizedHash(d))
+}
+
+// TestNormalizedHash_TagKeysOrderIndependent pins the tag-key
+// permutation invariant: two engine requests that differ only in the
+// order of TagKeys must produce the same cursor hash. The engine
+// flattens TagKeys into the "tags" entry of the NormalizedReq.Filter
+// map by joining sorted keys; without the sort, page 1's hash would
+// not match page 2's if the resolver re-emitted the same labels in a
+// different slice order.
+//
+// Driven via the engine end-to-end so the test is faithful to the
+// production hashing path (engine.flattenFilter → NormalizedHash) —
+// asserting on engine.Search's NextCursor catches any regression
+// that disagrees with the input flattening, not just NormalizedHash
+// itself.
+func TestNormalizedHash_TagKeysOrderIndependent(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	row, err := gens.FindOrCreateBuilding(context.Background(), ai.Fingerprint{
+		ModelID:      "test-model",
+		InputProfile: "test-profile",
+	}, 768)
+	r.NoError(err)
+	r.NoError(gens.Promote(context.Background(), row.ID))
+
+	be := &fakeBackend{hits: []index.Hit{
+		{MediaID: "m1", Score: 0.9},
+		{MediaID: "m2", Score: 0.8},
+	}}
+	tc := &fakeTextClient{vec: make([]float32, 768)}
+	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+
+	respA, err := eng.Search(context.Background(), hybrid.Request{
+		Owner: owner,
+		Query: "puppy",
+		Sort:  "relevance",
+		Limit: 2,
+		Filter: hybrid.Input{
+			TagKeys: []string{"beach", "sunset"},
+		},
+	})
+	r.NoError(err)
+	r.NotEmpty(respA.NextCursor, "page 1 must mint a cursor when len(hits)==Limit")
+
+	respB, err := eng.Search(context.Background(), hybrid.Request{
+		Owner: owner,
+		Query: "puppy",
+		Sort:  "relevance",
+		Limit: 2,
+		Filter: hybrid.Input{
+			// Same set, opposite order. The cursor hash must be
+			// identical so a client that paginates with this cursor
+			// against a re-shuffled chip set on the next page does
+			// not get a 400.
+			TagKeys: []string{"sunset", "beach"},
+		},
+	})
+	r.NoError(err)
+	r.Equal(respA.NextCursor, respB.NextCursor,
+		"TagKeys permutation must not shift the cursor hash")
 }

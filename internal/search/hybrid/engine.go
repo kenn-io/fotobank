@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/wesm/fotobank/internal/ai/embedding"
@@ -389,8 +390,16 @@ func flattenFilter(in Input) map[string]string {
 		out["date_before"] = in.DateBefore.UTC().Format("2006-01-02T15:04:05Z")
 	}
 	if len(in.TagKeys) > 0 {
+		// Sort the tag keys before joining so the cursor hash is
+		// independent of the slice order the resolver / caller emitted.
+		// Without this, two requests that differ only in TagKeys
+		// permutation would produce different hashes and a cursor
+		// minted on page 1 would 400 on page 2 simply because the
+		// resolver re-emitted the same labels in a different order.
+		keys := append([]string(nil), in.TagKeys...)
+		sort.Strings(keys)
 		var joined strings.Builder
-		for i, k := range in.TagKeys {
+		for i, k := range keys {
 			if i > 0 {
 				joined.WriteString(",")
 			}
