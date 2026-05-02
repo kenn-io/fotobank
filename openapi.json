@@ -269,6 +269,18 @@
         },
         "type": "object"
       },
+      "FeaturesStruct": {
+        "additionalProperties": false,
+        "properties": {
+          "sharing_enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sharing_enabled"
+        ],
+        "type": "object"
+      },
       "HealthzOutputBody": {
         "additionalProperties": false,
         "properties": {
@@ -624,6 +636,9 @@
             "readOnly": true,
             "type": "string"
           },
+          "features": {
+            "$ref": "#/components/schemas/FeaturesStruct"
+          },
           "principal": {
             "$ref": "#/components/schemas/PrincipalStruct"
           },
@@ -639,7 +654,8 @@
         },
         "required": [
           "principal",
-          "scopes"
+          "scopes",
+          "features"
         ],
         "type": "object"
       },

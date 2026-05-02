@@ -630,6 +630,9 @@ export interface components {
              */
             type: string;
         };
+        FeaturesStruct: {
+            sharing_enabled: boolean;
+        };
         HealthzOutputBody: {
             /**
              * Format: uri
@@ -759,6 +762,7 @@ export interface components {
              * @example https://example.com/api/schemas/MeOutputBody.json
              */
             readonly $schema?: string;
+            features: components["schemas"]["FeaturesStruct"];
             principal: components["schemas"]["PrincipalStruct"];
             scopes: string[] | null;
         };

@@ -171,7 +171,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	api := humago.New(mux, cfg)
 	api.OpenAPI().Info.Description = "Fotobank HTTP API"
 	registerHealthz(api)
-	registerMe(api)
+	registerMe(api, deps.SharingEnabled)
 	registerMedia(api, deps.MediaService)
 	registerMediaOriginal(mux, deps.MediaService)
 	registerMediaThumb(mux, deps.ThumbService)
