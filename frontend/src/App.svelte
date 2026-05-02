@@ -156,7 +156,7 @@
     {:else if router.current.route === "settings.ai"}
       <SettingsAI />
     {:else if router.current.route === "search"}
-      <Search />
+      <Search {events} />
     {:else}
       <NotFound />
     {/if}

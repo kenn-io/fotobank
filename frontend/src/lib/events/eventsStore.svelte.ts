@@ -6,6 +6,7 @@ const KNOWN_EVENTS = [
   "ai.tag.completed",
   "ai.caption.completed",
   "ai.embed.completed",
+  "ai.embed.generation_activated",
   "share.status.changed",
   "ai.health.changed",
   "catchup-required",

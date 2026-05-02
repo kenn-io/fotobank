@@ -1,11 +1,14 @@
 <!-- frontend/src/routes/Search.svelte
-     U2: page shell for /search. Reads the route match into the search
+     V1: page shell for /search. Reads the route match into the search
      store on mount and on every router.current change so external URL
      mutations (e.g. AppHeader typing into a query while already on
      /search) re-hydrate the store. Writes the store's reactive state
      back into the URL on every change so the URL is the source of
-     truth and a full reload preserves the user's view. The pill/banner
-     are still stubbed (see TODO V1 comments). -->
+     truth and a full reload preserves the user's view. The
+     IndexingStatusPill and IndexingStatusBanner project the search
+     response's embedding_completeness / semantic_unavailable_reason
+     into the UI; an SSE handler invalidates the store's requestHash
+     when the activator promotes a new generation. -->
 <script lang="ts">
   import { createSearchStore, type SearchStore } from "../lib/search/searchStore.svelte";
   import { searchClient } from "../lib/search/client";
@@ -19,14 +22,22 @@
   import VirtualGrid from "../lib/grid/VirtualGrid.svelte";
   import type { Month, Media } from "../lib/media/mediaStore.svelte";
   import { router } from "../lib/router/router.svelte";
+  import type { EventsStore } from "../lib/events/eventsStore.svelte";
 
   // Tests inject a stub store via the optional `store` prop; production
   // callers omit it and the route constructs its own backed by the
   // singleton search client. searchClient comes from the same module
-  // that hosts createSearchClient (default same-origin fetch).
-  let { store, client = searchClient }: {
+  // that hosts createSearchClient (default same-origin fetch). The
+  // optional events prop wires the page into the SSE stream so
+  // ai.embed.generation_activated invalidates the store's requestHash
+  // (the activator just promoted a new generation, prior cursors are
+  // stale). Tests omit it; isolated renders without an events bus
+  // simply don't get the invalidation, which is harmless because
+  // those tests don't drive a multi-request flow.
+  let { store, client = searchClient, events }: {
     store?: SearchStore;
     client?: SearchClient;
+    events?: EventsStore;
   } = $props();
 
   // svelte-ignore state_referenced_locally
@@ -150,6 +161,28 @@
     if (current !== target) {
       router.navigate(target, { replace: true });
     }
+  });
+
+  // SSE invalidation: when the activator promotes a new embedding
+  // generation (ai.embed.generation_activated), the prior cursor's
+  // ReqHash no longer matches a fresh request. Calling
+  // store.onGenerationActivated() clears the client-side requestHash
+  // so the store treats subsequent results as a fresh page rather
+  // than appending to a now-stale cursor. We deliberately do not
+  // reissue the current query here — the user may have navigated
+  // away or might not be expecting their results to change under
+  // them; the next user-driven mutation will produce the fresh
+  // request. lastEventId guards against double-firing when the
+  // events store re-emits the same event (the stored lastEvent is
+  // a single field and a re-render shouldn't trigger another call).
+  let lastEmbedActivatedId = $state<string | null>(null);
+  $effect(() => {
+    const ev = events?.lastEvent;
+    if (!ev) return;
+    if (ev.type !== "ai.embed.generation_activated") return;
+    if (ev.id === lastEmbedActivatedId) return;
+    lastEmbedActivatedId = ev.id;
+    s.onGenerationActivated();
   });
 
   // Wrap SearchResult rows into the Media shape VirtualGrid expects.
