@@ -389,3 +389,101 @@ describe("Lightbox (snapshot path)", () => {
     expect(queryByTestId("search-relevance")).toBeNull();
   });
 });
+
+describe("Lightbox.hiddenCrossContext — map source", () => {
+  // Helper: build a media store that doesn't have the id yet, forcing
+  // the lightbox's fetch effect to fire and populate `lastRaw`. The raw
+  // payload carries `hidden_at`, which is what `isHidden` keys off.
+  function emptyMediaStore() {
+    return {
+      months: [],
+      get: () => undefined,
+      mergeRaw: vi.fn(),
+      removeMany: vi.fn(),
+      exhausted: true,
+      loadMore: vi.fn().mockResolvedValue(undefined),
+    } as never;
+  }
+  function stubHiddenFetch(id: string) {
+    const fakeFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.startsWith(`/api/v1/media/${id}`)) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              id,
+              thumb_version: 0,
+              width: 1,
+              height: 1,
+              timestamp: "2026-04-20T00:00:00Z",
+              hidden_at: "2026-05-02T00:00:00Z",
+            }),
+        });
+      }
+      return Promise.resolve({ ok: false, status: 404 });
+    });
+    vi.stubGlobal("fetch", fakeFetch);
+  }
+
+  it("does not flag from=map with includeHidden=true as a cross-context leak", async () => {
+    lightboxSession.close();
+    stubHiddenFetch("hidden-1");
+    lightboxSession.open({
+      source: { kind: "map" },
+      navIds: ["hidden-1"],
+      selected: false,
+      scrollY: 0,
+      returnFocusMediaId: null,
+      returnHref: "/map?z=10&c=0,0&include_hidden=true",
+      includeHidden: true,
+    });
+    const { container } = render(Lightbox, {
+      props: {
+        id: "hidden-1",
+        from: "map",
+        mediaStore: emptyMediaStore(),
+        albumsStore: { markStale: vi.fn() } as never,
+        hiddenStore: { configured: true } as never,
+        toastStore: { push: vi.fn() } as never,
+        appConfig: defaultAppConfig(),
+      } as never,
+    });
+    // Wait for the fetch effect to settle (lastRaw populated, isHidden
+    // computed, fallback decision finalized). The non-fallback backdrop
+    // is the canonical "in-place lightbox renders" indicator.
+    await waitFor(() => {
+      expect(container.querySelector(".lb-backdrop")).toBeTruthy();
+    });
+    expect(container.querySelector(".lb-backdrop.fallback")).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("flags from=map without includeHidden as cross-context (fallback renders)", async () => {
+    lightboxSession.close();
+    stubHiddenFetch("hidden-2");
+    lightboxSession.open({
+      source: { kind: "map" },
+      navIds: ["hidden-2"],
+      selected: false,
+      scrollY: 0,
+      returnFocusMediaId: null,
+      returnHref: "/map?z=10&c=0,0",
+      includeHidden: false,
+    });
+    const { container } = render(Lightbox, {
+      props: {
+        id: "hidden-2",
+        from: "map",
+        mediaStore: emptyMediaStore(),
+        albumsStore: { markStale: vi.fn() } as never,
+        hiddenStore: { configured: true } as never,
+        toastStore: { push: vi.fn() } as never,
+        appConfig: defaultAppConfig(),
+      } as never,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(".lb-backdrop.fallback")).toBeTruthy();
+    });
+    vi.unstubAllGlobals();
+  });
+});

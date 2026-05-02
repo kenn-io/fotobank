@@ -200,7 +200,16 @@
   // hiddenCrossContext: a hidden row was opened with a non-hidden
   // `from` — render via DirectMediaDetail so the unhide flow runs in
   // the standalone surface (Lightbox is library-shaped, not hidden).
-  const hiddenCrossContext = $derived(isHidden && from !== "hidden");
+  // Exception: from=map combined with a snapshot that was fetched
+  // under explicit include_hidden=true is NOT a cross-context leak —
+  // the user explicitly opted in via the map's Include-hidden toggle,
+  // and the resulting nav set is hidden-aware.
+  const fromMapWithHidden = $derived(
+    from === "map" && session?.includeHidden === true,
+  );
+  const hiddenCrossContext = $derived(
+    isHidden && from !== "hidden" && !fromMapWithHidden,
+  );
 
   // Tri-state reconstruction. The effect below runs on mount and
   // synchronously sets this to "ok" (snapshot matches), "running"
