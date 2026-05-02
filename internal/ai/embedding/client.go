@@ -100,29 +100,39 @@ func NewClient(cfg Config) *Client {
 // returns one float32 vector per input, in input order. Each vector is
 // validated to match the configured Dimension; any mismatch fails the
 // whole batch with ErrMalformed.
-func (c *Client) EmbedImages(ctx context.Context, jpegs [][]byte) ([][]float32, error) {
+//
+// The model parameter is forwarded as the request body's "model"
+// field. The worker passes the claim's fingerprint.ModelID so a
+// mid-rollout batch under the prior model targets that endpoint
+// correctly. An empty model falls back to cfg.Model — the boot probe
+// uses that path because it tests the configured default.
+func (c *Client) EmbedImages(ctx context.Context, model string, jpegs [][]byte) ([][]float32, error) {
 	inputs := make([]string, len(jpegs))
 	for i, b := range jpegs {
 		inputs[i] = "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(b)
 	}
-	return c.callOnce(ctx, inputs)
+	return c.callOnce(ctx, model, inputs)
 }
 
 // EmbedTexts is the query-time counterpart to EmbedImages. The configured
 // model must produce a shared image-text embedding space for hybrid
-// ranking to remain comparable.
-func (c *Client) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+// ranking to remain comparable. See EmbedImages for the model fallback
+// semantics.
+func (c *Client) EmbedTexts(ctx context.Context, model string, texts []string) ([][]float32, error) {
 	// Defensive copy is unnecessary — strings are immutable. Pass through.
-	return c.callOnce(ctx, texts)
+	return c.callOnce(ctx, model, texts)
 }
 
 // callOnce is the request engine: builds the JSON body once, then loops
 // up to MaxRetries+1 attempts. Per-attempt classification routes to the
 // appropriate sentinel.
-func (c *Client) callOnce(ctx context.Context, input []string) ([][]float32, error) {
+func (c *Client) callOnce(ctx context.Context, model string, input []string) ([][]float32, error) {
+	if model == "" {
+		model = c.cfg.Model
+	}
 	body, err := json.Marshal(map[string]any{
 		"input": input,
-		"model": c.cfg.Model,
+		"model": model,
 	})
 	if err != nil {
 		// Marshal failure on a tiny static-shape map is effectively

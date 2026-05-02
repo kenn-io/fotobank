@@ -52,7 +52,7 @@ func Probe(ctx context.Context, cfg Config) error {
 	cfg.MaxRetries = 0
 	c := NewClient(cfg)
 
-	imgs, err := c.EmbedImages(ctx, [][]byte{embeddedTinyJPEG})
+	imgs, err := c.EmbedImages(ctx, cfg.Model, [][]byte{embeddedTinyJPEG})
 	if err != nil {
 		// ErrMalformed from the client is an in-band dimension/shape
 		// mismatch (the response decoded fine but had the wrong vector
@@ -68,7 +68,7 @@ func Probe(ctx context.Context, cfg Config) error {
 			cfg.Dimension, len(imgs), dimOf(imgs))
 	}
 
-	texts, err := c.EmbedTexts(ctx, []string{"a small dog on a beach"})
+	texts, err := c.EmbedTexts(ctx, cfg.Model, []string{"a small dog on a beach"})
 	if err != nil {
 		if errors.Is(err, ErrMalformed) {
 			return fmt.Errorf("embed probe (text): dimension mismatch (configured %d): %w", cfg.Dimension, err)

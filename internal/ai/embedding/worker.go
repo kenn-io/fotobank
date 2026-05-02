@@ -28,8 +28,13 @@ type PreviewResolver interface {
 // ClientIface is the minimal surface the embed worker needs from the
 // embeddings HTTP client. Tests substitute a fake that returns canned
 // vectors; the production impl is *embedding.Client.
+//
+// The model parameter is the per-call model the worker passes from
+// the claim's fingerprint.ModelID — see worker.processGroup. Routing
+// per claim rather than per worker is what keeps mid-rollout batches
+// (jobs claimed under both the prior and the new fingerprint) honest.
 type ClientIface interface {
-	EmbedImages(ctx context.Context, jpegs [][]byte) ([][]float32, error)
+	EmbedImages(ctx context.Context, model string, jpegs [][]byte) ([][]float32, error)
 }
 
 // Compile-time check: *Client satisfies ClientIface. If the client's
@@ -190,11 +195,17 @@ type prepared struct {
 	err    error
 }
 
-// encoded names a claim that survived the resolve+encode preflight and
-// is queued for the batched /v1/embeddings call.
+// encoded names a claim that survived the resolve preflight and is
+// queued for the per-fingerprint encode + /v1/embeddings call. The
+// raw preview JPEG is carried through here rather than re-encoded
+// upfront because the encode parameters (specifically the edge size)
+// are derived from the claim's fingerprint, not from cfg — see
+// processGroup. Two claims that share a media id but live under
+// different fingerprints would otherwise need their own encode pass
+// each anyway, so deferring saves one call when they don't.
 type encoded struct {
-	claim jobs.Claim
-	body  []byte
+	claim   jobs.Claim
+	preview []byte // raw preview JPEG, encoded per-fp inside processGroup
 }
 
 // process runs one claim batch through the six-step pipeline:
@@ -251,20 +262,41 @@ func partitionByFingerprint(ready []encoded) map[string][]encoded {
 }
 
 // processGroup runs the per-fingerprint pipeline tail: parse the fp,
-// resolve the building generation, issue one batched embeddings call,
-// and commit mappings + status in a single tx. Returns only on
-// infrastructure failures — per-claim outcomes are surfaced via
-// ai_jobs / ai_skipped rows.
+// derive the encode edge from fp.InputProfile, encode every preview
+// for this fp's edge, resolve the building generation, issue one
+// batched embeddings call against fp.ModelID, and commit mappings +
+// status in a single tx. Returns only on infrastructure failures —
+// per-claim outcomes are surfaced via ai_jobs / ai_skipped rows.
+//
+// Routing the model and the encode edge per fingerprint is what keeps
+// mid-rollout batches honest: a claim under fpV1 (model=A, edge=384)
+// and a claim under fpV2 (model=B, edge=512) can land in the same
+// ClaimBatch, and each must hit the right endpoint with the right
+// pixel input — using cfg.Model / cfg.InputEdge for both would land
+// the fpV1 vector in fpV2's coordinate system, breaking search.
 func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded) error {
 	fp, err := parseFingerprint(fpStr)
 	if err != nil {
 		// Defensive: a malformed fp on a working row is an invariant
 		// violation, but we still mark every claim in the group failed
-		// so the queue drains rather than re-claiming forever. The
-		// failure row is keyed on the canonical fp the claim carried,
-		// so the panel still surfaces it under the original triple.
+		// so the queue drains rather than re-claiming forever.
+		// recordTerminalFailure skips the ai_failures row for a
+		// zero-fp — see its docstring.
 		for _, e := range group {
 			w.recordTerminalFailure(ctx, e.claim, fp, ai.ErrKindMalformed, "parse fingerprint: "+err.Error())
+		}
+		return nil
+	}
+
+	// Derive the encode edge from the claim's InputProfile. A failure
+	// here means the fp is structurally well-formed (three pipe-
+	// separated parts) but the InputProfile string doesn't match the
+	// canonical "jpeg-{N}-q85-metadata-stripped-embed-v1" shape. Treat
+	// as malformed and drain the group.
+	edge, err := EdgeFromInputProfile(fp.InputProfile)
+	if err != nil {
+		for _, e := range group {
+			w.recordTerminalFailure(ctx, e.claim, fp, ai.ErrKindMalformed, "parse input profile: "+err.Error())
 		}
 		return nil
 	}
@@ -277,18 +309,41 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 		return fmt.Errorf("resolve generation: %w", err)
 	}
 
-	// Issue one batched /v1/embeddings call for this fingerprint group.
-	jpegs := make([][]byte, len(group))
-	for i, e := range group {
-		jpegs[i] = e.body
+	// Encode every preview at this fingerprint's edge. A per-claim
+	// encode failure is malformed (the bytes the resolver returned
+	// won't decode/resize even at this edge); mark just that claim
+	// failed and continue with the rest of the group. Empty group
+	// after partitioning is a no-op.
+	jpegs := make([][]byte, 0, len(group))
+	survivors := make([]encoded, 0, len(group))
+	for _, e := range group {
+		body, err := encode.EncodeEmbed(e.preview, edge)
+		if err != nil {
+			w.recordTerminalFailure(ctx, e.claim, fp, ai.ErrKindMalformed,
+				"encode embed input: "+err.Error())
+			continue
+		}
+		jpegs = append(jpegs, body)
+		survivors = append(survivors, e)
 	}
-	vectors, callErr := w.d.Client.EmbedImages(ctx, jpegs)
+	if len(survivors) == 0 {
+		return nil
+	}
+
+	// Issue one batched /v1/embeddings call for this fingerprint
+	// group, targeting the claim's model. An empty model in the
+	// fingerprint would fall back to cfg.Model on the client side —
+	// but the worker has already validated parseFingerprint's three
+	// parts, so ModelID is non-empty here unless the fingerprint
+	// itself is "||...".
+	vectors, callErr := w.d.Client.EmbedImages(ctx, fp.ModelID, jpegs)
 	if callErr != nil {
-		// Full-batch failure: classify once, mark every claim failed
-		// with the same kind. Per-claim attribution is not meaningful
-		// because the request body is the same for all of them.
+		// Full-batch failure: classify once, mark every survivor
+		// failed with the same kind. Per-claim attribution is not
+		// meaningful because the request body is the same for all of
+		// them.
 		kind := classifyEmbedErr(callErr)
-		for _, e := range group {
+		for _, e := range survivors {
 			w.recordTerminalFailure(ctx, e.claim, fp, kind, callErr.Error())
 		}
 		return nil
@@ -300,9 +355,9 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 	// fewer vectors than requested we mark all of them failed
 	// (transient) and let the next sweep re-claim them as singles.
 	// F2 will replace this with per-index attribution.
-	if len(vectors) != len(group) {
-		msg := fmt.Sprintf("partial response: got %d vectors, want %d", len(vectors), len(group))
-		for _, e := range group {
+	if len(vectors) != len(survivors) {
+		msg := fmt.Sprintf("partial response: got %d vectors, want %d", len(vectors), len(survivors))
+		for _, e := range survivors {
 			w.recordTerminalFailure(ctx, e.claim, fp, ai.ErrKindTransient, msg)
 		}
 		return nil
@@ -315,7 +370,7 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 	// matching Mapping.WriteVectorTx's contract. The same tx also
 	// clears any prior ai_failures row for each successful (media, fp)
 	// so a transient retry can't leave a stale failure visible.
-	if err := w.commitBatch(ctx, gen, fp, group, vectors); err != nil {
+	if err := w.commitBatch(ctx, gen, fp, survivors, vectors); err != nil {
 		// commitBatch's failures all leave the rows in 'working' so
 		// the next claim sweep recovers them. Don't double-mark.
 		return fmt.Errorf("commit batch: %w", err)
@@ -324,7 +379,7 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 	// Emit one completion event per successful claim. The event bus is
 	// async-best-effort; emitting after Commit means a listener sees a
 	// row that already exists in the DB.
-	for _, e := range group {
+	for _, e := range survivors {
 		w.d.Events.EmitAIEmbedCompleted(e.claim.MediaID, fpStr)
 	}
 	return nil
@@ -421,17 +476,13 @@ func (w *Worker) classify(ctx context.Context, out []prepared) ([]encoded, error
 				return nil, fmt.Errorf("mark blocked: %w", err)
 			}
 		case p.status == "ready":
-			// Re-encode the preview into the embed-task input profile.
-			// The model selects edge length at boot via the modality
-			// probe; cfg.InputEdge is the validated value.
-			body, err := encode.EncodeEmbed(p.jpeg, w.d.Cfg.InputEdge)
-			if err != nil {
-				fp, _ := parseFingerprint(p.claim.Fingerprint)
-				w.recordTerminalFailure(ctx, p.claim, fp, ai.ErrKindMalformed,
-					"encode embed input: "+err.Error())
-				continue
-			}
-			ready = append(ready, encoded{claim: p.claim, body: body})
+			// Defer the embed-input encode to processGroup so the edge
+			// size comes from the claim's fingerprint (parsed out of
+			// fp.InputProfile) rather than cfg.InputEdge. A claim under
+			// a stale fingerprint must encode at that fingerprint's
+			// edge or the resulting vector lives under the wrong
+			// InputProfile and search-time queries miss it.
+			ready = append(ready, encoded{claim: p.claim, preview: p.jpeg})
 		default:
 			// Unknown thumb_status — treat as missing input rather than
 			// silently dropping the job. The chat worker handles this

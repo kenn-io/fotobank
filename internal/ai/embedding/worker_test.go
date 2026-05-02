@@ -49,17 +49,25 @@ func embedCfg() ai.EmbedConfig {
 // returns a fixed slate of vectors (one per call) or a configured error.
 // vectorsToReturn caps the response length so partial-failure cases can
 // be exercised by returning fewer vectors than the input batch size.
+// lastModel records the model the worker passed on the most recent
+// call, so per-fingerprint routing tests can confirm the worker
+// targets the claim's fingerprint.ModelID rather than cfg.Model.
 type fakeEmbedClient struct {
 	vectors         [][]float32
 	vectorsToReturn int // -1 means "match input length exactly"
 	err             error
 	calls           atomic.Int32
 	lastInputCount  atomic.Int32
+	mu              sync.Mutex
+	lastModel       string
 }
 
-func (f *fakeEmbedClient) EmbedImages(_ context.Context, jpegs [][]byte) ([][]float32, error) {
+func (f *fakeEmbedClient) EmbedImages(_ context.Context, model string, jpegs [][]byte) ([][]float32, error) {
 	f.calls.Add(1)
 	f.lastInputCount.Store(int32(len(jpegs)))
+	f.mu.Lock()
+	f.lastModel = model
+	f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -463,18 +471,22 @@ func TestWorker_RunPromotesThumbReadyBlocked(t *testing.T) {
 // perCallEmbedClient returns a fresh slice of vectors per call,
 // indexed by call number. Used by tests where the worker is expected
 // to issue more than one EmbedImages call per RunOnce — e.g. one call
-// per fingerprint group.
+// per fingerprint group. modelByCall captures the model passed on
+// each call so per-fingerprint routing tests can verify the worker
+// targets each group's fingerprint.ModelID.
 type perCallEmbedClient struct {
 	mu          sync.Mutex
 	calls       atomic.Int32
 	perCall     [][][]float32 // perCall[i] is the slice for the i-th call
 	inputCounts []int         // recorded len(jpegs) per call, in call order
+	modelByCall []string      // recorded model per call, in call order
 }
 
-func (f *perCallEmbedClient) EmbedImages(_ context.Context, jpegs [][]byte) ([][]float32, error) {
+func (f *perCallEmbedClient) EmbedImages(_ context.Context, model string, jpegs [][]byte) ([][]float32, error) {
 	idx := int(f.calls.Add(1)) - 1
 	f.mu.Lock()
 	f.inputCounts = append(f.inputCounts, len(jpegs))
+	f.modelByCall = append(f.modelByCall, model)
 	f.mu.Unlock()
 	if idx >= len(f.perCall) {
 		idx = len(f.perCall) - 1
@@ -501,8 +513,12 @@ func TestWorker_BatchWithMixedFingerprintsRoutesToCorrectGenerations(t *testing.
 	d := testutil.OpenTestDB(t)
 	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
 
-	fpV1 := ai.Fingerprint{ModelID: "siglip2", InputProfile: "embed-v1"}
-	fpV2 := ai.Fingerprint{ModelID: "siglip2", InputProfile: "embed-v2"}
+	// Distinct fingerprints in canonical embed-input-profile shape so
+	// EdgeFromInputProfile can derive the per-fp encode edge. ModelID
+	// also differs so the per-call routing assertion (claim.fp.ModelID
+	// → request body's "model" field) has signal.
+	fpV1 := ai.Fingerprint{ModelID: "siglip2-v1", InputProfile: "jpeg-256-q85-metadata-stripped-embed-v1"}
+	fpV2 := ai.Fingerprint{ModelID: "siglip2-v2", InputProfile: "jpeg-512-q85-metadata-stripped-embed-v1"}
 
 	v1Mids := []string{
 		testutil.SeedPhoto(t, d.WriteDB(), owner, "v1-a"),
@@ -539,10 +555,16 @@ func TestWorker_BatchWithMixedFingerprintsRoutesToCorrectGenerations(t *testing.
 
 	r.NoError(w.RunOnce(ctx))
 
-	// One EmbedImages call per fingerprint group, two inputs each.
+	// One EmbedImages call per fingerprint group, two inputs each, and
+	// the model field on each call must come from the claim's
+	// fingerprint.ModelID — not cfg.Model — so a mid-rollout batch
+	// targets the right backend per-fp. Map rotation is non-deterministic
+	// (groups iteration order) so we assert as a set.
 	r.EqualValues(2, client.calls.Load(), "one call per fingerprint group")
 	client.mu.Lock()
 	r.Equal([]int{2, 2}, client.inputCounts, "each call carries exactly its group's inputs")
+	r.ElementsMatch([]string{fpV1.ModelID, fpV2.ModelID}, client.modelByCall,
+		"each call must target its fingerprint's ModelID, not cfg.Model")
 	client.mu.Unlock()
 
 	// v1 stayed active (worker writes mappings to it without changing
@@ -569,6 +591,105 @@ func TestWorker_BatchWithMixedFingerprintsRoutesToCorrectGenerations(t *testing.
 		r.False(mappingExists(t, d, v1Gen.ID, m), "v2 media %s leaked into v1 generation", m)
 		r.Equal("done", jobStatus(t, d, m, ai.TaskEmbed))
 	}
+}
+
+// edgeRecordingClient captures the JPEG dimensions of every input on
+// every EmbedImages call so the per-fp edge routing test can assert
+// the worker encoded each group at the edge derived from its
+// fingerprint.InputProfile (via EdgeFromInputProfile), not from
+// cfg.InputEdge.
+type edgeRecordingClient struct {
+	mu         sync.Mutex
+	dimsByCall [][]int // dimsByCall[i] is the [maxDim per input] slice for the i-th call
+}
+
+func (f *edgeRecordingClient) EmbedImages(_ context.Context, _ string, jpegs [][]byte) ([][]float32, error) {
+	dims := make([]int, len(jpegs))
+	for i, b := range jpegs {
+		// Decode the JPEG to read its (resized) dimension. EncodeEmbed
+		// resizes so the longer edge equals the requested edge — we
+		// read the larger of width/height.
+		img, err := jpeg.Decode(bytes.NewReader(b))
+		if err != nil {
+			return nil, err
+		}
+		bnds := img.Bounds()
+		w, h := bnds.Dx(), bnds.Dy()
+		dims[i] = max(w, h)
+	}
+	f.mu.Lock()
+	f.dimsByCall = append(f.dimsByCall, dims)
+	f.mu.Unlock()
+	out := make([][]float32, len(jpegs))
+	for i := range out {
+		out[i] = make([]float32, 768)
+		out[i][0] = 0.5
+	}
+	return out, nil
+}
+
+// TestWorker_PerFingerprintRequestUsesClaimFingerprint pins the
+// routing contract for fix #7: each fingerprint group's encode edge
+// comes from its own InputProfile, not from cfg.InputEdge. Two
+// fingerprints with edges 256 and 512 share one ClaimBatch; the
+// worker must encode group A at 256 and group B at 512 even though
+// cfg.InputEdge is some single value (here 384).
+func TestWorker_PerFingerprintRequestUsesClaimFingerprint(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+
+	fpA := ai.Fingerprint{ModelID: "siglip2-a", InputProfile: "jpeg-256-q85-metadata-stripped-embed-v1"}
+	fpB := ai.Fingerprint{ModelID: "siglip2-b", InputProfile: "jpeg-512-q85-metadata-stripped-embed-v1"}
+
+	midA := testutil.SeedPhoto(t, d.WriteDB(), owner, "a")
+	midB := testutil.SeedPhoto(t, d.WriteDB(), owner, "b")
+
+	// Build a preview that's bigger than both target edges so the
+	// resize is observable. EncodeEmbed scales the longer edge to N.
+	bigJPEG := func() []byte {
+		img := image.NewRGBA(image.Rect(0, 0, 800, 600))
+		for y := range 600 {
+			for x := range 800 {
+				img.Set(x, y, color.RGBA{R: uint8(x % 256), G: uint8(y % 256), B: 0x80, A: 0xff})
+			}
+		}
+		var buf bytes.Buffer
+		require.NoError(t, jpeg.Encode(&buf, img, &jpeg.Options{Quality: 80}))
+		return buf.Bytes()
+	}()
+
+	resolver := &fakeResolver{defaultJPEG: bigJPEG, defaultStatus: "ready"}
+	client := &edgeRecordingClient{}
+	w, q, gens, _ := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+
+	// Pre-create fpA's generation as active so fpB's row can land as
+	// the (single) building. The schema's one-building partial unique
+	// index would otherwise reject the worker's second
+	// FindOrCreateBuilding inside the same RunOnce.
+	gA, err := gens.FindOrCreateBuilding(ctx, fpA, embedCfg().Dimension)
+	r.NoError(err)
+	r.NoError(gens.Promote(ctx, gA.ID))
+
+	r.NoError(q.Enqueue(ctx, midA, ai.TaskEmbed, fpA))
+	r.NoError(q.Enqueue(ctx, midB, ai.TaskEmbed, fpB))
+	r.NoError(w.RunOnce(ctx))
+
+	// Two calls, each with one input. The encoded JPEG's longer edge
+	// must match the fp's InputProfile edge — 256 for fpA, 512 for fpB.
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	r.Len(client.dimsByCall, 2, "one call per fingerprint group")
+	// Map rotation is non-deterministic (groups iteration order) so
+	// flatten and assert as a set: across both calls, the 1-input
+	// dimension slate must contain {256, 512}.
+	flat := []int{}
+	for _, ds := range client.dimsByCall {
+		flat = append(flat, ds...)
+	}
+	r.ElementsMatch([]int{256, 512}, flat,
+		"each fingerprint group must encode at its InputProfile's edge")
 }
 
 // TestWorker_TerminalFailureRecordsAIFailureRow asserts the worker
