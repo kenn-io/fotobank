@@ -18,6 +18,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/wesm/fotobank/internal/ai"
+	aiembedding "github.com/wesm/fotobank/internal/ai/embedding"
+	"github.com/wesm/fotobank/internal/ai/jobs"
+	"github.com/wesm/fotobank/internal/ai/skipped"
+	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/ingest"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
@@ -33,6 +38,7 @@ type importerFixture struct {
 	store *storage.NASOnly
 	repo  *media.Repo
 	nas   string
+	db    *db.DB
 }
 
 func newImporterFixture(t *testing.T) *importerFixture {
@@ -50,7 +56,7 @@ func newImporterFixture(t *testing.T) *importerFixture {
 
 	nas := t.TempDir()
 	store := storage.NewNASOnly(nas, map[owners.Principal]string{owner: testStorageKey})
-	return &importerFixture{owner: owner, store: store, repo: repo, nas: nas}
+	return &importerFixture{owner: owner, store: store, repo: repo, nas: nas, db: d}
 }
 
 // copyFile copies src to dst without preserving permissions, a thin
@@ -592,4 +598,91 @@ func TestImporterPairsJPEGWithExistingRAW(t *testing.T) {
 	// touching the source filesystem.
 	r.Equal("trip-paris/IMG_1234.JPG", jpegRow.ImportSourcePath)
 	r.Equal("trip-paris/IMG_1234.DNG", dngRow.ImportSourcePath)
+}
+
+// TestImporter_EnqueuesEmbedJobAlongsideTagCaption locks the Task I1
+// end-to-end contract: when the importer is wired with a real
+// AIEnqueuer that has an embed fingerprint set, importing a photo
+// produces one ai_jobs row per task (tag, caption, embed). Without
+// this test the per-task wiring inside ImportFile could regress and
+// only the unit test on realAIEnqueuer would catch it; this asserts
+// the path through processPhoto -> repo.Insert -> ai.EnqueueForPhoto
+// is intact.
+func TestImporter_EnqueuesEmbedJobAlongsideTagCaption(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	fx := newImporterFixture(t)
+
+	q := jobs.NewQueue(fx.db.WriteDB(), fx.db.ReadDB())
+	skipR := skipped.NewRepo(fx.db.WriteDB(), fx.db.ReadDB())
+	tagFP := ai.Fingerprint{ModelID: "tag-m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	capFP := ai.Fingerprint{ModelID: "cap-m", PromptVersion: "caption-v1", InputProfile: "ip"}
+	embedFP := aiembedding.Fingerprint(ai.EmbedConfig{Model: "siglip2", InputEdge: 384})
+
+	imp := ingest.NewImporter(fx.store, fx.repo, nil)
+	imp.SetAIEnqueuer(ingest.NewRealAIEnqueuer(tagFP, capFP, q.Enqueue, skipR.Record).
+		WithEmbed(embedFP))
+
+	src := seedSource(t, "photo-with-timestamp.jpg")
+	res, err := imp.ImportDirectory(ctx, src,
+		ingest.Options{Owner: fx.owner, ConcurrentWorkers: 1})
+	r.NoError(err)
+	r.Equal(1, res.Imported)
+	r.Empty(res.Failures)
+
+	rows, err := fx.repo.List(ctx, media.ListFilter{Owner: fx.owner})
+	r.NoError(err)
+	r.Len(rows, 1)
+	mid := rows[0].ID
+
+	// One row per task — and explicit per-task assertions so a regression
+	// that drops a single task fails with a clear "import must enqueue X"
+	// message rather than a single combined-count mismatch.
+	for _, task := range []string{"tag", "caption", "embed"} {
+		var n int
+		r.NoError(fx.db.ReadDB().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM ai_jobs WHERE media_id = ? AND task = ?`,
+			mid, task,
+		).Scan(&n))
+		r.Equal(1, n, "import must enqueue %s", task)
+	}
+}
+
+// TestImporter_VideoImportSkipsAllThreeTasksWhenEmbedEnabled mirrors
+// the photo path for videos: when embed is wired, importing a video
+// records ai_skipped rows for tag, caption, AND embed. The embed gap
+// scanner relies on this to avoid re-enqueueing videos forever.
+func TestImporter_VideoImportSkipsAllThreeTasksWhenEmbedEnabled(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	fx := newImporterFixture(t)
+
+	q := jobs.NewQueue(fx.db.WriteDB(), fx.db.ReadDB())
+	skipR := skipped.NewRepo(fx.db.WriteDB(), fx.db.ReadDB())
+	tagFP := ai.Fingerprint{ModelID: "tag-m", PromptVersion: "tags-v1", InputProfile: "ip"}
+	capFP := ai.Fingerprint{ModelID: "cap-m", PromptVersion: "caption-v1", InputProfile: "ip"}
+	embedFP := aiembedding.Fingerprint(ai.EmbedConfig{Model: "siglip2", InputEdge: 384})
+
+	imp := ingest.NewImporter(fx.store, fx.repo, nil)
+	imp.SetAIEnqueuer(ingest.NewRealAIEnqueuer(tagFP, capFP, q.Enqueue, skipR.Record).
+		WithEmbed(embedFP))
+
+	src := seedSource(t, "video.mp4")
+	res, err := imp.ImportDirectory(ctx, src,
+		ingest.Options{Owner: fx.owner, ConcurrentWorkers: 1})
+	r.NoError(err)
+	r.Equal(1, res.Imported)
+	r.Empty(res.Failures)
+
+	rows, err := fx.repo.List(ctx, media.ListFilter{Owner: fx.owner})
+	r.NoError(err)
+	r.Len(rows, 1)
+	mid := rows[0].ID
+
+	for _, task := range []ai.Task{ai.TaskTag, ai.TaskCaption, ai.TaskEmbed} {
+		reason, found, err := skipR.Get(ctx, mid, task)
+		r.NoError(err, "skip lookup for %s", task)
+		r.True(found, "video import must record skip for %s", task)
+		r.Equal("video", reason)
+	}
 }

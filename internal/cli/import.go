@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wesm/fotobank/internal/ai"
+	"github.com/wesm/fotobank/internal/ai/embedding"
 	"github.com/wesm/fotobank/internal/ai/imginput"
 	"github.com/wesm/fotobank/internal/ai/jobs"
 	aiprompts "github.com/wesm/fotobank/internal/ai/prompts"
@@ -155,11 +156,19 @@ func runImport(ctx context.Context, opts importOpts) error {
 		PromptVersion: captionPrompt.Version,
 		InputProfile:  imginput.ProfileV1,
 	}
-	imp.SetAIEnqueuer(ingest.NewRealAIEnqueuer(
+	enq := ingest.NewRealAIEnqueuer(
 		tagFP, captionFP,
 		aiQueue.Enqueue,
 		aiSkippedRepo.Record,
-	))
+	)
+	// Wire embed-task enqueueing only when the operator has explicitly
+	// flipped cfg.AI.Embed.Enabled. Defer config defaults via
+	// embedding.Fingerprint so an InputEdge omitted in config still
+	// produces the canonical 384-edge fingerprint after Validate.
+	if cfg.AI.Embed.Enabled {
+		enq.WithEmbed(embedding.Fingerprint(cfg.AI.Embed))
+	}
+	imp.SetAIEnqueuer(enq)
 
 	res, err := imp.ImportDirectory(ctx, opts.source, ingest.Options{
 		Owner:             owner,
