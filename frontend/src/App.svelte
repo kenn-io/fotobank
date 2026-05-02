@@ -12,6 +12,7 @@
   import SharesPage from "./routes/SharesPage.svelte";
   import HiddenLibrary from "./routes/HiddenLibrary.svelte";
   import SettingsAI from "./routes/SettingsAI.svelte";
+  import Search from "./routes/Search.svelte";
   import NotFound from "./routes/NotFound.svelte";
   import HiddenLockStrip from "./lib/components/HiddenLockStrip.svelte";
   import ToastStack from "./lib/components/ToastStack.svelte";
@@ -106,6 +107,11 @@
     if (route.route === "albums" || route.route === "albums.detail") return "albums";
     if (route.route === "shares") return "shares";
     if (route.route === "hidden") return "hidden";
+    // search has no sidebar entry of its own; the toolbar's search box
+    // launches it and the user navigates back via the sidebar links.
+    // Returning "" keeps the existing sections from looking active
+    // while a search is on screen.
+    if (route.route === "search") return "";
     // notfound returns "" so the sidebar highlights nothing — landing
     // on a 404 shouldn't make Library look like the active section.
     if (route.route === "notfound") return "";
@@ -149,6 +155,8 @@
       <div style="padding:20px">Settings (placeholder; theme = {themeStore.theme})</div>
     {:else if router.current.route === "settings.ai"}
       <SettingsAI />
+    {:else if router.current.route === "search"}
+      <Search />
     {:else}
       <NotFound />
     {/if}

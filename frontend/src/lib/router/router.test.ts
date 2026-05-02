@@ -163,6 +163,60 @@ describe("RouterStore.match", () => {
     const r = new RouterStore();
     expect(r.current.route).toBe("notfound");
   });
+
+  it("matches /search with no query params", () => {
+    setLocation("/search");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "search" });
+  });
+
+  it("matches /search/ (trailing slash)", () => {
+    setLocation("/search/");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "search" });
+  });
+
+  it("parses /search?q=dogs", () => {
+    setLocation("/search?q=dogs");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "search", q: "dogs" });
+  });
+
+  it("parses /search with sort, dates, location, media_type, include_hidden", () => {
+    setLocation(
+      "/search?q=trees&sort=newest&date_after=2025-01-01&date_before=2025-12-31" +
+        "&location=Paris&media_type=photo&include_hidden=true",
+    );
+    const r = new RouterStore();
+    expect(r.current).toEqual({
+      route: "search",
+      q: "trees",
+      sort: "newest",
+      date_after: "2025-01-01",
+      date_before: "2025-12-31",
+      location: "Paris",
+      media_type: "photo",
+      include_hidden: true,
+    });
+  });
+
+  it("parses repeated ?tag= params into an array", () => {
+    setLocation("/search?tag=cat&tag=outdoor");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "search", tag: ["cat", "outdoor"] });
+  });
+
+  it("drops unknown sort/media_type values silently", () => {
+    setLocation("/search?sort=random&media_type=audio&q=a");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "search", q: "a" });
+  });
+
+  it("returns notfound for /search/extra (anchored regex)", () => {
+    setLocation("/search/extra");
+    const r = new RouterStore();
+    expect(r.current.route).toBe("notfound");
+  });
 });
 
 describe("RouterStore.navigate", () => {

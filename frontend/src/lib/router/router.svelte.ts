@@ -1,5 +1,7 @@
 // frontend/src/lib/router/router.svelte.ts
 
+import type { SearchSort } from "../search/types";
+
 export type RouteMatch =
   | { route: "library" }
   | { route: "sessions" }
@@ -10,6 +12,17 @@ export type RouteMatch =
   | { route: "shares"; album_id?: string; show_revoked?: boolean }
   | { route: "media"; id: string; from?: string }
   | { route: "hidden" }
+  | {
+      route: "search";
+      q?: string;
+      sort?: SearchSort;
+      date_after?: string;
+      date_before?: string;
+      tag?: string[];
+      location?: string;
+      media_type?: "photo" | "video";
+      include_hidden?: boolean;
+    }
   | { route: "notfound"; path: string };
 
 // Anchored patterns. Order doesn't matter — each regex tests in
@@ -48,7 +61,50 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
     };
   } },
   { re: /^\/hidden\/?$/, build: () => ({ route: "hidden" as const }) },
+  // /search accepts the full filter/sort surface as query params.
+  // Unknown sort/media_type values are dropped (treated as absent) so
+  // `?sort=garbage` doesn't poison the store; the page falls back to
+  // its default. tag is repeated (`?tag=a&tag=b`) and only included
+  // when at least one value is present.
+  { re: /^\/search\/?$/, build: () => {
+    const sp = new URLSearchParams(window.location.search);
+    const q = sp.get("q");
+    const sortRaw = sp.get("sort");
+    const sort = parseSearchSort(sortRaw);
+    const dateAfter = sp.get("date_after");
+    const dateBefore = sp.get("date_before");
+    const tags = sp.getAll("tag").filter((t) => t !== "");
+    const location = sp.get("location");
+    const mediaTypeRaw = sp.get("media_type");
+    const mediaType = parseMediaType(mediaTypeRaw);
+    const includeHidden = sp.get("include_hidden") === "true";
+    return {
+      route: "search" as const,
+      ...(q != null && q !== "" ? { q } : {}),
+      ...(sort !== null ? { sort } : {}),
+      ...(dateAfter != null && dateAfter !== "" ? { date_after: dateAfter } : {}),
+      ...(dateBefore != null && dateBefore !== "" ? { date_before: dateBefore } : {}),
+      ...(tags.length > 0 ? { tag: tags } : {}),
+      ...(location != null && location !== "" ? { location } : {}),
+      ...(mediaType !== null ? { media_type: mediaType } : {}),
+      ...(includeHidden ? { include_hidden: true } : {}),
+    };
+  } },
 ];
+
+// parseSearchSort narrows ?sort= to the known SearchSort union. Unknown
+// values fall through to null so the route omits the field entirely.
+function parseSearchSort(raw: string | null): SearchSort | null {
+  if (raw === "relevance" || raw === "newest" || raw === "oldest") return raw;
+  return null;
+}
+
+// parseMediaType narrows ?media_type= to "photo" | "video". Unknown
+// values fall through to null so the route omits the field.
+function parseMediaType(raw: string | null): "photo" | "video" | null {
+  if (raw === "photo" || raw === "video") return raw;
+  return null;
+}
 
 // parseFrom narrows the ?from= query param to one of the four known
 // source kinds plus the album:<id> form. Unknown values fall through
