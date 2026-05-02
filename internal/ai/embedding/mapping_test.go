@@ -154,6 +154,17 @@ func TestMapping_VecBlobRoundTrip(t *testing.T) {
 // drops orphan vec0 rows). A subsequent allocator call MUST query the
 // vec0 table — not media_embedding_ids — so the new vec_id doesn't
 // collide with the orphan and fail the vec0 INSERT.
+//
+// We delete the HIGHEST-vec_id mapping (mids[2], vec_id=3) to ensure
+// the test can distinguish a buggy MAX(vec_id)+1 over media_embedding_ids
+// from the correct MAX(vec_id)+1 over the vec0 table:
+//
+//   - After cascade: media_embedding_ids has rows {1, 2}, vec0 has {1, 2, 3}.
+//   - Buggy allocator (mapping table) picks 3 → collision with orphan.
+//   - Correct allocator (vec0 table) picks 4 → INSERT succeeds.
+//
+// Deleting any non-highest mapping (e.g. vec_id=2) would let both
+// allocators converge on 4, masking the bug.
 func TestMapping_VecIDAllocatorAvoidsOrphanedVec0Rows(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
@@ -174,10 +185,10 @@ func TestMapping_VecIDAllocatorAvoidsOrphanedVec0Rows(t *testing.T) {
 		r.NoError(err)
 	}
 
-	// Delete media[1]. The FK cascade removes its row from
-	// media_embedding_ids but leaves vec0 row 2 in place — that's the
-	// orphan the allocator must not collide with.
-	_, err := d.WriteDB().ExecContext(ctx, `DELETE FROM media WHERE id = ?`, mids[1])
+	// Delete media[2] (the highest-vec_id mapping, vec_id=3). The FK
+	// cascade removes its row from media_embedding_ids but leaves vec0
+	// row 3 in place — the orphan the allocator must not collide with.
+	_, err := d.WriteDB().ExecContext(ctx, `DELETE FROM media WHERE id = ?`, mids[2])
 	r.NoError(err)
 
 	// Confirm the orphan exists in vec0 and the mapping is gone.
@@ -185,15 +196,16 @@ func TestMapping_VecIDAllocatorAvoidsOrphanedVec0Rows(t *testing.T) {
 	r.NoError(d.ReadDB().QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM media_embedding_ids WHERE generation_id=?`, gen.ID,
 	).Scan(&mappingCount))
-	r.Equal(2, mappingCount, "mapping row 2 cascaded out")
+	r.Equal(2, mappingCount, "mapping row 3 cascaded out")
 	r.NoError(d.ReadDB().QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT COUNT(*) FROM %s`, gen.VecTableName),
 	).Scan(&vecCount))
-	r.Equal(3, vecCount, "vec0 still has the orphan row 2")
+	r.Equal(3, vecCount, "vec0 still has the orphan row 3")
 
 	// Write a fourth vector. The allocator must pick vec_id=4 (MAX+1
-	// over the vec0 table), not 3 (which would be MAX+1 over the
-	// orphan-pruned mapping table and would collide with vec0 row 3).
+	// over the vec0 table). A buggy allocator that took MAX+1 over the
+	// orphan-pruned mapping table would pick 3, collide with the
+	// orphan, and the vec0 INSERT would fail with a UNIQUE constraint.
 	mid4 := testutil.SeedPhoto(t, d.WriteDB(), owner, "p4")
 	_, err = m.WriteVector(ctx, gen, mid4, mockVec(4))
 	r.NoError(err, "WriteVector must succeed despite the orphan vec0 row")
