@@ -57,22 +57,28 @@
   let tagTimer: ReturnType<typeof setTimeout> | undefined;
   let locTimer: ReturnType<typeof setTimeout> | undefined;
 
-  // Token-based race protection: every fetch bumps the token; the
-  // response is dropped if the token has moved on. Without this, a
-  // slow "do" request landing after a fast "dog" request could
-  // overwrite the suggestions list with stale rows.
+  // Token-based race protection: every input change bumps the token
+  // synchronously. Both the dispatch (post-debounce) and the response
+  // handler check that the captured token is still current; either gate
+  // failing means the user has typed (or cleared) since this request
+  // was queued, so its response must be dropped. Without bumping
+  // synchronously on every input change, a slow "do" response landing
+  // after the user has cleared the input would repopulate suggestions
+  // for an empty input.
   let tagFetchToken = 0;
   let locFetchToken = 0;
 
   $effect(() => {
     const value = tagInput;
+    tagFetchToken++;
+    const myToken = tagFetchToken;
     if (tagTimer !== undefined) clearTimeout(tagTimer);
     if (value.length < 1) {
       tagSuggestions = [];
       return;
     }
     tagTimer = setTimeout(() => {
-      const myToken = ++tagFetchToken;
+      if (myToken !== tagFetchToken) return;
       void client.autocompleteTags({ prefix: value }).then((res) => {
         if (myToken !== tagFetchToken) return;
         tagSuggestions = res.tags;
@@ -82,13 +88,15 @@
 
   $effect(() => {
     const value = locationInput;
+    locFetchToken++;
+    const myToken = locFetchToken;
     if (locTimer !== undefined) clearTimeout(locTimer);
     if (value.length < 1) {
       locationSuggestions = [];
       return;
     }
     locTimer = setTimeout(() => {
-      const myToken = ++locFetchToken;
+      if (myToken !== locFetchToken) return;
       void client.autocompleteLocations({ substring: value }).then((res) => {
         if (myToken !== locFetchToken) return;
         locationSuggestions = res.locations;

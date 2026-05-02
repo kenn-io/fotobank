@@ -305,4 +305,102 @@ describe("SearchFiltersPopover", () => {
       expect(list?.children.length ?? 0).toBe(0);
     });
   });
+
+  it("ignores stale tag-autocomplete responses that land after the input is cleared", async () => {
+    // Timing:
+    //   t=0    type "do"
+    //   t=200  debounce fires → autocompleteTags("do") dispatched, but
+    //          the deferred promise is still pending
+    //   t=205  user clears the input
+    //   t=210  the deferred promise resolves with {dog}
+    // Without per-input-change token bumping, the response lands and
+    // overwrites the (correctly empty) suggestions for the cleared
+    // input. The fix is to bump the fetch token synchronously on every
+    // input change so the now-stale response is dropped.
+    let resolveTag: (v: { tags: { key: string; label: string; count: number }[] }) => void = () => {};
+    const tagPromise = new Promise<{ tags: { key: string; label: string; count: number }[] }>((res) => {
+      resolveTag = res;
+    });
+    const client: SearchClient = {
+      search: vi.fn().mockResolvedValue({
+        results: [],
+        next_cursor: null,
+        has_more: false,
+        effective_sort: "relevance",
+        embedding_completeness: 0,
+        semantic_unavailable: false,
+        semantic_unavailable_reason: "",
+      }),
+      autocompleteTags: vi.fn(() => tagPromise),
+      autocompleteLocations: vi.fn().mockResolvedValue({ locations: [] }),
+    };
+    const { container } = render(SearchFiltersPopover, {
+      props: { filters: emptyFilters(), onChange: vi.fn(), client },
+    });
+    const tagInput = container.querySelector(
+      "input[data-testid='search-filter-tag-input']",
+    ) as HTMLInputElement;
+
+    await fireEvent.input(tagInput, { target: { value: "do" } });
+    await vi.advanceTimersByTimeAsync(200);
+    // The dispatched request is in flight.
+    expect(client.autocompleteTags).toHaveBeenCalledWith({ prefix: "do" });
+
+    // Clear the input BEFORE the response resolves. The synchronous
+    // token bump on input change must invalidate the in-flight request.
+    await fireEvent.input(tagInput, { target: { value: "" } });
+
+    // Now resolve the original "do" request — its response must be
+    // dropped because the token has moved on.
+    resolveTag({ tags: [{ key: "dog", label: "Dog", count: 5 }] });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Suggestions list stays empty for the cleared input.
+    const list = container.querySelector(
+      "[data-testid='search-filter-tag-suggestions']",
+    );
+    expect(list).toBeTruthy();
+    expect(list?.children.length ?? 0).toBe(0);
+  });
+
+  it("ignores stale location-autocomplete responses that land after the input is cleared", async () => {
+    let resolveLoc: (v: { locations: { label: string; count: number }[] }) => void = () => {};
+    const locPromise = new Promise<{ locations: { label: string; count: number }[] }>((res) => {
+      resolveLoc = res;
+    });
+    const client: SearchClient = {
+      search: vi.fn().mockResolvedValue({
+        results: [],
+        next_cursor: null,
+        has_more: false,
+        effective_sort: "relevance",
+        embedding_completeness: 0,
+        semantic_unavailable: false,
+        semantic_unavailable_reason: "",
+      }),
+      autocompleteTags: vi.fn().mockResolvedValue({ tags: [] }),
+      autocompleteLocations: vi.fn(() => locPromise),
+    };
+    const { container } = render(SearchFiltersPopover, {
+      props: { filters: emptyFilters(), onChange: vi.fn(), client },
+    });
+    const locInput = container.querySelector(
+      "input[data-testid='search-filter-location-input']",
+    ) as HTMLInputElement;
+
+    await fireEvent.input(locInput, { target: { value: "par" } });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(client.autocompleteLocations).toHaveBeenCalledWith({ substring: "par" });
+
+    await fireEvent.input(locInput, { target: { value: "" } });
+
+    resolveLoc({ locations: [{ label: "Paris, France", count: 7 }] });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const list = container.querySelector(
+      "[data-testid='search-filter-location-suggestions']",
+    );
+    expect(list).toBeTruthy();
+    expect(list?.children.length ?? 0).toBe(0);
+  });
 });
