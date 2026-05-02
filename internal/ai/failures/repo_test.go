@@ -57,19 +57,51 @@ func TestRecord_AccumulatesAttemptCountOnConflict(t *testing.T) {
 	r.True(found)
 	r.Equal(1, row.AttemptCount)
 
-	// Second record under the same key: attempt_count += 1.
+	// Second record under the same key with attempts=1: +1.
 	r.NoError(repo.Record(ctx, mid, ai.TaskTag, fp, ai.ErrKindTransient, "second", 1))
 	row, _, err = repo.GetForFingerprint(ctx, mid, ai.TaskTag, fp)
 	r.NoError(err)
-	r.Equal(2, row.AttemptCount, "second record must increment, not overwrite")
+	r.Equal(2, row.AttemptCount, "second record must increment by attempts=1")
 	r.Equal("second", row.LastError, "last_error must reflect the latest record")
 	r.Equal(ai.ErrKindTransient, row.LastErrorKind)
 
-	// Third record bumps to 3.
+	// Third record with attempts=1 bumps to 3.
 	r.NoError(repo.Record(ctx, mid, ai.TaskTag, fp, ai.ErrKindMalformed, "third", 1))
 	row, _, err = repo.GetForFingerprint(ctx, mid, ai.TaskTag, fp)
 	r.NoError(err)
 	r.Equal(3, row.AttemptCount)
+}
+
+// TestRecord_AccumulatesProvidedAttempts pins the contract that the
+// upsert increments by the SUPPLIED attempts argument, not by a fixed
+// constant. The chat worker (MaxJobAttempts > 1) records the per-job
+// attempt count after a job exhausts its in-job retries — it must
+// accumulate by that count, not by 1. Embed-worker callers always
+// pass attempts=1, so their behaviour is unchanged.
+func TestRecord_AccumulatesProvidedAttempts(t *testing.T) {
+	r := require.New(t)
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+	repo := failures.NewRepo(rw, ro)
+	ctx := context.Background()
+	fp := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+
+	// First record carries attempts=2 (the just-failed run had 2
+	// in-job attempts before exhausting retry budget).
+	r.NoError(repo.Record(ctx, mid, ai.TaskTag, fp, ai.ErrKindTransient, "first", 2))
+	row, found, err := repo.GetForFingerprint(ctx, mid, ai.TaskTag, fp)
+	r.NoError(err)
+	r.True(found)
+	r.Equal(2, row.AttemptCount, "first insert preserves the supplied attempts")
+
+	// Second record with attempts=3 must accumulate to 5, NOT 3 (overwrite)
+	// or 3 (fixed +1).
+	r.NoError(repo.Record(ctx, mid, ai.TaskTag, fp, ai.ErrKindTransient, "second", 3))
+	row, _, err = repo.GetForFingerprint(ctx, mid, ai.TaskTag, fp)
+	r.NoError(err)
+	r.Equal(5, row.AttemptCount,
+		"second record must accumulate by supplied attempts (2+3=5)")
 }
 
 func TestCountForFingerprint(t *testing.T) {

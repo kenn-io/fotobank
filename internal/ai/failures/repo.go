@@ -40,16 +40,18 @@ type Repo struct {
 func NewRepo(rw, ro *sql.DB) *Repo { return &Repo{rw: rw, ro: ro} }
 
 // Record upserts a failure row keyed by (media, task, fingerprint).
-// On conflict, attempt_count is INCREMENTED (not overwritten) so a
-// failure that re-enqueues — Enqueue creates a fresh ai_jobs row each
-// time, with attempts starting at 0 — accumulates the running total
-// across the whole retry history. Without the accumulator, every
-// re-enqueue would reset attempt_count to 1 and the gap-scanner's
-// failure-budget gate would never trip on a repeat-failing media.
+// On conflict, attempt_count is INCREMENTED by the supplied attempts
+// (not by a fixed 1) so a caller passing attempts=N accumulates by N.
+// Without the accumulator, every re-enqueue would reset attempt_count
+// to 1 and the gap-scanner's failure-budget gate would never trip on
+// a repeat-failing media.
 //
 // The attempts argument represents the just-failed run's attempt
-// count for the FIRST insert (when no prior row exists). On conflict
-// it is unused — the SET clause increments the prior value by 1.
+// count: the embed worker passes attempts=1 for one failed run, so
+// behavior matches the prior fixed +1 path. The chat worker
+// (MaxJobAttempts > 1) now correctly accumulates per-job-attempt
+// counts instead of always adding 1 regardless of how many in-job
+// retries occurred.
 func (r *Repo) Record(ctx context.Context, mediaID string, task ai.Task, fp ai.Fingerprint, kind ai.LastErrorKind, msg string, attempts int) error {
 	_, err := r.rw.ExecContext(ctx, `
 		INSERT INTO ai_failures
@@ -59,7 +61,7 @@ func (r *Repo) Record(ctx context.Context, mediaID string, task ai.Task, fp ai.F
 		ON CONFLICT(media_id, task, model_id, prompt_version, input_profile) DO UPDATE SET
 		  last_error      = excluded.last_error,
 		  last_error_kind = excluded.last_error_kind,
-		  attempt_count   = ai_failures.attempt_count + 1,
+		  attempt_count   = ai_failures.attempt_count + excluded.attempt_count,
 		  failed_at       = excluded.failed_at`,
 		mediaID, string(task), fp.ModelID, fp.PromptVersion, fp.InputProfile,
 		msg, string(kind), attempts, time.Now().UTC())
