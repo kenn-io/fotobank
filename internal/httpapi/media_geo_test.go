@@ -31,7 +31,7 @@ func seedMediaGPS(
 		Type:             media.TypePhoto,
 		MimeType:         "image/jpeg",
 		Path:             path,
-		OriginalFilename: path, // tests assert on this; keep it equal to path for visibility
+		OriginalFilename: "x.jpg",
 		ImportedAt:       time.Now().UTC().Truncate(time.Second),
 		Size:             100,
 		Checksum:         checksum,
@@ -63,7 +63,7 @@ func TestGeoRoute_EmptyOwnerReturnsEmptyItems(t *testing.T) {
 func TestGeoRoute_VisibleByDefault(t *testing.T) {
 	r := require.New(t)
 	fx := newHiddenMediaFixture(t)
-	seedMediaGPS(t, fx.repo, fx.owner, "visible.jpg", "cs-vis", 10.0, 20.0)
+	m := seedMediaGPS(t, fx.repo, fx.owner, "visible.jpg", "cs-vis", 10.0, 20.0)
 
 	resp, err := http.Get(fx.srv.URL + "/api/v1/media/geo")
 	r.NoError(err)
@@ -75,7 +75,7 @@ func TestGeoRoute_VisibleByDefault(t *testing.T) {
 	}
 	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
 	r.Len(body.Items, 1)
-	r.Equal("visible.jpg", body.Items[0]["original_filename"])
+	r.Equal(m.ID, body.Items[0]["id"])
 }
 
 func TestGeoRoute_IncludeHiddenWithoutUnlockReturns403(t *testing.T) {
@@ -116,11 +116,12 @@ func TestGeoRoute_IncludeHiddenWithValidClaimReturnsHidden(t *testing.T) {
 	r.ElementsMatch([]any{visible.ID, hidden.ID}, ids)
 }
 
-// Route conflict regression: GET /api/v1/media/geo MUST resolve to the
-// geo handler, not GET /api/v1/media/{id} with id="geo". huma's route
-// dispatch is order-sensitive; this test pins behavior so a future
-// reorder doesn't silently break the geo endpoint.
-func TestGeoRoute_DoesNotCollideWithGetMediaByID(t *testing.T) {
+// TestGeoRoute_ResolvesAsListNotDetail asserts that GET /api/v1/media/geo
+// resolves to the list-shaped geo handler, not GET /api/v1/media/{id}
+// with id="geo". Go 1.22+ ServeMux pattern specificity makes this
+// behavior independent of registration order, so this test pins the
+// resolution shape rather than the registration order.
+func TestGeoRoute_ResolvesAsListNotDetail(t *testing.T) {
 	r := require.New(t)
 	fx := newHiddenMediaFixture(t)
 
