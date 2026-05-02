@@ -17,7 +17,7 @@
   import type { ToastStore } from "../lib/toasts/toastStore.svelte";
   import type { AppConfigStore } from "../lib/app/appConfig.svelte";
   import type { CreateShareBody } from "../lib/share/shareTypes";
-  import { router, handleInternalLinkClick } from "../lib/router/router.svelte";
+  import { router } from "../lib/router/router.svelte";
 
   let { id, mediaStore, albumsStore, hiddenStore, toastStore, appConfig }: {
     id: string;
@@ -266,9 +266,11 @@
     <div class="action-row">
       <div class="actions">
         <button type="button" onclick={() => (renaming = true)}>Rename</button>
-        <button type="button" onclick={() => (shareAlbumOpen = true)} disabled={!detail.album || detail.album.item_count === 0}>
-          Share album
-        </button>
+        {#if appConfig.sharingEnabled}
+          <button type="button" onclick={() => (shareAlbumOpen = true)} disabled={!detail.album || detail.album.item_count === 0}>
+            Share album
+          </button>
+        {/if}
         <button type="button" class="danger" onclick={() => (confirmingDelete = true)}>Delete</button>
       </div>
       <label class="sort">
@@ -321,13 +323,9 @@
 
 {#if deleteConflictAlbumId}
   <div class="conflict-toast" role="alert">
-    This album has active shares. Revoke them in Shares first.
-    <a
-      href={`/shares?album_id=${deleteConflictAlbumId}`}
-      onclick={(e) => handleInternalLinkClick(e, `/shares?album_id=${deleteConflictAlbumId}`)}
-    >
-      View shares →
-    </a>
+    This album has active CLI shares. Run
+    <code>fotobank shares list --album {deleteConflictAlbumId}</code>
+    and revoke them first.
     <button type="button" onclick={() => (deleteConflictAlbumId = null)}>×</button>
   </div>
 {/if}
@@ -407,5 +405,11 @@
     padding: 12px 16px; border-radius: 6px; z-index: 200;
     display: flex; align-items: center; gap: 12px;
   }
-  .conflict-toast a { color: var(--accent); text-decoration: underline; }
+  .conflict-toast code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    background: var(--bg-surface);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
 </style>
