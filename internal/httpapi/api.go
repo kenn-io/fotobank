@@ -17,6 +17,7 @@ import (
 	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/service"
 	aiservice "github.com/wesm/fotobank/internal/service/ai"
+	searchsvc "github.com/wesm/fotobank/internal/service/search"
 	"github.com/wesm/fotobank/internal/service/usersettings"
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/version"
@@ -100,6 +101,10 @@ type Deps struct {
 	// so the panel can show config_disabled without the AIService poking
 	// at config.
 	AIEnabled bool
+	// Search backs GET /api/v1/search. Nil leaves the route unregistered
+	// so the OpenAPI dumper can pass an empty Deps without wiring a
+	// search service.
+	Search *searchsvc.Service
 }
 
 // New constructs the Fotobank HTTP handler. The full middleware chain is:
@@ -174,6 +179,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerHiddenAuth(api, deps.HiddenAuth, cookieCfg)
 	registerHiddenMedia(api, deps.MediaService, deps.HiddenAuth)
 	registerAIRoutes(api, deps.AIService, deps.AIVisionProbe, deps.AIEnabled)
+	registerSearchRoutes(api, deps.Search)
 	return mux, api
 }
 

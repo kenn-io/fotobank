@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/wesm/fotobank/internal/ai/embedding"
+	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/search"
 	"github.com/wesm/fotobank/internal/search/index"
@@ -165,6 +166,9 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 	// branch share the same FilterOnly call — extracted into a helper
 	// so the recursion in the relevance branch is honest.
 	if req.Query == "" {
+		if err := validateCursor(req, effSort, engineModeFilterOnly); err != nil {
+			return Response{}, err
+		}
 		hits, err := e.runFilterOnly(ctx, filterCTE, effSort, req.Limit)
 		if err != nil {
 			return Response{}, err
@@ -185,6 +189,9 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 		filterSort := effSort
 		if filterSort == string(index.SortRelevance) {
 			filterSort = string(index.SortNewest)
+		}
+		if err := validateCursor(req, filterSort, engineModeFilterOnly); err != nil {
+			return Response{}, err
 		}
 		hits, err := e.runFilterOnly(ctx, filterCTE, filterSort, req.Limit)
 		if err != nil {
@@ -239,6 +246,9 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 	}
 
 	if !semanticUnavailable && len(queryVec) > 0 {
+		if err := validateCursor(req, effSort, engineModeHybrid); err != nil {
+			return Response{}, err
+		}
 		hits, err := e.backend.FusedSearch(ctx, in)
 		if err != nil {
 			return Response{}, fmt.Errorf("fused search: %w", err)
@@ -248,12 +258,45 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 	}
 
 	// Semantic unavailable for any reason → BM25Only.
+	if err := validateCursor(req, effSort, engineModeBM25Only); err != nil {
+		return Response{}, err
+	}
 	hits, err := e.backend.BM25Only(ctx, in)
 	if err != nil {
 		return Response{}, fmt.Errorf("bm25 search: %w", err)
 	}
 	return e.buildResponse(req, hits, effSort, engineModeBM25Only,
 		semanticUnavailable, semanticUnavailableReason), nil
+}
+
+// validateCursor enforces the round-trip contract: when req.Cursor is
+// non-empty, it must decode and its ReqHash must match the freshly-
+// computed hash of the current request shape. A mismatch most likely
+// means the client changed Q / Sort / Filter between page 1 and page 2;
+// honouring the cursor anyway would page through a result set that no
+// longer matches the visible query, so we surface the violation as
+// errs.ErrInvalidArgument (route layer maps this to 400).
+//
+// v1 does not yet consume the decoded Cursor.K1 / K2 / ID for page-skip
+// math — the engine's per-mode SELECT still returns the first N rows
+// regardless. The validation here is forward-compatible so a tampered
+// cursor or a query-shift between pages cannot leak rows the next-page
+// math will eventually paginate.
+func validateCursor(req Request, effSort, mode string) error {
+	if req.Cursor == "" {
+		return nil
+	}
+	expected := NormalizedHash(NormalizedReq{
+		Q:             req.Query,
+		Sort:          effSort,
+		IncludeHidden: req.IncludeHidden,
+		EngineMode:    mode,
+		Filter:        flattenFilter(req.Filter),
+	})
+	if _, err := DecodeCursorAndCheck(req.Cursor, expected); err != nil {
+		return fmt.Errorf("validate cursor: %w: %w", errs.ErrInvalidArgument, err)
+	}
+	return nil
 }
 
 // textEmbedder is the optional capability the engine extracts from
