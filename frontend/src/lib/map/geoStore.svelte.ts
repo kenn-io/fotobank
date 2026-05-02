@@ -50,6 +50,24 @@ export class GeoStore {
   async load(includeHidden: boolean): Promise<void> {
     const myReq = ++this.requestSeq;
     this._error = null;
+    // Narrowing the visible set (include_hidden=true → include_hidden=false)
+    // must clear stale hidden-aware items synchronously: otherwise the
+    // map would re-render the previously fetched hidden markers between
+    // the request kick-off and its resolution. This bites the
+    // retry-after-error path too — the error branch leaves the cached
+    // hidden-aware items in place, and the retry's onRetryLoad drops to
+    // include_hidden=false; without this clear, the user would briefly
+    // see hidden markers again right after clicking Retry.
+    //
+    // The widening case (false → true) keeps existing items rendered
+    // during the load, since the new result is a superset and showing
+    // them avoids an unnecessary "Loading…" flash on toggle-on.
+    if (this._includedHidden && !includeHidden) {
+      this._items = [];
+      this._rawItems = [];
+      this._ready = false;
+      this._includedHidden = false;
+    }
     try {
       const opts: { params?: { query: { include_hidden: true } } } = {};
       if (includeHidden) opts.params = { query: { include_hidden: true } };
