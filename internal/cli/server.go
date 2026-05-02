@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -41,8 +42,11 @@ import (
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/owners"
+	"github.com/wesm/fotobank/internal/search/hybrid"
+	"github.com/wesm/fotobank/internal/search/index"
 	"github.com/wesm/fotobank/internal/service"
 	aiservice "github.com/wesm/fotobank/internal/service/ai"
+	searchsvc "github.com/wesm/fotobank/internal/service/search"
 	"github.com/wesm/fotobank/internal/service/usersettings"
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/shareworker"
@@ -60,6 +64,28 @@ const shutdownTimeout = 30 * time.Second
 // initial startup eviction. One eviction a day keeps the flash footprint
 // bounded without thrashing the NAS on every request.
 const flashEvictInterval = 24 * time.Hour
+
+// embedActivatorTickDefault is how often the activator re-evaluates the
+// promote-from-building condition. One minute is short enough that a
+// freshly completed embed batch can trigger promotion within seconds of
+// the eligible/embedded ratio crossing the threshold, and long enough
+// that an idle deployment isn't constantly running two SELECTs per
+// minute.
+const embedActivatorTickDefault = time.Minute
+
+// embedCompactorIntervalDefault is the cadence the compactor sweeps
+// retired embedding generations off disk. Daily is the plan default —
+// retired generations are kept for cfg.Search.RetainRetiredDays and
+// then dropped, so a longer cadence would make the compactor lag the
+// retain window.
+const embedCompactorIntervalDefault = 24 * time.Hour
+
+// embedGapScanIntervalDefault is the cadence the gap-scan tick walks the
+// catalog for media that should be embedded against the active /
+// building generation but isn't. One minute matches the chat tag/caption
+// gap scanner's spirit (15 min) but tighter — embed gap fill drives the
+// activation budget directly, so a slow tick stretches out the rollout.
+const embedGapScanIntervalDefault = time.Minute
 
 func newServerCmd() *cobra.Command {
 	var (
@@ -353,6 +379,108 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		aiProbe = realAIProbe{c: client}
 	}
 
+	// Embed pipeline + search service: collaborators are constructed
+	// here (before httpapi.New) so deps.Search reaches the route layer.
+	// The bgWG-tracked goroutines (worker, activator, compactor,
+	// gap-scan tick) are spawned later, alongside the other workers,
+	// so a probe-fail short-circuit doesn't strand half-built workers.
+	//
+	// Single-principal v1: cfg.Identity.Stub provides the owner that
+	// the activator scopes its eligible/embedded counts to and that
+	// the events emitter binds to. Other identity modes are not
+	// supported by the embed pipeline in v1 (see the embed activator's
+	// Principal field comment).
+	var (
+		embedClient   *embedding.Client
+		embedGens     *embedding.Generations
+		embedMapping  *embedding.Mapping
+		embedEvents   *httpapi.AIEmbedEvents
+		embedWorker   *embedding.Worker
+		embedActivat  *embedding.Activator
+		embedCompactr *embedding.Compactor
+		embedFP       ai.Fingerprint
+		embedPrincp   owners.Principal
+		searchService *searchsvc.Service
+	)
+	if cfg.AI.Embed.Enabled {
+		embedPrincp = owners.Principal{
+			Hub:    cfg.Identity.Stub.Hub,
+			UserID: cfg.Identity.Stub.UserID,
+		}
+		embedFP = embedding.Fingerprint(cfg.AI.Embed)
+		embedClient = embedding.NewClient(embedding.Config{
+			Endpoint:   cfg.AI.Embed.Endpoint,
+			APIKey:     cfg.AI.Embed.APIKey(),
+			Model:      cfg.AI.Embed.Model,
+			Dimension:  cfg.AI.Embed.Dimension,
+			Timeout:    cfg.AI.Embed.Timeout,
+			MaxRetries: cfg.AI.Embed.MaxRetries,
+		})
+		embedGens = embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+		embedMapping = embedding.NewMapping(d.WriteDB())
+		embedEvents = httpapi.NewAIEmbedEvents(eventBus, embedPrincp)
+		embedGens.SetEmitter(embedEvents)
+
+		// Worker. The resolver is constructed fresh here even when the
+		// AI tag/caption pipeline already built one — the chat-pipeline
+		// resolver is scoped inside its own `if cfg.AI.Enabled` block
+		// and not visible at this scope.
+		embedResolver := imginput.NewResolver(d.ReadDB(), storeLayer)
+		embedWorker = embedding.NewWorker(embedding.WorkerDeps{
+			Q:        aiQueue,
+			Gens:     embedGens,
+			Mapping:  embedMapping,
+			Client:   embedClient,
+			Resolver: embedResolver,
+			Cfg:      cfg.AI.Embed,
+			Events:   embedEvents,
+			DB:       d.WriteDB(),
+			Skipped:  aiSkipped,
+			Failures: aiFailures,
+			Metrics:  metricsObj,
+		})
+
+		// Activator. Tick is overridable for tests; the H2 Run loop
+		// awaits each Tick before scheduling the next, so a short
+		// override doesn't compound work.
+		activatorTick := embedActivatorTickDefault
+		if raw := os.Getenv("FOTOBANK_TEST_EMBED_ACTIVATOR_TICK"); raw != "" {
+			if dur, err := time.ParseDuration(raw); err == nil && dur > 0 {
+				activatorTick = dur
+			} else if err != nil {
+				fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_EMBED_ACTIVATOR_TICK parse error: %v\n", err)
+			}
+		}
+		embedActivat = embedding.NewActivator(d.ReadDB(), embedGens, aiAck, embedEvents, metricsObj, embedding.ActivatorCfg{
+			Principal:    embedPrincp,
+			ThresholdPct: cfg.Search.ActivationThresholdPct,
+			Tick:         activatorTick,
+		})
+
+		// Compactor. retainRetired is the configured "keep retired
+		// generations for N days" preference; the per-tick interval
+		// (how often we sweep) is independent and defaults to daily.
+		retainRetired := time.Duration(cfg.Search.RetainRetiredDays) * 24 * time.Hour
+		embedCompactr = embedding.NewCompactor(d.WriteDB(), retainRetired)
+
+		// Search service: backend + engine + auth-scoped wrapper.
+		// Backend is constructed with embedding.Row{} (zero value); the
+		// engine probes for the active generation per request via
+		// embedGens.FindActive and routes BM25Only / FilterOnly when
+		// none exists — neither path consults the backend's baked-in
+		// generation row.
+		searchBackend := index.NewSQLiteVecBackend(d.ReadDB(), embedding.Row{})
+		searchEngine := hybrid.NewEngine(searchBackend, embedClient, embedGens, cfg.Search)
+		searchService = searchsvc.New(
+			searchEngine,
+			userSettingsAIInspection{svc: usersettingsSvc},
+			tagLabelResolver{ro: d.ReadDB()},
+			hiddenCheckAdapter{},
+			embedGens,
+			d.ReadDB(),
+		)
+	}
+
 	apiHandler, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: idp,
 		OwnerService:     ownerSvc,
@@ -381,6 +509,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		AIService:       aiSvc,
 		AIVisionProbe:   aiProbe,
 		AIEnabled:       cfg.AI.Enabled,
+		Search:          searchService,
 	})
 	if err != nil {
 		return err
@@ -637,6 +766,54 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		}
 		bgWG.Go(func() {
 			runAIBackground(sigCtx, aiQueue, aiGap, tagFingerprint, captionFingerprint, cfg, opts.stderr)
+		})
+	}
+
+	// Embed pipeline workers. The probe at line ~426 already validated
+	// the endpoint, so a short-lived endpoint outage at boot has been
+	// surfaced. Each goroutine is bgWG-tracked so a crash during
+	// shutdown can't race the deferred d.Close.
+	if cfg.AI.Embed.Enabled {
+		bgWG.Go(func() {
+			if err := embedWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
+				fmt.Fprintln(opts.stderr, "embed worker exited:", err)
+			}
+		})
+		bgWG.Go(func() {
+			if err := embedActivat.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
+				fmt.Fprintln(opts.stderr, "embed activator exited:", err)
+			}
+		})
+		// Compactor sweeps daily by default. The interval is overridable
+		// via FOTOBANK_TEST_EMBED_COMPACTOR_INTERVAL so e2e tests can
+		// observe a sweep without waiting 24h. Per-tick failures are
+		// logged but do not crash the server — the next tick re-evaluates
+		// from scratch.
+		compactorInterval := embedCompactorIntervalDefault
+		if raw := os.Getenv("FOTOBANK_TEST_EMBED_COMPACTOR_INTERVAL"); raw != "" {
+			if dur, err := time.ParseDuration(raw); err == nil && dur > 0 {
+				compactorInterval = dur
+			} else if err != nil {
+				fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_EMBED_COMPACTOR_INTERVAL parse error: %v\n", err)
+			}
+		}
+		bgWG.Go(func() {
+			runEmbedCompactor(sigCtx, embedCompactr, compactorInterval, opts.stderr)
+		})
+		// Gap-scan tick: walks the catalog every minute looking for
+		// media that should be embedded against the active or building
+		// generation. The 1-minute default keeps the activation budget
+		// moving on a fresh deploy without hammering the catalog.
+		gapInterval := embedGapScanIntervalDefault
+		if raw := os.Getenv("FOTOBANK_TEST_EMBED_GAPSCAN_INTERVAL"); raw != "" {
+			if dur, err := time.ParseDuration(raw); err == nil && dur > 0 {
+				gapInterval = dur
+			} else if err != nil {
+				fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_EMBED_GAPSCAN_INTERVAL parse error: %v\n", err)
+			}
+		}
+		bgWG.Go(func() {
+			runEmbedGapScan(sigCtx, aiGap, embedGens, embedPrincp, embedFP, gapInterval, opts.stderr)
 		})
 	}
 
@@ -1073,4 +1250,216 @@ func runAIBackground(
 			}
 		}
 	}
+}
+
+// runEmbedCompactor drives the K1 sweep on a daily ticker. SweepOnce
+// errors are logged and ignored — a transient lock-contention spike or a
+// stuck DROP TABLE on one row must not crash the server. Subsequent
+// ticks re-evaluate the residue; partial progress from earlier ticks is
+// already committed and durable.
+func runEmbedCompactor(
+	ctx context.Context,
+	c *embedding.Compactor,
+	interval time.Duration,
+	stderr io.Writer,
+) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if _, err := c.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				fmt.Fprintln(stderr, "embed compactor sweep:", err)
+			}
+		}
+	}
+}
+
+// runEmbedGapScan drives the embed gap-fill repair tick. Each tick
+// resolves the right generation (the building generation if one exists,
+// otherwise the active generation), and walks the catalog enqueueing any
+// (media, embed) pair that has no mapping for the chosen generation,
+// no ai_skipped row, and no in-flight job.
+//
+// The building generation takes priority because the worker is actively
+// trying to fill it and the activator promote condition reads from its
+// embedded_count. Once the activator promotes the building gen, the
+// next tick falls through to the active branch — by which point the
+// promoted gen and the active gen are the same row, so the scan
+// continues against the right target without missing a beat.
+//
+// principal scopes the SQL to the configured stub-mode owner. fp is
+// the canonical embed fingerprint derived from cfg.AI.Embed at boot;
+// the gap scan re-enqueues against fp so a mid-rollout fp drift is
+// surfaced as a fresh batch under the new fingerprint.
+func runEmbedGapScan(
+	ctx context.Context,
+	gs *gapscanner.Scanner,
+	gens *embedding.Generations,
+	principal owners.Principal,
+	fp ai.Fingerprint,
+	interval time.Duration,
+	stderr io.Writer,
+) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			gen, err := resolveGapScanGeneration(ctx, gens)
+			if err != nil {
+				if !errors.Is(err, context.Canceled) {
+					fmt.Fprintln(stderr, "embed gap scan: resolve generation:", err)
+				}
+				continue
+			}
+			if gen == nil {
+				// No building or active generation — nothing to scan
+				// against. The worker creates the first building row on
+				// its first claim, so an empty catalog remains a no-op
+				// until activity arrives.
+				continue
+			}
+			if _, err := gs.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
+				Owner:           principal,
+				Generation:      *gen,
+				Fingerprint:     fp,
+				AckAllowsHidden: false,
+				RetryBudget:     5,
+				Limit:           200,
+			}); err != nil && !errors.Is(err, context.Canceled) {
+				fmt.Fprintln(stderr, "embed gap scan:", err)
+			}
+		}
+	}
+}
+
+// resolveGapScanGeneration picks the embedding generation the gap scan
+// targets this tick: building if any, otherwise active. Returns
+// (nil, nil) when neither exists — a fresh deploy that hasn't yet
+// claimed its first job. The Generations registry's nil-or-row
+// contract is preserved here so the caller can no-op cleanly.
+func resolveGapScanGeneration(ctx context.Context, gens *embedding.Generations) (*embedding.Row, error) {
+	if b, err := gens.FindBuilding(ctx); err != nil {
+		return nil, fmt.Errorf("find building: %w", err)
+	} else if b != nil {
+		return b, nil
+	}
+	a, err := gens.FindActive(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("find active: %w", err)
+	}
+	return a, nil
+}
+
+// hiddenCheckAdapter satisfies searchsvc.HiddenChecker. The contract
+// (see service.go::HiddenChecker) is fail-closed: nil claim or an
+// expired or wrong-principal claim returns false. Used by the search
+// service to gate IncludeHidden=true requests; the upstream
+// httpapi/search handler has already validated the caller's
+// UnlockClaim cookie via WithHiddenUnlock middleware, so this check
+// is defense-in-depth (a future caller could bypass that middleware).
+type hiddenCheckAdapter struct{}
+
+func (hiddenCheckAdapter) Valid(claim *hidden.UnlockClaim, caller owners.Principal) bool {
+	if claim == nil {
+		return false
+	}
+	if claim.Principal != caller {
+		return false
+	}
+	if !claim.ExpiresAt.IsZero() && time.Now().UTC().After(claim.ExpiresAt) {
+		return false
+	}
+	return true
+}
+
+// aiInspectionSettingKey is the canonical key the user-settings store
+// holds the per-caller AI Inspection toggle under. Reading the key
+// here keeps the canonical name in one place rather than hardcoding
+// it at every callsite — the search service consumes it via
+// userSettingsAIInspection below, and any future feature that wants
+// to check the same flag can read the same constant.
+const aiInspectionSettingKey = "ai.inspection"
+
+// userSettingsAIInspection adapts *usersettings.Service onto
+// searchsvc.UserSettingsRepo. The interface only needs the boolean
+// "is AI Inspection enabled?" answer for the caller; we read the
+// "ai.inspection" key, treat any non-`false`/empty JSON value as
+// truthy, and default to false on a missing row. This matches the
+// fakeSettings shape used in service_test.go and keeps the gate
+// fail-closed under unexpected payloads.
+type userSettingsAIInspection struct{ svc *usersettings.Service }
+
+func (u userSettingsAIInspection) AIInspectionEnabled(ctx context.Context, caller owners.Principal) (bool, error) {
+	val, ok, err := u.svc.Get(ctx, caller, aiInspectionSettingKey)
+	if err != nil {
+		return false, fmt.Errorf("read ai inspection setting: %w", err)
+	}
+	if !ok {
+		return false, nil
+	}
+	// Setting values are stored as JSON literals. The toggle is a
+	// boolean; treat the canonical "true" as on, everything else as
+	// off. A future migration may split the setting into a struct;
+	// until then the comparison stays simple and fail-closed for any
+	// unexpected payload.
+	return strings.TrimSpace(val) == "true", nil
+}
+
+// tagLabelResolver satisfies searchsvc.TagResolver by canonicalising
+// chip labels into tag_keys via media_tags. The mapping is one-to-one
+// with case-folded tag_label as the join key; an unresolvable label
+// passes through unchanged so the engine's exact-match filter yields
+// zero rows rather than a silent drop.
+type tagLabelResolver struct{ ro *sql.DB }
+
+// LabelsToKeys looks up each label's canonical tag_key from the
+// caller's media_tags. The query joins through ai_results and media so
+// only labels attached to the caller's own library participate; this
+// matches AutocompleteTags' owner-scoping and prevents cross-owner
+// label collisions.
+//
+// Empty input returns an empty slice without hitting the DB. Labels
+// that don't resolve to a known key fall through verbatim so the
+// engine's tag_key match still runs (and yields zero hits) — the
+// autocomplete pipeline only commits chips for known labels, so the
+// fall-through is a defensive case rather than a routine path.
+func (r tagLabelResolver) LabelsToKeys(ctx context.Context, caller owners.Principal, labels []string) ([]string, error) {
+	if len(labels) == 0 {
+		return nil, nil
+	}
+	out := make([]string, len(labels))
+	// Fall-through default: if the lookup fails to resolve a label, we
+	// pass it through unchanged so the engine still runs.
+	copy(out, labels)
+	// One round-trip per label is fine for v1: chip popovers commit
+	// a few labels at a time. A bulk IN-list would be a follow-up if
+	// the workload changes.
+	for i, label := range labels {
+		var key string
+		err := r.ro.QueryRowContext(ctx, `
+			SELECT mt.tag_key FROM media_tags mt
+			 JOIN ai_results ar ON ar.id = mt.result_id
+			 JOIN media m ON m.id = ar.media_id
+			 WHERE ar.task = 'tag' AND ar.status = 'active'
+			   AND m.owner_hub = ? AND m.owner_user_id = ?
+			   AND mt.tag_label = ?
+			 LIMIT 1`,
+			caller.Hub, caller.UserID, label,
+		).Scan(&key)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// No match — keep the fall-through value (the label).
+		case err != nil:
+			return nil, fmt.Errorf("resolve tag label %q: %w", label, err)
+		default:
+			out[i] = key
+		}
+	}
+	return out, nil
 }

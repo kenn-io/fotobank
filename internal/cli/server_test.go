@@ -3,23 +3,56 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/wesm/fotobank/internal/ai"
+	"github.com/wesm/fotobank/internal/ai/embedding"
+	"github.com/wesm/fotobank/internal/ai/jobs"
 	"github.com/wesm/fotobank/internal/cli"
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
 )
+
+// jsonUnmarshal is a thin alias used by newTestEmbedEndpoint so we
+// don't carry a doc-only encoding/json reference at the package level
+// for callers that don't need the dep — the helper is the only user.
+func jsonUnmarshal(data []byte, v any) error { return json.Unmarshal(data, v) }
+
+// lockedBuffer wraps a bytes.Buffer with a mutex so Write and String
+// can be called from different goroutines without racing. Used as the
+// server's stderr sink in tests where the test reads stderr while the
+// server is still running (e.g. diagnosing a boot failure).
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
 
 func TestServerRespondsToHealthz(t *testing.T) {
 	r := require.New(t)
@@ -474,4 +507,334 @@ admin_listen = "127.0.0.1:0"
 		&out, &eout)
 	r.Equal(1, code)
 	r.Contains(eout.String(), "header")
+}
+
+// newTestEmbedEndpoint stands up an httptest.Server that emulates the
+// OpenAI /v1/embeddings shape: it returns one dim-sized vector per
+// input regardless of modality. Probe + Worker calls all succeed; the
+// vector contents are arbitrary because the wiring tests never check
+// retrieval quality. Returns (server, base URL with /v1 suffix).
+func newTestEmbedEndpoint(t *testing.T, dim int) (*httptest.Server, string) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, err := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Decode the request body to count input entries. The OpenAI
+		// envelope guarantees `input` is an array of strings; we don't
+		// care about the contents, just the length.
+		var reqBody struct {
+			Input []string `json:"input"`
+		}
+		// Prefer a real JSON parser over manual scanning so a
+		// well-formed body with embedded brackets/commas (e.g. base64
+		// data URLs) doesn't trip the response builder.
+		if err := jsonUnmarshal(body, &reqBody); err != nil {
+			http.Error(w, "decode: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		n := len(reqBody.Input)
+		if n == 0 {
+			n = 1
+		}
+		// Build a single-dim-sized vector of zeroes and emit one entry
+		// per input.
+		var vec strings.Builder
+		vec.WriteByte('[')
+		for i := range dim {
+			if i > 0 {
+				vec.WriteByte(',')
+			}
+			vec.WriteString("0.1")
+		}
+		vec.WriteByte(']')
+
+		var out strings.Builder
+		out.WriteString(`{"data":[`)
+		for i := range n {
+			if i > 0 {
+				out.WriteByte(',')
+			}
+			fmt.Fprintf(&out, `{"embedding":%s,"index":%d}`, vec.String(), i)
+		}
+		out.WriteString(`],"model":"test-embed"}`)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, out.String())
+	}))
+	t.Cleanup(srv.Close)
+	return srv, srv.URL + "/v1"
+}
+
+// TestServer_StartsEmbedSubsystemWhenEnabled boots a server with
+// [ai.embed].enabled=true and asserts three things:
+//
+//  1. The server boots and binds successfully (probe passes against
+//     the test embedding endpoint).
+//  2. /api/v1/search returns 200 — i.e. deps.Search was wired into the
+//     httpapi handler.
+//  3. The embed worker's Run loop has claimed at least one
+//     pending TaskEmbed job — proving the worker goroutine is alive
+//     and pulling from ai_jobs.
+//
+// We seed an owner, a thumb-ready media row, an ack row (so the
+// worker doesn't park on the hidden gate at the activator), and one
+// pending embed job. Polling the job's status until it leaves
+// 'pending' is the strongest available "worker is alive" signal in a
+// short test budget.
+func TestServer_StartsEmbedSubsystemWhenEnabled(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	nasRoot := filepath.Join(tmp, "nas")
+	r.NoError(os.MkdirAll(filepath.Join(nasRoot, "h", "u"), 0o700))
+
+	// Stand up a fake embed endpoint so the boot probe passes.
+	const dim = 8
+	_, base := newTestEmbedEndpoint(t, dim)
+
+	cfgPath := filepath.Join(tmp, "c.toml")
+	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
+[nas]
+root = %q
+[flash]
+root = %q
+[identity]
+mode = "stub"
+[identity.stub]
+hub = "h"
+user_id = "u"
+storage_key = "h/u"
+[http]
+listen_address = "127.0.0.1:0"
+[ai]
+enabled = false
+[ai.embed]
+enabled = true
+model = "test-embed"
+endpoint = %q
+dimension = 8
+input_edge = 384
+batch_size = 8
+worker_concurrency = 1
+idle_poll = "50ms"
+timeout = "5s"
+max_retries = 1
+[search]
+retain_retired_days = 30
+[observability]
+admin_listen = "127.0.0.1:0"
+`, nasRoot, filepath.Join(tmp, "flash"), base), 0o600))
+
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_CONFIG", cfgPath)
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	// Seed one media + ack + a pending embed job. The worker should
+	// claim the job within a few poll ticks and flip its status away
+	// from 'pending'. We don't care about the eventual terminal state
+	// (ready storage path is a placeholder so the resolver may fail,
+	// landing the row in 'failed' or 'blocked') — only that something
+	// other than 'pending' is observed.
+	d, err := db.Open(dbPath)
+	r.NoError(err)
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	_, err = d.WriteDB().ExecContext(context.Background(),
+		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "h/u", time.Now().UTC())
+	r.NoError(err)
+	mid := uuid.NewString()
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	r.NoError(repo.Insert(context.Background(), media.Media{
+		ID: mid, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "h/u/" + mid + ".jpg", ImportedAt: time.Now().UTC(),
+		Size: 1, Checksum: mid, ThumbStatus: "ready",
+	}))
+	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
+	fp := embedding.Fingerprint(ai.EmbedConfig{Model: "test-embed", InputEdge: 384})
+	r.NoError(q.Enqueue(context.Background(), mid, ai.TaskEmbed, fp))
+	// Capture the job id so we can poll its row directly without
+	// guessing the queue's id-generation strategy.
+	var jobID string
+	r.NoError(d.ReadDB().QueryRowContext(context.Background(),
+		`SELECT id FROM ai_jobs WHERE media_id=? AND task='embed'`, mid).Scan(&jobID))
+	_ = d.Close()
+
+	addrFile := filepath.Join(tmp, "addr")
+	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	errCh := make(chan int, 1)
+	// stderrSink is a sync-safe sink for the server's stderr — the
+	// test reads it during startup-failure diagnostics, so a plain
+	// bytes.Buffer would race with the server goroutine still writing.
+	stderrSink := &lockedBuffer{}
+	go func() {
+		var out bytes.Buffer
+		errCh <- cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &out, stderrSink)
+	}()
+
+	// Wait for boot.
+	var resolved string
+	for range 200 {
+		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
+			resolved = strings.TrimSpace(string(b))
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	r.NotEmpty(resolved, "server never published its bind address: stderr=%q", stderrSink.String())
+
+	// 1. /api/v1/search must answer (search service was wired into deps.Search).
+	resp, err := http.Get("http://" + resolved + "/api/v1/search?q=")
+	r.NoError(err)
+	_ = resp.Body.Close()
+	r.Equal(http.StatusOK, resp.StatusCode,
+		"search route must be registered when embed is enabled")
+
+	// 2. Embed worker must have claimed the seeded job (its status must
+	//    leave 'pending' within a few poll ticks).
+	d2, err := db.Open(dbPath)
+	r.NoError(err)
+	defer func() { _ = d2.Close() }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	var status string
+	for time.Now().Before(deadline) {
+		err := d2.ReadDB().QueryRowContext(context.Background(),
+			`SELECT status FROM ai_jobs WHERE id=?`, jobID).Scan(&status)
+		r.NoError(err)
+		if status != "pending" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	r.NotEqual("pending", status,
+		"embed worker did not claim the pending job; got status=%q", status)
+
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(5 * time.Second):
+		r.Fail("server did not shut down within 5s")
+	}
+}
+
+// TestServer_LeavesEmbedSubsystemDormantWhenDisabled boots a server
+// with [ai.embed].enabled=false and asserts:
+//
+//  1. The server boots successfully (no probe runs, no embed wiring).
+//  2. /api/v1/search returns 404 — deps.Search is nil so the route is
+//     not registered.
+//  3. A pre-seeded TaskEmbed job stays in 'pending' for the duration
+//     of the boot — confirming no embed worker is consuming the queue.
+func TestServer_LeavesEmbedSubsystemDormantWhenDisabled(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	nasRoot := filepath.Join(tmp, "nas")
+	r.NoError(os.MkdirAll(filepath.Join(nasRoot, "h", "u"), 0o700))
+
+	cfgPath := filepath.Join(tmp, "c.toml")
+	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
+[nas]
+root = %q
+[flash]
+root = %q
+[identity]
+mode = "stub"
+[identity.stub]
+hub = "h"
+user_id = "u"
+storage_key = "h/u"
+[http]
+listen_address = "127.0.0.1:0"
+[ai]
+enabled = false
+[ai.embed]
+enabled = false
+[search]
+retain_retired_days = 30
+[observability]
+admin_listen = "127.0.0.1:0"
+`, nasRoot, filepath.Join(tmp, "flash")), 0o600))
+
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_CONFIG", cfgPath)
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	// Seed an owner, media, and a pending embed job. With embed
+	// disabled, no worker should claim it.
+	d, err := db.Open(dbPath)
+	r.NoError(err)
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	_, err = d.WriteDB().ExecContext(context.Background(),
+		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, "h/u", time.Now().UTC())
+	r.NoError(err)
+	mid := uuid.NewString()
+	repoM := media.NewRepo(d.WriteDB(), d.ReadDB())
+	r.NoError(repoM.Insert(context.Background(), media.Media{
+		ID: mid, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "h/u/" + mid + ".jpg", ImportedAt: time.Now().UTC(),
+		Size: 1, Checksum: mid, ThumbStatus: "ready",
+	}))
+	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
+	fp := embedding.Fingerprint(ai.EmbedConfig{Model: "any", InputEdge: 384})
+	r.NoError(q.Enqueue(context.Background(), mid, ai.TaskEmbed, fp))
+	var jobID string
+	r.NoError(d.ReadDB().QueryRowContext(context.Background(),
+		`SELECT id FROM ai_jobs WHERE media_id=? AND task='embed'`, mid).Scan(&jobID))
+	_ = d.Close()
+
+	addrFile := filepath.Join(tmp, "addr")
+	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	errCh := make(chan int, 1)
+	go func() {
+		var out, eout bytes.Buffer
+		errCh <- cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &out, &eout)
+	}()
+
+	// Wait for boot.
+	var resolved string
+	for range 200 {
+		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
+			resolved = strings.TrimSpace(string(b))
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	r.NotEmpty(resolved, "server never published its bind address")
+
+	// 1. /api/v1/search returns 404 — search service is not registered.
+	resp, err := http.Get("http://" + resolved + "/api/v1/search?q=")
+	r.NoError(err)
+	_ = resp.Body.Close()
+	r.Equal(http.StatusNotFound, resp.StatusCode,
+		"search route must be unregistered when embed is disabled")
+
+	// 2. Pending embed job stays pending — no worker is consuming it.
+	// Wait briefly to give a hypothetical leaked worker time to claim;
+	// the job must remain pending throughout.
+	time.Sleep(300 * time.Millisecond)
+	d2, err := db.Open(dbPath)
+	r.NoError(err)
+	defer func() { _ = d2.Close() }()
+	var status string
+	r.NoError(d2.ReadDB().QueryRowContext(context.Background(),
+		`SELECT status FROM ai_jobs WHERE id=?`, jobID).Scan(&status))
+	r.Equal("pending", status,
+		"embed job must stay pending when embed is disabled; got status=%q", status)
+
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(5 * time.Second):
+		r.Fail("server did not shut down within 5s")
+	}
 }
