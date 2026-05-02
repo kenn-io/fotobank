@@ -112,7 +112,7 @@ func WriteVectorTx(ctx context.Context, tx *sql.Tx, gen Row, mediaID string, vec
 	}
 	if _, err := tx.ExecContext(ctx,
 		fmt.Sprintf(`INSERT INTO %s (vec_id, embedding) VALUES (?, vec_f32(?))`, gen.VecTableName),
-		nextVecID, vecToBlob(vec),
+		nextVecID, VecToBlob(vec),
 	); err != nil {
 		return 0, fmt.Errorf("insert vec row: %w", err)
 	}
@@ -158,10 +158,13 @@ func DeleteForGenerationMediaTx(ctx context.Context, tx *sql.Tx, gen Row, mediaI
 	return -1, nil
 }
 
-// vecToBlob packs vec into a little-endian float32 byte slice for
+// VecToBlob packs vec into a little-endian float32 byte slice for
 // vec_f32(?). Mirrors the sqlite-vec FLOAT[N] storage layout: 4 bytes
 // per element, IEEE-754 single precision, little-endian on disk.
-func vecToBlob(vec []float32) []byte {
+//
+// Exported so the read side (search/index) can pack a query vector for
+// `embedding MATCH vec_f32(?)` using the same packing as the writer.
+func VecToBlob(vec []float32) []byte {
 	buf := make([]byte, 4*len(vec))
 	for i, v := range vec {
 		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(v))
