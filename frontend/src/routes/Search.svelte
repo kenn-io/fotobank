@@ -75,6 +75,48 @@
   // break the loop without coupling the two effects.
   let lastHydratedKey = $state("");
 
+  // lastSyncedKey is the dual: when the URL-sync $effect writes a URL,
+  // it records the key it just wrote. The hydration effect, which
+  // re-runs once the navigate() call mutates router.current, recognises
+  // its own echo and skips the setter cascade. lastHydratedKey alone
+  // wasn't sufficient because the URL-sync writeback runs AFTER the
+  // hydration effect and can produce a key the hydration effect hasn't
+  // observed yet (e.g. fresh mount → setters → URL writeback → router
+  // change → hydration: the round-trip key is novel to the hydration
+  // effect's lastHydratedKey state).
+  let lastSyncedKey = $state("");
+
+  // computeKey serialises the canonical search shape into a string the
+  // two effects compare against. The shape mirrors what the URL would
+  // encode: q, sort, date filters, tag labels (already strings, sorted
+  // for stable order), location label, media_type, include_hidden.
+  // Sort defaults to "relevance" on both sides so the empty-state
+  // /search and a freshly-hydrated relevance store produce the same
+  // key. Tag arrays are sorted because route → tag arrives in URL
+  // order while store → tag is in user-add order; without sorting the
+  // round-trip would diverge.
+  function computeKey(shape: {
+    q: string;
+    sort: SearchSort;
+    dateAfter?: string;
+    dateBefore?: string;
+    tagLabels: string[];
+    location?: string;
+    mediaType?: "photo" | "video";
+    includeHidden: boolean;
+  }): string {
+    return JSON.stringify({
+      q: shape.q,
+      sort: shape.sort,
+      date_after: shape.dateAfter ?? "",
+      date_before: shape.dateBefore ?? "",
+      tag: [...shape.tagLabels].sort(),
+      location: shape.location ?? "",
+      media_type: shape.mediaType ?? "",
+      include_hidden: shape.includeHidden,
+    });
+  }
+
   // filtersFromMatch projects the route match into the SearchFilters
   // shape the store expects. It is only called inside the hydration
   // effect with a narrowed `match.route === "search"` pre-condition,
@@ -127,17 +169,25 @@
     if (!inspectionStore.loaded) return;
     const m = router.current;
     if (m.route !== "search") return;
-    const key = JSON.stringify({
+    const key = computeKey({
       q: m.q ?? "",
-      sort: m.sort ?? "",
-      date_after: m.date_after ?? "",
-      date_before: m.date_before ?? "",
-      tag: m.tag ?? [],
-      location: m.location ?? "",
-      media_type: m.media_type ?? "",
-      include_hidden: m.include_hidden ?? false,
+      sort: m.sort ?? "relevance",
+      ...(m.date_after !== undefined ? { dateAfter: m.date_after } : {}),
+      ...(m.date_before !== undefined ? { dateBefore: m.date_before } : {}),
+      tagLabels: m.tag ?? [],
+      ...(m.location !== undefined ? { location: m.location } : {}),
+      ...(m.media_type !== undefined ? { mediaType: m.media_type } : {}),
+      includeHidden: m.include_hidden ?? false,
     });
     if (key === lastHydratedKey) return;
+    if (key === lastSyncedKey) {
+      // The URL-sync effect just wrote this key; the resulting
+      // router.current change is our own echo. Record the hydration
+      // marker so future runs short-circuit without re-issuing the
+      // setter cascade, and bail.
+      lastHydratedKey = key;
+      return;
+    }
     lastHydratedKey = key;
     const initialQuery = m.q ?? "";
     const initialSort: SearchSort = m.sort ?? "relevance";
@@ -156,6 +206,24 @@
   // is exactly /search with no query string.
   $effect(() => {
     if (!hydrated) return;
+    const key = computeKey({
+      q: s.query,
+      sort: s.sort,
+      ...(s.filters.dateAfter !== undefined && s.filters.dateAfter !== ""
+        ? { dateAfter: s.filters.dateAfter }
+        : {}),
+      ...(s.filters.dateBefore !== undefined && s.filters.dateBefore !== ""
+        ? { dateBefore: s.filters.dateBefore }
+        : {}),
+      tagLabels: s.filters.tags.map((t) => t.tag_label),
+      ...(s.filters.location !== undefined && s.filters.location.location_label !== ""
+        ? { location: s.filters.location.location_label }
+        : {}),
+      ...(s.filters.mediaType !== undefined ? { mediaType: s.filters.mediaType } : {}),
+      includeHidden: s.filters.includeHidden === true,
+    });
+    if (key === lastSyncedKey) return;
+    lastSyncedKey = key;
     const params = new URLSearchParams();
     if (s.query !== "") params.set("q", s.query);
     if (s.sort !== "relevance") params.set("sort", s.sort);

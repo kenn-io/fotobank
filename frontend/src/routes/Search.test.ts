@@ -274,6 +274,55 @@ describe("Search.svelte", () => {
     expect(store.fetchNextPage).toHaveBeenCalled();
   });
 
+  it("URL-sync echo does not re-hydrate the store", async () => {
+    // The URL-sync $effect writes /search?q=trees via router.navigate,
+    // which calls syncFromLocation() and mutates router.current. The
+    // hydration $effect then observes the new router.current and would
+    // run setFilters/setSort/setQuery again unless lastSyncedKey
+    // recognises it as the writeback's own echo. This test mounts with
+    // a pre-seeded store, lets the URL-sync run real navigate() so
+    // router.current changes, and asserts the post-writeback hydration
+    // does not call setQuery again.
+    //
+    // Use the real router.navigate (no spy) so the URL writeback
+    // actually mutates router.current. The setFilters/setSort/setQuery
+    // counts seen by the test reflect (a) the initial hydration cycle
+    // for the seeded URL, and (b) any echo-induced re-run.
+    const store = makeStore({
+      query: "trees",
+      sort: "newest",
+      filters: { tags: [] },
+    });
+    const inspectionStore = makeInspectionStore();
+    render(Search, { props: { store, client: makeClient(), inspectionStore } });
+    await inspectionStore.load();
+    flushSync();
+    await tick();
+    // After the initial hydration + URL-sync round-trip, the store's
+    // setters were called exactly once each from the seeded URL match
+    // (which carried no q/sort, so setFilters({tags:[]}), setSort
+    // ("relevance"), setQuery("") were issued). The URL-sync then
+    // wrote /search?q=trees&sort=newest from the seeded store state,
+    // which mutated router.current. The hydration effect must have
+    // suppressed its own echo: setQuery should not have been called a
+    // second time with a different argument coming from the
+    // writeback.
+    const setQueryCalls = (store.setQuery as ReturnType<typeof vi.fn>).mock.calls.length;
+    const setSortCalls = (store.setSort as ReturnType<typeof vi.fn>).mock.calls.length;
+    const setFiltersCalls = (store.setFilters as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    // Route the URL-sync writeback again: bump the URL to itself by
+    // re-running syncFromLocation (no-op for the URL but exercises
+    // the hydration effect once more). After the round-trip, no
+    // additional setter calls should have been made.
+    router.syncFromLocation();
+    flushSync();
+    await tick();
+    expect((store.setQuery as ReturnType<typeof vi.fn>).mock.calls.length).toBe(setQueryCalls);
+    expect((store.setSort as ReturnType<typeof vi.fn>).mock.calls.length).toBe(setSortCalls);
+    expect((store.setFilters as ReturnType<typeof vi.fn>).mock.calls.length).toBe(setFiltersCalls);
+  });
+
   it("waits for AIInspection to load before the first search", async () => {
     // The AIInspectionStore's GET resolves on a microtask, which
     // historically meant the hydration $effect fired BEFORE load()
