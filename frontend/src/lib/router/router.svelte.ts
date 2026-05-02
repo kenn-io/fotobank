@@ -106,13 +106,13 @@ function parseMediaType(raw: string | null): "photo" | "video" | null {
   return null;
 }
 
-// parseFrom narrows the ?from= query param to one of the four known
+// parseFrom narrows the ?from= query param to one of the five known
 // source kinds plus the album:<id> form. Unknown values fall through
 // to undefined so /media/:id?from=garbage behaves the same as no
 // from at all (the lightbox treats absent from as direct-detail).
 function parseFrom(raw: string | null): string | null {
   if (raw === null) return null;
-  if (raw === "library" || raw === "sessions" || raw === "hidden") return raw;
+  if (raw === "library" || raw === "sessions" || raw === "hidden" || raw === "search") return raw;
   if (raw.startsWith("album:") && raw.length > "album:".length) return raw;
   return null;
 }

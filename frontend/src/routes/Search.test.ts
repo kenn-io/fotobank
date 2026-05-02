@@ -7,6 +7,7 @@ import type { SearchClient } from "../lib/search/client";
 import type { SearchFilters, SearchResult, SearchSort } from "../lib/search/types";
 import { router } from "../lib/router/router.svelte";
 import { AIInspectionStore } from "../lib/ai/inspectionStore.svelte";
+import { lightboxSession } from "../lib/lightbox/lightboxSession.svelte";
 
 // VirtualGrid wires ResizeObserver + IntersectionObserver in $effect
 // blocks. jsdom ships neither. The default IntersectionObserver stub
@@ -394,5 +395,78 @@ describe("Search.svelte", () => {
     expect(lastCall).toBeDefined();
     const params = lastCall![0] as { explain?: boolean };
     expect(params.explain).toBe(true);
+  });
+
+  it("opens a result in the lightbox with score_components on the snapshot", async () => {
+    // V2 wiring: clicking a search result should capture the
+    // score_components map onto the lightboxSession snapshot so the
+    // metadata drawer's Search relevance row reads from it. Mount
+    // Search with two results — one carrying score_components, one
+    // without — fire a plain click on the first cell, and assert:
+    //   1. The session source is { kind: "search" }.
+    //   2. scoreComponentsById carries the first hit's components.
+    //   3. router.navigate was called with /media/m1?from=search.
+    //
+    // Use a real selection store reset (clear from any prior test) so
+    // useSelection narrowing doesn't kick in unexpectedly.
+    lightboxSession.close();
+    const navigate = vi.spyOn(router, "navigate").mockImplementation(() => {});
+    const sc1 = {
+      rrf: 0.0156,
+      bm25: 8.42,
+      vector: 0.81,
+      rank_bm25: 3,
+      rank_vector: 7,
+    };
+    const store = makeStore({
+      query: "trees",
+      results: [
+        {
+          media_id: "m1",
+          media_type: "photo",
+          timestamp: "2025-06-01T00:00:00Z",
+          imported_at: "2025-06-01T00:00:00Z",
+          width: 1600,
+          height: 1200,
+          thumb_version: 1,
+          score_components: sc1,
+        },
+        {
+          media_id: "m2",
+          media_type: "photo",
+          timestamp: "2025-06-02T00:00:00Z",
+          imported_at: "2025-06-02T00:00:00Z",
+          width: 1600,
+          height: 1200,
+          thumb_version: 1,
+        },
+      ],
+    });
+    const { container } = render(Search, {
+      props: { store, client: makeClient(), inspectionStore: makeInspectionStore() },
+    });
+    flushSync();
+    await tick();
+
+    const cell = container.querySelector<HTMLAnchorElement>(
+      "a[data-media-id='m1']",
+    );
+    expect(cell).not.toBeNull();
+    cell!.click();
+
+    // The snapshot is captured synchronously inside the click handler;
+    // assert immediately. snapshot.scoreComponentsById is a defensive
+    // copy of the route's $derived map.
+    const snap = lightboxSession.snapshot;
+    expect(snap).not.toBeNull();
+    expect(snap!.source).toEqual({ kind: "search" });
+    expect(snap!.navIds).toEqual(["m1", "m2"]);
+    expect(snap!.returnFocusMediaId).toBe("m1");
+    const map = snap!.scoreComponentsById;
+    expect(map).toBeDefined();
+    expect(map!.get("m1")).toEqual(sc1);
+    expect(map!.has("m2")).toBe(false);
+
+    expect(navigate).toHaveBeenCalledWith("/media/m1?from=search");
   });
 });

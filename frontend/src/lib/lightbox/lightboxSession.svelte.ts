@@ -6,12 +6,23 @@
 // are unmounted during lightbox display, so the snapshot is the only
 // durable handoff between source and lightbox.
 
+import type { SearchScoreComponents } from "../search/types";
+
 export type LightboxSource =
   | { kind: "library" }
   | { kind: "sessions" }
   | { kind: "album"; albumId: string }
-  | { kind: "hidden" };
+  | { kind: "hidden" }
+  | { kind: "search" };
 
+// scoreComponentsById is the per-media diagnostics payload threaded
+// from the Search route into the lightbox. Only the search source
+// populates it; other source kinds leave it undefined and the
+// lightbox surfaces no relevance row. The map is keyed by media_id —
+// values come from SearchResult.score_components on the wire and are
+// only present when the request was issued with explain=true AND the
+// AI Inspection toggle was on. Hits without score_components are
+// simply absent from the map; the lookup miss renders no row.
 export type LightboxSnapshot = {
   source: LightboxSource;
   navIds: string[];
@@ -19,6 +30,7 @@ export type LightboxSnapshot = {
   scrollY: number;
   returnFocusMediaId: string | null;
   returnHref: string;
+  scoreComponentsById?: Map<string, SearchScoreComponents>;
 };
 
 export class LightboxSessionStore {
@@ -30,7 +42,20 @@ export class LightboxSessionStore {
     // after handoff (e.g. infinite-scroll appends, hide/unhide).
     // Capture by value so the snapshot is a true point-in-time
     // record, immune to source-side mutation.
-    this.snapshot = { ...s, navIds: [...s.navIds] };
+    //
+    // scoreComponentsById is similarly cloned so a re-fetch in the
+    // search store (which atomically replaces the map) doesn't mutate
+    // the snapshot's view. Values inside the map (the score component
+    // records) are immutable plain objects on the wire, so a shallow
+    // Map clone is sufficient.
+    const next: LightboxSnapshot = {
+      ...s,
+      navIds: [...s.navIds],
+      ...(s.scoreComponentsById !== undefined
+        ? { scoreComponentsById: new Map(s.scoreComponentsById) }
+        : {}),
+    };
+    this.snapshot = next;
   }
 
   close(): void {

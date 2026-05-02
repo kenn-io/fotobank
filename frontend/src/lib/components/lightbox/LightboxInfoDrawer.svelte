@@ -1,9 +1,18 @@
 <!-- frontend/src/lib/components/lightbox/LightboxInfoDrawer.svelte -->
 <script lang="ts">
   import type { Media } from "../../media/mediaStore.svelte";
+  import type { SearchScoreComponents } from "../../search/types";
   import LightboxMetadata from "./LightboxMetadata.svelte";
 
-  let { media, onClose }: { media: Media; onClose: () => void } = $props();
+  // scoreComponents passes the per-media diagnostics payload through
+  // to LightboxMetadata. Only the search-context lightbox supplies it;
+  // omitting the prop (every non-search caller) keeps the metadata
+  // panel unchanged.
+  let { media, scoreComponents, onClose }: {
+    media: Media;
+    scoreComponents?: SearchScoreComponents;
+    onClose: () => void;
+  } = $props();
 </script>
 
 <aside class="lb-drawer" aria-label="Photo info">
@@ -11,7 +20,11 @@
     <button type="button" aria-label="Close info" onclick={onClose}>×</button>
   </header>
   <div class="lb-drawer-body">
-    <LightboxMetadata {media} />
+    {#if scoreComponents}
+      <LightboxMetadata {media} {scoreComponents} />
+    {:else}
+      <LightboxMetadata {media} />
+    {/if}
   </div>
 </aside>
 

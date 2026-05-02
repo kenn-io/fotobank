@@ -62,6 +62,14 @@
       switch (source.kind) {
         case "library":
         case "sessions":
+        case "search":
+          // Hide from a search-context lightbox: the hidden row drops
+          // out of the visible mediaStore for any other surface that
+          // shares the cache. The search store's own results array
+          // ages out on the next refetch (a hidden row no longer
+          // matches include_hidden=false); we don't proactively prune
+          // it here because the search route may be unmounted by the
+          // time hide resolves.
           mediaStore.removeMany(succeeded);
           break;
         case "album":

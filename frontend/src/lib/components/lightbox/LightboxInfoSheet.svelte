@@ -1,10 +1,19 @@
 <!-- frontend/src/lib/components/lightbox/LightboxInfoSheet.svelte -->
 <script lang="ts">
   import type { Media } from "../../media/mediaStore.svelte";
+  import type { SearchScoreComponents } from "../../search/types";
   import BottomSheet from "../BottomSheet.svelte";
   import LightboxMetadata from "./LightboxMetadata.svelte";
 
-  let { media, onClose }: { media: Media; onClose: () => void } = $props();
+  // scoreComponents passes the per-media diagnostics payload through
+  // to LightboxMetadata. Only the search-context lightbox supplies it;
+  // omitting the prop (every non-search caller) keeps the metadata
+  // panel unchanged.
+  let { media, scoreComponents, onClose }: {
+    media: Media;
+    scoreComponents?: SearchScoreComponents;
+    onClose: () => void;
+  } = $props();
   // Per-instance stable id. Earlier we tied this to media.id, but
   // BottomSheet registers its modalStack entry on mount and pops
   // using the captured id on destroy — if the sheet stays mounted
@@ -16,5 +25,9 @@
 </script>
 
 <BottomSheet id={sheetId} {onClose} snap="peek">
-  <LightboxMetadata {media} />
+  {#if scoreComponents}
+    <LightboxMetadata {media} {scoreComponents} />
+  {:else}
+    <LightboxMetadata {media} />
+  {/if}
 </BottomSheet>

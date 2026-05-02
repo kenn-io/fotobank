@@ -100,12 +100,27 @@
         return from === "hidden";
       case "album":
         return from === `album:${src.albumId}`;
+      case "search":
+        return from === "search";
       default: {
         const _exhaustive: never = src;
         void _exhaustive;
         return false;
       }
     }
+  });
+
+  // Per-active-id score components. The search snapshot carries a
+  // Map<mediaID, scoreComponents>; the active id's entry (if any) is
+  // forwarded to the info drawer/sheet so LightboxMetadata can render
+  // its Search relevance row. Other source kinds leave the map
+  // undefined → the lookup returns undefined → the row is omitted.
+  // Read only when the snapshot agrees with `from`; a stale snapshot
+  // for a different source must not leak its score components into
+  // the active view.
+  const activeScoreComponents = $derived.by(() => {
+    if (!fromMatchesSession || session === null) return undefined;
+    return session.scoreComponentsById?.get(id);
   });
 
   // ---- Media data ------------------------------------------------
@@ -274,6 +289,14 @@
             source: { kind: "album", albumId },
           };
           reconstructionState = "ok";
+        } else if (from === "search") {
+          // Search context isn't reconstructible from the URL alone:
+          // the result list depends on the original query, filters,
+          // and explain flag, none of which travel in /media/:id.
+          // Fall through to the DirectMediaDetail fallback (the user
+          // landed deep into a search result and the snapshot is gone).
+          reconstructionState = "failed";
+          return;
         } else if (from === "hidden") {
           const ids: string[] = [];
           let offset = 0;
@@ -343,10 +366,14 @@
       : (reconstructed?.navIds ?? []),
   );
   const nav = $derived(computeNav(navIds, id));
+  // returnHref defaults: when reconstruction fails or is impossible
+  // (search context — see the search arm of the reconstruction
+  // effect) fall back to a route that matches the `from` param when
+  // possible. Otherwise /library is the safe last resort.
   const returnHref = $derived(
     fromMatchesSession && session !== null
       ? session.returnHref
-      : (reconstructed?.returnHref ?? "/library"),
+      : (reconstructed?.returnHref ?? (from === "search" ? "/search" : "/library")),
   );
   const effectiveSource = $derived<LightboxSource>(
     fromMatchesSession && session !== null
@@ -583,7 +610,21 @@
     />
     {#if infoOpen}
       {#if isMobile}
-        <LightboxInfoSheet {media} onClose={() => (infoOpen = false)} />
+        {#if activeScoreComponents}
+          <LightboxInfoSheet
+            {media}
+            scoreComponents={activeScoreComponents}
+            onClose={() => (infoOpen = false)}
+          />
+        {:else}
+          <LightboxInfoSheet {media} onClose={() => (infoOpen = false)} />
+        {/if}
+      {:else if activeScoreComponents}
+        <LightboxInfoDrawer
+          {media}
+          scoreComponents={activeScoreComponents}
+          onClose={() => (infoOpen = false)}
+        />
       {:else}
         <LightboxInfoDrawer {media} onClose={() => (infoOpen = false)} />
       {/if}

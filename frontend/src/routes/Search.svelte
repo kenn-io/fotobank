@@ -26,6 +26,9 @@
   import type { EventsStore } from "../lib/events/eventsStore.svelte";
   import { AIInspectionStore } from "../lib/ai/inspectionStore.svelte";
   import { api } from "../lib/api/client";
+  import { lightboxSession } from "../lib/lightbox/lightboxSession.svelte";
+  import { captureMainScrollY } from "../lib/lightbox/scrollRestore.svelte";
+  import { selection } from "../lib/selection/selectionStore.svelte";
 
   // Tests inject a stub store via the optional `store` prop; production
   // callers omit it and the route constructs its own backed by the
@@ -318,6 +321,37 @@
   function onLoadMore(): void {
     void s.fetchNextPage();
   }
+
+  // openMedia captures the search-context source state into
+  // lightboxSession before navigating to /media/:id?from=search.
+  // navIds walks the current results in display order (selection
+  // narrowing mirrors Library/Albums/Sessions when a multi-selection
+  // covers the clicked id). scoreComponentsByMediaId travels with the
+  // snapshot so LightboxMetadata can surface the Search relevance row
+  // for whichever id is active in the lightbox.
+  //
+  // Search reconstruction isn't possible from the URL alone: the
+  // result list depends on q/filters/explain that don't appear in
+  // /media/:id. Direct entry to a /media/:id?from=search URL falls
+  // through to the DirectMediaDetail fallback in Lightbox.svelte —
+  // that's the explicit failure mode for the search reconstruction
+  // path.
+  function openMedia(id: string): void {
+    const all = s.results.map((r) => r.media_id);
+    const sel = selection.ids;
+    const useSelection = sel.size > 1 && sel.has(id);
+    const navIds = useSelection ? all.filter((x) => sel.has(x)) : all;
+    lightboxSession.open({
+      source: { kind: "search" },
+      navIds,
+      selected: useSelection,
+      scrollY: captureMainScrollY(),
+      returnFocusMediaId: id,
+      returnHref: window.location.pathname + window.location.search,
+      scoreComponentsById: scoreComponentsByMediaId,
+    });
+    router.navigate(`/media/${id}?from=search`);
+  }
 </script>
 
 <div class="search-page">
@@ -338,6 +372,7 @@
       {months}
       {onLoadMore}
       timelineChrome={false}
+      onOpenMedia={openMedia}
     >
       {#snippet cellOverlay(m)}
         {@const comps = scoreComponentsByMediaId.get(m.id)}

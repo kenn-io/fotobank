@@ -59,6 +59,15 @@ describe("RouterStore.match", () => {
     expect(r.current).toEqual({ route: "media", id: "y", from: "hidden" });
   });
 
+  it("parses ?from=search on /media/:id", () => {
+    // Search is the fifth source kind: a search-context lightbox uses
+    // ?from=search so Lightbox.svelte's fromMatchesSession can agree
+    // with a snapshot.source.kind of "search".
+    setLocation("/media/m1?from=search");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "media", id: "m1", from: "search" });
+  });
+
   it("parses ?from=album:abc on /media/:id", () => {
     setLocation("/media/abc?from=album:my-album-123");
     const r = new RouterStore();
