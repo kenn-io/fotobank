@@ -39,3 +39,67 @@ func (b *EventBus) EmitAIHealthChanged(p owners.Principal, ev AIHealthChangedEve
 	}
 	b.PublishAutoID(p, EventNameAIHealthChanged, data)
 }
+
+// EmitAIEmbedCompleted publishes an ai.embed.completed event to p.
+// Wired into the embed worker via the AIEmbedEvents adapter — fires
+// once per claim after commitBatch persists the mapping. A marshal
+// error here is silently dropped: the mapping row is durable in
+// media_embedding_ids regardless of SSE delivery, and the SPA falls
+// back to polling on reconnect (same posture as EmitAICompleted).
+func (b *EventBus) EmitAIEmbedCompleted(p owners.Principal, ev AIEmbedCompletedEvent) {
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	b.PublishAutoID(p, EventNameAIEmbedCompleted, data)
+}
+
+// EmitAIEmbedFailed publishes an ai.embed.failed event to p. Wired
+// into the embed worker's recordTerminalFailure path; only fires
+// after MarkFailed succeeds so a reclaimed lease (jobs.ErrClaimLost)
+// doesn't surface a phantom failure under a claim some other worker
+// now owns.
+func (b *EventBus) EmitAIEmbedFailed(p owners.Principal, ev AIEmbedFailedEvent) {
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	b.PublishAutoID(p, EventNameAIEmbedFailed, data)
+}
+
+// EmitAIEmbedGenerationCreated publishes an ai.embed.generation_created
+// event to p. Fires from Generations.FindOrCreateBuilding only on the
+// actual INSERT path — the fast-path lookup that returns an existing
+// row does not emit (the row was created by a prior call).
+func (b *EventBus) EmitAIEmbedGenerationCreated(p owners.Principal, ev AIEmbedGenerationEvent) {
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	b.PublishAutoID(p, EventNameAIEmbedGenerationCreated, data)
+}
+
+// EmitAIEmbedGenerationActivated publishes an ai.embed.generation_activated
+// event to p. Fires from the activator's Tick after a successful
+// PromoteFromBuilding (Plan H1). The event payload carries the
+// promoted row's id and fingerprint so listeners can route by either.
+func (b *EventBus) EmitAIEmbedGenerationActivated(p owners.Principal, ev AIEmbedGenerationEvent) {
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	b.PublishAutoID(p, EventNameAIEmbedGenerationActivated, data)
+}
+
+// EmitAIEmbedGenerationRetired publishes an ai.embed.generation_retired
+// event to p. Fires from Generations.Promote / PromoteFromBuilding
+// only when the retire-prior-active UPDATE actually changed a row —
+// "no prior active" (the normal first-promotion case) doesn't emit
+// because there's no retired row to announce.
+func (b *EventBus) EmitAIEmbedGenerationRetired(p owners.Principal, ev AIEmbedGenerationEvent) {
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	b.PublishAutoID(p, EventNameAIEmbedGenerationRetired, data)
+}

@@ -99,21 +99,34 @@ func (f *fakeResolver) ResolvePreviewJPEG(_ context.Context, _ string) ([]byte, 
 	return f.defaultJPEG, f.defaultStatus, nil
 }
 
-// recordingEmitter captures EmitAIEmbedCompleted / EmitAIEmbedFailed /
-// EmitAIEmbedGenerationActivated calls so happy-path tests can confirm
-// the worker (or activator) fires the post-commit event for every
-// successful claim or activation.
+// recordingEmitter captures EmitAIEmbed* calls so happy-path tests can
+// confirm the worker, activator, and generations registry fire the
+// post-commit events for every successful claim, activation, creation,
+// and retirement. failedKinds appends the string-form of each failed
+// emit's errorKind so per-classification expectations stay assertable
+// without tracking multiple counters.
 type recordingEmitter struct {
-	completed atomic.Int32
-	failed    atomic.Int32
-	activated atomic.Int32
+	completed   atomic.Int32
+	failed      atomic.Int32
+	created     atomic.Int32
+	activated   atomic.Int32
+	retired     atomic.Int32
+	mu          sync.Mutex
+	failedKinds []string
 }
 
 func (r *recordingEmitter) EmitAIEmbedCompleted(_ string, _ string) { r.completed.Add(1) }
-func (r *recordingEmitter) EmitAIEmbedFailed(_ string, _ string)    { r.failed.Add(1) }
+func (r *recordingEmitter) EmitAIEmbedFailed(_ string, _ string, kind string) {
+	r.failed.Add(1)
+	r.mu.Lock()
+	r.failedKinds = append(r.failedKinds, kind)
+	r.mu.Unlock()
+}
+func (r *recordingEmitter) EmitAIEmbedGenerationCreated(_ int64, _ string) { r.created.Add(1) }
 func (r *recordingEmitter) EmitAIEmbedGenerationActivated(_ int64, _ string) {
 	r.activated.Add(1)
 }
+func (r *recordingEmitter) EmitAIEmbedGenerationRetired(_ int64, _ string) { r.retired.Add(1) }
 
 // dim768N returns n distinct 768-dim vectors. Each vector starts with a
 // distinct float so the worker's positional alignment can be verified
@@ -950,7 +963,9 @@ func TestWorker_SuccessfulRetryClearsPriorFailureRow(t *testing.T) {
 // TestWorker_TransientErrorMarksAllFailed exercises the full-batch
 // failure path: the embeddings endpoint returns a transient error, so
 // every claim in the batch is marked failed with the transient kind
-// and zero mappings are written.
+// and zero mappings are written. The Failed emit must carry the
+// "transient" kind through to listeners so the SPA can colour-code
+// without re-deriving from the message.
 func TestWorker_TransientErrorMarksAllFailed(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
@@ -959,7 +974,8 @@ func TestWorker_TransientErrorMarksAllFailed(t *testing.T) {
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 	client := &fakeEmbedClient{err: errors.New("HTTP 500: boom")}
-	w, q, gens, _ := newTestWorker(t, d, resolver, client, &recordingEmitter{})
+	emitter := &recordingEmitter{}
+	w, q, gens, _ := newTestWorker(t, d, resolver, client, emitter)
 
 	fp := embedFP()
 	r.NoError(q.Enqueue(ctx, mid, ai.TaskEmbed, fp))
@@ -969,6 +985,11 @@ func TestWorker_TransientErrorMarksAllFailed(t *testing.T) {
 	r.NoError(err)
 	r.Equal(0, embeddedCount(t, d, gen.ID))
 	r.Equal("failed", jobStatus(t, d, mid, ai.TaskEmbed))
+	r.EqualValues(1, emitter.failed.Load())
+	emitter.mu.Lock()
+	r.Equal([]string{string(ai.ErrKindTransient)}, emitter.failedKinds,
+		"failed emit must carry the transient kind through to listeners")
+	emitter.mu.Unlock()
 }
 
 // flakyQueue wraps a real *jobs.Queue and fails the first ClaimBatch

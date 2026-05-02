@@ -45,14 +45,38 @@ type Row struct {
 // the ro pool; the slow path (insert + CREATE VIRTUAL TABLE) sequences
 // on the rw pool inside one transaction so a rollback unwinds the row
 // and the vec0 table together.
+//
+// events is the post-commit lifecycle hook (Task P1): created fires
+// from FindOrCreateBuilding's insert branch, retired fires from
+// Promote / PromoteFromBuilding when the retire-prior-active UPDATE
+// actually changed a row. activated lives on the activator (Task H1)
+// because it's the activator's tick that decides when to promote.
+// Defaults to NoopEmitter so the simplest test wiring stays terse;
+// production wiring uses SetEmitter to bind the SSE adapter.
 type Generations struct {
-	rw *sql.DB
-	ro *sql.DB
+	rw     *sql.DB
+	ro     *sql.DB
+	events EventEmitter
 }
 
 // NewGenerations builds a Generations registry over the supplied pools.
+// Events default to NoopEmitter; production callers should follow up
+// with SetEmitter to wire the SSE bus adapter.
 func NewGenerations(rw, ro *sql.DB) *Generations {
-	return &Generations{rw: rw, ro: ro}
+	return &Generations{rw: rw, ro: ro, events: NoopEmitter{}}
+}
+
+// SetEmitter installs the post-commit event emitter on the registry.
+// Callers in production wiring (cmd/fotobank server) bind the
+// httpapi.AIEmbedEvents adapter here so generation lifecycle changes
+// reach the SSE channel. Passing nil resets to the no-op default —
+// useful for tests that want to exercise the registry with events
+// disabled mid-run.
+func (g *Generations) SetEmitter(e EventEmitter) {
+	if e == nil {
+		e = NoopEmitter{}
+	}
+	g.events = e
 }
 
 // generationColumns is the canonical SELECT-list for embedding_generations
@@ -199,7 +223,62 @@ func (g *Generations) FindOrCreateBuilding(ctx context.Context, fp ai.Fingerprin
 	if err != nil {
 		return Row{}, fmt.Errorf("read back: %w", err)
 	}
+
+	// Emit the lifecycle event only on the actual INSERT path. The
+	// fast-path lookup and the in-tx re-find both return early above
+	// so this point is unreachable when we returned an existing row;
+	// every reach here corresponds to one new embedding_generations
+	// row hitting disk.
+	g.events.EmitAIEmbedGenerationCreated(row.ID, row.Fingerprint)
 	return row, nil
+}
+
+// retirePriorActiveTx captures any currently-active row, retires it
+// inside tx, and returns (id, fingerprint, retired) where retired is
+// true iff a prior active row existed and was actually flipped to
+// 'retired'. The SELECT runs inside the tx so a concurrent admin
+// retire can't make us emit a phantom retired event under an id that
+// some other writer already moved.
+//
+// Used by Promote and PromoteFromBuilding so the lifecycle event fires
+// in lockstep with the schema change — emit only when n > 0, with the
+// id/fingerprint captured before the row was retired.
+func retirePriorActiveTx(ctx context.Context, tx *sql.Tx, now time.Time) (int64, string, bool, error) {
+	var (
+		priorID int64
+		priorFP string
+	)
+	row := tx.QueryRowContext(ctx,
+		`SELECT id, fingerprint FROM embedding_generations WHERE state='active'`,
+	)
+	switch err := row.Scan(&priorID, &priorFP); {
+	case errors.Is(err, sql.ErrNoRows):
+		// "No prior active" — the normal state on first promotion. The
+		// retire UPDATE is still issued for symmetry with prior
+		// behaviour (it's a no-op), but no event fires.
+	case err != nil:
+		return 0, "", false, fmt.Errorf("find prior active: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE embedding_generations
+		    SET state='retired', retired_at=?
+		  WHERE state='active'`,
+		now,
+	)
+	if err != nil {
+		return 0, "", false, fmt.Errorf("retire prior active: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, "", false, fmt.Errorf("retire prior active rows affected: %w", err)
+	}
+	// Only emit if both signals agree: a prior row was found AND the
+	// UPDATE matched. Either side alone could mean a concurrent
+	// transition snuck through under WAL between the SELECT and the
+	// UPDATE, in which case the other writer owns the announcement.
+	retired := priorID != 0 && n > 0
+	return priorID, priorFP, retired, nil
 }
 
 // Promote retires any current active generation and promotes id to
@@ -212,6 +291,11 @@ func (g *Generations) FindOrCreateBuilding(ctx context.Context, fp ai.Fingerprin
 // shape (activated_at set, retired_at NULL). Returns errs.ErrNotFound
 // when id does not match any row, rolling back so a prior active row
 // remains active.
+//
+// Emits EmitAIEmbedGenerationRetired on commit when a prior active row
+// was actually retired (RowsAffected > 0); emission after Commit means
+// a listener observing the event sees a row that has already been
+// retired in the DB.
 func (g *Generations) Promote(ctx context.Context, id int64) error {
 	tx, err := g.rw.BeginTx(ctx, nil)
 	if err != nil {
@@ -220,15 +304,9 @@ func (g *Generations) Promote(ctx context.Context, id int64) error {
 	defer func() { _ = tx.Rollback() }()
 
 	now := time.Now().UTC()
-	// Retire any currently-active row. RowsAffected=0 here is fine —
-	// "no prior active" is the normal state on first promotion.
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE embedding_generations
-		    SET state='retired', retired_at=?
-		  WHERE state='active'`,
-		now,
-	); err != nil {
-		return fmt.Errorf("retire prior active: %w", err)
+	priorID, priorFP, retired, err := retirePriorActiveTx(ctx, tx, now)
+	if err != nil {
+		return err
 	}
 	// Activate the target row. Clearing retired_at keeps the row in the
 	// canonical active shape even if it was previously retired and is
@@ -255,6 +333,13 @@ func (g *Generations) Promote(ctx context.Context, id int64) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
+	// Post-commit: emit the retired-row event only if we actually
+	// retired one. Emission outside the tx means a transient bus error
+	// can't roll back the schema change — the lifecycle row is durable
+	// in the DB regardless of SSE delivery.
+	if retired {
+		g.events.EmitAIEmbedGenerationRetired(priorID, priorFP)
+	}
 	return nil
 }
 
@@ -279,13 +364,9 @@ func (g *Generations) PromoteFromBuilding(ctx context.Context, id int64) error {
 	defer func() { _ = tx.Rollback() }()
 
 	now := time.Now().UTC()
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE embedding_generations
-		    SET state='retired', retired_at=?
-		  WHERE state='active'`,
-		now,
-	); err != nil {
-		return fmt.Errorf("retire prior active: %w", err)
+	priorID, priorFP, retired, err := retirePriorActiveTx(ctx, tx, now)
+	if err != nil {
+		return err
 	}
 	res, err := tx.ExecContext(ctx,
 		`UPDATE embedding_generations
@@ -308,6 +389,10 @@ func (g *Generations) PromoteFromBuilding(ctx context.Context, id int64) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
+	}
+	// Post-commit retired emit, gated on RowsAffected — see Promote.
+	if retired {
+		g.events.EmitAIEmbedGenerationRetired(priorID, priorFP)
 	}
 	return nil
 }

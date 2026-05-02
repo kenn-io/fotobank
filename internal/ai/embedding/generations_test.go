@@ -311,6 +311,116 @@ func TestGenerations_PromoteRetiredRowClearsRetiredAt(t *testing.T) {
 	r.NotNil(active.ActivatedAt)
 }
 
+// TestGenerations_FindOrCreateBuilding_EmitsCreatedOnInsert confirms
+// the lifecycle event fires only on the actual INSERT path. The first
+// FindOrCreateBuilding inserts a row (one event); subsequent calls
+// with the same fingerprint return the existing row via the fast path
+// (no event). Wired in Task P1 — gating on insert-only is what keeps
+// the SSE channel from announcing fingerprints that already exist.
+//
+// The partial unique index embedding_generations_one_building forbids
+// two simultaneous building rows, so the second-fingerprint INSERT
+// requires promoting the first row to active first. That mirrors the
+// production lifecycle: a fresh fingerprint always means the prior
+// generation has been promoted already.
+func TestGenerations_FindOrCreateBuilding_EmitsCreatedOnInsert(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	emitter := &recordingEmitter{}
+	g.SetEmitter(emitter)
+
+	row, err := g.FindOrCreateBuilding(ctx, fpEmbed1(), 768)
+	r.NoError(err)
+	r.EqualValues(1, emitter.created.Load(), "first insert must emit one created event")
+
+	// Second call hits the fast-path lookup → no insert, no emit.
+	row2, err := g.FindOrCreateBuilding(ctx, fpEmbed1(), 768)
+	r.NoError(err)
+	r.Equal(row.ID, row2.ID)
+	r.EqualValues(1, emitter.created.Load(),
+		"fast-path lookup must not re-emit created for an existing row")
+
+	// Promote the existing building row out of the way; the partial
+	// unique index forbids two simultaneous building rows.
+	r.NoError(g.Promote(ctx, row.ID))
+
+	// Distinct fingerprint → new INSERT → second emit.
+	_, err = g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v2", InputProfile: "p"}, 768)
+	r.NoError(err)
+	r.EqualValues(2, emitter.created.Load(),
+		"a distinct fingerprint must emit a new created event")
+
+	// retired stayed at zero — Promote on the only-ever-active row had
+	// no prior active to retire.
+	r.EqualValues(0, emitter.retired.Load())
+}
+
+// TestGenerations_Promote_EmitsRetiredOnlyWhenPriorActive confirms the
+// retired emit gates on the retire-prior-active UPDATE actually
+// changing a row. The first Promote (no prior active) must NOT emit;
+// the second Promote (with v1 active) must emit exactly once for v1.
+//
+// Sequencing the second FindOrCreateBuilding AFTER the first Promote
+// is mandatory — the partial unique index
+// embedding_generations_one_building forbids two simultaneous building
+// rows.
+func TestGenerations_Promote_EmitsRetiredOnlyWhenPriorActive(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	emitter := &recordingEmitter{}
+	g.SetEmitter(emitter)
+
+	a, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+
+	// First Promote: no prior active → no retired event.
+	r.NoError(g.Promote(ctx, a.ID))
+	r.EqualValues(0, emitter.retired.Load(),
+		"first promote with no prior active must not emit retired")
+
+	b, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v2", InputProfile: "p2"}, 768)
+	r.NoError(err)
+
+	// Second Promote: v1 is active → it gets retired in the same tx,
+	// and the post-commit emit fires exactly once.
+	r.NoError(g.Promote(ctx, b.ID))
+	r.EqualValues(1, emitter.retired.Load(),
+		"second promote must retire v1 and emit exactly one retired event")
+}
+
+// TestGenerations_PromoteFromBuilding_EmitsRetired covers the same
+// retired-emit gating on the activator-side path (PromoteFromBuilding).
+// The retired emit fires only when a prior active exists.
+func TestGenerations_PromoteFromBuilding_EmitsRetired(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	emitter := &recordingEmitter{}
+	g.SetEmitter(emitter)
+
+	a, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, a.ID))
+	r.EqualValues(0, emitter.retired.Load(),
+		"first promote had no prior active so no retired event")
+
+	b, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v2", InputProfile: "p2"}, 768)
+	r.NoError(err)
+	r.NoError(g.PromoteFromBuilding(ctx, b.ID))
+	r.EqualValues(1, emitter.retired.Load(),
+		"PromoteFromBuilding with v1 active must emit exactly one retired event")
+}
+
 // TestGenerations_FindOrCreateBuilding_ConcurrentSafety confirms the
 // idempotency contract under a fan-out of N goroutines all racing to
 // create the same fingerprint. The contention model relies on the rw

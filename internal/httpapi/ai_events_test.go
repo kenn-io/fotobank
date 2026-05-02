@@ -94,3 +94,55 @@ func TestPublishAutoIDIsMonotonicPerPrincipal(t *testing.T) {
 	bobID := bus.PublishAutoID(bob, "test", json.RawMessage(`{}`))
 	r.EqualValues(1, bobID, "Bob's per-principal counter starts fresh")
 }
+
+// TestAIEmbedCompletedEventMarshal pins the wire shape of the per-job
+// completion payload (snake_case keys, no omitempty on either field —
+// listeners always need both to route the event).
+func TestAIEmbedCompletedEventMarshal(t *testing.T) {
+	r := require.New(t)
+	ev := httpapi.AIEmbedCompletedEvent{
+		MediaID:     "m1",
+		Fingerprint: "siglip2||jpeg-384-q85-metadata-stripped-embed-v1",
+	}
+	b, err := json.Marshal(ev)
+	r.NoError(err)
+	s := string(b)
+	r.Contains(s, `"media_id":"m1"`)
+	r.Contains(s, `"fingerprint":"siglip2||jpeg-384-q85-metadata-stripped-embed-v1"`)
+}
+
+// TestAIEmbedFailedEventMarshal pins the failure-payload wire shape:
+// the SPA reads error_kind to colour-code the failure surface, so it
+// must be a top-level key (not nested) and present even on transient
+// kinds where the message is uninformative.
+func TestAIEmbedFailedEventMarshal(t *testing.T) {
+	r := require.New(t)
+	ev := httpapi.AIEmbedFailedEvent{
+		MediaID:     "m1",
+		Fingerprint: "siglip2||jpeg-384-q85-metadata-stripped-embed-v1",
+		ErrorKind:   "provider_4xx",
+	}
+	b, err := json.Marshal(ev)
+	r.NoError(err)
+	s := string(b)
+	r.Contains(s, `"media_id":"m1"`)
+	r.Contains(s, `"fingerprint":"siglip2||jpeg-384-q85-metadata-stripped-embed-v1"`)
+	r.Contains(s, `"error_kind":"provider_4xx"`)
+}
+
+// TestAIEmbedGenerationEventMarshal pins the wire shape of the shared
+// lifecycle payload (created / activated / retired). The fingerprint is
+// the canonical Fingerprint.String() value, the id is the
+// embedding_generations row id; both keys flow through every variant.
+func TestAIEmbedGenerationEventMarshal(t *testing.T) {
+	r := require.New(t)
+	ev := httpapi.AIEmbedGenerationEvent{
+		ID:          7,
+		Fingerprint: "siglip2||jpeg-384-q85-metadata-stripped-embed-v1",
+	}
+	b, err := json.Marshal(ev)
+	r.NoError(err)
+	s := string(b)
+	r.Contains(s, `"id":7`)
+	r.Contains(s, `"fingerprint":"siglip2||jpeg-384-q85-metadata-stripped-embed-v1"`)
+}

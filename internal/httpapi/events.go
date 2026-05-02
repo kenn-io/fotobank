@@ -374,10 +374,22 @@ func writeControlSSE(w http.ResponseWriter, eventType string, data json.RawMessa
 // EventNameAITagCompleted / EventNameAICaptionCompleted on terminal
 // job state and EventNameAIHealthChanged when reachability or queue
 // depth crosses a threshold (Q1 throttles the latter on the frontend).
+//
+// The ai.embed.* family is emitted by the embed worker (per-job
+// completion / failure) and the generations registry (lifecycle —
+// created when FindOrCreateBuilding inserts a new row, activated when
+// the activator promotes building→active, retired when a Promote
+// retires a prior active row). Wired through the embedding package's
+// EventEmitter interface; the production adapter is AIEmbedEvents.
 const (
-	EventNameAITagCompleted     = "ai.tag.completed"
-	EventNameAICaptionCompleted = "ai.caption.completed"
-	EventNameAIHealthChanged    = "ai.health.changed"
+	EventNameAITagCompleted             = "ai.tag.completed"
+	EventNameAICaptionCompleted         = "ai.caption.completed"
+	EventNameAIHealthChanged            = "ai.health.changed"
+	EventNameAIEmbedCompleted           = "ai.embed.completed"
+	EventNameAIEmbedFailed              = "ai.embed.failed"
+	EventNameAIEmbedGenerationCreated   = "ai.embed.generation_created"
+	EventNameAIEmbedGenerationActivated = "ai.embed.generation_activated"
+	EventNameAIEmbedGenerationRetired   = "ai.embed.generation_retired"
 )
 
 // AICompletedEvent is the payload for ai.tag.completed and
@@ -416,4 +428,35 @@ type AIHealthVisionDelta struct {
 type AIHealthTaskDelta struct {
 	Pending      int `json:"pending"`
 	FailedActive int `json:"failed_active"`
+}
+
+// AIEmbedCompletedEvent is the payload for ai.embed.completed. Emitted
+// once per claim that lands a successful mapping. The fingerprint is
+// the canonical Fingerprint.String() value the job was claimed under so
+// listeners can route by either media id or fingerprint.
+type AIEmbedCompletedEvent struct {
+	MediaID     string `json:"media_id"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+// AIEmbedFailedEvent is the payload for ai.embed.failed. Emitted from
+// the worker's recordTerminalFailure path after MarkFailed succeeds.
+// ErrorKind is the string form of ai.LastErrorKind ("transient",
+// "provider_4xx", "malformed", …) so the SPA can colour-code without
+// re-deriving from the message.
+type AIEmbedFailedEvent struct {
+	MediaID     string `json:"media_id"`
+	Fingerprint string `json:"fingerprint"`
+	ErrorKind   string `json:"error_kind"`
+}
+
+// AIEmbedGenerationEvent is the payload shared by the three generation
+// lifecycle events (created / activated / retired). ID is the
+// embedding_generations row id; Fingerprint is the canonical
+// Fingerprint.String() value the row carries — both keys are exposed
+// because operator tools (CLI) prefer the id while the SPA prefers
+// the fingerprint.
+type AIEmbedGenerationEvent struct {
+	ID          int64  `json:"id"`
+	Fingerprint string `json:"fingerprint"`
 }

@@ -61,33 +61,63 @@ type QueueIface interface {
 // Compile-time check: *jobs.Queue satisfies QueueIface.
 var _ QueueIface = (*jobs.Queue)(nil)
 
-// EventEmitter is the post-commit notification hook. F1 ships with a
-// no-op default; the real bus is wired up in Task P1 once the event
-// names are defined.
+// EventEmitter is the post-commit notification hook for the embed
+// pipeline. The two worker hooks fire from the worker's commit /
+// failure paths; the three lifecycle hooks fire from the generations
+// registry (created / retired) and the activator (activated). The
+// production adapter is httpapi.AIEmbedEvents — a thin wrapper that
+// binds the configured stub-mode principal and forwards onto the
+// SSE EventBus.
+//
+// Methods are principal-free because the worker, activator, and
+// generations registry don't thread a principal through their hot
+// paths; v1 is single-principal so the adapter binds it once.
 type EventEmitter interface {
+	// EmitAIEmbedCompleted fires from worker.processGroup once per
+	// claim that lands a successful mapping. fingerprint is the
+	// canonical Fingerprint.String() value the claim was processed
+	// under.
 	EmitAIEmbedCompleted(mediaID string, fingerprint string)
-	EmitAIEmbedFailed(mediaID string, fingerprint string)
+	// EmitAIEmbedFailed fires from worker.recordTerminalFailure after
+	// MarkFailed succeeds. errorKind is the string form of
+	// ai.LastErrorKind ("transient", "provider_4xx", "malformed", …).
+	EmitAIEmbedFailed(mediaID string, fingerprint string, errorKind string)
+	// EmitAIEmbedGenerationCreated fires when FindOrCreateBuilding
+	// inserts a new embedding_generations row. The fast-path lookup
+	// (an existing row for this fingerprint) does not emit.
+	EmitAIEmbedGenerationCreated(generationID int64, fingerprint string)
 	// EmitAIEmbedGenerationActivated fires when the activator promotes
 	// a building generation to active. generationID is the row id and
 	// fingerprint is the canonical Fingerprint.String() value the row
 	// was created under, so listeners can route by either key.
 	EmitAIEmbedGenerationActivated(generationID int64, fingerprint string)
+	// EmitAIEmbedGenerationRetired fires from Promote /
+	// PromoteFromBuilding when the retire-prior-active UPDATE actually
+	// changed a row (RowsAffected > 0). "No prior active" — the normal
+	// first-promotion case — does not emit because there's no retired
+	// row to announce.
+	EmitAIEmbedGenerationRetired(generationID int64, fingerprint string)
 }
 
-// NoopEmitter satisfies EventEmitter without doing anything. The
-// production wiring (Task P1) replaces it with a real bus; the
-// no-op keeps the worker testable and avoids nil-checks on the hot
-// path.
+// NoopEmitter satisfies EventEmitter without doing anything. Useful
+// for tests that don't want to assert on event emission and for
+// embedding-only deployments that haven't wired an EventBus yet.
 type NoopEmitter struct{}
 
 // EmitAIEmbedCompleted is a no-op.
 func (NoopEmitter) EmitAIEmbedCompleted(_ string, _ string) {}
 
 // EmitAIEmbedFailed is a no-op.
-func (NoopEmitter) EmitAIEmbedFailed(_ string, _ string) {}
+func (NoopEmitter) EmitAIEmbedFailed(_ string, _ string, _ string) {}
+
+// EmitAIEmbedGenerationCreated is a no-op.
+func (NoopEmitter) EmitAIEmbedGenerationCreated(_ int64, _ string) {}
 
 // EmitAIEmbedGenerationActivated is a no-op.
 func (NoopEmitter) EmitAIEmbedGenerationActivated(_ int64, _ string) {}
+
+// EmitAIEmbedGenerationRetired is a no-op.
+func (NoopEmitter) EmitAIEmbedGenerationRetired(_ int64, _ string) {}
 
 // WorkerDeps is the fully-wired dependency set the worker requires.
 // Construct via NewWorker — there is no zero-value worker.
@@ -456,7 +486,7 @@ func (w *Worker) recordTerminalFailure(ctx context.Context, c jobs.Claim, fp ai.
 			slog.Default().Warn("embedding worker record failure", "media", c.MediaID, "err", err)
 		}
 	}
-	w.d.Events.EmitAIEmbedFailed(c.MediaID, fp.String())
+	w.d.Events.EmitAIEmbedFailed(c.MediaID, fp.String(), string(kind))
 }
 
 // resolveAll fans out one ResolvePreviewJPEG goroutine per claim and

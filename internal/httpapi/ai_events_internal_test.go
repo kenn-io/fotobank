@@ -66,3 +66,133 @@ func TestEmitAIHealthChangedFlowsThroughBus(t *testing.T) {
 	r.Equal(3, decoded.Tag.Pending)
 	r.Equal(2, decoded.Tag.FailedActive)
 }
+
+// embedTestPrincipal returns the canonical principal used by the
+// ai.embed.* emit-helper tests. Pulled out so the assertions stay
+// uniform across the five sibling tests.
+func embedTestPrincipal() owners.Principal {
+	return owners.Principal{Hub: "local", UserID: "alice"}
+}
+
+// TestEmitAIEmbedCompleted exercises the worker's per-claim
+// completion emit: the helper must publish under EventNameAIEmbedCompleted
+// and the payload must round-trip back into AIEmbedCompletedEvent so
+// listeners decode the same shape the worker marshalled.
+func TestEmitAIEmbedCompleted(t *testing.T) {
+	r := require.New(t)
+	bus := NewEventBus()
+	p := embedTestPrincipal()
+
+	bus.EmitAIEmbedCompleted(p, AIEmbedCompletedEvent{
+		MediaID:     "m1",
+		Fingerprint: "siglip2||jpeg-384-q85-metadata-stripped-embed-v1",
+	})
+
+	got := bus.replayAfter(p, 0)
+	r.Len(got, 1)
+	r.Equal(EventNameAIEmbedCompleted, got[0].Type)
+
+	var decoded AIEmbedCompletedEvent
+	r.NoError(json.Unmarshal(got[0].Data, &decoded))
+	r.Equal("m1", decoded.MediaID)
+	r.Equal("siglip2||jpeg-384-q85-metadata-stripped-embed-v1", decoded.Fingerprint)
+}
+
+// TestEmitAIEmbedFailed exercises the worker's per-claim failure emit:
+// the helper must publish under EventNameAIEmbedFailed and the payload
+// must carry the (media, fingerprint, error_kind) triple — the SPA
+// uses error_kind to colour-code the failure without re-deriving from
+// the message.
+func TestEmitAIEmbedFailed(t *testing.T) {
+	r := require.New(t)
+	bus := NewEventBus()
+	p := embedTestPrincipal()
+
+	bus.EmitAIEmbedFailed(p, AIEmbedFailedEvent{
+		MediaID:     "m1",
+		Fingerprint: "siglip2||jpeg-384-q85-metadata-stripped-embed-v1",
+		ErrorKind:   "transient",
+	})
+
+	got := bus.replayAfter(p, 0)
+	r.Len(got, 1)
+	r.Equal(EventNameAIEmbedFailed, got[0].Type)
+
+	var decoded AIEmbedFailedEvent
+	r.NoError(json.Unmarshal(got[0].Data, &decoded))
+	r.Equal("m1", decoded.MediaID)
+	r.Equal("siglip2||jpeg-384-q85-metadata-stripped-embed-v1", decoded.Fingerprint)
+	r.Equal("transient", decoded.ErrorKind)
+}
+
+// TestEmitAIEmbedGenerationCreated exercises the registry's
+// FindOrCreateBuilding insert-path emit. The payload carries (id,
+// fingerprint) so listeners can route by either key — the CLI prefers
+// the id, the SPA prefers the fingerprint.
+func TestEmitAIEmbedGenerationCreated(t *testing.T) {
+	r := require.New(t)
+	bus := NewEventBus()
+	p := embedTestPrincipal()
+
+	bus.EmitAIEmbedGenerationCreated(p, AIEmbedGenerationEvent{
+		ID:          7,
+		Fingerprint: "siglip2||jpeg-384-q85-metadata-stripped-embed-v1",
+	})
+
+	got := bus.replayAfter(p, 0)
+	r.Len(got, 1)
+	r.Equal(EventNameAIEmbedGenerationCreated, got[0].Type)
+
+	var decoded AIEmbedGenerationEvent
+	r.NoError(json.Unmarshal(got[0].Data, &decoded))
+	r.EqualValues(7, decoded.ID)
+	r.Equal("siglip2||jpeg-384-q85-metadata-stripped-embed-v1", decoded.Fingerprint)
+}
+
+// TestEmitAIEmbedGenerationActivated exercises the activator's
+// promote-to-active emit. Payload mirrors the created event so the
+// SPA can render the lifecycle as a single timeline.
+func TestEmitAIEmbedGenerationActivated(t *testing.T) {
+	r := require.New(t)
+	bus := NewEventBus()
+	p := embedTestPrincipal()
+
+	bus.EmitAIEmbedGenerationActivated(p, AIEmbedGenerationEvent{
+		ID:          7,
+		Fingerprint: "siglip2||jpeg-384-q85-metadata-stripped-embed-v1",
+	})
+
+	got := bus.replayAfter(p, 0)
+	r.Len(got, 1)
+	r.Equal(EventNameAIEmbedGenerationActivated, got[0].Type)
+
+	var decoded AIEmbedGenerationEvent
+	r.NoError(json.Unmarshal(got[0].Data, &decoded))
+	r.EqualValues(7, decoded.ID)
+	r.Equal("siglip2||jpeg-384-q85-metadata-stripped-embed-v1", decoded.Fingerprint)
+}
+
+// TestEmitAIEmbedGenerationRetired exercises the registry's
+// retire-on-promote emit. Only fires when the retire-prior-active
+// UPDATE actually changed a row — the bus-side helper itself doesn't
+// gate on that (the gating lives in Generations.Promote /
+// PromoteFromBuilding); this test pins the wire shape and routing.
+func TestEmitAIEmbedGenerationRetired(t *testing.T) {
+	r := require.New(t)
+	bus := NewEventBus()
+	p := embedTestPrincipal()
+
+	bus.EmitAIEmbedGenerationRetired(p, AIEmbedGenerationEvent{
+		ID:          6,
+		Fingerprint: "siglip2|prev|jpeg-384-q85-metadata-stripped-embed-v1",
+	})
+
+	got := bus.replayAfter(p, 0)
+	r.Len(got, 1)
+	r.Equal(EventNameAIEmbedGenerationRetired, got[0].Type)
+
+	var decoded AIEmbedGenerationEvent
+	r.NoError(json.Unmarshal(got[0].Data, &decoded))
+	r.EqualValues(6, decoded.ID)
+	r.Equal("siglip2|prev|jpeg-384-q85-metadata-stripped-embed-v1", decoded.Fingerprint)
+}
