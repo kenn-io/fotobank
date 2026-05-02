@@ -200,6 +200,11 @@ describe("Lightbox (snapshot path)", () => {
       rank_bm25: 3,
       rank_vector: 7,
     };
+    // qHash binds the search snapshot to the search-state it was
+    // captured under. The lightbox compares it against the URL's
+    // ?qhash= and rejects the snapshot on mismatch. We seed both sides
+    // with the same value so the snapshot is honoured.
+    const qHash = "test-q-hash";
     lightboxSession.open({
       source: { kind: "search" },
       navIds: ["m1"],
@@ -208,7 +213,13 @@ describe("Lightbox (snapshot path)", () => {
       returnFocusMediaId: "m1",
       returnHref: "/search?q=trees",
       scoreComponentsById: new Map([["m1", sc]]),
+      qHash,
     });
+    window.history.replaceState(
+      {},
+      "",
+      `/media/m1?from=search&qhash=${encodeURIComponent(qHash)}`,
+    );
     const { container, getByTestId } = render(Lightbox, {
       props: {
         id: "m1",
@@ -241,6 +252,89 @@ describe("Lightbox (snapshot path)", () => {
     expect(block.textContent).toContain("Vector");
     expect(block.textContent).toContain("0.81");
     expect(block.textContent).toContain("(rank 7)");
+  });
+
+  it("SearchSnapshotRejectedWhenQHashMismatches", async () => {
+    // Stale-snapshot defense: Search.svelte computes a canonical key
+    // hash of the search state (q/filters/sort) when it opens a result
+    // and mirrors it onto the /media/:id URL via ?qhash=. The lightbox
+    // re-reads the URL's qhash and rejects the snapshot when it
+    // doesn't agree, falling through to DirectMediaDetail. This guards
+    // against direct entry to /media/:id?from=search (shared URL,
+    // browser back) reusing a stale snapshot from an unrelated earlier
+    // query — Search.svelte doesn't clear the snapshot on unmount, so
+    // without the qhash binding the lightbox would happily serve those
+    // navIds + scoreComponents for an unrelated id.
+    vi.mocked(aiClient.getMediaAIView).mockResolvedValue({});
+    const sc = {
+      rrf: 0.0156,
+      bm25: 8.42,
+      vector: 0.81,
+      rank_bm25: 3,
+      rank_vector: 7,
+    };
+    // Open a snapshot under one search-state ("trees" hash).
+    lightboxSession.open({
+      source: { kind: "search" },
+      navIds: ["m1", "m99"],
+      selected: false,
+      scrollY: 0,
+      returnFocusMediaId: "m1",
+      returnHref: "/search?q=trees",
+      scoreComponentsById: new Map([["m1", sc]]),
+      qHash: "hash-for-trees",
+    });
+    // Navigate with a mismatched qhash on the URL (simulating a stale
+    // direct entry from a different earlier query). The lightbox reads
+    // window.location.search synchronously, so we replace the URL with
+    // the mismatched qhash before mounting.
+    window.history.replaceState(
+      {},
+      "",
+      "/media/m1?from=search&qhash=hash-for-cats",
+    );
+    // Provide a fetch stub for the media payload — the fallback path
+    // mounts DirectMediaDetail which fetches /api/v1/media/m1.
+    const fakeFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.startsWith("/api/v1/media/m1")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              id: "m1",
+              thumb_version: 0,
+              width: 1,
+              height: 1,
+              timestamp: "2026-04-20T00:00:00Z",
+            }),
+        });
+      }
+      return Promise.resolve({ ok: false, status: 404 });
+    });
+    vi.stubGlobal("fetch", fakeFetch);
+    const { container } = render(Lightbox, {
+      props: {
+        id: "m1",
+        from: "search",
+        mediaStore: fakeMediaStore(),
+        albumsStore: { markStale: vi.fn() } as never,
+        hiddenStore: { configured: true } as never,
+        toastStore: { push: vi.fn() } as never,
+      } as never,
+    });
+    // The reconstruction effect runs synchronously and flips state to
+    // "failed" for the search arm (search isn't reconstructible from
+    // the URL alone). Wait for the fallback shell to render — the
+    // .lb-backdrop.fallback class is the canonical "fell through to
+    // DirectMediaDetail" indicator. Crucially, the prev/next nav
+    // buttons must NOT render (those would imply the stale snapshot
+    // was honoured).
+    await waitFor(() => {
+      expect(container.querySelector(".lb-backdrop.fallback")).toBeTruthy();
+    });
+    expect(container.querySelector(".lb-prev")).toBeNull();
+    expect(container.querySelector(".lb-next")).toBeNull();
+    vi.unstubAllGlobals();
   });
 
   it("omits the Search relevance row for a non-search-context snapshot", async () => {

@@ -23,6 +23,20 @@ export type LightboxSource =
 // only present when the request was issued with explain=true AND the
 // AI Inspection toggle was on. Hits without score_components are
 // simply absent from the map; the lookup miss renders no row.
+// qHash binds a search snapshot to the canonical key of the search
+// state (q + filters + sort) it was captured under. The Search route
+// computes the hash, sets it on the snapshot, AND mirrors it onto the
+// /media/:id URL via ?qhash=...; the lightbox compares the URL value
+// against the snapshot's qHash before trusting navIds /
+// scoreComponentsById. Without this binding a stale search snapshot
+// from an earlier query could be served for a fresh direct entry to
+// /media/:id?from=search (shared URL, browser back, etc.), yielding
+// wrong prev/next and stale relevance diagnostics. Only the search
+// source populates this field; other source kinds leave it undefined
+// and the lightbox skips the hash check (those sources reconstruct
+// from the URL alone, so a stale snapshot is harmless there because
+// the activeId-in-navIds + from-kind agreement check already covers
+// it for the same source).
 export type LightboxSnapshot = {
   source: LightboxSource;
   navIds: string[];
@@ -31,6 +45,7 @@ export type LightboxSnapshot = {
   returnFocusMediaId: string | null;
   returnHref: string;
   scoreComponentsById?: Map<string, SearchScoreComponents>;
+  qHash?: string;
 };
 
 export class LightboxSessionStore {

@@ -100,8 +100,24 @@
         return from === "hidden";
       case "album":
         return from === `album:${src.albumId}`;
-      case "search":
-        return from === "search";
+      case "search": {
+        if (from !== "search") return false;
+        // Search is the only source that requires a qhash match: the
+        // result list depends on q/filters/sort and a stale snapshot
+        // from a prior query would otherwise leak (Search.svelte
+        // doesn't clear lightboxSession on unmount, so a direct entry
+        // to /media/:id?from=search via shared URL or browser back
+        // could pick up unrelated navIds / scoreComponents). We read
+        // the URL's ?qhash= directly here rather than threading it
+        // through router.svelte.ts because the param is opaque (a
+        // canonical-key JSON string) and isn't part of the typed
+        // route surface — no other route consumes it.
+        const sp = new URLSearchParams(window.location.search);
+        const urlQHash = sp.get("qhash");
+        if (urlQHash === null) return false;
+        if (session.qHash === undefined) return false;
+        return urlQHash === session.qHash;
+      }
       default: {
         const _exhaustive: never = src;
         void _exhaustive;
@@ -426,7 +442,17 @@
 
   // ---- Navigation -----------------------------------------------
   function navTo(targetId: string) {
-    router.navigate(`/media/${targetId}?from=${encodeURIComponent(from)}`, {
+    // Preserve ?qhash= when paging through a search-context lightbox so
+    // the snapshot validation continues to pass on the next id. Other
+    // sources don't carry a qhash, so we only forward it for `from === "search"`.
+    const params = new URLSearchParams();
+    params.set("from", from);
+    if (from === "search") {
+      const sp = new URLSearchParams(window.location.search);
+      const qh = sp.get("qhash");
+      if (qh !== null) params.set("qhash", qh);
+    }
+    router.navigate(`/media/${targetId}?${params.toString()}`, {
       replace: true,
     });
   }

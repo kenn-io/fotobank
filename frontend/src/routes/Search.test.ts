@@ -467,6 +467,86 @@ describe("Search.svelte", () => {
     expect(map!.get("m1")).toEqual(sc1);
     expect(map!.has("m2")).toBe(false);
 
-    expect(navigate).toHaveBeenCalledWith("/media/m1?from=search");
+    // The navigate target carries from=search and a qhash so the
+    // lightbox can validate the snapshot against the active search
+    // state. Don't pin to a specific hash value (that's coupled to
+    // computeKey's JSON serialisation); just assert presence and
+    // non-emptiness.
+    const lightboxCall = navigate.mock.calls.find((c) =>
+      typeof c[0] === "string" && (c[0] as string).startsWith("/media/m1"),
+    );
+    expect(lightboxCall).toBeDefined();
+    const target = lightboxCall![0] as string;
+    const u = new URL(target, window.location.origin);
+    expect(u.pathname).toBe("/media/m1");
+    expect(u.searchParams.get("from")).toBe("search");
+    const qhash = u.searchParams.get("qhash");
+    expect(qhash).not.toBeNull();
+    expect(qhash!.length).toBeGreaterThan(0);
+  });
+
+  it("OpenMediaIncludesQHashInURL", async () => {
+    // Stale-snapshot defense (paired with
+    // Lightbox.test.ts::SearchSnapshotRejectedWhenQHashMismatches):
+    // openMedia must mirror the snapshot's qHash onto the /media/:id
+    // URL via ?qhash= so the lightbox can validate the snapshot
+    // against the active search state. Without it, a direct entry to
+    // /media/:id?from=search via shared URL or browser back could pick
+    // up an unrelated stale snapshot. Mount with a configured query +
+    // filters so the hash is non-trivial; click a cell and assert the
+    // navigate target carries qhash with a non-empty value, AND the
+    // snapshot's qHash matches what the URL carries.
+    lightboxSession.close();
+    const navigate = vi.spyOn(router, "navigate").mockImplementation(() => {});
+    const store = makeStore({
+      query: "trees",
+      sort: "newest",
+      filters: {
+        tags: [{ tag_key: "dog", tag_label: "Dog" }],
+        dateAfter: "2025-01-01",
+        mediaType: "photo",
+      },
+      results: [
+        {
+          media_id: "m1",
+          media_type: "photo",
+          timestamp: "2025-06-01T00:00:00Z",
+          imported_at: "2025-06-01T00:00:00Z",
+          width: 1600,
+          height: 1200,
+          thumb_version: 1,
+        },
+      ],
+    });
+    const { container } = render(Search, {
+      props: { store, client: makeClient(), inspectionStore: makeInspectionStore() },
+    });
+    flushSync();
+    await tick();
+
+    const cell = container.querySelector<HTMLAnchorElement>(
+      "a[data-media-id='m1']",
+    );
+    expect(cell).not.toBeNull();
+    cell!.click();
+
+    // Find the lightbox-open navigate (skip URL-sync writebacks).
+    const lightboxCall = navigate.mock.calls.find((c) =>
+      typeof c[0] === "string" && (c[0] as string).startsWith("/media/m1"),
+    );
+    expect(lightboxCall).toBeDefined();
+    const target = lightboxCall![0] as string;
+    const u = new URL(target, window.location.origin);
+    expect(u.searchParams.get("from")).toBe("search");
+    const qhash = u.searchParams.get("qhash");
+    expect(qhash).not.toBeNull();
+    expect(qhash!.length).toBeGreaterThan(0);
+
+    // Snapshot's qHash must agree with the URL's qhash so the lightbox
+    // validation passes. Different inputs would obviously produce
+    // different hashes, but the round-trip must be exact.
+    const snap = lightboxSession.snapshot;
+    expect(snap).not.toBeNull();
+    expect(snap!.qHash).toBe(qhash);
   });
 });

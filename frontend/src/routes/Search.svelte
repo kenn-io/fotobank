@@ -341,6 +341,30 @@
     const sel = selection.ids;
     const useSelection = sel.size > 1 && sel.has(id);
     const navIds = useSelection ? all.filter((x) => sel.has(x)) : all;
+    // qHash binds this snapshot to the canonical search-state key
+    // (same shape computeKey emits for URL sync). The lightbox reads
+    // ?qhash= back from the /media/:id URL and rejects the snapshot
+    // when the values don't agree — this prevents a stale snapshot
+    // from a prior query (still in lightboxSession because nothing
+    // clears it on Search unmount) being reused for an unrelated
+    // direct entry, which would otherwise leak wrong navIds /
+    // scoreComponents into the lightbox view.
+    const qHash = computeKey({
+      q: s.query,
+      sort: s.sort,
+      ...(s.filters.dateAfter !== undefined && s.filters.dateAfter !== ""
+        ? { dateAfter: s.filters.dateAfter }
+        : {}),
+      ...(s.filters.dateBefore !== undefined && s.filters.dateBefore !== ""
+        ? { dateBefore: s.filters.dateBefore }
+        : {}),
+      tagLabels: s.filters.tags.map((t) => t.tag_label),
+      ...(s.filters.location !== undefined && s.filters.location.location_label !== ""
+        ? { location: s.filters.location.location_label }
+        : {}),
+      ...(s.filters.mediaType !== undefined ? { mediaType: s.filters.mediaType } : {}),
+      includeHidden: s.filters.includeHidden === true,
+    });
     lightboxSession.open({
       source: { kind: "search" },
       navIds,
@@ -349,8 +373,12 @@
       returnFocusMediaId: id,
       returnHref: window.location.pathname + window.location.search,
       scoreComponentsById: scoreComponentsByMediaId,
+      qHash,
     });
-    router.navigate(`/media/${id}?from=search`);
+    const params = new URLSearchParams();
+    params.set("from", "search");
+    params.set("qhash", qHash);
+    router.navigate(`/media/${id}?${params.toString()}`);
   }
 </script>
 
