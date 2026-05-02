@@ -49,7 +49,7 @@ describe("Map page shell", () => {
     );
   });
 
-  it("renders the count when geo response has items", async () => {
+  it("mounts MapPane in the loaded branch when geo response has items", async () => {
     const geoStore = makeGeoStore([
       {
         id: "a",
@@ -62,8 +62,10 @@ describe("Map page shell", () => {
       },
     ]);
     render(Map, { props: mapProps(geoStore) });
-    await waitFor(() =>
-      expect(screen.getByText(/1 photos with GPS/)).toBeTruthy(),
-    );
+    // Asserting on the map-loaded grid wrapper (not Leaflet internals)
+    // — JSDOM can't render tiles, so the smoke test stops at "the
+    // 60/40 split is in the DOM and MapPane mounted".
+    await waitFor(() => expect(screen.getByTestId("map-loaded")).toBeTruthy());
+    expect(screen.getByTestId("map-pane")).toBeTruthy();
   });
 });
