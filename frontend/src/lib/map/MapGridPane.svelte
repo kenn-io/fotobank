@@ -8,6 +8,7 @@
 <script lang="ts">
   import VirtualGrid from "../grid/VirtualGrid.svelte";
   import type { MediaStore, Month, Media } from "../media/mediaStore.svelte";
+  import type { GeoStore } from "./geoStore.svelte";
 
   let {
     visibleIds,
@@ -15,27 +16,32 @@
     onPhotoClick,
     onClearClusterFilter,
     mediaStore,
+    geoStore,
   }: {
     visibleIds: string[];
     clusterIds: string[] | null;
     onPhotoClick: (id: string) => void;
     onClearClusterFilter: () => void;
     mediaStore: MediaStore;
+    geoStore: GeoStore;
   } = $props();
 
   const activeIds = $derived(clusterIds !== null ? clusterIds : visibleIds);
   const showClearChip = $derived(clusterIds !== null);
 
   // Synthetic single-month feed for VirtualGrid timelineChrome=false.
-  // mediaStore.get(...) reads from a non-reactive Map, so we touch the
-  // reactive `months` snapshot first to register a dependency — every
-  // MediaStore.merge() replaces `months`, forcing this derivation to
-  // re-run when new media rows arrive. Same pattern as
-  // AlbumDetail.svelte:91-98.
+  // The lookup chain prefers MediaStore (visible rows pre-merged via
+  // Map.svelte's loadAndMerge) and falls back to GeoStore for hidden
+  // rows — MediaStore.mergeRaw drops hidden_at!=null by design, so
+  // hidden geo rows would otherwise vanish from the right-grid even
+  // when their markers exist on the map.
+  // Touching mediaStore.months and geoStore.items registers reactive
+  // deps on both sources; the derivation re-runs on either change.
   const months: Month[] = $derived.by((): Month[] => {
     void mediaStore.months;
+    void geoStore.items;
     const items: Media[] = activeIds
-      .map((id) => mediaStore.get(id))
+      .map((id) => mediaStore.get(id) ?? geoStore.findById(id))
       .filter((m): m is Media => m !== undefined);
     return [{ key: "map:active", items }];
   });

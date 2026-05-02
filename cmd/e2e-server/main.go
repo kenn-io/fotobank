@@ -489,10 +489,12 @@ func seedFixtures(dbPath, nasRoot string) error {
 		return fmt.Errorf("seed gps fixture: %w", err)
 	}
 
-	// Map clustering fixtures: two San Francisco rows close enough to
-	// cluster at low zoom + one NYC row that always renders as a
-	// separate marker. Used by the /map Playwright suite to verify
-	// cluster click → grid filter behavior.
+	// Map clustering fixtures. The Bay Area pair sits ~13km apart
+	// (downtown SF vs Oakland) — close enough to cluster at zoom 10 but
+	// far enough to render as separate markers at zoom 12+, which is
+	// what the marker-click e2e relies on. The NYC row is always a
+	// separate marker. Default Leaflet markercluster radius is 80px;
+	// at zoom 12 the SF↔Oakland pair lands well outside that radius.
 	geoFixtures := []struct {
 		id    string
 		lat   float64
@@ -500,7 +502,7 @@ func seedFixtures(dbPath, nasRoot string) error {
 		label string
 	}{
 		{"geo-photo-a", 37.7749, -122.4194, "San Francisco, California, USA"},
-		{"geo-photo-b", 37.7750, -122.4195, "San Francisco, California, USA"},
+		{"geo-photo-b", 37.8044, -122.2712, "Oakland, California, USA"},
 		{"geo-photo-c", 40.7128, -74.0060, "New York, New York, USA"},
 	}
 	for _, g := range geoFixtures {

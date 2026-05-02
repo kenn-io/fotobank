@@ -38,7 +38,7 @@ test.describe("/map page", () => {
     // Seed gps-fixture-1 has GPS — its lightbox shows the map pin.
     await page.goto("/media/gps-fixture-1?from=library");
     await expect(page.getByTestId("lightbox-map-pin")).toBeVisible();
-    await page.getByTestId("lightbox-map-pin").click();
+    await page.getByTestId("lightbox-map-pin-link").click();
     await expect(page).toHaveURL(/\/map\?z=14&c=[^&]+&focus=gps-fixture-1/);
   });
 

@@ -54,6 +54,13 @@
   // must remain a no-op when items is empty and fitToAll bails) skips
   // emitting in that window.
   let viewReady = false;
+  // focusApplied tracks whether the focusId centering has been applied
+  // to the map view. Onmount sets it true if the focus item was found
+  // in the initial items; otherwise the items-change effect retries
+  // when items update (the F7 hidden-retry sequence loads visible-only
+  // first, then re-loads with include_hidden — focusId may not be in
+  // items until the second load lands).
+  let focusApplied = false;
   const markersById = new Map<string, L.Marker>();
   const idByMarker = new Map<L.Marker, string>();
 
@@ -135,21 +142,11 @@
     //   1. focusId       → zoom 14 at that photo (regardless of z=)
     //   2. z + c         → use those
     //   3. otherwise     → fitBounds to all markers
-    if (focusId !== undefined) {
-      const found = items.find((m) => m.id === focusId);
-      if (found && found.latitude != null && found.longitude != null) {
-        // Spec choice: focus= always lands at zoom 14 even when the URL
-        // also carries ?z=. The `z` param represents the user's last
-        // viewport for back-button restoration; focus= represents an
-        // explicit "show me this photo" intent that overrides it.
-        map.setView([found.latitude, found.longitude], 14, { animate: false });
-        viewReady = true;
-      } else if (initialCenter !== undefined && initialZoom !== undefined) {
-        map.setView(initialCenter, initialZoom, { animate: false });
-        viewReady = true;
-      } else {
-        fitToAll();
-      }
+    // If focusId is set but not yet in items (F7 hidden-retry sequence
+    // hasn't completed), fall through to z+c or fitToAll and let the
+    // items-change effect re-apply focus when the row arrives.
+    if (focusId !== undefined && tryApplyFocus()) {
+      // applied via tryApplyFocus
     } else if (initialCenter !== undefined && initialZoom !== undefined) {
       map.setView(initialCenter, initialZoom, { animate: false });
       viewReady = true;
@@ -160,12 +157,30 @@
     emitViewportVisible();
   });
 
+  // tryApplyFocus centers the map on focusId at zoom 14 if the row is
+  // present and has GPS. Returns true on success so callers (onMount,
+  // items-change effect) know whether to fall through to other branches.
+  // Marks focusApplied so subsequent items changes don't snap the
+  // viewport back if the user has panned away.
+  function tryApplyFocus(): boolean {
+    if (map === null || focusId === undefined || focusApplied) return false;
+    const found = items.find((m) => m.id === focusId);
+    if (!found || found.latitude == null || found.longitude == null) return false;
+    map.setView([found.latitude, found.longitude], 14, { animate: false });
+    viewReady = true;
+    focusApplied = true;
+    return true;
+  }
+
   // Re-render markers whenever items change (e.g. include-hidden retry).
   // The `void items` read registers the dependency so $effect tracks
-  // the prop reactively.
+  // the prop reactively. Also re-attempt focus application: F7's hidden
+  // retry sequence calls onMount before the second load resolves, so
+  // focus may need to apply when the hidden row finally lands here.
   $effect(() => {
     void items;
     buildMarkers();
+    tryApplyFocus();
     emitViewportVisible();
   });
 

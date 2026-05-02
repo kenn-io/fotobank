@@ -161,27 +161,28 @@
     void initialLoad();
   });
 
+  // loadAndMerge centralizes the load+merge sequence so initialLoad,
+  // toggle, and retry all behave the same way. mergeRaw drops hidden
+  // rows by design (MediaStore is the visible-only index) — hidden geo
+  // rows still surface in MapGridPane via the geoStore fallback chain.
+  async function loadAndMerge(includeHidden: boolean): Promise<void> {
+    await geoStore.load(includeHidden);
+    mediaStore.mergeRaw(geoStore.rawItems);
+  }
+
   // initialLoad runs the visible-only fetch first; if ?focus=<id> isn't
   // present in the result and the user has unlocked hidden, retry with
   // include_hidden=true. The retry only fires once per mount — if the
   // photo still isn't there, we toast and stop.
-  //
-  // After each successful load we merge the geo rows into MediaStore so
-  // MapGridPane's mediaStore.get(id) lookup resolves for IDs that
-  // haven't been paged in by the library timeline. /media/geo returns
-  // every geotagged primary the user owns, so without this the right
-  // grid would silently drop rows whose page-in hasn't happened yet.
   async function initialLoad(): Promise<void> {
-    await geoStore.load(false);
-    mediaStore.mergeRaw(geoStore.rawItems);
+    await loadAndMerge(false);
     if (
       focus !== undefined
       && geoStore.findById(focus) === undefined
       && hiddenStore.unlocked
     ) {
       includeHiddenToggle = true;
-      await geoStore.load(true);
-      mediaStore.mergeRaw(geoStore.rawItems);
+      await loadAndMerge(true);
       if (geoStore.findById(focus) === undefined) {
         toastStore.push({ kind: "info", message: "Photo not found on map." });
       }
@@ -199,24 +200,29 @@
   // shareable link risks leaking the toggle state into bookmarks.
   async function onToggleHidden(next: boolean): Promise<void> {
     includeHiddenToggle = next;
-    await geoStore.load(next);
-    mediaStore.mergeRaw(geoStore.rawItems);
+    await loadAndMerge(next);
   }
+
+  // Lock-state cleanup. If the hidden session locks (manual lock, idle
+  // timeout, page-hide auto-lock) while hidden rows are loaded into the
+  // map, those markers would otherwise stay visible until refresh. The
+  // effect drops the toggle and reloads visible-only as soon as the
+  // unlocked transition flips false. Reading both reactive sources is
+  // intentional — Svelte tracks the dependency and re-fires on either.
+  $effect(() => {
+    if (!hiddenStore.unlocked && includeHiddenToggle) {
+      includeHiddenToggle = false;
+      void loadAndMerge(false);
+    }
+  });
 </script>
 
 <section class="map-page" data-testid="map-page">
-  {#if !geoStore.ready && geoStore.error === null}
-    <div class="loading">Loading your photo locations…</div>
-  {:else if geoStore.error !== null}
-    <div class="error">
-      Couldn't load photo locations.
-      <button onclick={() => geoStore.load(false)}>Retry</button>
-    </div>
-  {:else if geoStore.items.length === 0}
-    <div class="empty">
-      No geotagged photos in your library yet. Photos with GPS metadata will appear here as you import.
-    </div>
-  {:else}
+  <!-- Header is rendered for every state branch (loading/error/empty/loaded)
+       once unlocked, so an unlocked user with zero visible geotagged
+       photos can still flip on Include hidden to reveal hidden-only
+       geotagged rows. -->
+  {#if hiddenStore.unlocked || geoStore.items.length > 0}
     <header class="map-page-header">
       <nav class="tabs" aria-label="Map view">
         <button
@@ -241,6 +247,20 @@
         </label>
       {/if}
     </header>
+  {/if}
+
+  {#if !geoStore.ready && geoStore.error === null}
+    <div class="loading">Loading your photo locations…</div>
+  {:else if geoStore.error !== null}
+    <div class="error">
+      Couldn't load photo locations.
+      <button onclick={() => loadAndMerge(includeHiddenToggle)}>Retry</button>
+    </div>
+  {:else if geoStore.items.length === 0}
+    <div class="empty">
+      No geotagged photos in your library yet. Photos with GPS metadata will appear here as you import.
+    </div>
+  {:else}
     <div
       class="map-page-grid"
       data-testid="map-loaded"
@@ -265,6 +285,7 @@
           visibleIds={viewportIds}
           {clusterIds}
           {mediaStore}
+          {geoStore}
           onPhotoClick={(id) => openMedia(id)}
           onClearClusterFilter={() => (clusterIds = null)}
         />

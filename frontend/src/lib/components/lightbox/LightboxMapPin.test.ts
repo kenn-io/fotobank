@@ -45,14 +45,12 @@ describe("LightboxMapPin", () => {
     expect(getByTestId("lightbox-map-pin")).toBeTruthy();
   });
 
-  it("plain click navigates to /map?focus=<id>", () => {
+  it("plain click on the link navigates to /map?focus=<id>", () => {
     const navigate = vi.fn();
     const { getByTestId } = render(LightboxMapPin, {
       props: pinProps({ id: "abc", latitude: 1, longitude: 2 }, { navigate }),
     });
-    // Scope by testid: Leaflet's attribution control adds its own <a>
-    // links, so getByRole("link") would find multiple matches.
-    const link = getByTestId("lightbox-map-pin") as HTMLAnchorElement;
+    const link = getByTestId("lightbox-map-pin-link") as HTMLAnchorElement;
     fireEvent.click(link, { button: 0 });
     expect(navigate).toHaveBeenCalledWith("/map?z=14&c=1,2&focus=abc");
   });
@@ -62,8 +60,22 @@ describe("LightboxMapPin", () => {
     const { getByTestId } = render(LightboxMapPin, {
       props: pinProps({ id: "abc", latitude: 1, longitude: 2 }, { navigate }),
     });
-    const link = getByTestId("lightbox-map-pin") as HTMLAnchorElement;
+    const link = getByTestId("lightbox-map-pin-link") as HTMLAnchorElement;
     fireEvent.click(link, { button: 0, metaKey: true });
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("does not nest the focus link inside the map container", () => {
+    // Regression: the previous version wrapped the entire pin in <a>,
+    // which produced invalid nested-link HTML once Leaflet's attribution
+    // control inserted its own <a> inside the map container.
+    const { getByTestId } = render(LightboxMapPin, {
+      props: pinProps({ id: "abc", latitude: 1, longitude: 2 }),
+    });
+    const root = getByTestId("lightbox-map-pin");
+    const mapContainer = root.querySelector(".map-pin-preview");
+    const focusLink = getByTestId("lightbox-map-pin-link");
+    expect(mapContainer).not.toBeNull();
+    expect(mapContainer?.contains(focusLink)).toBe(false);
   });
 });
