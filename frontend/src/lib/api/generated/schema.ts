@@ -246,6 +246,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/media/geo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the caller's geotagged media (primaries only). */
+        get: operations["list-media-geo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/media/hidden:bulk": {
         parameters: {
             query?: never;
@@ -730,6 +747,15 @@ export interface components {
             items: components["schemas"]["MediaDTO"][] | null;
             /** Format: int64 */
             next_offset?: number;
+        };
+        ListMediaGeoOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ListMediaGeoOutputBody.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["MediaDTO"][] | null;
         };
         ListMediaOutputBody: {
             /**
@@ -1606,6 +1632,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListMediaOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "list-media-geo": {
+        parameters: {
+            query?: {
+                /** @description Return hidden geotagged media; requires a valid hidden-unlock cookie. */
+                include_hidden?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListMediaGeoOutputBody"];
                 };
             };
             /** @description Error */

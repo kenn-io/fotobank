@@ -558,6 +558,33 @@
         ],
         "type": "object"
       },
+      "ListMediaGeoOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ListMediaGeoOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MediaDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "ListMediaOutputBody": {
         "additionalProperties": false,
         "properties": {
@@ -2164,6 +2191,46 @@
           }
         },
         "summary": "List media visible to the caller"
+      }
+    },
+    "/api/v1/media/geo": {
+      "get": {
+        "operationId": "list-media-geo",
+        "parameters": [
+          {
+            "description": "Return hidden geotagged media; requires a valid hidden-unlock cookie.",
+            "explode": false,
+            "in": "query",
+            "name": "include_hidden",
+            "schema": {
+              "description": "Return hidden geotagged media; requires a valid hidden-unlock cookie.",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMediaGeoOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List the caller's geotagged media (primaries only)."
       }
     },
     "/api/v1/media/hidden:bulk": {

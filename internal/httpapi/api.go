@@ -172,6 +172,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	api.OpenAPI().Info.Description = "Fotobank HTTP API"
 	registerHealthz(api)
 	registerMe(api, deps.SharingEnabled)
+	registerMediaGeo(api, deps.MediaService, deps.HiddenAuth)
 	registerMedia(api, deps.MediaService)
 	registerMediaOriginal(mux, deps.MediaService)
 	registerMediaThumb(mux, deps.ThumbService)
