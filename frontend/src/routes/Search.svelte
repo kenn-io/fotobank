@@ -117,7 +117,14 @@
   // one's response lands in the UI. The async fetch promises are
   // intentionally left unawaited — URL state and the request are
   // independent concerns and the URL must not block on the request.
+  // We gate on inspectionStore.loaded so the first hydration sees the
+  // persisted ai.inspection setting. Otherwise the explainGetter
+  // reads its default (false) on the very first request and a user
+  // with persisted ai.inspection=true gets a non-diagnostic page on
+  // landing. Subsequent re-runs (e.g. AppHeader typing) don't depend
+  // on this gate because loaded stays true.
   $effect(() => {
+    if (!inspectionStore.loaded) return;
     const m = router.current;
     if (m.route !== "search") return;
     const key = JSON.stringify({

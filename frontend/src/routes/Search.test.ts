@@ -6,6 +6,7 @@ import type { SearchStore } from "../lib/search/searchStore.svelte";
 import type { SearchClient } from "../lib/search/client";
 import type { SearchFilters, SearchResult, SearchSort } from "../lib/search/types";
 import { router } from "../lib/router/router.svelte";
+import { AIInspectionStore } from "../lib/ai/inspectionStore.svelte";
 
 // VirtualGrid wires ResizeObserver + IntersectionObserver in $effect
 // blocks. jsdom ships neither. The default IntersectionObserver stub
@@ -94,11 +95,27 @@ function makeClient(): SearchClient {
   };
 }
 
+// makeInspectionStore returns an AIInspectionStore wired to a stub
+// openapi-fetch shape that immediately resolves an empty value, so
+// load() flips the loaded flag before the page's hydration $effect
+// would otherwise gate. Tests that don't care about the toggle's
+// persisted value pass this directly; tests that drive a specific
+// persisted value override the GET mock per-call.
+function makeInspectionStore(getValue: string | undefined = undefined): AIInspectionStore {
+  const GET = vi.fn().mockResolvedValue(
+    getValue !== undefined
+      ? { data: { value: getValue }, error: undefined }
+      : { data: undefined, error: undefined },
+  );
+  const PUT = vi.fn().mockResolvedValue({ error: undefined });
+  return new AIInspectionStore({ GET, PUT } as never);
+}
+
 describe("Search.svelte", () => {
   it("renders the idle empty state when no query and no results", () => {
     const store = makeStore();
     const { container } = render(Search, {
-      props: { store, client: makeClient() },
+      props: { store, client: makeClient(), inspectionStore: makeInspectionStore() },
     });
     // No search results and no query → the idle prompt renders, and
     // there are no media-cell anchors (the grid is suppressed).
@@ -123,7 +140,12 @@ describe("Search.svelte", () => {
         mediaType: "photo",
       },
     });
-    render(Search, { props: { store, client: makeClient() } });
+    const inspectionStore = makeInspectionStore();
+    render(Search, { props: { store, client: makeClient(), inspectionStore } });
+    // load() is async — wait until loaded flips so the hydration
+    // $effect runs before assertions. flushSync alone isn't enough
+    // because the GET resolves on a microtask after construction.
+    await inspectionStore.load();
     // $effect runs as a microtask after mount; awaiting tick lets it
     // settle so the assertion sees the post-hydration navigate.
     flushSync();
@@ -151,7 +173,9 @@ describe("Search.svelte", () => {
     // for an empty-state /search is exactly /search with no query.
     const navigate = vi.spyOn(router, "navigate").mockImplementation(() => {});
     const store = makeStore({ query: "trees", sort: "relevance" });
-    render(Search, { props: { store, client: makeClient() } });
+    const inspectionStore = makeInspectionStore();
+    render(Search, { props: { store, client: makeClient(), inspectionStore } });
+    await inspectionStore.load();
     flushSync();
     await tick();
     expect(navigate).toHaveBeenCalled();
@@ -172,7 +196,9 @@ describe("Search.svelte", () => {
     window.history.replaceState({}, "", "/search?q=foo");
     router.syncFromLocation();
     const store = makeStore();
-    render(Search, { props: { store, client: makeClient() } });
+    const inspectionStore = makeInspectionStore();
+    render(Search, { props: { store, client: makeClient(), inspectionStore } });
+    await inspectionStore.load();
     flushSync();
     await tick();
     expect(store.setQuery).toHaveBeenCalledWith("foo");
@@ -226,7 +252,9 @@ describe("Search.svelte", () => {
       cursor: "next-page",
       hasMore: true,
     });
-    render(Search, { props: { store, client: makeClient() } });
+    render(Search, {
+      props: { store, client: makeClient(), inspectionStore: makeInspectionStore() },
+    });
 
     // Fire each captured callback with a synthetic intersecting entry.
     // The load-more observer's callback only inspects
@@ -244,5 +272,76 @@ describe("Search.svelte", () => {
     }
 
     expect(store.fetchNextPage).toHaveBeenCalled();
+  });
+
+  it("waits for AIInspection to load before the first search", async () => {
+    // The AIInspectionStore's GET resolves on a microtask, which
+    // historically meant the hydration $effect fired BEFORE load()
+    // resolved. The explainGetter then read its default (false) and a
+    // user with persisted ai.inspection=true received a non-diagnostic
+    // page on the first render. Gate the hydration on
+    // inspectionStore.loaded so the persisted value is honoured even
+    // for the very first request.
+    //
+    // Mount on /search?q=cats so the route hydrates with a query, and
+    // construct the inspection store with a deferred GET we resolve
+    // after asserting the hydration hasn't fired yet. The real store
+    // we create here drives a real createSearchStore via the
+    // explainGetter, so we observe the effect through the
+    // SearchClient's `search` calls instead of through a stub store's
+    // setQuery — that way we can assert explain=true reaches the
+    // wire.
+    window.history.replaceState({}, "", "/search?q=cats");
+    router.syncFromLocation();
+
+    // resolveGet captures the deferred resolver for the very first GET
+    // call (the route fires load() in its mount path). We don't want
+    // to make a second call from the test — that would issue a fresh
+    // deferred promise — so we keep the GET strict: only the first
+    // invocation produces the deferred shape, any subsequent calls
+    // resolve immediately to keep the test independent.
+    let resolveGet: ((value: { data: { value: string } | undefined; error: undefined }) => void) | null = null;
+    let getCalls = 0;
+    const GET = vi.fn().mockImplementation(() => {
+      getCalls++;
+      if (getCalls === 1) {
+        return new Promise((res) => {
+          resolveGet = res as typeof resolveGet;
+        });
+      }
+      return Promise.resolve({ data: undefined, error: undefined });
+    });
+    const PUT = vi.fn().mockResolvedValue({ error: undefined });
+    const inspectionStore = new AIInspectionStore({ GET, PUT } as never);
+
+    const client = makeClient();
+    render(Search, { props: { client, inspectionStore } });
+    flushSync();
+    await tick();
+    // Before load resolves, no search should have fired — the
+    // hydration $effect is gated on inspectionStore.loaded.
+    expect(client.search).not.toHaveBeenCalled();
+
+    // Resolve the GET with the persisted "true" payload. The route's
+    // in-flight load() promise then microtask-chains to set
+    // this.loaded = true; we await two microtasks to let that
+    // settle before the $effect schedules.
+    expect(resolveGet).not.toBeNull();
+    resolveGet!({ data: { value: "true" }, error: undefined });
+    // Two ticks: one for the GET .then to run (sets loaded=true), one
+    // for the resulting $effect run scheduled off that state change.
+    await tick();
+    flushSync();
+    await tick();
+    // The default-constructed search store inside Search.svelte ran
+    // setFilters → setSort → setQuery, each of which issues. Only
+    // the last issue's params survive on the wire (each call aborts
+    // the prior in-flight); explain=true must be set since the
+    // toggle's persisted value loaded as true.
+    expect(client.search).toHaveBeenCalled();
+    const lastCall = (client.search as ReturnType<typeof vi.fn>).mock.calls.at(-1);
+    expect(lastCall).toBeDefined();
+    const params = lastCall![0] as { explain?: boolean };
+    expect(params.explain).toBe(true);
   });
 });

@@ -27,20 +27,27 @@ export class AIInspectionStore {
   constructor(private client: Pick<Client, "GET" | "PUT">) {}
 
   async load(): Promise<void> {
-    const res = await this.client.GET("/api/v1/settings/user/{key}", {
-      params: { path: { key: "ai.inspection" } },
-    });
-    if (!this.dirty && res.data?.value !== undefined) {
-      try {
-        const parsed = JSON.parse(res.data.value);
-        if (typeof parsed === "boolean") {
-          this.enabled = parsed;
+    try {
+      const res = await this.client.GET("/api/v1/settings/user/{key}", {
+        params: { path: { key: "ai.inspection" } },
+      });
+      if (!this.dirty && res.data?.value !== undefined) {
+        try {
+          const parsed = JSON.parse(res.data.value);
+          if (typeof parsed === "boolean") {
+            this.enabled = parsed;
+          }
+        } catch {
+          // Malformed payload — keep the default (false).
         }
-      } catch {
-        // Malformed payload — keep the default (false).
       }
+    } finally {
+      // loaded must flip to true even when the GET rejects so the
+      // search page's hydration $effect (which gates on loaded) still
+      // proceeds. Persisted state is best-effort; transport failures
+      // shouldn't strand the rest of the UI on the load barrier.
+      this.loaded = true;
     }
-    this.loaded = true;
   }
 
   async set(on: boolean): Promise<void> {
