@@ -45,6 +45,44 @@ func NewSQLiteVecBackend(ro *sql.DB, gen embedding.Row) *SQLiteVecBackend {
 	return &SQLiteVecBackend{ro: ro, gen: gen}
 }
 
+// fusedOrderBy returns the trailing ORDER BY clause for FusedSearch's
+// final SELECT. SortNewest / SortOldest sort the relevance-selected
+// candidate pool by date for the page; SortRelevance (and any other
+// value) falls through to RRF DESC. The returned string includes
+// the trailing newline so the caller can append "LIMIT ?" without
+// formatting gymnastics.
+//
+// The split between candidate selection (relevance) and page sort
+// (date) mirrors the msgvault pattern: the user sees their date-
+// ordered photos but the engine still confines the page to the
+// most relevant N candidates. A different split — sort the entire
+// owner library by date and rank — would defeat the relevance
+// signal for any but the very first matches.
+func fusedOrderBy(s Sort) string {
+	switch s {
+	case SortNewest:
+		return "ORDER BY m.timestamp IS NULL, m.timestamp DESC, m.imported_at DESC, m.id\n"
+	case SortOldest:
+		return "ORDER BY m.timestamp IS NULL, m.timestamp ASC, m.imported_at ASC, m.id\n"
+	default:
+		return "ORDER BY rrf DESC, m.id\n"
+	}
+}
+
+// bm25OrderBy is the BM25Only counterpart to fusedOrderBy. The
+// fallback (SortRelevance / zero) sorts by BM25 ascending — bm25()
+// returns negative scores where lower is better.
+func bm25OrderBy(s Sort) string {
+	switch s {
+	case SortNewest:
+		return "ORDER BY m.timestamp IS NULL, m.timestamp DESC, m.imported_at DESC, m.id\n"
+	case SortOldest:
+		return "ORDER BY m.timestamp IS NULL, m.timestamp ASC, m.imported_at ASC, m.id\n"
+	default:
+		return "ORDER BY bm25.score, m.id\n"
+	}
+}
+
 // validateFilter enforces the security contract that every Backend
 // call must arrive with an owner-conditioned filter CTE. Earlier
 // revisions silently substituted a scan-all-media SELECT when
@@ -143,7 +181,13 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	sb.WriteString("        CASE WHEN fused.rank_vector IS NOT NULL THEN 1.0 / (? + fused.rank_vector) ELSE 0 END) AS rrf,\n")
 	sb.WriteString("       fused.bm25, fused.vec, fused.rank_bm25, fused.rank_vector\n")
 	sb.WriteString("FROM fused JOIN media m ON m.id = fused.id\n")
-	sb.WriteString("ORDER BY rrf DESC, m.id\n")
+	// Candidates are picked by relevance (BM25 + ANN, fused via RRF
+	// inside the bm25/ann CTEs); the final page sort is then applied
+	// over that pool. SortNewest / SortOldest let the user request a
+	// date-sorted view that still scopes to relevance-selected
+	// candidates — consistent with the msgvault pattern. SortRelevance
+	// (and the zero value) falls through to RRF DESC.
+	sb.WriteString(fusedOrderBy(in.Sort))
 	sb.WriteString("LIMIT ?")
 
 	args := make([]any, 0, len(in.Filter.Args)+9)
@@ -200,7 +244,10 @@ func (b *SQLiteVecBackend) BM25Only(ctx context.Context, in SearchInput) ([]Hit,
 	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version,\n")
 	sb.WriteString("       bm25.score AS bm25, bm25.rank_bm25\n")
 	sb.WriteString("FROM bm25 JOIN media m ON m.id = bm25.id\n")
-	sb.WriteString("ORDER BY bm25.score, m.id\n")
+	// Same candidates-by-relevance / page-by-date split as
+	// FusedSearch: the bm25 CTE picks the top-K by BM25 score, then
+	// the final SELECT applies the user's sort over that pool.
+	sb.WriteString(bm25OrderBy(in.Sort))
 	sb.WriteString("LIMIT ?")
 
 	args := make([]any, 0, len(in.Filter.Args)+3)

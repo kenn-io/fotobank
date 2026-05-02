@@ -400,6 +400,109 @@ func TestSQLiteVec_FusedSearchFiltersANNCandidates(t *testing.T) {
 		"the hit must carry a vector score — proving ANN, not BM25, surfaced it")
 }
 
+// TestSQLiteVec_FusedSearchSortNewest pins the date-sort posture for
+// FusedSearch's final SELECT. Three media all match the query and
+// all carry vectors at the query baseline (so they all surface in
+// both BM25 and ANN candidate pools); SortNewest must order the
+// page by m.timestamp DESC regardless of which candidate scored
+// highest on relevance. Without the post-fix ORDER BY switch, the
+// returned hits would still be RRF-DESC ordered.
+func TestSQLiteVec_FusedSearchSortNewest(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+
+	mids := []string{
+		seedSearchMedia(t, d, owner),
+		seedSearchMedia(t, d, owner),
+		seedSearchMedia(t, d, owner),
+	}
+	timestamps := []time.Time{
+		time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),  // T1 — oldest
+		time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),  // T2
+		time.Date(2025, 12, 1, 0, 0, 0, 0, time.UTC), // T3 — newest
+	}
+	for i, mid := range mids {
+		_, err := d.WriteDB().ExecContext(ctx,
+			`UPDATE media SET timestamp = ? WHERE id = ?`, timestamps[i], mid)
+		r.NoError(err)
+		mustWriteFTSCorpus(t, d, mid, ftsCorpus{
+			Caption: "shared_query_token",
+			Tags:    "shared_query_token",
+		})
+	}
+
+	gen := mustCreateActiveGenWithVectors(t, d, 768, map[string][]float32{
+		mids[0]: vecForText("baseline"),
+		mids[1]: vecForText("baseline"),
+		mids[2]: vecForText("baseline"),
+	})
+	b := index.NewSQLiteVecBackend(d.ReadDB(), gen)
+
+	hits, err := b.FusedSearch(ctx, index.SearchInput{
+		Query:       "shared_query_token",
+		QueryVector: vecForText("baseline"),
+		Owner:       owner,
+		Filter:      noFilter(owner),
+		Sort:        index.SortNewest,
+		KPerSignal:  10,
+		RRFK:        60,
+		Limit:       10,
+	})
+	r.NoError(err)
+	r.Len(hits, 3, "all three media must survive the candidate pools")
+	// SortNewest → T3, T2, T1 (descending timestamps).
+	r.Equal(mids[2], hits[0].MediaID, "newest hit first")
+	r.Equal(mids[1], hits[1].MediaID, "middle hit second")
+	r.Equal(mids[0], hits[2].MediaID, "oldest hit last")
+}
+
+// TestSQLiteVec_BM25OnlySortNewest is the lexical-only counterpart:
+// when the engine routes BM25Only (no semantic signal), SortNewest
+// still orders the candidate pool by date.
+func TestSQLiteVec_BM25OnlySortNewest(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+
+	mids := []string{
+		seedSearchMedia(t, d, owner),
+		seedSearchMedia(t, d, owner),
+		seedSearchMedia(t, d, owner),
+	}
+	timestamps := []time.Time{
+		time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2025, 12, 1, 0, 0, 0, 0, time.UTC),
+	}
+	for i, mid := range mids {
+		_, err := d.WriteDB().ExecContext(ctx,
+			`UPDATE media SET timestamp = ? WHERE id = ?`, timestamps[i], mid)
+		r.NoError(err)
+		mustWriteFTSCorpus(t, d, mid, ftsCorpus{
+			Caption: "shared_query_token",
+			Tags:    "shared_query_token",
+		})
+	}
+
+	b := index.NewSQLiteVecBackend(d.ReadDB(), embedding.Row{})
+	hits, err := b.BM25Only(ctx, index.SearchInput{
+		Query:      "shared_query_token",
+		Owner:      owner,
+		Filter:     noFilter(owner),
+		Sort:       index.SortNewest,
+		KPerSignal: 10,
+		Limit:      10,
+	})
+	r.NoError(err)
+	r.Len(hits, 3, "all three media must survive the BM25 pool")
+	r.Equal(mids[2], hits[0].MediaID)
+	r.Equal(mids[1], hits[1].MediaID)
+	r.Equal(mids[0], hits[2].MediaID)
+}
+
 // TestSQLiteVec_FusedSearchANNCappedPostFilter pins the post-filter
 // cap on the ANN CTE. ann_raw over-fetches at
 // k=KPerSignal*annOverfetchFactor to absorb owner-imbalance, but
