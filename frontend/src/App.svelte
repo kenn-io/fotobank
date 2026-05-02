@@ -1,6 +1,6 @@
 <!-- frontend/src/App.svelte -->
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import ThreeColumnLayout from "./lib/components/ThreeColumnLayout.svelte";
   import AppHeader from "./lib/components/AppHeader.svelte";
   import Sidebar from "./lib/components/Sidebar.svelte";
@@ -29,6 +29,7 @@
   import { modalStack } from "./lib/lightbox/modalStack.svelte";
   import { api } from "./lib/api/client";
   import { aiHealthStore } from "./lib/ai/health.svelte";
+  import { appConfig } from "./lib/app/appConfig.svelte";
 
   const themeStore = new ThemeStore(api);
   themeStore.load();
@@ -47,6 +48,10 @@
   const toastStore = new ToastStore();
   // Initial health snapshot — runs once on mount.
   void aiHealthStore.refresh();
+
+  onMount(() => {
+    void appConfig.load();
+  });
 
   $effect(() => {
     const ev = events.lastEvent;
