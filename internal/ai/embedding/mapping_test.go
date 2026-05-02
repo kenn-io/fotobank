@@ -138,11 +138,20 @@ func TestMapping_VecBlobRoundTrip(t *testing.T) {
 		fmt.Sprintf(`SELECT embedding FROM %s LIMIT 1`, gen.VecTableName),
 	).Scan(&blob)
 	r.NoError(err)
+	r.NotNil(blob, "blob must be non-nil")
 	r.Len(blob, 4*len(vec), "blob is 4 bytes per float32")
 
 	got := make([]float32, len(vec))
 	for i := range got {
-		got[i] = math.Float32frombits(binary.LittleEndian.Uint32(blob[i*4 : (i+1)*4]))
+		// nilaway: r.NotNil + r.Len above guard against nil slice access.
+		start := i * 4
+		end := start + 4
+		if end > len(blob) {
+			r.FailNow("blob shorter than expected")
+			return
+		}
+		chunk := blob[start:end]
+		got[i] = math.Float32frombits(binary.LittleEndian.Uint32(chunk))
 	}
 	r.Equal(vec, got, "round-tripped float32 values match input")
 }
