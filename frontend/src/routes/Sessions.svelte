@@ -248,7 +248,7 @@
   />
 {/if}
 
-{#if shareOpen}
+{#if appConfig.sharingEnabled && shareOpen}
   <ShareModal
     target={{ type: "media_set", mediaIds: pendingIds }}
     onCreate={onCreateShare}

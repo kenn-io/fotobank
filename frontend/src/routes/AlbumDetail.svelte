@@ -356,7 +356,7 @@
   />
 {/if}
 
-{#if shareOpen}
+{#if appConfig.sharingEnabled && shareOpen}
   <ShareModal
     target={{ type: "media_set", mediaIds: pendingIds }}
     onCreate={onCreateShare}
@@ -364,7 +364,7 @@
   />
 {/if}
 
-{#if shareAlbumOpen && detail.album}
+{#if appConfig.sharingEnabled && shareAlbumOpen && detail.album}
   <ShareModal
     target={{ type: "album_live", albumId: id, albumName: detail.album.name }}
     onCreate={onCreateShare}

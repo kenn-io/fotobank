@@ -3,9 +3,13 @@
   import ShareDrawer from "../lib/components/ShareDrawer.svelte";
   import ConfirmModal from "../lib/components/ConfirmModal.svelte";
   import type { SharesStore } from "../lib/shares/sharesStore.svelte";
+  import type { AppConfigStore } from "../lib/app/appConfig.svelte";
   import { router } from "../lib/router/router.svelte";
 
-  let { sharesStore }: { sharesStore: SharesStore } = $props();
+  let { sharesStore, appConfig }: {
+    sharesStore: SharesStore;
+    appConfig: AppConfigStore;
+  } = $props();
 
   let openUuid = $state<string | null>(null);
   let revokingUuid = $state<string | null>(null);
@@ -141,7 +145,7 @@
 
 {#if sharesStore.loading}<div class="loading">Loading…</div>{/if}
 
-{#if openScope}
+{#if appConfig.sharingEnabled && openScope}
   <ShareDrawer
     scope={openScope}
     {sharesStore}

@@ -155,7 +155,7 @@
     {:else if router.current.route === "albums.detail"}
       <AlbumDetail id={router.current.id} {mediaStore} {albumsStore} {hiddenStore} {toastStore} {appConfig} />
     {:else if router.current.route === "shares"}
-      <SharesPage {sharesStore} />
+      <SharesPage {sharesStore} {appConfig} />
     {:else if router.current.route === "hidden"}
       <HiddenLibrary {hiddenStore} {albumsStore} {toastStore} {appConfig} />
     {:else if router.current.route === "settings"}
