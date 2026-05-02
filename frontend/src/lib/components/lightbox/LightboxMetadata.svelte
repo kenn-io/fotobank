@@ -4,6 +4,7 @@
   import type { SearchScoreComponents } from "../../search/types";
   import { formatCoord } from "../../format/coords";
   import LightboxAI from "./LightboxAI.svelte";
+  import LightboxMapPin from "./LightboxMapPin.svelte";
 
   // scoreComponents is the V2 diagnostics payload threaded through
   // from a Search-context lightbox. When present, the Search relevance
@@ -65,6 +66,12 @@
       {#if media.latitude != null && media.longitude != null}
         <small class="coord">{formatCoord(media.latitude, media.longitude)}</small>
       {/if}
+    </dd>
+  {/if}
+  {#if media.latitude != null && media.longitude != null}
+    <dt class="map-pin-dt">Map</dt>
+    <dd class="map-pin-dd">
+      <LightboxMapPin {media} />
     </dd>
   {/if}
   {#if media.sidecars && media.sidecars.length > 0}

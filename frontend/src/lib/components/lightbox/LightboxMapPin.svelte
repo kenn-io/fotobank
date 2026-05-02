@@ -13,18 +13,19 @@
   import { tileUrl, attribution, defaultMaxZoom } from "../../map/tiles";
   import { router } from "../../router/router.svelte";
 
-  // exactOptionalPropertyTypes:true distinguishes `?: T` (must be T when
-  // present) from `T | undefined` (may be explicitly undefined). Callers
-  // (LightboxMetadata, tests) pass explicit undefined for missing GPS,
-  // so the union is required here.
+  // latitude/longitude must accept BOTH "absent property" (`?:`, matches
+  // Media's optional fields when LightboxMetadata passes the row through)
+  // AND "explicit undefined" (the test's pinProps helper sets undefined
+  // explicitly). Combining `?:` with `| undefined` satisfies both under
+  // exactOptionalPropertyTypes:true.
   let {
     media,
     navigate = (href: string): void => router.navigate(href),
   }: {
     media: {
       id: string;
-      latitude: number | null | undefined;
-      longitude: number | null | undefined;
+      latitude?: number | null | undefined;
+      longitude?: number | null | undefined;
       location_label?: string;
     };
     navigate?: (href: string) => void;

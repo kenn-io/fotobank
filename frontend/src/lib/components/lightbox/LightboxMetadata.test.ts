@@ -91,4 +91,21 @@ describe("LightboxMetadata", () => {
     });
     expect(queryByText("Search relevance")).toBeNull();
   });
+
+  it("renders LightboxMapPin when media has GPS coordinates", () => {
+    vi.mocked(client.getMediaAIView).mockResolvedValue({});
+    const mediaWithGPS = { ...baseMedia, latitude: 48.8566, longitude: 2.3522 };
+    const { getByTestId } = render(LightboxMetadata, {
+      props: { media: mediaWithGPS } as never,
+    });
+    expect(getByTestId("lightbox-map-pin")).toBeTruthy();
+  });
+
+  it("omits LightboxMapPin when media has no GPS", () => {
+    vi.mocked(client.getMediaAIView).mockResolvedValue({});
+    const { queryByTestId } = render(LightboxMetadata, {
+      props: { media: baseMedia } as never,
+    });
+    expect(queryByTestId("lightbox-map-pin")).toBeNull();
+  });
 });
