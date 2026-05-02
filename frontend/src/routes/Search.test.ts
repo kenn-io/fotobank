@@ -162,6 +162,29 @@ describe("Search.svelte", () => {
     expect(u.searchParams.get("q")).toBe("trees");
   });
 
+  it("rehydrates the store when router.current changes to a new ?q=", async () => {
+    // Mount on /search?q=foo so the initial hydration captures q=foo.
+    // Then update the URL to /search?q=bar and call router.syncFromLocation,
+    // which mutates router.current. The hydration $effect must re-run
+    // and route the new query through store.setQuery, otherwise external
+    // URL changes (e.g. AppHeader typing while already on /search) leave
+    // the store stale.
+    window.history.replaceState({}, "", "/search?q=foo");
+    router.syncFromLocation();
+    const store = makeStore();
+    render(Search, { props: { store, client: makeClient() } });
+    flushSync();
+    await tick();
+    expect(store.setQuery).toHaveBeenCalledWith("foo");
+
+    // Simulate AppHeader navigating /search?q=foo → /search?q=bar.
+    window.history.replaceState({}, "", "/search?q=bar");
+    router.syncFromLocation();
+    flushSync();
+    await tick();
+    expect(store.setQuery).toHaveBeenCalledWith("bar");
+  });
+
   it("triggers fetchNextPage when VirtualGrid's load-more sentinel intersects", async () => {
     // Capture the IntersectionObserver constructor callback so the test
     // can fire it directly. VirtualGrid creates one for resize, one for

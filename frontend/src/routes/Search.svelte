@@ -1,11 +1,12 @@
 <!-- frontend/src/routes/Search.svelte
      U2: page shell for /search. Reads the route match into the search
-     store on mount, then writes the store's reactive state back into
-     the URL on every change so the URL is the source of truth and a
-     full reload preserves the user's view. The pill/banner are still
-     stubbed (see TODO V1 comments). -->
+     store on mount and on every router.current change so external URL
+     mutations (e.g. AppHeader typing into a query while already on
+     /search) re-hydrate the store. Writes the store's reactive state
+     back into the URL on every change so the URL is the source of
+     truth and a full reload preserves the user's view. The pill/banner
+     are still stubbed (see TODO V1 comments). -->
 <script lang="ts">
-  import { onMount } from "svelte";
   import { createSearchStore, type SearchStore } from "../lib/search/searchStore.svelte";
   import { searchClient } from "../lib/search/client";
   import type { SearchClient } from "../lib/search/client";
@@ -32,21 +33,29 @@
   const s: SearchStore = store ?? createSearchStore({ client });
 
   // hydrated guards the URL-sync $effect from firing during the initial
-  // hydration cycle (when onMount writes the URL's params *into* the
-  // store). Without it, the effect would fire 3+ times during onMount
-  // — once per setFilters/setSort/setQuery — and each fire would
-  // navigate(replace) with a partial state that doesn't reflect the
-  // user's URL until the last call lands. The effect skips while
-  // hydrated=false so the first user-driven mutation produces the
-  // first URL write.
+  // hydration cycle (when the hydration effect writes the URL's params
+  // *into* the store). Without it, the effect would fire 3+ times
+  // during hydration — once per setFilters/setSort/setQuery — and each
+  // fire would navigate(replace) with a partial state that doesn't
+  // reflect the user's URL until the last call lands. The effect skips
+  // while hydrated=false so the first user-driven mutation produces
+  // the first URL write.
   let hydrated = $state(false);
 
+  // lastHydratedKey deduplicates hydration: the URL-sync $effect writes
+  // back to the URL after each store mutation, which mutates
+  // router.current and would otherwise re-fire the hydration effect
+  // forever. Stringifying the relevant search-route fields and skipping
+  // when the key matches the last hydration is the cheapest way to
+  // break the loop without coupling the two effects.
+  let lastHydratedKey = $state("");
+
   // filtersFromMatch projects the route match into the SearchFilters
-  // shape the store expects. It is only called inside onMount with a
-  // narrowed `match.route === "search"` pre-condition, so the typed
-  // fields are safe to read directly. tags arrive on the wire as
-  // tag_label strings (the ?tag= query repeats the label, not a
-  // canonical key); without the canonical key we mirror label → key,
+  // shape the store expects. It is only called inside the hydration
+  // effect with a narrowed `match.route === "search"` pre-condition,
+  // so the typed fields are safe to read directly. tags arrive on the
+  // wire as tag_label strings (the ?tag= query repeats the label, not
+  // a canonical key); without the canonical key we mirror label → key,
   // which the store dedupes by tag_key when it computes the request
   // hash.
   function filtersFromMatch(m: Extract<typeof router.current, { route: "search" }>): SearchFilters {
@@ -72,23 +81,36 @@
     void s.setSort(next);
   }
 
-  onMount(() => {
+  // Hydration effect: re-runs whenever router.current changes (the
+  // initial mount, a popstate from back/forward, or AppHeader writing a
+  // new ?q=). Skips when the route is not "search", and dedupes by
+  // serialised key so the URL-sync effect's writeback doesn't trigger
+  // a second hydration. The setFilters → setSort → setQuery order
+  // matches the original onMount; each call supersedes the prior
+  // in-flight request via the store's inflight token, so only the last
+  // one's response lands in the UI. The async fetch promises are
+  // intentionally left unawaited — URL state and the request are
+  // independent concerns and the URL must not block on the request.
+  $effect(() => {
     const m = router.current;
     if (m.route !== "search") return;
+    const key = JSON.stringify({
+      q: m.q ?? "",
+      sort: m.sort ?? "",
+      date_after: m.date_after ?? "",
+      date_before: m.date_before ?? "",
+      tag: m.tag ?? [],
+      location: m.location ?? "",
+      media_type: m.media_type ?? "",
+      include_hidden: m.include_hidden ?? false,
+    });
+    if (key === lastHydratedKey) return;
+    lastHydratedKey = key;
     const initialQuery = m.q ?? "";
     const initialSort: SearchSort = m.sort ?? "relevance";
-    // setSort/setFilters each trigger a fetch with cursor reset, so we
-    // route the *initial* hydration through the store's setters in
-    // order: filters → sort → query. Each call supersedes the prior
-    // in-flight request via the store's inflight token, so only the
-    // last one's response lands in the UI.
     void s.setFilters(filtersFromMatch(m));
     void s.setSort(initialSort);
     void s.setQuery(initialQuery);
-    // Flip the gate after the synchronous state writes complete so the
-    // URL-sync effect can take over. The async fetch promises are
-    // intentionally left unawaited — URL state and the request are
-    // independent concerns and the URL must not block on the request.
     hydrated = true;
   });
 
