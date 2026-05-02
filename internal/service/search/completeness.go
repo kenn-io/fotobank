@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/wesm/fotobank/internal/auth/hidden"
+	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/owners"
 )
 
@@ -18,6 +20,13 @@ import (
 // the only knob the user sees; the activator's separate
 // ackAllowsHidden=false measure is internal and never surfaced through
 // this method.
+//
+// includeHidden=true is gated on a valid UnlockClaim — same posture
+// as Search. A nil claim or a checker rejection returns
+// errs.ErrPermissionDenied. Defense-in-depth: even if the caller
+// already presented a valid claim to Search on the same request,
+// EmbeddingCompleteness validates independently so a misuse that
+// calls only the completeness path can't leak the hidden tally.
 //
 // Sentinel returns:
 //   - active generation absent → (0, nil). The pill renders 0% in this
@@ -37,7 +46,12 @@ import (
 // active generation. Both queries route through the read pool (s.ro);
 // the JOIN to media on the embedded query is what keeps the count
 // honest across thumb-regen invalidations and hidden-flag flips.
-func (s *Service) EmbeddingCompleteness(ctx context.Context, caller owners.Principal, includeHidden bool) (float64, error) {
+func (s *Service) EmbeddingCompleteness(ctx context.Context, caller owners.Principal, includeHidden bool, claim *hidden.UnlockClaim) (float64, error) {
+	if includeHidden {
+		if claim == nil || !s.hiddenChecker.Valid(claim, caller) {
+			return 0, errs.ErrPermissionDenied
+		}
+	}
 	active, err := s.gens.FindActive(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("find active generation: %w", err)

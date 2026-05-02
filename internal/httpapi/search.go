@@ -89,8 +89,15 @@ func handleSearch(ctx context.Context, svc *searchsvc.Service, in *searchInput) 
 	// service performs the validity check via its HiddenChecker; we
 	// merely surface the claim. A nil claim with IncludeHidden=true
 	// short-circuits to ErrPermissionDenied inside the service.
+	//
+	// The same claim is forwarded to EmbeddingCompleteness below so
+	// the completeness call validates independently — defense-in-depth
+	// against a future caller that exercises only the completeness
+	// path with includeHidden=true and no claim.
+	var claimPtr *hidden.UnlockClaim
 	if claim, hasClaim := hidden.UnlockClaimFromContext(ctx); hasClaim && claim.Principal == caller {
 		c := claim
+		claimPtr = &c
 		req.UnlockClaim = &c
 	}
 
@@ -103,7 +110,7 @@ func handleSearch(ctx context.Context, svc *searchsvc.Service, in *searchInput) 
 	// the "X% indexed" pill without forcing every Search to JOIN against
 	// media_embedding_ids. The service treats a missing active generation
 	// as 0, so this never errors on a fresh library — just yields zero.
-	completeness, err := svc.EmbeddingCompleteness(ctx, caller, in.IncludeHidden)
+	completeness, err := svc.EmbeddingCompleteness(ctx, caller, in.IncludeHidden, claimPtr)
 	if err != nil {
 		return nil, Translate(err)
 	}

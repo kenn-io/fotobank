@@ -11,7 +11,9 @@ import (
 
 	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/ai/embedding"
+	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/db"
+	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/owners"
 	searchsvc "github.com/wesm/fotobank/internal/service/search"
 	"github.com/wesm/fotobank/internal/testutil"
@@ -28,15 +30,27 @@ func completenessFP() ai.Fingerprint {
 	}
 }
 
+// completenessFakeChecker accepts every claim. The completeness
+// tests pass a nil claim for includeHidden=false (the gate is
+// inactive in that branch) and a non-nil claim for
+// includeHidden=true; the checker validates whatever it's given so
+// the happy path exercises the full validation chain.
+type completenessFakeChecker struct{}
+
+func (completenessFakeChecker) Valid(_ *hidden.UnlockClaim, _ owners.Principal) bool {
+	return true
+}
+
 // newCompletenessSvc bundles a Service wired against the test DB. The
-// auth-side dependencies (settings/tags/checker) are nil because no
-// completeness path exercises them; the engine is also nil for the
-// same reason. gens and ro are the only fields the completeness
-// method consults.
+// auth-side dependencies (settings/tags) are nil because no completeness
+// path exercises them; the engine is also nil for the same reason. The
+// hidden checker accepts every claim so happy-path tests can exercise
+// the validation chain. gens and ro are consulted directly by the
+// completeness queries.
 func newCompletenessSvc(t *testing.T, d *db.DB) (*searchsvc.Service, *embedding.Generations) {
 	t.Helper()
 	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
-	svc := searchsvc.New(nil, nil, nil, nil, gens, d.ReadDB())
+	svc := searchsvc.New(nil, nil, nil, completenessFakeChecker{}, gens, d.ReadDB())
 	return svc, gens
 }
 
@@ -128,7 +142,9 @@ func TestCompleteness_VisibleOnlyMatchesDenominator(t *testing.T) {
 	owner, _, _ := seedHiddenAwareFixture(t, d)
 	svc, _ := newCompletenessSvc(t, d)
 
-	got, err := svc.EmbeddingCompleteness(context.Background(), owner, false)
+	// includeHidden=false: claim is irrelevant — the gate is
+	// inactive — so pass nil.
+	got, err := svc.EmbeddingCompleteness(context.Background(), owner, false, nil)
 	r.NoError(err)
 	r.InDelta(6.0/7.0, got, 0.001, "visible-only count: 6/7")
 }
@@ -144,9 +160,27 @@ func TestCompleteness_IncludeHiddenWithUnlockSeesAll(t *testing.T) {
 	owner, _, _ := seedHiddenAwareFixture(t, d)
 	svc, _ := newCompletenessSvc(t, d)
 
-	got, err := svc.EmbeddingCompleteness(context.Background(), owner, true)
+	claim := hidden.UnlockClaim{Principal: owner}
+	got, err := svc.EmbeddingCompleteness(context.Background(), owner, true, &claim)
 	r.NoError(err)
 	r.InDelta(6.0/10.0, got, 0.001, "include-hidden count: 6/10 (no hidden are mapped)")
+}
+
+// TestCompleteness_IncludeHiddenWithoutClaimDenied pins the new
+// fail-closed gate: includeHidden=true with a nil claim must surface
+// errs.ErrPermissionDenied. Even if Search has already validated a
+// claim earlier on the same request, EmbeddingCompleteness validates
+// independently — defense-in-depth against a misuse that exercises
+// only the completeness path.
+func TestCompleteness_IncludeHiddenWithoutClaimDenied(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner, _, _ := seedHiddenAwareFixture(t, d)
+	svc, _ := newCompletenessSvc(t, d)
+
+	_, err := svc.EmbeddingCompleteness(context.Background(), owner, true, nil)
+	r.ErrorIs(err, errs.ErrPermissionDenied,
+		"includeHidden=true with nil claim must deny")
 }
 
 // TestCompleteness_NoActiveGenReturnsZero exercises the
@@ -166,7 +200,7 @@ func TestCompleteness_NoActiveGenReturnsZero(t *testing.T) {
 	}
 	svc, _ := newCompletenessSvc(t, d)
 
-	got, err := svc.EmbeddingCompleteness(context.Background(), owner, false)
+	got, err := svc.EmbeddingCompleteness(context.Background(), owner, false, nil)
 	r.NoError(err)
 	r.InDelta(0.0, got, 0.0, "no active generation must yield 0, not an error")
 }
