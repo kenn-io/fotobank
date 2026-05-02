@@ -11,38 +11,30 @@
 // route guards (e.g. /shares redirect) can fire predictably. A pending
 // load leaves the SPA on the safer default (sharing UI hidden).
 
+import type { Client } from "../api/client";
+
 export class AppConfigStore {
-  private _sharingEnabled = $state(false);
-  private _ready = $state(false);
+  sharingEnabled = $state(false);
+  ready = $state(false);
 
-  get sharingEnabled(): boolean {
-    return this._sharingEnabled;
-  }
-
-  get ready(): boolean {
-    return this._ready;
-  }
+  constructor(private client: Pick<Client, "GET">) {}
 
   async load(): Promise<void> {
     try {
-      const resp = await fetch("/api/v1/me");
-      if (!resp.ok) {
-        // Treat HTTP failure as resolved-disabled so guards can fire.
-        this._sharingEnabled = false;
-        this._ready = true;
+      const { data } = await this.client.GET("/api/v1/me", {});
+      // openapi-fetch returns data===undefined for non-2xx responses;
+      // both HTTP error and "no body" are treated as resolved-disabled.
+      if (!data) {
+        this.sharingEnabled = false;
+        this.ready = true;
         return;
       }
-      const body = (await resp.json()) as {
-        features?: { sharing_enabled?: boolean };
-      };
-      this._sharingEnabled = body?.features?.sharing_enabled === true;
-      this._ready = true;
+      this.sharingEnabled = data.features.sharing_enabled === true;
+      this.ready = true;
     } catch {
-      // Network failure: same treatment as HTTP failure.
-      this._sharingEnabled = false;
-      this._ready = true;
+      // Network failure (fetch threw): same treatment as HTTP failure.
+      this.sharingEnabled = false;
+      this.ready = true;
     }
   }
 }
-
-export const appConfig = new AppConfigStore();

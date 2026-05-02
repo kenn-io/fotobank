@@ -29,7 +29,7 @@
   import { modalStack } from "./lib/lightbox/modalStack.svelte";
   import { api } from "./lib/api/client";
   import { aiHealthStore } from "./lib/ai/health.svelte";
-  import { appConfig } from "./lib/app/appConfig.svelte";
+  import { AppConfigStore } from "./lib/app/appConfig.svelte";
 
   const themeStore = new ThemeStore(api);
   themeStore.load();
@@ -46,6 +46,7 @@
   const hiddenStore = new HiddenStore(api);
   hiddenStore.refresh();
   const toastStore = new ToastStore();
+  const appConfig = new AppConfigStore(api);
   // Initial health snapshot — runs once on mount.
   void aiHealthStore.refresh();
 
