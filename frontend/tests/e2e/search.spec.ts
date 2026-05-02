@@ -198,25 +198,32 @@ test.describe("W1 Search", () => {
     // (the engine still ranks by BM25/RRF candidates, then orders by
     // date — see internal/search/index/sqlitevec.go::fusedOrderBy).
     //
-    // Wait one second past the goto so inspectionStore.load() has had
-    // time to resolve before we click. 800ms is more than enough for
-    // a same-machine round-trip.
-    await page.waitForTimeout(800);
+    // Race avoidance: register the waitForResponse promise BEFORE the
+    // click so a fast same-machine response can't fire between the
+    // click and the waiter. Promise.all sequences both registrations
+    // synchronously — Playwright's waitForResponse is queued before
+    // the click event is dispatched. This also drops the previous
+    // fixed waitForTimeout(800) — relying on it can flake on slower
+    // CI (response slips by) and on faster local runs (response
+    // arrives before the waiter registers). The first /api/v1/search
+    // request fired by the prior page.goto("/search?q=beach") has
+    // already settled by the time we reach this point because the
+    // result-cell visibility assertion above blocked on it.
     const newestBtn = page.getByTestId("search-sort-newest");
-    await newestBtn.click();
-
-    // Wait for the explain=true search response to land.
-    await page.waitForResponse(
-      (resp) => {
-        const url = new URL(resp.url());
-        return (
-          url.pathname === "/api/v1/search" &&
-          url.searchParams.get("explain") === "true" &&
-          resp.status() === 200
-        );
-      },
-      { timeout: 8_000 },
-    );
+    await Promise.all([
+      page.waitForResponse(
+        (resp) => {
+          const url = new URL(resp.url());
+          return (
+            url.pathname === "/api/v1/search" &&
+            url.searchParams.get("explain") === "true" &&
+            resp.status() === 200
+          );
+        },
+        { timeout: 8_000 },
+      ),
+      newestBtn.click(),
+    ]);
 
     const badges = page.getByTestId("diagnostics-badge");
     await expect(badges.first()).toBeVisible({ timeout: 5_000 });
