@@ -630,9 +630,14 @@ func (f *edgeRecordingClient) EmbedImages(_ context.Context, _ string, dimension
 	f.dimsByCall = append(f.dimsByCall, dims)
 	f.callDims = append(f.callDims, dimension)
 	f.mu.Unlock()
+	// Return vectors sized to the per-call dimension so the worker's
+	// downstream WriteVectorTx writes into the matching vec0 column
+	// (FLOAT[N] rejects a mis-sized blob). This is what makes the
+	// test's gen.Dimension differ from cfg.Dimension exercise the full
+	// pipeline — the response shape mirrors the request's dimension.
 	out := make([][]float32, len(jpegs))
 	for i := range out {
-		out[i] = make([]float32, 768)
+		out[i] = make([]float32, dimension)
 		out[i][0] = 0.5
 	}
 	return out, nil
@@ -644,6 +649,15 @@ func (f *edgeRecordingClient) EmbedImages(_ context.Context, _ string, dimension
 // fingerprints with edges 256 and 512 share one ClaimBatch; the
 // worker must encode group A at 256 and group B at 512 even though
 // cfg.InputEdge is some single value (here 384).
+//
+// The test also exercises the per-call dimension routing: fpA's
+// generation row is pre-created with a dimension (512) that differs
+// from cfg.Dimension (768), so a regression that forwards
+// cfg.Dimension instead of gen.Dimension fails the dimsByCall set
+// assertion. fpB's generation is created lazily by the worker at
+// cfg.Dimension, so its call carries 768 — the union of the two
+// proves the worker reads gen.Dimension per-claim, not cfg.Dimension
+// once at boot.
 func TestWorker_PerFingerprintRequestUsesClaimFingerprint(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
@@ -674,12 +688,18 @@ func TestWorker_PerFingerprintRequestUsesClaimFingerprint(t *testing.T) {
 	client := &edgeRecordingClient{}
 	w, q, gens, _ := newTestWorker(t, d, resolver, client, &recordingEmitter{})
 
-	// Pre-create fpA's generation as active so fpB's row can land as
-	// the (single) building. The schema's one-building partial unique
-	// index would otherwise reject the worker's second
-	// FindOrCreateBuilding inside the same RunOnce.
-	gA, err := gens.FindOrCreateBuilding(ctx, fpA, embedCfg().Dimension)
+	// Pre-create fpA's generation as active at a dimension that
+	// differs from cfg.Dimension (cfg=768, fpA's gen=512). The worker
+	// resolves fpA's row via FindOrCreateBuilding which returns the
+	// existing row unchanged — so when it forwards the per-call
+	// dimension to EmbedImages it MUST forward gen.Dimension (512),
+	// not cfg.Dimension (768). A regression that uses cfg.Dimension
+	// would land 768 on the wire and the dimsByCall assertion below
+	// would fail.
+	const fpADim = 512
+	gA, err := gens.FindOrCreateBuilding(ctx, fpA, fpADim)
 	r.NoError(err)
+	r.Equal(fpADim, gA.Dimension)
 	r.NoError(gens.Promote(ctx, gA.ID))
 
 	r.NoError(q.Enqueue(ctx, midA, ai.TaskEmbed, fpA))
@@ -701,16 +721,13 @@ func TestWorker_PerFingerprintRequestUsesClaimFingerprint(t *testing.T) {
 	r.ElementsMatch([]int{256, 512}, flat,
 		"each fingerprint group must encode at its InputProfile's edge")
 
-	// Per-call dimension routing: every call must have received the
-	// matched generation row's Dimension. Both gens were created via
-	// FindOrCreateBuilding(cfg.Dimension=768), so each call carries
-	// dim=768. The assertion proves the worker reads gen.Dimension
-	// rather than cfg.Dimension when it routes the request — a stale
-	// claim that lands on a row created at a different dimension would
-	// be validated against that row's value, not the worker's current
-	// configuration.
-	r.Equal([]int{embedCfg().Dimension, embedCfg().Dimension}, client.callDims,
-		"each call must carry the matched generation's Dimension")
+	// Per-call dimension routing: fpA's call must carry gen.Dimension=512
+	// (different from cfg.Dimension=768) and fpB's lazily-created gen
+	// at cfg.Dimension=768 must carry that. The set assertion is
+	// position-agnostic because group iteration order is
+	// non-deterministic.
+	r.ElementsMatch([]int{fpADim, embedCfg().Dimension}, client.callDims,
+		"each call must carry the matched generation's Dimension, not cfg.Dimension")
 }
 
 // TestWorker_RepeatedFailuresAccumulateAttemptCount covers the

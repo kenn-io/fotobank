@@ -240,6 +240,48 @@ func TestClient_ContextCanceledDuringBodyReadDoesNotWrapAsTransient(t *testing.T
 	r.NotErrorIs(err, embedding.ErrTransient, "must not be wrapped as transient")
 }
 
+// TestClient_NonZeroDimensionOverridesConfig pins the per-call
+// dimension routing contract. The client validates response vector
+// length against the supplied dimension argument when it is > 0,
+// falling back to cfg.Dimension only when the caller passed 0.
+//
+// The worker's per-claim dispatch passes gen.Dimension on every
+// EmbedImages call so a stale-fp claim under a generation built at
+// dim=512 still validates against 512 regardless of the worker's
+// currently-configured dim. This client-level test pins the
+// validation contract that makes that work: a 512-arg call with a
+// 512-vec response succeeds; a 768-arg (cfg-fallback) call with a
+// 512-vec response is rejected as malformed.
+func TestClient_NonZeroDimensionOverridesConfig(t *testing.T) {
+	r := require.New(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w,
+			`{"data":[{"embedding":`+vec(512, 0.1)+`,"index":0}],"model":"siglip2"}`)
+	}))
+	defer srv.Close()
+
+	c := embedding.NewClient(embedding.Config{
+		Endpoint:  srv.URL + "/v1",
+		Model:     "siglip2",
+		Dimension: 768, // cfg fallback — the explicit per-call arg wins
+		Timeout:   5 * time.Second,
+	})
+
+	// Per-call dim=512 with a 512-vec response: passes validation.
+	out, err := c.EmbedImages(context.Background(), "siglip2", 512, [][]byte{[]byte("a")})
+	r.NoError(err, "explicit per-call dim=512 must validate against 512-vec response")
+	r.Len(out, 1)
+	r.Len(out[0], 512)
+
+	// Per-call dim=0 falls back to cfg.Dimension=768. The 512-vec
+	// response now mismatches the expected 768 — surfaces as
+	// ErrMalformed.
+	_, err = c.EmbedImages(context.Background(), "siglip2", 0, [][]byte{[]byte("a")})
+	r.ErrorIs(err, embedding.ErrMalformed,
+		"dim=0 falls back to cfg.Dimension=768; 512-vec response must be malformed")
+}
+
 // TestClient_DeadlineExceededDoesNotWrapAsTransient is the deadline twin
 // of the cancel test: a tiny per-call deadline that fires mid-flight
 // returns context.DeadlineExceeded, not ErrTransient.
