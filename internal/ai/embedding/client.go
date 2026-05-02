@@ -169,15 +169,6 @@ func (c *Client) callOnce(ctx context.Context, input []string) ([][]float32, err
 		out, class, perr := parse(resp, len(input), c.cfg.Dimension)
 		_ = resp.Body.Close()
 
-		// If the context was cancelled or the deadline expired during
-		// the body read, parse classifies the truncated read as
-		// transient. Surface the raw context error instead so callers
-		// can errors.Is(err, context.Canceled / DeadlineExceeded) and
-		// don't get a needless retry on a deliberate cancel.
-		if cerr := ctx.Err(); cerr != nil {
-			return nil, cerr
-		}
-
 		switch class {
 		case classOK:
 			return out, nil
@@ -186,6 +177,18 @@ func (c *Client) callOnce(ctx context.Context, input []string) ([][]float32, err
 		case classMalformed:
 			return nil, fmt.Errorf("%w: %v", ErrMalformed, perr)
 		case classTransient:
+			// If the context was cancelled or the deadline expired
+			// during the body read, parse classifies the truncated
+			// read as transient. Surface the raw context error
+			// instead so callers can errors.Is(err, context.Canceled
+			// / DeadlineExceeded) and don't get a needless retry on
+			// a deliberate cancel. Scoped to the transient branch
+			// only — a successful, 4xx, or malformed response that
+			// happens to land just as ctx is cancelled must still be
+			// reported on its own merits.
+			if cerr := ctx.Err(); cerr != nil {
+				return nil, cerr
+			}
 			lastErr = fmt.Errorf("%w: %v", ErrTransient, perr)
 			continue
 		default:
