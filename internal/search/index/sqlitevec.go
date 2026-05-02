@@ -9,6 +9,23 @@ import (
 	"github.com/wesm/fotobank/internal/ai/embedding"
 )
 
+// annOverfetchFactor controls how many extra ANN candidates the backend
+// asks sqlite-vec for relative to KPerSignal. The vec0 MATCH operator
+// has no way to apply a SQL filter (e.g. owner scoping) before the
+// LIMIT — it returns the top-k vectors over the entire generation, and
+// the filter join narrows that pool afterwards. If the filter shrinks
+// the pool drastically (e.g. owner A's 5 photos in a corpus of 1000),
+// the bare KPerSignal-cap on ann_raw can leave the post-join set empty
+// because most of the top-k vectors belong to other owners.
+//
+// Multiplying KPerSignal by this factor over-fetches at the vec layer
+// so the post-filter set is dense enough for the RRF fusion. v1 picks
+// 10 — enough to absorb a 10:1 owner imbalance — at the cost of
+// scanning 10× as many vec rows per query. M3 will replace this with
+// a per-request iteration that asks for more ANN candidates only when
+// the filter narrows them out.
+const annOverfetchFactor = 10
+
 // SQLiteVecBackend is the production Backend. It runs the composed
 // BM25 + ANN + filter intersection + RRF fusion in one SQL statement
 // against the read-only pool, joining the per-generation vec0 virtual
@@ -120,8 +137,12 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	args = append(args, in.Filter.Args...)
 	// bm25_raw: MATCH ? then LIMIT ?
 	args = append(args, in.Query, in.KPerSignal)
-	// ann_raw: vec_f32(?), k = ?
-	args = append(args, embedding.VecToBlob(in.QueryVector), in.KPerSignal)
+	// ann_raw: vec_f32(?), k = KPerSignal * annOverfetchFactor.
+	// vec0 MATCH applies its k-cap before the filter join, so a query
+	// that filters down to a small slice (owner-scoped, hidden=false)
+	// can come up empty if k=KPerSignal happens to be filled by other
+	// owners' vectors. Over-fetching gives the filter room to narrow.
+	args = append(args, embedding.VecToBlob(in.QueryVector), in.KPerSignal*annOverfetchFactor)
 	// ann: generation_id = ?
 	args = append(args, b.gen.ID)
 	// SELECT: RRF k for BM25 then for vector, then outer LIMIT.

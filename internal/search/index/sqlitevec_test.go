@@ -303,6 +303,102 @@ func TestSQLiteVec_FilterOnly_NoQueryNoVector(t *testing.T) {
 	r.Equal(mids[2], hits[2].MediaID)
 }
 
+// TestSQLiteVec_FusedSearchFiltersANNCandidates is the regression for
+// the ANN over-fetch fix. sqlite-vec's vec0 MATCH applies its k-cap
+// BEFORE the filter join, so a query that filters down to a small
+// slice (e.g. one owner-scoped match in a corpus where the top-k is
+// dominated by another owner) can come up empty under k=KPerSignal.
+// The post-fix code over-fetches at the vec layer
+// (k = KPerSignal * annOverfetchFactor) so the filter has room to
+// narrow.
+//
+// Setup:
+//   - 5 owner B media whose vectors are all the query baseline
+//     (distance 0; they fill the top-5 ANN slots).
+//   - 1 owner A media whose vector is moderately distant from the
+//     query (distance > 0; ranks 6th in the global ANN order).
+//
+// Owner A's BM25 corpus contains tokens that DO NOT match the query
+// string, so the BM25 CTE cannot surface owner A — only the ANN
+// signal can. With KPerSignal=5 and no over-fetch, ann_raw returns
+// owner B's 5 vectors and the post-filter set is empty for owner A.
+// With over-fetch (k=50), ann_raw includes owner A's vector and the
+// filter join surfaces it.
+//
+// If the over-fetch is reverted, this test fails (owner A's media
+// won't appear in the result).
+func TestSQLiteVec_FusedSearchFiltersANNCandidates(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	ownerA := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	ownerB := testutil.SeedOwner(t, d.WriteDB(), "local", "bob")
+
+	const bCount = 5
+	bMids := make([]string, bCount)
+	for i := range bCount {
+		mid := seedSearchMedia(t, d, ownerB)
+		bMids[i] = mid
+		mustWriteFTSCorpus(t, d, mid, ftsCorpus{
+			Caption: "owner_b_text matches_query_text",
+			Tags:    "owner_b_only",
+		})
+	}
+	aMid := seedSearchMedia(t, d, ownerA)
+	mustWriteFTSCorpus(t, d, aMid, ftsCorpus{
+		Caption: "owner_a_irrelevant_text",
+		Tags:    "owner_a_only",
+	})
+
+	// Insert mappings explicitly so B's vectors get earlier rowids in
+	// the vec0 table — sqlite-vec breaks ties on rowid, which makes
+	// the ordering deterministic across runs. B's vectors are all at
+	// the query baseline (distance 0); A's vector is from a different
+	// text so it lives at a non-zero distance.
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	fp := ai.Fingerprint{
+		ModelID:      "siglip2",
+		InputProfile: "search-overfetch-" + t.Name(),
+	}
+	gen, err := g.FindOrCreateBuilding(ctx, fp, 768)
+	r.NoError(err)
+	mp := embedding.NewMapping(d.WriteDB())
+	queryBaseline := vecForText("owner-b-baseline")
+	for _, mid := range bMids {
+		_, err := mp.WriteVector(ctx, gen, mid, queryBaseline)
+		r.NoError(err)
+	}
+	_, err = mp.WriteVector(ctx, gen, aMid, vecForText("owner-a-distant"))
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, gen.ID))
+	got, err := g.GetByID(ctx, gen.ID)
+	r.NoError(err)
+	b := index.NewSQLiteVecBackend(d.ReadDB(), *got)
+
+	// Query: BM25 string matches owner B's caption but NOT owner A's,
+	// and the query vector is the owner B baseline. So owner B's 5
+	// vectors are the top-5 ANN candidates — without over-fetch, the
+	// filter join (owner=A) lands on an empty set and BM25 has nothing
+	// to rescue owner A with either, so the result is empty.
+	hits, err := b.FusedSearch(ctx, index.SearchInput{
+		Query:       "matches_query_text",
+		QueryVector: queryBaseline,
+		Owner:       ownerA,
+		Filter:      noFilter(ownerA),
+		KPerSignal:  5,
+		RRFK:        60,
+		Limit:       10,
+	})
+	r.NoError(err)
+	r.Len(hits, 1,
+		"owner A's media must surface via the over-fetched ANN slate")
+	r.Equal(aMid, hits[0].MediaID,
+		"the only hit must be owner A's lone media")
+	r.NotNil(hits[0].ScoreComponents)
+	r.NotNil(hits[0].ScoreComponents.Vector,
+		"the hit must carry a vector score — proving ANN, not BM25, surfaced it")
+}
+
 // TestSQLiteVec_EmptyFilterIsValidSQL ensures that all three Backend
 // methods substitute a default scan-all-media SELECT when in.Filter.SQL
 // is the empty string. Without the fallback, the WITH filter AS ()
