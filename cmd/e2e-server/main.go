@@ -28,20 +28,26 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
+	"math"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/ai/ack"
+	"github.com/wesm/fotobank/internal/ai/embedding"
 	"github.com/wesm/fotobank/internal/ai/failures"
 	"github.com/wesm/fotobank/internal/ai/imginput"
 	"github.com/wesm/fotobank/internal/ai/parse"
@@ -62,6 +68,27 @@ import (
 // the cfg heredoc writes — the AI fingerprints persisted on seeded
 // results must use the same model id so the gap scanner skips them.
 const e2eVisionModelID = "qwen2.5-vl:3b"
+
+// Embed pipeline constants. Keep all three in lockstep — the seeded
+// embedding generation row carries this fingerprint (model + input
+// profile), and the mock /v1/embeddings endpoint responds with vectors
+// of e2eEmbedDim. A mismatch between the seed dim and the configured
+// dim makes the boot Probe fail; a mismatch between the seed input
+// profile and the cfg.AI.Embed.InputEdge makes the gap scanner think
+// the seeded mappings belong to a different fingerprint and re-enqueue
+// them.
+const (
+	e2eEmbedModelID  = "siglip2"
+	e2eEmbedDim      = 4
+	e2eEmbedEdge     = 384
+	e2eEmbedProfile  = "jpeg-384-q85-metadata-stripped-embed-v1"
+	e2eVisibleCount  = 30
+	e2eHiddenCount   = 5
+	e2eMappedCount   = 22 // 22/30 ≈ 73% — under the 80% banner threshold.
+	e2eOwnerHub      = "local"
+	e2eOwnerUserID   = "alice"
+	e2eOwnerStorageK = "alice-sk"
+)
 
 // e2ePort returns the listen port for the e2e server, honoring
 // FOTOBANK_E2E_PORT and falling back to 18080.
@@ -110,6 +137,34 @@ func run() error {
 		return fmt.Errorf("start mock vlm: %w", err)
 	}
 
+	// Mock OpenAI-compat embeddings endpoint. Same lifetime semantics
+	// as the VLM mock. Returns deterministic e2eEmbedDim-dim vectors so
+	// the boot Probe and any runtime EmbedTexts call land successfully;
+	// see startMockEmbed for the failure-injection knobs.
+	embedURL, _, err := startMockEmbed()
+	if err != nil {
+		return fmt.Errorf("start mock embed: %w", err)
+	}
+
+	// FOTOBANK_TEST_EMBED_GAPSCAN_INTERVAL / _ACTIVATOR_TICK / _COMPACTOR_INTERVAL
+	// override the production-default 1m / 1m / 24h cadences. The seed
+	// directly inserts an active generation row + 22/30 mappings; the
+	// runtime workers must not race the seed by enqueuing fresh embed
+	// jobs for the unmapped 8, or the under-80% banner test would flap
+	// as completeness drifts upward during the run. Setting all three
+	// to 1h keeps the workers idle for the duration of the suite while
+	// still wiring the boot path so the Probe and search service get
+	// constructed.
+	for k, v := range map[string]string{
+		"FOTOBANK_TEST_EMBED_GAPSCAN_INTERVAL":   "1h",
+		"FOTOBANK_TEST_EMBED_ACTIVATOR_TICK":     "1h",
+		"FOTOBANK_TEST_EMBED_COMPACTOR_INTERVAL": "1h",
+	} {
+		if err := os.Setenv(k, v); err != nil {
+			return fmt.Errorf("set %s: %w", k, err)
+		}
+	}
+
 	cfg := fmt.Sprintf(`
 [nas]
 root = "%s"
@@ -118,10 +173,10 @@ root = "%s"
 [identity]
 mode = "stub"
 [identity.stub]
-hub = "local"
-user_id = "alice"
+hub = "%s"
+user_id = "%s"
 handle = "Alice"
-storage_key = "alice-sk"
+storage_key = "%s"
 [http]
 listen_address = "127.0.0.1:%s"
 # dev_insecure_cookies must be true for the e2e server: the __Host- prefix
@@ -152,8 +207,25 @@ worker_concurrency = 1
 enabled = true
 model = "%s"
 worker_concurrency = 1
-`, nasRoot, flashRoot, e2ePort(), filepath.Join(tmp, "import.lock"),
-		vlmURL, e2eVisionModelID, e2eVisionModelID)
+[ai.embed]
+enabled = true
+model = "%s"
+endpoint = "%s/v1"
+dimension = %d
+input_edge = %d
+timeout = "5s"
+max_retries = 1
+worker_concurrency = 1
+batch_size = 8
+[search]
+# Lower the activation threshold so the seeded mapping count crosses
+# the bar even when the activator picks up a building generation
+# mid-run (defense-in-depth — the seed inserts active directly).
+activation_threshold = 50
+`, nasRoot, flashRoot, e2eOwnerHub, e2eOwnerUserID, e2eOwnerStorageK,
+		e2ePort(), filepath.Join(tmp, "import.lock"),
+		vlmURL, e2eVisionModelID, e2eVisionModelID,
+		e2eEmbedModelID, embedURL, e2eEmbedDim, e2eEmbedEdge)
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
@@ -247,6 +319,114 @@ func startMockVLM() (string, *http.Server, error) {
 		_ = srv.Serve(ln)
 	}()
 	return "http://" + ln.Addr().String(), srv, nil
+}
+
+// startMockEmbed stands up an OpenAI-compatible embeddings stub on a
+// free loopback port. Returns deterministic e2eEmbedDim-dim vectors so
+// the boot embedding.Probe and any runtime text-embed call land cleanly.
+//
+// Failure injection: when FOTOBANK_E2E_EMBED_FAIL_EVERY_N is set to a
+// positive integer N, every Nth POST to /embeddings returns 503. The
+// boot Probe sends two requests (one image, one text) so a small N
+// would fail the boot — the env var defaults to "0" (disabled) and
+// the query_embedding_failed Playwright test sets it to a value high
+// enough to clear the boot probe (e.g. 100) and uses a separate
+// trip-now URL to flip the failure flag synchronously between the
+// boot probe and the test request. v1 keeps the mock simple and
+// trips on every Nth call regardless of probe vs runtime; the e2e
+// spec for query_embedding_failed is deferred (see search.spec.ts).
+func startMockEmbed() (string, *http.Server, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", nil, fmt.Errorf("listen mock embed: %w", err)
+	}
+	mux := http.NewServeMux()
+	// counter is incremented atomically per /embeddings hit so the 503
+	// rate is deterministic regardless of test parallelism.
+	var counter atomic.Int64
+	failEveryN := embedFailEveryN()
+	// /trip-next-failure flips an override that fails the next /embeddings
+	// call regardless of the modulo gate. Used by tests that want a
+	// single 503 without touching the env var (which would also affect
+	// the boot probe). Hits to this path do not increment counter.
+	var tripNext atomic.Bool
+	mux.HandleFunc("/trip-next-failure", func(w http.ResponseWriter, _ *http.Request) {
+		tripNext.Store(true)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
+		// Increment the counter first so the failure modulo is
+		// computed against the post-increment ordinal — N=2 means
+		// requests 2, 4, 6 fail, not 0, 2, 4.
+		n := counter.Add(1)
+		if tripNext.Swap(false) || (failEveryN > 0 && n%failEveryN == 0) {
+			http.Error(w, `{"error":"injected 503"}`, http.StatusServiceUnavailable)
+			return
+		}
+		var body struct {
+			Input []string `json:"input"`
+			Model string   `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// One vector per input, in input order. deterministicVec
+		// derives a vector from the input index so the response is
+		// stable across runs and the seed-side vectors collide with
+		// the runtime-side query vectors during ANN search.
+		out := struct {
+			Data  []map[string]any `json:"data"`
+			Model string           `json:"model"`
+		}{Model: body.Model}
+		for i := range body.Input {
+			out.Data = append(out.Data, map[string]any{
+				"embedding": deterministicVec(i, e2eEmbedDim),
+				"index":     i,
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(out)
+	})
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() { _ = srv.Serve(ln) }()
+	return "http://" + ln.Addr().String(), srv, nil
+}
+
+// embedFailEveryN reads the failure-modulo from FOTOBANK_E2E_EMBED_FAIL_EVERY_N.
+// Defaults to 0 (no failures). Returns 0 on any parse error so a
+// malformed env var doesn't accidentally enable failure injection.
+func embedFailEveryN() int64 {
+	raw := os.Getenv("FOTOBANK_E2E_EMBED_FAIL_EVERY_N")
+	if raw == "" {
+		return 0
+	}
+	var n int64
+	if _, err := fmt.Sscan(raw, &n); err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// deterministicVec returns a stable e2eEmbedDim-length vector derived
+// from i. Uses a simple sin/cos pattern so distinct i values produce
+// distinct (and L2-comparable) vectors. The vectors are not normalized
+// — the search backend's ANN MATCH on FLOAT[N] doesn't require unit
+// length — but they are bounded in [-1, 1] so the per-element
+// representation is well-behaved.
+func deterministicVec(i, dim int) []float32 {
+	v := make([]float32, dim)
+	// scale i into a phase angle so neighbouring i values produce
+	// neighbouring (but non-identical) vectors; the prime constant
+	// breaks any aliasing against dim.
+	phase := float64(i) * 0.6180339887
+	for j := range dim {
+		v[j] = float32(math.Sin(phase + float64(j)*1.5707963))
+	}
+	return v
 }
 
 // seedFixtures inserts an owner row and deterministic media rows used by
@@ -537,6 +717,10 @@ func seedFixtures(dbPath, nasRoot string) error {
 		return fmt.Errorf("seed ai fixtures: %w", err)
 	}
 
+	if err := seedSearchFixtures(ctx, d, repo, owner); err != nil {
+		return fmt.Errorf("seed search fixtures: %w", err)
+	}
+
 	return nil
 }
 
@@ -812,4 +996,219 @@ func writePreviewBlob(nasRoot, storageKey, mediaID string, jpg []byte) error {
 		return fmt.Errorf("write %s: %w", full, err)
 	}
 	return nil
+}
+
+// seedSearchFixtures inserts the W1 search-suite fixtures: 30 visible
+// + 5 hidden photos (search-fixture-vis-NNN, search-fixture-hid-NNN),
+// active tag + caption results for each (so FTS picks them up), an
+// active embedding generation matching cfg.AI.Embed, and 22/30
+// media_embedding_ids mappings for the visible photos so embedding
+// completeness lands at ≈73% — under the 80% banner threshold.
+//
+// Captions are seeded with a deterministic three-keyword pattern
+// ("beach", "mountain", or "sunset") so the Playwright suite can
+// search for any of them and get a non-empty result set without
+// guessing which words FTS5's tokenizer will keep.
+//
+// The active generation row is inserted directly via SQL (rather than
+// embedding.Generations.FindOrCreateBuilding + Promote) so the seed
+// stamps state='active' atomically with the per-generation vec0 table.
+// embedded_count is set to e2eMappedCount in lockstep with the mapping
+// insertions so a downstream call to FindActive sees a consistent row.
+func seedSearchFixtures(
+	ctx context.Context,
+	d *db.DB,
+	mediaRepo *media.Repo,
+	owner owners.Principal,
+) error {
+	base := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+
+	// Three caption keywords cycle across the visible set so a query
+	// for any one of them returns a non-trivial slice. The cycle
+	// frequency (every 3rd) means a "beach" search returns 10 of the
+	// 30 visible — comfortably more than one page of cells without
+	// dominating the corpus.
+	keywords := []string{"beach", "mountain", "sunset"}
+
+	// Visible photos. thumb_status='ready' so the embedding-completeness
+	// query counts them as eligible. ImportedAt walks backwards from
+	// base in 2-minute increments so the newest-first sort is stable
+	// against the AI-fixture timestamps and the lightbox album rows.
+	visibleIDs := make([]string, 0, e2eVisibleCount)
+	for i := 1; i <= e2eVisibleCount; i++ {
+		id := fmt.Sprintf("search-fixture-vis-%03d", i)
+		visibleIDs = append(visibleIDs, id)
+		if err := mediaRepo.Insert(ctx, media.Media{
+			ID:          id,
+			Owner:       owner,
+			Type:        media.TypePhoto,
+			MimeType:    "image/jpeg",
+			Path:        id + ".jpg",
+			ImportedAt:  base.Add(-time.Duration(i) * 2 * time.Minute),
+			Size:        1,
+			Checksum:    "checksum-" + id,
+			ThumbStatus: "ready",
+		}); err != nil {
+			return fmt.Errorf("seed %s: %w", id, err)
+		}
+		kw := keywords[(i-1)%len(keywords)]
+		caption := fmt.Sprintf("A %s photo numbered %d.", kw, i)
+		if err := writeSearchAIResults(ctx, d, id, kw, caption); err != nil {
+			return fmt.Errorf("seed ai results for %s: %w", id, err)
+		}
+	}
+
+	// Hidden photos. Inserted visible, then flipped via direct SQL
+	// (same pattern as hidden-prehidden-1 above). Each hidden row gets
+	// a tag/caption with a marker keyword "hiddencache" so a search
+	// for that string verifies the hidden gate excludes them by
+	// default.
+	for i := 1; i <= e2eHiddenCount; i++ {
+		id := fmt.Sprintf("search-fixture-hid-%03d", i)
+		if err := mediaRepo.Insert(ctx, media.Media{
+			ID:          id,
+			Owner:       owner,
+			Type:        media.TypePhoto,
+			MimeType:    "image/jpeg",
+			Path:        id + ".jpg",
+			ImportedAt:  base.Add(-time.Duration(e2eVisibleCount+i) * 2 * time.Minute),
+			Size:        1,
+			Checksum:    "checksum-" + id,
+			ThumbStatus: "ready",
+		}); err != nil {
+			return fmt.Errorf("seed %s: %w", id, err)
+		}
+		if err := writeSearchAIResults(
+			ctx, d, id, "hiddencache",
+			fmt.Sprintf("A hiddencache photo numbered %d.", i),
+		); err != nil {
+			return fmt.Errorf("seed ai results for %s: %w", id, err)
+		}
+		if _, err := d.WriteDB().ExecContext(ctx,
+			`UPDATE media SET hidden_at = ? WHERE id = ?`, base, id,
+		); err != nil {
+			return fmt.Errorf("hide %s: %w", id, err)
+		}
+	}
+
+	// Active embedding generation. The id is auto-incremented; we
+	// derive the vec_table_name from it after the insert. Inserting
+	// state='active' directly relies on the partial unique index
+	// embedding_generations_one_active still permitting the row when
+	// no other active row exists (which is the case at seed time —
+	// this is the very first generation).
+	fp := embedding.Fingerprint(ai.EmbedConfig{
+		Model:     e2eEmbedModelID,
+		InputEdge: e2eEmbedEdge,
+	})
+	res, err := d.WriteDB().ExecContext(ctx,
+		`INSERT INTO embedding_generations
+		   (fingerprint, fingerprint_hash, model_id, input_profile, vec_table_name,
+		    dimension, state, embedded_count, threshold_pct, created_at, activated_at)
+		 VALUES (?, ?, ?, ?, '', ?, 'active', ?, ?, ?, ?)`,
+		fp.String(), embeddingFingerprintHash(fp),
+		e2eEmbedModelID, e2eEmbedProfile,
+		e2eEmbedDim, e2eMappedCount, 95, base, base,
+	)
+	if err != nil {
+		return fmt.Errorf("insert active generation: %w", err)
+	}
+	genID, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("active generation id: %w", err)
+	}
+	vecTable := fmt.Sprintf("media_embeddings_g%d", genID)
+	if _, err := d.WriteDB().ExecContext(ctx,
+		`UPDATE embedding_generations SET vec_table_name = ? WHERE id = ?`,
+		vecTable, genID,
+	); err != nil {
+		return fmt.Errorf("set active gen vec_table_name: %w", err)
+	}
+	if _, err := d.WriteDB().ExecContext(ctx,
+		fmt.Sprintf(
+			`CREATE VIRTUAL TABLE %s USING vec0(vec_id INTEGER PRIMARY KEY, embedding FLOAT[%d])`,
+			vecTable, e2eEmbedDim,
+		),
+	); err != nil {
+		return fmt.Errorf("create vec0 table: %w", err)
+	}
+
+	// Mappings: 22 of 30 visible photos. Ordered by the visibleIDs
+	// slice so the unmapped 8 are deterministic ("vis-023" through
+	// "vis-030"). vec_id starts at 1 and walks up by 1 per row.
+	for i := range e2eMappedCount {
+		mediaID := visibleIDs[i]
+		vecID := int64(i + 1)
+		if _, err := d.WriteDB().ExecContext(ctx,
+			`INSERT INTO media_embedding_ids (generation_id, media_id, vec_id) VALUES (?, ?, ?)`,
+			genID, mediaID, vecID,
+		); err != nil {
+			return fmt.Errorf("insert mapping for %s: %w", mediaID, err)
+		}
+		blob := vecToBlob(deterministicVec(i, e2eEmbedDim))
+		if _, err := d.WriteDB().ExecContext(ctx,
+			fmt.Sprintf(`INSERT INTO %s (vec_id, embedding) VALUES (?, vec_f32(?))`, vecTable),
+			vecID, blob,
+		); err != nil {
+			return fmt.Errorf("insert vec0 row for %s: %w", mediaID, err)
+		}
+	}
+
+	return nil
+}
+
+// writeSearchAIResults seeds an active tag + caption for mediaID and
+// refreshes the FTS row in the same tx. The fingerprint matches the
+// e2e VLM mock's stamping so the gap scanner will skip these rows. The
+// keyword goes into both the tag label and the caption text so a
+// search query against either field surfaces this photo.
+func writeSearchAIResults(ctx context.Context, d *db.DB, mediaID, keyword, caption string) error {
+	tagPrompt := aiprompts.Tag()
+	captionPrompt := aiprompts.Caption()
+	tagFP := ai.Fingerprint{
+		ModelID:       e2eVisionModelID,
+		PromptVersion: tagPrompt.Version,
+		InputProfile:  imginput.ProfileV1,
+	}
+	captionFP := ai.Fingerprint{
+		ModelID:       e2eVisionModelID,
+		PromptVersion: captionPrompt.Version,
+		InputProfile:  imginput.ProfileV1,
+	}
+	resultsRepo := results.NewRepo(d.WriteDB(), d.ReadDB())
+	tagRows := []parse.Tag{{Key: keyword, Label: keyword, Rank: 1}}
+	if err := resultsRepo.WriteTagResult(ctx, mediaID, tagFP, tagPrompt.Hash, tagRows); err != nil {
+		return fmt.Errorf("write tag result: %w", err)
+	}
+	if err := resultsRepo.WriteCaptionResult(ctx, mediaID, captionFP, captionPrompt.Hash, caption); err != nil {
+		return fmt.Errorf("write caption result: %w", err)
+	}
+	// Both WriteTagResult and WriteCaptionResult refresh media_fts
+	// inside their own tx (see internal/ai/results/repo.go), so the
+	// FTS row is already in lockstep with the tag/caption writes by
+	// the time we return. No follow-up RefreshMediaFTS needed.
+	return nil
+}
+
+// embeddingFingerprintHash mirrors the unexported hash function in
+// internal/ai/embedding/generations.go (sha256-hex of fp.String()).
+// Re-derived here instead of exporting the internal so the seed doesn't
+// force a public surface change just to satisfy the e2e harness; the
+// duplication is a few lines of stdlib calls.
+func embeddingFingerprintHash(fp ai.Fingerprint) string {
+	sum := sha256.Sum256([]byte(fp.String()))
+	return hex.EncodeToString(sum[:])
+}
+
+// vecToBlob mirrors embedding.VecToBlob — the seeded mappings need the
+// same little-endian float32 packing the runtime expects. (Reproduced
+// here rather than imported because embedding.VecToBlob is exported
+// for the read side of search and the seed lives outside that path;
+// the duplication is a few lines of stdlib calls.)
+func vecToBlob(vec []float32) []byte {
+	buf := make([]byte, 4*len(vec))
+	for i, v := range vec {
+		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(v))
+	}
+	return buf
 }
