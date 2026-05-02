@@ -215,6 +215,18 @@
       void loadAndMerge(false);
     }
   });
+
+  // Retry handler for the error branch. Defensive against a 403 from an
+  // expired hidden-unlock cookie that the SPA still believes is alive
+  // (the lock-cleanup $effect only fires on the SPA's hiddenStore.unlocked
+  // transition, not on a server-side cookie expiry mid-session). Without
+  // this guard, retrying with includeHidden=true would loop forever
+  // against the same 403. Drop the toggle on retry so we always start
+  // from the visible-only baseline.
+  function onRetryLoad(): void {
+    includeHiddenToggle = false;
+    void loadAndMerge(false);
+  }
 </script>
 
 <section class="map-page" data-testid="map-page">
@@ -254,7 +266,7 @@
   {:else if geoStore.error !== null}
     <div class="error">
       Couldn't load photo locations.
-      <button onclick={() => loadAndMerge(includeHiddenToggle)}>Retry</button>
+      <button onclick={onRetryLoad}>Retry</button>
     </div>
   {:else if geoStore.items.length === 0}
     <div class="empty">

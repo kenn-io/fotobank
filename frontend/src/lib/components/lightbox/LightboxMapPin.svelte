@@ -72,8 +72,15 @@
         maxZoom: defaultMaxZoom,
       }).addTo(map);
     }
-    if (marker !== null) marker.remove();
-    marker = L.marker([lat, lng]).addTo(map);
+    // GPS → GPS navigation keeps this component mounted, so the effect
+    // re-runs with new coords on the same map instance. Reuse the marker
+    // (cheap setLatLng) instead of remove+addTo (which churns Leaflet's
+    // internal layer set on every keypress).
+    if (marker === null) {
+      marker = L.marker([lat, lng]).addTo(map);
+    } else {
+      marker.setLatLng([lat, lng]);
+    }
     map.setView([lat, lng], 14, { animate: false });
   });
 

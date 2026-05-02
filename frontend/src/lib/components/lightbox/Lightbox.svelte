@@ -210,8 +210,17 @@
   // under explicit include_hidden=true is NOT a cross-context leak —
   // the user explicitly opted in via the map's Include-hidden toggle,
   // and the resulting nav set is hidden-aware.
+  //
+  // The `hiddenStore.unlocked` clause closes a stale-snapshot leak: if
+  // hidden locks (manual lock, idle timeout, page-hide) AFTER the user
+  // opened the lightbox from /map, session.includeHidden is still true
+  // but the user is no longer authorized to act on hidden rows. Gating
+  // on the live unlock state forces hiddenCrossContext=true in that
+  // window, suppressing the Unhide button until the user re-unlocks.
   const fromMapWithHidden = $derived(
-    from === "map" && session?.includeHidden === true,
+    from === "map"
+      && session?.includeHidden === true
+      && hiddenStore.unlocked,
   );
   const hiddenCrossContext = $derived(
     isHidden && from !== "hidden" && !fromMapWithHidden,
