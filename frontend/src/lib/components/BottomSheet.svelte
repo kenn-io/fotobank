@@ -98,13 +98,14 @@
 <style>
   .bs-backdrop {
     position: fixed; inset: 0;
-    background: rgba(0,0,0,0.5);
+    background: var(--bg-overlay);
     z-index: 200;
     display: flex; align-items: flex-end; justify-content: center;
   }
   .bs-sheet {
-    background: var(--bg-elevated);
-    border-radius: 16px 16px 0 0;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border-strong);
+    border-radius: 0;
     width: 100%;
     max-height: 50vh;
     display: flex; flex-direction: column;
@@ -114,13 +115,13 @@
   .bs-handle {
     align-self: center;
     width: 40px; height: 4px;
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     background: var(--border);
-    margin: 8px 0 12px;
+    margin: var(--space-4) 0 var(--space-5);
     border: none;
     padding: 0;
     touch-action: none;
     cursor: grab;
   }
-  .bs-body { overflow: auto; padding: 0 16px 16px; }
+  .bs-body { overflow: auto; padding: 0 var(--space-6) var(--space-6); }
 </style>

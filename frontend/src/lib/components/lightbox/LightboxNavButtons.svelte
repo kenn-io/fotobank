@@ -23,12 +23,15 @@
 <style>
   .lb-nav {
     position: absolute; top: 50%; transform: translateY(-50%);
-    background: rgba(0,0,0,0.5); color: white; border: 1px solid rgba(255,255,255,0.2);
-    border-radius: 50%; width: 48px; height: 48px;
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    width: 48px; height: 48px;
     display: flex; align-items: center; justify-content: center;
     font-size: 28px; cursor: pointer; padding: 0;
   }
-  .lb-prev { left: 16px; }
-  .lb-next { right: 16px; }
-  .lb-nav:hover { background: rgba(0,0,0,0.75); }
+  .lb-prev { left: var(--space-6); }
+  .lb-next { right: var(--space-6); }
+  .lb-nav:hover { background: var(--bg-hover); }
 </style>

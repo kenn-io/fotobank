@@ -146,25 +146,25 @@
   .strip {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 6px 12px;
+    gap: var(--space-5);
+    padding: var(--space-3) var(--space-5);
     border-bottom: 1px solid var(--border);
     background: var(--bg-elevated);
     height: 44px;
     box-shadow: var(--shadow-sm);
   }
-  .brand { font-weight: 600; font-size: 14px; }
-  .identity { font-size: 12px; color: var(--text-secondary); }
+  .brand { font-weight: 600; font-size: var(--text-md); }
+  .identity { font-size: var(--text-sm); color: var(--text-secondary); }
   .search {
     flex: 1;
     max-width: 540px;
     height: 28px;
-    padding: 0 10px;
+    padding: 0 var(--space-4);
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: var(--radius-sm);
     background: var(--bg-surface);
     color: var(--text-primary);
-    font-size: 13px;
+    font-size: var(--text-base);
     margin-left: auto;
   }
 </style>

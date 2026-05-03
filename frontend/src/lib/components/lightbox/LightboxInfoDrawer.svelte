@@ -32,21 +32,28 @@
   .lb-drawer {
     position: absolute; top: 0; right: 0; bottom: 0;
     width: min(360px, 40vw);
-    background: rgba(20,20,20,0.95);
-    border-left: 1px solid rgba(255,255,255,0.1);
+    background: var(--bg-surface);
+    border-left: 1px solid var(--border-strong);
     display: flex; flex-direction: column;
   }
   .lb-drawer-head {
     display: flex; justify-content: flex-end;
-    padding: 8px;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--border);
   }
   .lb-drawer-head button {
-    background: transparent; color: white; border: none; font-size: 18px; cursor: pointer;
+    background: transparent;
+    color: var(--text-primary);
+    border: none;
+    font-size: var(--text-lg);
+    cursor: pointer;
   }
-  /* Drawer is dark; force white text + links for the metadata
-     content it wraps. The sheet variant inherits theme colors
-     instead. */
-  .lb-drawer-body { padding: 16px; overflow: auto; color: white; }
-  .lb-drawer-body :global(a) { color: white; }
+  /* Drawer inherits theme colors; the metadata content reads against
+     --bg-surface using the standard text tokens. */
+  .lb-drawer-body {
+    padding: var(--space-6);
+    overflow: auto;
+    color: var(--text-primary);
+  }
+  .lb-drawer-body :global(a) { color: var(--text-primary); }
 </style>

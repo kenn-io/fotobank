@@ -11,15 +11,19 @@ test("sessions route renders", async ({ page }) => {
   await expect(page.getByText("fotobank")).toBeVisible();
 });
 
-test("theme override persists via user_settings", async ({ page }) => {
-  await page.goto("/settings");
-  const put = await page.request.put("/api/v1/settings/user/theme", {
-    data: { value: '"dark"' },
+test("user_settings persists arbitrary key/value", async ({ page }) => {
+  // End-to-end smoke for /api/v1/settings/user/{key}. The SPA no longer
+  // reads a "theme" key (densityStore + inspectionStore exercise the
+  // endpoint with real consumers in unit tests); this probe just
+  // confirms the persistence surface round-trips an opaque JSON value.
+  await page.goto("/");
+  const put = await page.request.put("/api/v1/settings/user/e2e.smoke", {
+    data: { value: '"ok"' },
   });
   expect(put.status()).toBe(204);
-  const get = await page.request.get("/api/v1/settings/user/theme");
+  const get = await page.request.get("/api/v1/settings/user/e2e.smoke");
   expect(get.status()).toBe(200);
-  expect(await get.json()).toMatchObject({ value: '"dark"' });
+  expect(await get.json()).toMatchObject({ value: '"ok"' });
 });
 
 test("reload /media/<id> returns SPA shell + matched route", async ({ page }) => {

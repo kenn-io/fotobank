@@ -62,9 +62,28 @@
 </div>
 
 <style>
-  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; }
-  .modal { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 16px; min-width: 320px; max-width: 480px; }
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: var(--bg-overlay);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+  }
+  .modal {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    padding: var(--space-6);
+    min-width: 320px; max-width: 480px;
+    box-shadow: var(--shadow-md);
+  }
   .modal h2 { margin-top: 0; }
-  .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
-  .danger { background: var(--danger); color: white; border-color: var(--danger); }
+  .actions {
+    display: flex; gap: var(--space-4); justify-content: flex-end;
+    margin-top: var(--space-5);
+  }
+  .danger {
+    background: var(--danger);
+    color: var(--accent-fg);
+    border-color: var(--danger);
+  }
 </style>

@@ -152,25 +152,32 @@
 
 <style>
   .modal-backdrop {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
-    display: flex; align-items: center; justify-content: center; z-index: 100;
+    position: fixed; inset: 0;
+    background: var(--bg-overlay);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
   }
   .modal {
     background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    padding: var(--space-6);
     min-width: 400px;
     max-width: 480px;
+    box-shadow: var(--shadow-md);
   }
   .modal h2 { margin-top: 0; }
-  .summary { color: var(--text-muted); font-size: 13px; margin-bottom: 12px; }
-  form { display: flex; flex-direction: column; gap: 12px; }
-  label { display: flex; flex-direction: column; gap: 4px; }
-  label.checkbox { flex-direction: row; align-items: center; gap: 8px; }
-  .grantee { font-family: monospace; }
-  .helper { font-size: 12px; color: var(--text-muted); }
-  .warn { color: var(--warn); font-size: 13px; }
-  .error { color: var(--danger); font-size: 13px; }
-  .actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .summary {
+    color: var(--text-muted);
+    font-size: var(--text-base);
+    margin-bottom: var(--space-5);
+  }
+  form { display: flex; flex-direction: column; gap: var(--space-5); }
+  label { display: flex; flex-direction: column; gap: var(--space-2); }
+  label.checkbox { flex-direction: row; align-items: center; gap: var(--space-4); }
+  .grantee { font-family: var(--font-mono); }
+  .helper { font-size: var(--text-sm); color: var(--text-muted); }
+  .warn { color: var(--warn); font-size: var(--text-base); }
+  .error { color: var(--danger); font-size: var(--text-base); }
+  .actions { display: flex; gap: var(--space-4); justify-content: flex-end; }
 </style>

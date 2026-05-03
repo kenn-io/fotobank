@@ -29,13 +29,20 @@
   .lb-toolbar {
     position: absolute; top: 0; left: 0; right: 0;
     display: flex; justify-content: space-between; align-items: center;
-    padding: 12px 16px;
-    color: white;
+    padding: var(--space-5) var(--space-6);
+    color: var(--text-primary);
   }
-  .lb-toolbar-left, .lb-toolbar-right { display: flex; gap: 8px; align-items: center; }
+  .lb-toolbar-left, .lb-toolbar-right {
+    display: flex; gap: var(--space-4); align-items: center;
+  }
   .lb-btn {
-    background: rgba(0,0,0,0.5); color: white; border: 1px solid rgba(255,255,255,0.2);
-    border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 16px;
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3) var(--space-5);
+    cursor: pointer;
+    font-size: var(--text-lg);
   }
-  .lb-btn:hover { background: rgba(0,0,0,0.7); }
+  .lb-btn:hover { background: var(--bg-hover); }
 </style>

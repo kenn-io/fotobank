@@ -1,10 +1,10 @@
 import type { Client } from "../api/client";
 
 // AIInspectionStore is a Svelte 5 rune-backed store for the per-user
-// "AI Inspection" toggle. Mirrors the (theme|density)Store pattern:
-// load() pulls the persisted JSON value at boot, set() flips the local
-// state and PUTs the new value, and a dirty flag protects an eager
-// click from a late server response.
+// "AI Inspection" toggle. Mirrors the densityStore pattern: load() pulls
+// the persisted JSON value at boot, set() flips the local state and PUTs
+// the new value, and a dirty flag protects an eager click from a late
+// server response.
 //
 // Wire format: the user-settings route stores opaque JSON strings under
 // the "ai.inspection" key. This store writes the literal `true` / `false`
@@ -21,7 +21,7 @@ export class AIInspectionStore {
   loaded = $state(false);
   // load() is fired at boot; if the user clicks the toggle before the
   // GET resolves the late server response must not stomp the newer
-  // choice. Same pattern as themeStore / densityStore.
+  // choice. Same pattern as densityStore.
   private dirty = false;
 
   constructor(private client: Pick<Client, "GET" | "PUT">) {}

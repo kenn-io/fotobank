@@ -26,9 +26,9 @@
 <style>
   .lb-backdrop {
     position: fixed; inset: 0;
-    background: #000;
+    background: var(--bg-overlay);
     z-index: 150;
     display: flex; align-items: center; justify-content: center;
   }
-  .lb-backdrop.fallback { background: rgba(0,0,0,0.92); }
+  .lb-backdrop.fallback { background: var(--bg-overlay); }
 </style>

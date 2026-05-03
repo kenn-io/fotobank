@@ -57,14 +57,14 @@
   {/if}
   {#if media.size}
     <dt>Size</dt>
-    <dd>{formatBytes(media.size)}</dd>
+    <dd class="numeric">{formatBytes(media.size)}</dd>
   {/if}
   {#if media.location_label || (media.latitude != null && media.longitude != null)}
     <dt>Location</dt>
     <dd>
       {#if media.location_label}{media.location_label}{/if}
       {#if media.latitude != null && media.longitude != null}
-        <small class="coord">{formatCoord(media.latitude, media.longitude)}</small>
+        <small class="coord numeric">{formatCoord(media.latitude, media.longitude)}</small>
       {/if}
     </dd>
   {/if}
@@ -115,19 +115,31 @@
 
 <style>
   /* Inherit color from parent so this content reads correctly on
-     either the dark drawer or the theme-aware bottom sheet. The
-     drawer applies a white override; the sheet relies on the
-     theme's default text color. */
+     either the dark drawer or the bottom sheet — both surfaces use
+     the same dark token palette so the metadata reads cleanly with
+     the default text color. */
   .lb-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; }
-  .lb-meta dt { font-weight: 600; opacity: 0.7; }
+  .lb-meta dt { font-weight: 600; color: var(--text-secondary); }
   .lb-meta a { color: inherit; }
-  .coord { display: block; opacity: 0.7; font-size: 0.85em; }
+  /* Numeric/technical values render in monospace with tabular-nums so
+     vertical columns (file size, coords, search relevance) line up. */
+  .lb-meta dd.numeric,
+  .lb-meta .numeric {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+  }
+  .coord { display: block; color: var(--text-secondary); font-size: 0.85em; }
   .relevance {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     font-size: 0.85em;
     line-height: 1.5;
   }
-  .relevance .rel-label { display: inline-block; min-width: 56px; opacity: 0.7; }
-  .relevance .rel-num { opacity: 0.95; }
+  .relevance .rel-label {
+    display: inline-block;
+    min-width: 56px;
+    color: var(--text-secondary);
+  }
+  .relevance .rel-num { color: var(--text-primary); }
 </style>
