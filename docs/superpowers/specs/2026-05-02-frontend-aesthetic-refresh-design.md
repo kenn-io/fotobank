@@ -64,7 +64,7 @@ Two layers:
 ### Type stack
 
 ```css
---font-ui:   "Inter", "SF Pro Text", system-ui, -apple-system, sans-serif;
+--font-ui:   system-ui, -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
 --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
 
 --text-xs:   11px
@@ -74,10 +74,13 @@ Two layers:
 --text-lg:   16px
 ```
 
-**Inter**: self-hosted woff2 in `frontend/public/fonts/` (Vite's
-default static dir, served at `/fonts/...`). ~50KB for
-`Inter-Variable.woff2` covering 100–900 weights. Fallback is
-`system-ui` so the SPA renders cleanly even if the font fails to load.
+System UI is doing the work for now — it adapts per-OS (San Francisco
+on macOS, Segoe UI on Windows, Roboto on Android), avoids a font
+asset / licensing / pinning chore, and keeps the embedded SPA
+self-contained. The aesthetic of this pass is carried by palette,
+radii, and chrome discipline; if the type face becomes the limiting
+factor later, swapping in Inter (or another) is a one-token edit plus
+a `@font-face` declaration.
 
 ### Spacing scale
 
@@ -137,7 +140,7 @@ state):
   spacing scale, font tokens) are additive — no existing call sites
   to update.
 
-## Theme store cleanup
+## Theme store + kebab menu cleanup
 
 `themeStore` and its dropdown menu lose their reason to exist. Plan:
 
@@ -146,9 +149,11 @@ state):
 2. Remove the `themeStore` instance from `App.svelte` and stop passing
    `theme`/`onSetTheme` to `<AppHeader>`.
 3. Remove the theme-section markup and tests from `AppHeader.svelte` /
-   `AppHeader.test.ts`. The kebab dropdown shell stays — it gains an
-   "About fotobank" entry showing the build version (already exposed
-   from `cmd/fotobank/main.go` via ldflags) so the dropdown isn't empty.
+   `AppHeader.test.ts`. **Drop the kebab button entirely** — there is
+   no second item to put behind it (build version isn't exposed to
+   the SPA today, and exposing it would be a backend change outside
+   this pass's scope). When a real settings surface arrives, the
+   kebab can come back, properly populated.
 4. Backend: leave `/api/v1/settings/user/{key}` untouched. The "theme"
    key just becomes unused; future settings (density, default sort,
    etc.) will use the same endpoint.
@@ -168,9 +173,9 @@ radii/sizes → token references.
 | `LightboxInfoSheet.svelte` | sheet bg, divider, font sizes |
 | `LightboxInfoDrawer.svelte` | surface bg, divider |
 | `LightboxMetadata.svelte` | font sizes, mono usage for numeric fields |
-| `BottomSheet.svelte` | scrim `rgba(0,0,0,0.5)`, sheet bg, 16px top radius → 0 |
+| `lib/components/BottomSheet.svelte` | scrim `rgba(0,0,0,0.5)`, sheet bg, 16px top radius → 0 |
 | `AppHeader.svelte` | search radius (14px → `--radius-sm`), padding to space tokens |
-| `Toast.svelte` | verify token usage; fix any hex literals |
+| `ToastStack.svelte` | verify token usage; fix any hex literals |
 | `ConfirmModal.svelte` | scrim, radius, sizing |
 | `AddToAlbumModal.svelte` | same modal shell concerns |
 | `ShareModal.svelte` | same modal shell concerns |
@@ -195,10 +200,10 @@ should also be enabled on the mono face for consistent column widths.
 
 ## Test strategy
 
-- All 529 existing unit tests must keep passing. They assert structure
-  and behavior, not pixels.
-- The Playwright e2e suite (~25 tests) must keep passing for the same
-  reason. Selectors don't depend on colors.
+- All existing unit tests must keep passing. They assert structure and
+  behavior, not pixels.
+- The Playwright e2e suite must keep passing for the same reason.
+  Selectors don't depend on colors.
 - No new pure-CSS tests. Visual regressions are caught by manual QA in
   the next phase (SD-card import + browse-the-library spot-check).
 - One assertion to add: an `app.css` smoke test that imports the file
@@ -207,31 +212,34 @@ should also be enabled on the mono face for consistent column widths.
 
 ## Test cases worth calling out
 
-- AppHeader test: drop the theme-menu tests when the menu is removed;
-  add a test for the "About fotobank" item showing a non-empty version
-  string.
+- AppHeader test: drop the theme-menu tests entirely along with the
+  menu. The identity-display tests stay.
 - Lightbox manual smoke: open a photo, hit ←/→, info drawer opens with
   monospace-aligned metadata, backdrop is opaque-ish charcoal not
   pure-black-with-blur.
 
 ## Sequencing
 
-The plan will execute in this order so each commit leaves the SPA in a
-working visual state:
+The plan will execute in four commits so each one leaves the SPA in a
+working visual state without ceremonial micro-checkpoints:
 
-1. Replace tokens in `app.css` (palette, type, spacing, radii,
-   shadows). At this commit point the SPA already looks distinctly
-   different — every component using `var(--*)` inherits the change.
-2. Add Inter to `frontend/static/fonts/` and the `@font-face`
-   declaration to `app.css`. Wire `--font-ui` to body.
-3. Remove `themeStore` and its UI surface; add About item to the kebab
-   dropdown.
-4. Chrome scrub: lightbox files, bottom sheet, modals.
-5. Monospace pass on metadata.
-6. Final manual QA across every route.
+1. **Tokens** — rewrite `app.css` (palette, type stack with system-ui,
+   spacing, radii, shadows) and update the 14 known call sites for
+   `--bg-primary` / `--radius` / `--shadow` in the same commit. SPA
+   already looks distinctly different at this point.
+2. **Theme cleanup** — delete `themeStore` + its tests; remove the
+   kebab button and dropdown markup from `AppHeader`; trim
+   `App.svelte` and `AppHeader.test.ts` accordingly.
+3. **Chrome + metadata scrub** — sweep all files in the chrome scrub
+   table; same commit applies the monospace pass on
+   `LightboxMetadata` (numeric/technical `<dd>` values get
+   `var(--font-mono)` plus `font-variant-numeric: tabular-nums`).
+4. **Verification** — run typecheck + unit + e2e; manual QA across
+   /library, /map, /albums/<id>, /search, /hidden, lightbox; record
+   the QA notes in this commit's message and close the spec.
 
-Each step is a single commit. Subagent-driven execution with two-stage
-review between tasks (spec compliance, then code quality).
+Subagent-driven execution with two-stage review between tasks (spec
+compliance, then code quality).
 
 ## Open question
 
