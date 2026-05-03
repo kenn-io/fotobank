@@ -579,7 +579,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			fmt.Fprintln(opts.stderr, "test sink write failed:", werr)
 		}
 	}
-	fmt.Fprintln(opts.stdout, "fotobank server listening on", ln.Addr())
+	fmt.Fprintln(opts.stdout, "fotobank server listening on", listenURL(ln.Addr()))
 
 	srv := &http.Server{
 		Handler:      handler,
@@ -1057,6 +1057,26 @@ func bindListener(addr string) (net.Listener, error) {
 		return net.Listen("unix", after)
 	}
 	return net.Listen("tcp", addr)
+}
+
+// listenURL formats a bind address for the startup banner. For TCP
+// listeners it returns "http://host:port" so modern terminals render it
+// as a clickable link. Wildcard binds (0.0.0.0 / ::) are rewritten to
+// localhost so the printed URL is also a working URL on the host.
+// Unix sockets are returned with a "unix:" prefix matching the config
+// surface.
+func listenURL(a net.Addr) string {
+	if a.Network() == "unix" {
+		return "unix:" + a.String()
+	}
+	host, port, err := net.SplitHostPort(a.String())
+	if err != nil {
+		return a.String()
+	}
+	if host == "0.0.0.0" || host == "::" || host == "" {
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 // buildIdentityProvider selects the identity provider implementation that
