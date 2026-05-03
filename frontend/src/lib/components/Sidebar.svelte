@@ -65,7 +65,7 @@
   .entry {
     display: block;
     padding: 5px 10px;
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     color: var(--text-primary);
     text-decoration: none;
     font-size: 13px;

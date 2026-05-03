@@ -83,10 +83,10 @@
     border-left: none;
   }
   .search-sort-segment button:first-child {
-    border-radius: var(--radius) 0 0 var(--radius);
+    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
   }
   .search-sort-segment button:last-child {
-    border-radius: 0 var(--radius) var(--radius) 0;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   }
   .search-sort-segment button.selected {
     background: var(--bg-elevated);

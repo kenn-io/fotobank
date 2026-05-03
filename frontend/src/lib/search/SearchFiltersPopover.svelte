@@ -302,7 +302,7 @@
     gap: 8px;
     padding: 8px 12px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--bg-elevated);
   }
   .filter-row {
@@ -325,7 +325,7 @@
     height: 26px;
     padding: 0 8px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--bg-surface);
     color: var(--text-primary);
     font-size: 13px;
@@ -344,7 +344,7 @@
     width: 100%;
     padding: 4px 8px;
     border: none;
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-primary);
     font-size: 13px;
@@ -371,8 +371,8 @@
   .segment:not(:first-child) {
     border-left: none;
   }
-  .segment:first-child { border-radius: var(--radius) 0 0 var(--radius); }
-  .segment:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+  .segment:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+  .segment:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
   .segment[aria-pressed="true"] {
     background: var(--bg-elevated);
     font-weight: 600;

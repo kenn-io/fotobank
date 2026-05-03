@@ -140,7 +140,7 @@
     margin: 8px 0;
     padding: 8px 12px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--bg-elevated);
     color: var(--text-secondary);
     font-size: 13px;
@@ -151,7 +151,7 @@
     height: 24px;
     padding: 0 8px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--bg-surface);
     color: var(--text-primary);
     font-size: 12px;

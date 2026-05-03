@@ -1,66 +1,70 @@
 /* frontend/src/app.css */
 :root {
-  /* color-scheme tells the UA to render native scrollbars, form
-     widgets, and default backgrounds in the matching mode. Without
-     this, the dark @media block below switches our custom variables
-     but native controls stay light. */
-  color-scheme: light dark;
-  --bg-primary:   #ffffff;
-  --bg-surface:   #f6f7f9;
-  --bg-elevated:  #ffffff;
-  --text-primary: #1a1d22;
-  --text-secondary: #5a6068;
-  --text-muted:   #8b929c;
-  --accent:       #2563eb;
-  --border:       #e3e6eb;
-  --danger:       #b42318;
-  --warn:         #b54708;
-  --ok:           #16a34a;
-  --orange:       #d97706;
-  --shadow:       0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
-  --radius:       6px;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-}
+  color-scheme: dark;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-primary:   #0f1115;
-    --bg-surface:   #14171c;
-    --bg-elevated:  #1a1e25;
-    --text-primary: #e9ecf1;
-    --text-secondary: #a9b1bc;
-    --text-muted:   #6c7480;
-    --accent:       #4f8bff;
-    --border:       #232831;
-    --danger:       #f87171;
-    --warn:         #fbbf24;
-    --ok:           #4ade80;
-    --orange:       #fb923c;
-    --shadow:       0 1px 3px rgba(0,0,0,0.4);
-  }
-}
+  /* Surfaces */
+  --bg-base:     #0c0e12;
+  --bg-surface:  #14171c;
+  --bg-elevated: #1a1e25;
+  --bg-hover:    #20242c;
+  --bg-overlay:  rgba(0, 0, 0, 0.78);
 
-/* Manual override class set by themeStore. */
-:root.theme-light { color-scheme: light; }
-:root.theme-light {
-  --bg-primary: #ffffff; --bg-surface: #f6f7f9; --bg-elevated: #ffffff;
-  --text-primary: #1a1d22; --text-secondary: #5a6068; --text-muted: #8b929c;
-  --accent: #2563eb; --border: #e3e6eb; --danger: #b42318; --warn: #b54708;
-  --ok: #16a34a; --orange: #d97706;
-  --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
-}
-:root.theme-dark { color-scheme: dark; }
-:root.theme-dark {
-  --bg-primary: #0f1115; --bg-surface: #14171c; --bg-elevated: #1a1e25;
-  --text-primary: #e9ecf1; --text-secondary: #a9b1bc; --text-muted: #6c7480;
-  --accent: #4f8bff; --border: #232831; --danger: #f87171; --warn: #fbbf24;
-  --ok: #4ade80; --orange: #fb923c;
-  --shadow: 0 1px 3px rgba(0,0,0,0.4);
+  /* Text */
+  --text-primary:   #e6e9ef;
+  --text-secondary: #a4abb6;
+  --text-muted:     #6c7480;
+
+  /* Accent */
+  --accent:       #3a7bd5;
+  --accent-hover: #4a8bea;
+  --accent-fg:    #ffffff;
+
+  /* Borders */
+  --border:        #232831;
+  --border-strong: #2c333d;
+
+  /* Status */
+  --danger: #d04545;
+  --warn:   #d68a3a;
+  --ok:     #4aaa6a;
+  --orange: #d97706;
+
+  /* Type */
+  --font-ui:   system-ui, -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+  --text-xs:   11px;
+  --text-sm:   12px;
+  --text-base: 13px;
+  --text-md:   14px;
+  --text-lg:   16px;
+
+  /* Spacing */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 24px;
+  --space-8: 32px;
+
+  /* Radii */
+  --radius-none: 0;
+  --radius-sm:   2px;
+  --radius-md:   4px;
+
+  /* Shadows */
+  --shadow-none: none;
+  --shadow-sm:   0 1px 0 rgba(0, 0, 0, 0.4);
+  --shadow-md:   0 8px 24px rgba(0, 0, 0, 0.45);
+
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
 }
 
 body {
   margin: 0;
-  background: var(--bg-primary);
+  background: var(--bg-base);
   color: var(--text-primary);
 }
 

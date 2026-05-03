@@ -83,7 +83,7 @@
     margin-left: auto;
     padding: 4px 10px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--bg-surface);
     color: var(--text-primary);
     font-size: 13px;

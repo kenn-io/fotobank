@@ -51,10 +51,10 @@
     align-items: flex-start;
     gap: 10px;
     padding: 10px 12px;
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--bg-elevated);
     border: 1px solid var(--border);
-    box-shadow: var(--shadow);
+    box-shadow: var(--shadow-sm);
     font-size: 13px;
     color: var(--text-primary);
   }

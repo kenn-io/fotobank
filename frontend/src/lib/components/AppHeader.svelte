@@ -225,7 +225,7 @@
     border-bottom: 1px solid var(--border);
     background: var(--bg-elevated);
     height: 44px;
-    box-shadow: var(--shadow);
+    box-shadow: var(--shadow-sm);
   }
   .brand { font-weight: 600; font-size: 14px; }
   .identity { font-size: 12px; color: var(--text-secondary); }
@@ -247,7 +247,7 @@
   .account {
     background: transparent;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     padding: 4px 10px;
     color: var(--text-primary);
     cursor: pointer;
@@ -259,8 +259,8 @@
     min-width: 160px;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-sm);
     padding: 4px;
     z-index: 100;
   }

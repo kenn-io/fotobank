@@ -32,7 +32,7 @@
     display: inline-flex;
     gap: 0;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     overflow: hidden;
   }
   .density button {

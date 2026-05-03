@@ -116,7 +116,7 @@
   .gate-form input {
     padding: 8px 10px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--bg-elevated);
     color: var(--text-primary);
     font-size: 14px;

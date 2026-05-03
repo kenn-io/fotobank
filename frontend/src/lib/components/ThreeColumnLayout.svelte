@@ -31,7 +31,7 @@
   }
   .main {
     overflow: auto;
-    background: var(--bg-primary);
+    background: var(--bg-base);
   }
   .detail {
     background: var(--bg-surface);
