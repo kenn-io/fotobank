@@ -44,10 +44,14 @@ export class AppConfigStore {
       // For UI display, fall back to user_id so AppHeader always has a
       // non-empty string — a blank "dev-local: " in the header would
       // look like a rendering bug rather than a deliberate empty value.
+      // `||` (not `??`) so that an explicit empty string also falls back —
+      // /api/v1/me may return handle: "" when the principal has no
+      // friendly name set, and an empty string is just as bad for the UI
+      // as a missing field.
       this.principal = {
         hub: data.principal.hub,
         userId: data.principal.user_id,
-        handle: data.principal.handle ?? data.principal.user_id,
+        handle: data.principal.handle || data.principal.user_id,
       };
       this.ready = true;
     } catch {

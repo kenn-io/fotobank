@@ -252,6 +252,8 @@ In `frontend/src/App.svelte`, remove the import line `import { ThemeStore } from
 />
 ```
 
+The settings placeholder route currently renders `Settings (placeholder; theme = {themeStore.theme})` and breaks typecheck once the store is gone. Replace it with `Settings (placeholder)` in the same edit so this step lands as a clean unit. (Caught by roborev #17080 against an earlier draft of the plan.)
+
 - [ ] **Step 3: Strip the kebab from `AppHeader.svelte`.**
 
 Remove these from `frontend/src/lib/components/AppHeader.svelte`:
@@ -391,17 +393,21 @@ Beyond the rename already done in Task 1, the search input still has `border-rad
 
 - [ ] **Step 4: Verify the scrub is complete.**
 
+Run BOTH greps over the same target list — hex literals AND rgba/rgb literals. The original draft of this plan only checked hex; rgba leftovers (the lightbox toolbar's old `rgba(0,0,0,0.5)` etc.) could pass that one verification. (Caught by roborev #17080.)
+
 ```sh
-cd frontend && rg -l "#[0-9a-fA-F]{3,8}\b" src/lib/components/lightbox \
+SCRUB_TARGETS="src/lib/components/lightbox \
   src/lib/components/BottomSheet.svelte \
   src/lib/components/ConfirmModal.svelte \
   src/lib/components/AddToAlbumModal.svelte \
   src/lib/components/ShareModal.svelte \
   src/lib/components/ToastStack.svelte \
-  src/lib/components/AppHeader.svelte
+  src/lib/components/AppHeader.svelte"
+cd frontend && rg "#[0-9a-fA-F]{3,8}\b" $SCRUB_TARGETS
+cd frontend && rg "rgba?\(" $SCRUB_TARGETS
 ```
 
-Should return zero or near-zero matches. Any remaining hits must have a comment explaining why (e.g. `transparent` is fine, an SVG fill that has to be inline, etc.).
+Both greps should return zero or near-zero matches. Any remaining hits must have a comment explaining why (e.g. `transparent` is fine, an SVG fill that has to be inline, an `rgba(...)` declaration that's the underlying value of `var(--bg-overlay)` itself, etc.).
 
 - [ ] **Step 5: Run typecheck and unit tests.**
 

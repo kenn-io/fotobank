@@ -69,6 +69,29 @@ describe("AppConfigStore", () => {
     expect(s.principal).toBeNull();
   });
 
+  it("falls back handle → user_id when /me returns an empty handle string", async () => {
+    // The schema marks handle optional (PrincipalStruct.handle?: string).
+    // Some configs set it to "" rather than omitting it entirely; that's
+    // the same intent — no friendly name available — and AppHeader would
+    // render `dev-local: ` with a trailing space if the store let "" through.
+    const client = makeClient({
+      "/api/v1/me": {
+        data: {
+          principal: { hub: "dev-local", user_id: "owner", handle: "" },
+          scopes: [],
+          features: { sharing_enabled: false },
+        },
+      },
+    });
+    const s = new AppConfigStore(client as never);
+    await s.load();
+    expect(s.principal).toEqual({
+      hub: "dev-local",
+      userId: "owner",
+      handle: "owner",
+    });
+  });
+
   it("treats a non-true sharing_enabled value as false but still captures principal", async () => {
     // Server returned ok but sent a non-boolean for sharing_enabled.
     // The strict ===true compare coerces this to false defensively.
