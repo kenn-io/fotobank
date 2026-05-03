@@ -134,7 +134,6 @@
   .map-pin-preview {
     width: 100%;
     aspect-ratio: 16 / 10;
-    border-radius: 6px;
     overflow: hidden;
   }
   .map-pin-label {

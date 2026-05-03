@@ -127,7 +127,6 @@
   }
   .chip {
     padding: 2px 8px;
-    border-radius: 10px;
     background: var(--surface);
     border: 1px solid var(--border);
     font-size: 10px;
@@ -154,7 +153,7 @@
   }
   .failure {
     font-size: 11px;
-    color: var(--danger, #ef4444);
+    color: var(--danger);
     display: flex;
     align-items: center;
     gap: 6px;
