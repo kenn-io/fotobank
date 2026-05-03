@@ -69,7 +69,7 @@
   /* ── top bar ─────────────────────────────────────────────── */
   header.top {
     display: grid;
-    grid-template-columns: auto auto 1fr auto;
+    grid-template-columns: auto 1fr auto;
     align-items: center;
     gap: 24px;
     padding: 0 22px;
@@ -168,28 +168,6 @@
     display: inline-flex; align-items: baseline; gap: 7px;
   }
   .v-plex-mono::after { content: ""; display: inline-block; width: 5px; height: 5px; background: var(--amber); box-shadow: 0 0 9px var(--amber-glow); transform: translateY(-1px); }
-
-  nav.tabs { display: flex; gap: 0; height: 100%; }
-  nav.tabs a {
-    position: relative;
-    display: inline-flex; align-items: center;
-    padding: 0 16px;
-    color: var(--ink-3);
-    font-size: 11px; font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: var(--label-track);
-    text-decoration: none;
-    transition: color 120ms;
-  }
-  nav.tabs a:hover { color: var(--ink-2); }
-  nav.tabs a.active { color: var(--ink); }
-  nav.tabs a.active::after {
-    content: "";
-    position: absolute; left: 16px; right: 16px; bottom: -1px;
-    height: 1px;
-    background: var(--amber);
-    box-shadow: 0 0 8px var(--amber-glow);
-  }
 
   .top-right { display: flex; align-items: center; gap: 10px; }
 
@@ -491,12 +469,6 @@
 <div class="app">
   <header class="top">
     <span class="brand">fotobank</span>
-    <nav class="tabs">
-      <a href="#" class="active">Library</a>
-      <a href="#">Map</a>
-      <a href="#">Albums</a>
-      <a href="#">Hidden</a>
-    </nav>
     <div class="search-bar">
       <svg class="search-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
         <circle cx="6.5" cy="6.5" r="5"/><path d="M14 14l-3.5-3.5"/>

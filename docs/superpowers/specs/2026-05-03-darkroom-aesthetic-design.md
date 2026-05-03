@@ -152,13 +152,13 @@ always-visible `<input type="search">`:
 
 ## Nav
 
-Drop **Search** from the nav (replaced by the always-visible search bar).
-Remaining items: **Library / Map / Albums / Hidden**. Style:
-
-- 11px Plex Sans 500 uppercase, tracked 0.085em.
-- Default color `--ink-3`; hover lifts to `--ink-2`; active is `--ink`
-  with a 1px amber underline (with a soft amber glow) flush to the
-  bottom of the header. **Never** a filled background.
+The AppHeader has **no in-header section nav**. Section navigation
+lives entirely in the sidebar (BROWSE / CURATE / MANAGE groups). A
+prior draft of this spec placed a Library/Map/Albums/Hidden tab strip
+in the header, but it duplicated sidebar entries for no functional
+gain. The Lightroom pattern — brand mark + global search + identity
+strip on top, navigation in the side rail — reads as more
+photo-tool-like and removes a redundant chrome surface.
 
 ## Chrome treatments
 
