@@ -141,8 +141,8 @@
       {/if}
       {#if error}<div class="error" role="alert">{error}</div>{/if}
       <div class="actions">
-        <button type="button" onclick={onClose} disabled={pending}>Cancel</button>
-        <button type="submit" disabled={!valid || pending}>
+        <button type="button" class="btn-ghost" onclick={onClose} disabled={pending}>Cancel</button>
+        <button type="submit" class="btn-primary" disabled={!valid || pending}>
           {pending ? "Creating…" : "Create share"}
         </button>
       </div>
@@ -153,16 +153,17 @@
 <style>
   .modal-backdrop {
     position: fixed; inset: 0;
-    background: rgba(10, 10, 13, 0.92);
+    background: rgba(10, 10, 13, 0.78);
     display: flex; align-items: center; justify-content: center;
     z-index: 100;
   }
   .modal {
-    background: var(--surface-2);
-    border: 1px solid var(--border-2);
+    background: var(--surface);
+    border: 1px solid var(--border);
     padding: var(--space-6);
     min-width: 400px;
     max-width: 480px;
+    color: var(--ink);
   }
   .modal h2 { margin-top: 0; }
   .summary {
@@ -178,4 +179,30 @@
   .warn { color: var(--warn); font-size: var(--text-base); }
   .error { color: var(--danger); font-size: var(--text-base); }
   .actions { display: flex; gap: var(--space-4); justify-content: flex-end; }
+  .btn-ghost {
+    background: transparent;
+    color: var(--ink-2);
+    border: 1px solid var(--border);
+    padding: var(--space-3) var(--space-5);
+    cursor: pointer;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--ink);
+    border-color: var(--border-2);
+  }
+  .btn-ghost:disabled { cursor: not-allowed; opacity: 0.6; }
+  .btn-primary {
+    background: var(--amber);
+    color: var(--ink);
+    border: 1px solid var(--amber);
+    padding: var(--space-3) var(--space-5);
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--amber-deep);
+    border-color: var(--amber-deep);
+  }
+  .btn-primary:disabled { cursor: not-allowed; opacity: 0.6; }
 </style>

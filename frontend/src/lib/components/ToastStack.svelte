@@ -57,15 +57,28 @@
        looser visual. */
     gap: 10px;
     padding: 10px var(--space-5);
-    background: var(--surface-2);
+    background: var(--surface);
     border: 1px solid var(--border);
+    /* Indicator stripe: 2px left edge tinted by kind. Default (info)
+       reads as a neutral hairline; status kinds shift to ok / warn /
+       danger so the stripe matches the message tone. Body text stays
+       --ink across all kinds; only the stripe carries the signal. */
+    border-left-width: 2px;
+    border-left-color: var(--border-2);
     font-size: var(--text-base);
     color: var(--ink);
   }
 
   .toast--error {
-    border-color: var(--danger);
-    color: var(--danger);
+    border-left-color: var(--danger);
+  }
+
+  .toast--success {
+    border-left-color: var(--ok);
+  }
+
+  .toast--warning {
+    border-left-color: var(--warn);
   }
 
   .toast-body {

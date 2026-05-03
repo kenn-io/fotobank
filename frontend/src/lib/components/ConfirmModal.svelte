@@ -53,8 +53,8 @@
     <h2>{title}</h2>
     <p>{body}</p>
     <div class="actions">
-      <button type="button" onclick={onCancel} disabled={pending}>{cancelLabel}</button>
-      <button type="button" class:danger onclick={confirm} disabled={pending}>
+      <button type="button" class="btn-ghost" onclick={onCancel} disabled={pending}>{cancelLabel}</button>
+      <button type="button" class="btn-primary" class:danger onclick={confirm} disabled={pending}>
         {pending ? "Working…" : confirmLabel}
       </button>
     </div>
@@ -64,24 +64,58 @@
 <style>
   .modal-backdrop {
     position: fixed; inset: 0;
-    background: rgba(10, 10, 13, 0.92);
+    background: rgba(10, 10, 13, 0.78);
     display: flex; align-items: center; justify-content: center;
     z-index: 100;
   }
   .modal {
-    background: var(--surface-2);
-    border: 1px solid var(--border-2);
+    background: var(--surface);
+    border: 1px solid var(--border);
     padding: var(--space-6);
     min-width: 320px; max-width: 480px;
+    color: var(--ink);
   }
   .modal h2 { margin-top: 0; }
   .actions {
     display: flex; gap: var(--space-4); justify-content: flex-end;
     margin-top: var(--space-5);
   }
-  .danger {
-    background: var(--danger);
+  /* Ghost secondary: transparent until hover. */
+  .btn-ghost {
+    background: transparent;
+    color: var(--ink-2);
+    border: 1px solid var(--border);
+    padding: var(--space-3) var(--space-5);
+    cursor: pointer;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--surface-2);
     color: var(--ink);
+    border-color: var(--border-2);
+  }
+  .btn-ghost:disabled { cursor: not-allowed; opacity: 0.6; }
+  /* Amber primary: filled accent for the confirm action. */
+  .btn-primary {
+    background: var(--amber);
+    color: var(--ink);
+    border: 1px solid var(--amber);
+    padding: var(--space-3) var(--space-5);
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--amber-deep);
+    border-color: var(--amber-deep);
+  }
+  .btn-primary:disabled { cursor: not-allowed; opacity: 0.6; }
+  /* Destructive variant overrides the amber primary with --danger. */
+  .btn-primary.danger {
+    background: var(--danger);
     border-color: var(--danger);
+  }
+  .btn-primary.danger:hover:not(:disabled) {
+    background: var(--danger);
+    border-color: var(--danger);
+    filter: brightness(1.1);
   }
 </style>

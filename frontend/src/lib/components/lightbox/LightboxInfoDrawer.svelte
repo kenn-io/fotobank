@@ -33,7 +33,7 @@
     position: absolute; top: 0; right: 0; bottom: 0;
     width: min(360px, 40vw);
     background: var(--surface);
-    border-left: 1px solid var(--border-2);
+    border-left: 1px solid var(--border);
     display: flex; flex-direction: column;
   }
   .lb-drawer-head {
@@ -43,11 +43,12 @@
   }
   .lb-drawer-head button {
     background: transparent;
-    color: var(--ink);
+    color: var(--ink-2);
     border: none;
     font-size: var(--text-lg);
     cursor: pointer;
   }
+  .lb-drawer-head button:hover { color: var(--ink); }
   /* Drawer inherits theme colors; the metadata content reads against
      --bg-surface using the standard text tokens. */
   .lb-drawer-body {

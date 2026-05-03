@@ -46,79 +46,120 @@
   }
 </script>
 
-<dl class="lb-meta">
-  {#if media.original_filename}
-    <dt>File</dt>
-    <dd>{media.original_filename}</dd>
-  {/if}
-  {#if media.timestamp}
-    <dt>Captured</dt>
-    <dd>{formatTimestamp(media.timestamp)}</dd>
-  {/if}
-  {#if media.size}
-    <dt>Size</dt>
-    <dd class="numeric">{formatBytes(media.size)}</dd>
-  {/if}
-  {#if media.location_label || (media.latitude != null && media.longitude != null)}
-    <dt>Location</dt>
-    <dd>
-      {#if media.location_label}{media.location_label}{/if}
-      {#if media.latitude != null && media.longitude != null}
-        <small class="coord numeric">{formatCoord(media.latitude, media.longitude)}</small>
+{#if media.original_filename || media.timestamp || media.size}
+  <div class="meta-section">
+    <div class="meta-label">Capture</div>
+    <dl class="lb-meta">
+      {#if media.original_filename}
+        <dt>File</dt>
+        <dd>{media.original_filename}</dd>
       {/if}
-    </dd>
-  {/if}
-  {#if media.latitude != null && media.longitude != null}
-    <dt class="map-pin-dt">Map</dt>
-    <dd class="map-pin-dd">
-      <LightboxMapPin {media} />
-    </dd>
-  {/if}
-  {#if media.sidecars && media.sidecars.length > 0}
-    <dt>Files</dt>
-    <dd class="files">
-      <a href={`/api/v1/media/${media.id}/original`} download={media.original_filename ?? media.id}>
-        {media.original_filename ?? media.id}
-      </a>
-      {#each media.sidecars as sc (sc.id)}
-        <br />
-        <a href={`/api/v1/media/${sc.id}/original`} download={sc.original_filename ?? sc.id}>
-          {sc.original_filename ?? sc.id}
+      {#if media.timestamp}
+        <dt>Captured</dt>
+        <dd>{formatTimestamp(media.timestamp)}</dd>
+      {/if}
+      {#if media.size}
+        <dt>Size</dt>
+        <dd class="numeric">{formatBytes(media.size)}</dd>
+      {/if}
+    </dl>
+  </div>
+{/if}
+
+{#if media.location_label || (media.latitude != null && media.longitude != null)}
+  <div class="meta-section">
+    <div class="meta-label">Location</div>
+    <dl class="lb-meta">
+      <dt>Location</dt>
+      <dd>
+        {#if media.location_label}{media.location_label}{/if}
+        {#if media.latitude != null && media.longitude != null}
+          <small class="coord numeric">{formatCoord(media.latitude, media.longitude)}</small>
+        {/if}
+      </dd>
+      {#if media.latitude != null && media.longitude != null}
+        <dt class="map-pin-dt">Map</dt>
+        <dd class="map-pin-dd">
+          <LightboxMapPin {media} />
+        </dd>
+      {/if}
+    </dl>
+  </div>
+{/if}
+
+<div class="meta-section">
+  <div class="meta-label">Files</div>
+  <dl class="lb-meta">
+    {#if media.sidecars && media.sidecars.length > 0}
+      <dt>Files</dt>
+      <dd class="files">
+        <a href={`/api/v1/media/${media.id}/original`} download={media.original_filename ?? media.id}>
+          {media.original_filename ?? media.id}
         </a>
-      {/each}
-    </dd>
-  {:else}
-    <dt>Download</dt>
-    <dd>
-      <a href={`/api/v1/media/${media.id}/original`} download={media.original_filename ?? media.id}>
-        {media.original_filename ?? media.id}
-      </a>
-    </dd>
-  {/if}
-  {#if scoreComponents}
-    <dt>Search relevance</dt>
-    <dd class="relevance" data-testid="search-relevance">
-      <div><span class="rel-label">RRF</span> <span class="rel-num">{fmtRRF(scoreComponents.rrf)}</span></div>
-      <div>
-        <span class="rel-label">BM25</span>
-        <span class="rel-num">{fmtSignal(scoreComponents.bm25)}{fmtRank(scoreComponents.rank_bm25)}</span>
-      </div>
-      <div>
-        <span class="rel-label">Vector</span>
-        <span class="rel-num">{fmtSignal(scoreComponents.vector)}{fmtRank(scoreComponents.rank_vector)}</span>
-      </div>
-    </dd>
-  {/if}
-</dl>
+        {#each media.sidecars as sc (sc.id)}
+          <br />
+          <a href={`/api/v1/media/${sc.id}/original`} download={sc.original_filename ?? sc.id}>
+            {sc.original_filename ?? sc.id}
+          </a>
+        {/each}
+      </dd>
+    {:else}
+      <dt>Download</dt>
+      <dd>
+        <a href={`/api/v1/media/${media.id}/original`} download={media.original_filename ?? media.id}>
+          {media.original_filename ?? media.id}
+        </a>
+      </dd>
+    {/if}
+  </dl>
+</div>
+
+{#if scoreComponents}
+  <div class="meta-section">
+    <div class="meta-label">Search</div>
+    <dl class="lb-meta">
+      <dt>Search relevance</dt>
+      <dd class="relevance" data-testid="search-relevance">
+        <div><span class="rel-label">RRF</span> <span class="rel-num">{fmtRRF(scoreComponents.rrf)}</span></div>
+        <div>
+          <span class="rel-label">BM25</span>
+          <span class="rel-num">{fmtSignal(scoreComponents.bm25)}{fmtRank(scoreComponents.rank_bm25)}</span>
+        </div>
+        <div>
+          <span class="rel-label">Vector</span>
+          <span class="rel-num">{fmtSignal(scoreComponents.vector)}{fmtRank(scoreComponents.rank_vector)}</span>
+        </div>
+      </dd>
+    </dl>
+  </div>
+{/if}
 
 <LightboxAI mediaId={media.id} />
 
 <style>
+  /* Section grouping per the darkroom mockup: each block (Capture,
+     Location, Files, Search) gets its own hairline-topped section
+     with a tracked uppercase label. The dl/dt/dd structure inside
+     stays unchanged so test selectors and a11y semantics survive. */
+  .meta-section {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-5);
+    margin-bottom: var(--space-6);
+  }
+  .meta-section:first-of-type { border-top: none; padding-top: 0; }
+  .meta-label {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: var(--label-track);
+    margin-bottom: 10px;
+  }
   /* Inherit color from parent so this content reads correctly on
      either the dark drawer or the bottom sheet — both surfaces use
      the same dark token palette so the metadata reads cleanly with
      the default text color. */
-  .lb-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; }
+  .lb-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0; }
   .lb-meta dt { font-weight: 600; color: var(--ink-2); }
   .lb-meta a { color: inherit; }
   /* Numeric/technical values render in monospace with tabular-nums so

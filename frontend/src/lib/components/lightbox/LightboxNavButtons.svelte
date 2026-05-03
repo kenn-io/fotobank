@@ -23,8 +23,8 @@
 <style>
   .lb-nav {
     position: absolute; top: 50%; transform: translateY(-50%);
-    background: var(--surface-2);
-    color: var(--ink);
+    background: var(--surface);
+    color: var(--ink-2);
     border: 1px solid var(--border);
     width: 48px; height: 48px;
     display: flex; align-items: center; justify-content: center;
@@ -33,5 +33,9 @@
   }
   .lb-prev { left: var(--space-6); }
   .lb-next { right: var(--space-6); }
-  .lb-nav:hover { background: var(--surface-2); }
+  .lb-nav:hover {
+    background: var(--surface-2);
+    color: var(--ink);
+    border-color: var(--border-2);
+  }
 </style>

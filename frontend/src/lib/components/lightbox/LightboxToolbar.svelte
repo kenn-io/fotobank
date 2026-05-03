@@ -15,7 +15,7 @@
 
 <header class="lb-toolbar">
   <div class="lb-toolbar-left">
-    <button type="button" class="lb-btn" aria-label="Close" onclick={onClose}>×</button>
+    <button type="button" class="lb-btn lb-btn--close" aria-label="Close" onclick={onClose}>×</button>
   </div>
   <div class="lb-toolbar-right">
     {#if onToggleInfo}
@@ -36,12 +36,20 @@
     display: flex; gap: var(--space-4); align-items: center;
   }
   .lb-btn {
-    background: var(--surface-2);
-    color: var(--ink);
+    background: var(--surface);
+    color: var(--ink-2);
     border: 1px solid var(--border);
     padding: var(--space-3) var(--space-5);
     cursor: pointer;
     font-size: var(--text-lg);
   }
-  .lb-btn:hover { background: var(--surface-2); }
+  .lb-btn:hover {
+    background: var(--surface-2);
+    color: var(--ink);
+    border-color: var(--border-2);
+  }
+  /* Close glyph tinted amber per the darkroom mockup; hover lifts to
+     amber-deep so the affordance reads as primary action. */
+  .lb-btn--close { color: var(--amber); }
+  .lb-btn--close:hover { color: var(--amber-deep); }
 </style>
