@@ -1,168 +1,145 @@
 <!-- frontend/src/lib/components/AppHeader.svelte -->
 <script lang="ts">
   import AIStatusDot from "./AIStatusDot.svelte";
-  import { router } from "../router/router.svelte";
+  import IdentityChips from "./IdentityChips.svelte";
+  import SearchBar from "./SearchBar.svelte";
+  import { handleInternalLinkClick, router } from "../router/router.svelte";
+  import type { Principal } from "../app/appConfig.svelte";
 
-  // Identity and search live here. Identity comes from /api/v1/me via
-  // AppConfigStore (App.svelte threads it through), keeping this
-  // component free of module-singleton imports so tests can supply
-  // minimal stubs.
+  // Props are minimal: identity for the chips, ready flag (renders
+  // chips only after /me has resolved), and an `onsearch` callback
+  // the host wires to its router. Keeping the SearchBar's
+  // navigation contract on the host means this header doesn't need
+  // to import the router for that path; it still imports `router`
+  // for the active-tab highlight, which reads `router.current`.
   let {
-    hub,
-    handle,
+    principal,
+    ready,
+    onsearch,
   }: {
-    hub?: string | undefined;
-    handle?: string | undefined;
+    principal: Principal | null;
+    ready: boolean;
+    onsearch: (q: string) => void;
   } = $props();
 
-  let searchEl: HTMLInputElement | null = $state(null);
-  let value = $state("");
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const DEBOUNCE_MS = 300;
-
-  // ⌘K (and Ctrl+K) focuses the search box from anywhere in the app.
-  $effect(() => {
-    function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        searchEl?.focus();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
-
-  // When the route changes externally (sidebar nav, back/forward, deep
-  // link), mirror the q from the URL into the input. Without this the
-  // input drifts away from the URL and a /search ↔ /library round-trip
-  // shows stale text. router.current is a `$state` so the effect
-  // re-runs whenever the route shape changes. We compute the desired
-  // string with $derived so the effect's dependency is the *URL-sourced
-  // value*, not `value` itself — otherwise typing into the input
-  // (which mutates `value`) would re-fire the effect and reset the
-  // input back to the URL on every keystroke.
-  const urlQuery = $derived.by((): string => {
+  // Map the matched route to a tab key. We collapse media-detail and
+  // anything else that "lives in the library context" onto the
+  // Library tab so a deep-link to /media/<id> still highlights it.
+  // Routes that have no top-tab home (sessions, settings, search,
+  // shares) fall through to the empty string and no tab is active —
+  // matches the prior AppHeader's behavior of leaving the strip
+  // unhighlighted on those screens.
+  const activeTab = $derived.by((): string => {
     const r = router.current;
-    if (r.route === "search") return r.q ?? "";
+    if (r.route === "library" || r.route === "media") return "library";
+    if (r.route === "map") return "map";
+    if (r.route === "albums" || r.route === "albums.detail") return "albums";
+    if (r.route === "hidden") return "hidden";
     return "";
   });
-  $effect(() => {
-    value = urlQuery;
-  });
-
-  // Clear the pending timer on unmount so a debounced commit can't
-  // fire after the component has been torn down (would reach into a
-  // detached DOM).
-  $effect(() => {
-    return () => {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-        timer = undefined;
-      }
-    };
-  });
-
-  // Cancel any pending debounce when the route changes externally. If
-  // the user types "do" on /library and navigates away (sidebar click,
-  // back/forward) before the debounce fires, the stale timer would
-  // otherwise navigate back to /search?q=do and stomp the user's chosen
-  // route. The effect runs whenever router.current changes, including
-  // immediately after mount, which is harmless because timer is
-  // undefined at that point.
-  $effect(() => {
-    const _ = router.current;
-    void _;
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      timer = undefined;
-    }
-  });
-
-  function onInput(): void {
-    // `bind:value` already mirrors the DOM value into `value`; this
-    // handler exists purely for the debounce side effect.
-    if (timer !== undefined) clearTimeout(timer);
-    timer = setTimeout(() => commit(), DEBOUNCE_MS);
-  }
-
-  function onKeyDown(ev: KeyboardEvent): void {
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      if (timer !== undefined) clearTimeout(timer);
-      timer = undefined;
-      commit({ pushHistory: true });
-    }
-  }
-
-  // commit syncs `value` to the URL by navigating to /search. The
-  // contract:
-  //  - On /search with no Enter: replace the current history entry so
-  //    typing doesn't fill the back stack.
-  //  - On Enter (anywhere): push a new entry so back returns to the
-  //    previous page (or to the prior query).
-  //  - From any other route: push a new entry so back returns to that
-  //    page.
-  function commit({ pushHistory = false }: { pushHistory?: boolean } = {}): void {
-    const params = new URLSearchParams(window.location.search);
-    if (value !== "") {
-      params.set("q", value);
-    } else {
-      params.delete("q");
-    }
-    const qs = params.toString();
-    const target = qs.length > 0 ? `/search?${qs}` : "/search";
-    if (window.location.pathname === "/search" && !pushHistory) {
-      router.navigate(target, { replace: true });
-    } else {
-      router.navigate(target);
-    }
-  }
-
-  // Identity display: `{hub}: {handle}` when /me has resolved, em-dash
-  // placeholders before that. We never fall through to a placeholder
-  // user_id like "alice" — a missing principal is a real state worth
-  // signaling, not faked.
-  const identityHub = $derived(hub ?? "—");
-  const identityHandle = $derived(handle ?? "—");
 </script>
 
-<header class="strip">
-  <div class="brand">fotobank</div>
-  <div class="identity" data-testid="app-identity">{identityHub}: {identityHandle}</div>
-  <input
-    bind:this={searchEl}
-    bind:value
-    class="search"
-    type="search"
-    placeholder="Search ⌘K"
-    aria-label="Search"
-    oninput={onInput}
-    onkeydown={onKeyDown}
-  />
-  <AIStatusDot />
+<header class="top">
+  <span class="brand">fotobank</span>
+  <nav class="tabs">
+    <a
+      href="/library"
+      class:active={activeTab === "library"}
+      onclick={(e) => handleInternalLinkClick(e, "/library")}
+    >Library</a>
+    <a
+      href="/map"
+      class:active={activeTab === "map"}
+      onclick={(e) => handleInternalLinkClick(e, "/map")}
+    >Map</a>
+    <a
+      href="/albums"
+      class:active={activeTab === "albums"}
+      onclick={(e) => handleInternalLinkClick(e, "/albums")}
+    >Albums</a>
+    <a
+      href="/hidden"
+      class:active={activeTab === "hidden"}
+      onclick={(e) => handleInternalLinkClick(e, "/hidden")}
+    >Hidden</a>
+  </nav>
+  <SearchBar onsubmit={onsearch} />
+  <div class="top-right">
+    <AIStatusDot />
+    <IdentityChips {principal} {ready} />
+  </div>
 </header>
 
 <style>
-  .strip {
+  header.top {
+    display: grid;
+    grid-template-columns: auto auto 1fr auto;
+    align-items: center;
+    gap: 24px;
+    padding: 0 22px;
+    height: 46px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #101015 0%, #0c0c11 100%);
+  }
+
+  .brand {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 15px;
+    color: var(--ink);
+    letter-spacing: 0;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 7px;
+  }
+  .brand::after {
+    content: "";
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    background: var(--amber);
+    box-shadow: 0 0 9px var(--amber-glow);
+    transform: translateY(-1px);
+  }
+
+  nav.tabs {
+    display: flex;
+    gap: 0;
+    height: 100%;
+  }
+  nav.tabs a {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 16px;
+    color: var(--ink-3);
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: var(--label-track);
+    text-decoration: none;
+    transition: color 120ms;
+  }
+  nav.tabs a:hover {
+    color: var(--ink-2);
+  }
+  nav.tabs a.active {
+    color: var(--ink);
+  }
+  nav.tabs a.active::after {
+    content: "";
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: -1px;
+    height: 1px;
+    background: var(--amber);
+    box-shadow: 0 0 8px var(--amber-glow);
+  }
+
+  .top-right {
     display: flex;
     align-items: center;
-    gap: var(--space-5);
-    padding: var(--space-3) var(--space-5);
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-2);
-    height: 44px;
-  }
-  .brand { font-weight: 600; font-size: var(--text-md); }
-  .identity { font-size: var(--text-sm); color: var(--ink-2); }
-  .search {
-    flex: 1;
-    max-width: 540px;
-    height: 28px;
-    padding: 0 var(--space-4);
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--ink);
-    font-size: var(--text-base);
-    margin-left: auto;
+    gap: 10px;
   }
 </style>

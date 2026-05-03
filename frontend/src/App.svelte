@@ -120,6 +120,15 @@
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  // SearchBar (in AppHeader) calls this with the trimmed query when
+  // the user presses Enter. Empty inputs are skipped at the SearchBar
+  // layer so this only fires with a real string; we still guard
+  // defensively because the prop is publicly callable.
+  function onSearchSubmit(q: string): void {
+    if (q === "") return;
+    router.navigate(`/search?q=${encodeURIComponent(q)}`);
+  }
+
   function activeId(route: RouteMatch): string {
     if (route.route === "sessions") return "sessions";
     if (route.route === "settings" || route.route === "settings.ai") return "settings";
@@ -142,8 +151,9 @@
 </script>
 
 <AppHeader
-  hub={appConfig.principal?.hub}
-  handle={appConfig.principal?.handle}
+  principal={appConfig.principal}
+  ready={appConfig.ready}
+  onsearch={onSearchSubmit}
 />
 {#if hiddenStore.unlocked}
   <HiddenLockStrip {hiddenStore} />
