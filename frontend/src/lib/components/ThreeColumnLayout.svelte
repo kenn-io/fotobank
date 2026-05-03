@@ -28,6 +28,9 @@
     background: var(--surface);
     border-right: 1px solid var(--border);
     overflow-y: auto;
+    /* Relief — top-edge highlight matches AppHeader so the chrome reads
+       as a unified raised plane stepping down from the header. */
+    box-shadow: inset 0 1px 0 var(--rim-highlight);
   }
   .main {
     overflow: auto;
@@ -37,5 +40,6 @@
     background: var(--surface);
     border-left: 1px solid var(--border);
     overflow-y: auto;
+    box-shadow: inset 0 1px 0 var(--rim-highlight);
   }
 </style>

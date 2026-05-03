@@ -74,6 +74,10 @@
     padding: var(--space-6);
     min-width: 320px; max-width: 480px;
     color: var(--ink);
+    /* Relief — modals float above the scrim; the strong composite adds
+       a soft drop plus the rim highlight so the panel reads as
+       elevated, not stamped. */
+    box-shadow: var(--shadow-relief-strong);
   }
   .modal h2 { margin-top: 0; }
   .actions {

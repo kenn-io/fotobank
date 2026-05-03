@@ -108,6 +108,9 @@
     width: 100%;
     max-height: 50vh;
     display: flex; flex-direction: column;
+    /* Relief — top-edge highlight reads as the sheet sitting forward of
+       the dimmed page, matching the rim treatment on header/sidebar. */
+    box-shadow: inset 0 1px 0 var(--rim-highlight);
     transition: transform 120ms ease-out, max-height 200ms ease-out;
   }
   .bs-sheet.full { max-height: 90vh; }

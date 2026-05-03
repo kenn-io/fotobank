@@ -90,6 +90,22 @@
   --space-7: 24px;
   --space-8: 32px;
 
+  /*
+    Relief — subtle "light from above" cue that gives chrome surfaces a
+    sense of being slightly raised planes without resorting to drop
+    shadows. Two 1px lines: a near-white inset on the TOP edge (reads as
+    a darkroom safelight grazing the surface) and a deeper black hairline
+    just BELOW. Composes with the existing `border: 1px solid --border`
+    on most chrome — relief is the depth cue, the border is the edge.
+  */
+  --rim-highlight: rgba(255, 255, 255, 0.05);
+  --rim-shadow:    rgba(0, 0, 0, 0.45);
+  --shadow-relief: inset 0 1px 0 var(--rim-highlight),
+                   0 1px 0 var(--rim-shadow);
+  --shadow-relief-strong: inset 0 1px 0 var(--rim-highlight),
+                          0 1px 2px rgba(0, 0, 0, 0.4),
+                          0 1px 0 var(--rim-shadow);
+
   color-scheme: dark;
 }
 

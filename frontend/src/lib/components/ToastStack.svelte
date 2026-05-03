@@ -67,6 +67,9 @@
     border-left-color: var(--border-2);
     font-size: var(--text-base);
     color: var(--ink);
+    /* Relief — toasts float above the page; the strong composite gives
+       the card a sense of being lifted, matching modal panels. */
+    box-shadow: var(--shadow-relief-strong);
   }
 
   .toast--error {

@@ -35,6 +35,7 @@
     background: var(--surface);
     border-left: 1px solid var(--border);
     display: flex; flex-direction: column;
+    box-shadow: inset 0 1px 0 var(--rim-highlight);
   }
   .lb-drawer-head {
     display: flex; justify-content: flex-end;

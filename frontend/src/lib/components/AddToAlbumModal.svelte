@@ -168,6 +168,8 @@
     max-height: 80vh;
     display: flex; flex-direction: column;
     color: var(--ink);
+    /* Relief — same elevated-panel treatment as ConfirmModal. */
+    box-shadow: var(--shadow-relief-strong);
   }
   .modal h2 { margin-top: 0; }
   .subtitle {

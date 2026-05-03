@@ -39,6 +39,9 @@
     height: 46px;
     border-bottom: 1px solid var(--border);
     background: linear-gradient(180deg, #101015 0%, #0c0c11 100%);
+    /* Relief — top-edge highlight reads as light grazing a panel that
+       sits forward of the page; bottom rim deepens the existing border. */
+    box-shadow: var(--shadow-relief);
   }
 
   .brand {
