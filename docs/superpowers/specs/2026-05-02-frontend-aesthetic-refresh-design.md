@@ -251,7 +251,7 @@ The pass is done when:
 
 - Every chrome surface listed above uses tokens, not hex/rgba literals.
 - `app.css` has no light-mode or `prefers-color-scheme` block.
-- `themeStore` is deleted; AppHeader dropdown has a non-empty entry.
+- `themeStore` is deleted; AppHeader's kebab button and dropdown are gone (no second item to put behind it; the kebab returns when a real settings surface arrives).
 - Lightbox metadata reads in monospace with aligned columns.
 - All unit + e2e tests still pass.
 - Manual QA of /library, /map, /albums/<id>, /search, /hidden, and the
