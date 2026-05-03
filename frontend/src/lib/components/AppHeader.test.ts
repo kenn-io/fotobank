@@ -9,17 +9,15 @@ function setLocation(pathname: string) {
   router.syncFromLocation();
 }
 
-// Default props mirror what App.svelte threads from AppConfigStore +
-// ThemeStore. Tests that need a different identity or theme override
-// individual fields. Centralizing the defaults here means a future
-// prop addition only touches this helper, not every render() call.
+// Default props mirror what App.svelte threads from AppConfigStore.
+// Tests that need a different identity override individual fields.
+// Centralizing the defaults here means a future prop addition only
+// touches this helper, not every render() call.
 function renderHeader(overrides: Record<string, unknown> = {}) {
   return render(AppHeader, {
     props: {
       hub: "dev-local",
       handle: "owner",
-      theme: "system",
-      onSetTheme: vi.fn(),
       ...overrides,
     },
   });
@@ -131,10 +129,11 @@ describe("AppHeader search input", () => {
     const { container } = renderHeader();
     const input = container.querySelector("input.search") as HTMLInputElement;
     expect(input).toBeTruthy();
-    // Move focus elsewhere first so we can prove ⌘K shifts it back.
-    const button = container.querySelector("button.account") as HTMLButtonElement;
-    button.focus();
-    expect(document.activeElement).toBe(button);
+    // Move focus elsewhere first so we can prove ⌘K shifts it back. The
+    // brand div isn't focusable; the search input itself is what we want
+    // to assert focus on, so steal focus to document.body explicitly.
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
 
     // jsdom dispatches keydown on window for plain `new KeyboardEvent`,
     // which is what AppHeader listens on. metaKey emulates ⌘K on macOS.
@@ -159,47 +158,6 @@ describe("AppHeader identity display", () => {
   it("renders em-dash placeholders before /me has resolved", () => {
     const { getByTestId } = renderHeader({ hub: undefined, handle: undefined });
     expect(getByTestId("app-identity").textContent).toBe("—: —");
-  });
-});
-
-describe("AppHeader account menu", () => {
-  beforeEach(() => {
-    setLocation("/");
-  });
-
-  it("opens on click and closes on Escape", async () => {
-    const { container, queryByTestId } = renderHeader();
-    expect(queryByTestId("account-dropdown")).toBeNull();
-    const button = container.querySelector("button.account") as HTMLButtonElement;
-    await fireEvent.click(button);
-    expect(queryByTestId("account-dropdown")).not.toBeNull();
-    await fireEvent.keyDown(document, { key: "Escape" });
-    expect(queryByTestId("account-dropdown")).toBeNull();
-  });
-
-  it("invokes onSetTheme with the chosen theme and closes the menu", async () => {
-    const onSetTheme = vi.fn();
-    const { container, getByRole, queryByTestId } = renderHeader({
-      theme: "system",
-      onSetTheme,
-    });
-    const button = container.querySelector("button.account") as HTMLButtonElement;
-    await fireEvent.click(button);
-    const darkItem = getByRole("menuitemradio", { name: /dark/i });
-    await fireEvent.click(darkItem);
-    expect(onSetTheme).toHaveBeenCalledWith("dark");
-    expect(queryByTestId("account-dropdown")).toBeNull();
-  });
-
-  it("marks the active theme with aria-checked=true", async () => {
-    const { container, getByRole } = renderHeader({ theme: "dark" });
-    await fireEvent.click(
-      container.querySelector("button.account") as HTMLButtonElement,
-    );
-    const darkItem = getByRole("menuitemradio", { name: /dark/i });
-    const lightItem = getByRole("menuitemradio", { name: /light/i });
-    expect(darkItem.getAttribute("aria-checked")).toBe("true");
-    expect(lightItem.getAttribute("aria-checked")).toBe("false");
   });
 });
 

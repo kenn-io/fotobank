@@ -17,7 +17,6 @@
   import NotFound from "./routes/NotFound.svelte";
   import HiddenLockStrip from "./lib/components/HiddenLockStrip.svelte";
   import ToastStack from "./lib/components/ToastStack.svelte";
-  import { ThemeStore } from "./lib/theme/themeStore.svelte";
   import { EventsStore } from "./lib/events/eventsStore.svelte";
   import { MediaStore } from "./lib/media/mediaStore.svelte";
   import { AlbumsStore } from "./lib/albums/albumsStore.svelte";
@@ -34,8 +33,6 @@
   import { AppConfigStore } from "./lib/app/appConfig.svelte";
   import { shouldRedirectSharesToHome } from "./lib/app/routeGuards";
 
-  const themeStore = new ThemeStore(api);
-  themeStore.load();
   const events = new EventsStore();
   events.connect();
   // HMR remounts the root component; without an explicit teardown the
@@ -147,8 +144,6 @@
 <AppHeader
   hub={appConfig.principal?.hub}
   handle={appConfig.principal?.handle}
-  theme={themeStore.theme}
-  onSetTheme={(next) => themeStore.set(next)}
 />
 {#if hiddenStore.unlocked}
   <HiddenLockStrip {hiddenStore} />
@@ -181,7 +176,7 @@
     {:else if router.current.route === "hidden"}
       <HiddenLibrary {hiddenStore} {albumsStore} {toastStore} {appConfig} />
     {:else if router.current.route === "settings"}
-      <div style="padding:20px">Settings (placeholder; theme = {themeStore.theme})</div>
+      <div style="padding:20px">Settings (placeholder)</div>
     {:else if router.current.route === "settings.ai"}
       <SettingsAI />
     {:else if router.current.route === "search"}

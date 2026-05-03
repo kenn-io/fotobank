@@ -2,23 +2,17 @@
 <script lang="ts">
   import AIStatusDot from "./AIStatusDot.svelte";
   import { router } from "../router/router.svelte";
-  import type { Theme } from "../theme/themeStore.svelte";
 
-  // Identity, search, and theme controls live here. Identity comes from
-  // /api/v1/me via AppConfigStore (App.svelte threads it through). Theme
-  // is the same — App.svelte owns the ThemeStore and forwards the
-  // current value plus a setter, so this component stays free of
-  // module-singleton imports and tests can supply minimal stubs.
+  // Identity and search live here. Identity comes from /api/v1/me via
+  // AppConfigStore (App.svelte threads it through), keeping this
+  // component free of module-singleton imports so tests can supply
+  // minimal stubs.
   let {
     hub,
     handle,
-    theme,
-    onSetTheme,
   }: {
     hub?: string | undefined;
     handle?: string | undefined;
-    theme?: Theme | undefined;
-    onSetTheme?: ((next: Theme) => void) | undefined;
   } = $props();
 
   let searchEl: HTMLInputElement | null = $state(null);
@@ -124,36 +118,6 @@
     }
   }
 
-  // Account dropdown (theme switcher today; will gain more entries as
-  // the settings surface grows). Click-outside / Escape both close it.
-  // Listener is conditional on menuOpen so we only pay the document
-  // listener cost while the menu is actually visible.
-  let menuOpen = $state(false);
-  let menuEl: HTMLDivElement | null = $state(null);
-
-  $effect(() => {
-    if (!menuOpen) return;
-    function onDocPointer(e: PointerEvent): void {
-      if (menuEl === null) return;
-      if (e.target instanceof Node && menuEl.contains(e.target)) return;
-      menuOpen = false;
-    }
-    function onDocKey(e: KeyboardEvent): void {
-      if (e.key === "Escape") menuOpen = false;
-    }
-    document.addEventListener("pointerdown", onDocPointer);
-    document.addEventListener("keydown", onDocKey);
-    return () => {
-      document.removeEventListener("pointerdown", onDocPointer);
-      document.removeEventListener("keydown", onDocKey);
-    };
-  });
-
-  function chooseTheme(next: Theme): void {
-    onSetTheme?.(next);
-    menuOpen = false;
-  }
-
   // Identity display: `{hub}: {handle}` when /me has resolved, em-dash
   // placeholders before that. We never fall through to a placeholder
   // user_id like "alice" — a missing principal is a real state worth
@@ -176,44 +140,6 @@
     onkeydown={onKeyDown}
   />
   <AIStatusDot />
-  <div class="account-menu" bind:this={menuEl}>
-    <button
-      class="account"
-      aria-label="Account menu"
-      aria-expanded={menuOpen}
-      aria-haspopup="menu"
-      onclick={() => (menuOpen = !menuOpen)}
-    >⋯</button>
-    {#if menuOpen}
-      <div class="account-dropdown" role="menu" data-testid="account-dropdown">
-        <div class="dropdown-section-label">Theme</div>
-        <button
-          type="button"
-          role="menuitemradio"
-          aria-checked={theme === "system"}
-          class="dropdown-item"
-          class:active={theme === "system"}
-          onclick={() => chooseTheme("system")}
-        >System</button>
-        <button
-          type="button"
-          role="menuitemradio"
-          aria-checked={theme === "light"}
-          class="dropdown-item"
-          class:active={theme === "light"}
-          onclick={() => chooseTheme("light")}
-        >Light</button>
-        <button
-          type="button"
-          role="menuitemradio"
-          aria-checked={theme === "dark"}
-          class="dropdown-item"
-          class:active={theme === "dark"}
-          onclick={() => chooseTheme("dark")}
-        >Dark</button>
-      </div>
-    {/if}
-  </div>
 </header>
 
 <style>
@@ -240,54 +166,5 @@
     color: var(--text-primary);
     font-size: 13px;
     margin-left: auto;
-  }
-  .account-menu {
-    position: relative;
-  }
-  .account {
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 4px 10px;
-    color: var(--text-primary);
-    cursor: pointer;
-  }
-  .account-dropdown {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    min-width: 160px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    box-shadow: var(--shadow-sm);
-    padding: 4px;
-    z-index: 100;
-  }
-  .dropdown-section-label {
-    font-size: 11px;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    padding: 6px 8px 2px;
-  }
-  .dropdown-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    background: transparent;
-    border: 0;
-    padding: 6px 8px;
-    color: var(--text-primary);
-    font-size: 13px;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  .dropdown-item:hover {
-    background: var(--bg-surface);
-  }
-  .dropdown-item.active {
-    color: var(--accent);
-    font-weight: 600;
   }
 </style>
