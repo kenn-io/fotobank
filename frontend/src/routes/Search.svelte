@@ -432,7 +432,7 @@
   }
   .search-status {
     padding: 24px 16px;
-    color: var(--text-secondary);
+    color: var(--ink-2);
     text-align: center;
   }
 </style>

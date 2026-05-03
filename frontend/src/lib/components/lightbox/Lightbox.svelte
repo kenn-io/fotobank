@@ -711,7 +711,7 @@
 <style>
   .lb-loading,
   .lb-not-found {
-    color: var(--text-primary);
+    color: var(--ink);
     padding: 2rem;
     text-align: center;
   }

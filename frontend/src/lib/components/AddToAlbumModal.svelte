@@ -156,39 +156,35 @@
 <style>
   .modal-backdrop {
     position: fixed; inset: 0;
-    background: var(--bg-overlay);
+    background: rgba(10, 10, 13, 0.92);
     display: flex; align-items: center; justify-content: center;
     z-index: 100;
   }
   .modal {
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
+    background: var(--surface-2);
+    border: 1px solid var(--border-2);
     padding: var(--space-6);
     min-width: 400px;
     max-height: 80vh;
     display: flex; flex-direction: column;
-    box-shadow: var(--shadow-md);
   }
   .modal h2 { margin-top: 0; }
   .subtitle {
-    color: var(--text-muted);
+    color: var(--ink-3);
     font-size: var(--text-base);
     margin-bottom: var(--space-5);
   }
   .search {
     padding: var(--space-3) var(--space-4);
     border: 1px solid var(--border);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
   }
   .list {
     margin-top: var(--space-5);
     overflow-y: auto;
     flex: 1;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
   }
   .row {
     display: flex;
@@ -198,24 +194,24 @@
     background: transparent;
     border: 0;
     border-bottom: 1px solid var(--border);
-    color: var(--text-primary);
+    color: var(--ink);
     cursor: pointer;
     text-align: left;
   }
   .row:last-child { border-bottom: 0; }
-  .row:hover { background: var(--bg-hover); }
+  .row:hover { background: var(--surface-2); }
   .row.selected {
-    background: var(--bg-hover);
+    background: var(--surface-2);
     font-weight: 600;
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--amber);
     outline-offset: -2px;
   }
-  .row.create-new { color: var(--accent); font-weight: 500; }
-  .row.load-more { color: var(--text-muted); font-style: italic; justify-content: center; }
+  .row.create-new { color: var(--amber); font-weight: 500; }
+  .row.load-more { color: var(--ink-3); font-style: italic; justify-content: center; }
   .row.load-more:disabled { cursor: not-allowed; opacity: 0.6; }
   .row.error-row { color: var(--danger); align-items: center; }
   .error-msg { flex: 1; }
-  .count { color: var(--text-muted); font-size: var(--text-sm); }
+  .count { color: var(--ink-3); font-size: var(--text-sm); }
   .error {
     color: var(--danger);
     font-size: var(--text-base);

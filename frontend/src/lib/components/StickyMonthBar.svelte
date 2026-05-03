@@ -16,8 +16,8 @@
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: var(--text-muted);
-    background: color-mix(in srgb, var(--bg-base) 80%, transparent);
+    color: var(--ink-3);
+    background: color-mix(in srgb, var(--bg) 80%, transparent);
     backdrop-filter: blur(6px);
     border-bottom: 1px solid var(--border);
   }

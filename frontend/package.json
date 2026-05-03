@@ -26,6 +26,9 @@
     "panzoom": "^9.4.4"
   },
   "devDependencies": {
+    "@fontsource-variable/fraunces": "5.2.9",
+    "@fontsource/ibm-plex-mono": "5.2.7",
+    "@fontsource/ibm-plex-sans": "5.2.8",
     "@playwright/test": "1.55.1",
     "@sveltejs/vite-plugin-svelte": "7.0.0",
     "@testing-library/svelte": "5.2.8",

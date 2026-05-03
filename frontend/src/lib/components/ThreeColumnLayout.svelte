@@ -25,16 +25,16 @@
     width: 100vw;
   }
   .sidebar {
-    background: var(--bg-surface);
+    background: var(--surface);
     border-right: 1px solid var(--border);
     overflow-y: auto;
   }
   .main {
     overflow: auto;
-    background: var(--bg-base);
+    background: var(--bg);
   }
   .detail {
-    background: var(--bg-surface);
+    background: var(--surface);
     border-left: 1px solid var(--border);
     overflow-y: auto;
   }

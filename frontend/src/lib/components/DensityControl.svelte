@@ -32,19 +32,18 @@
     display: inline-flex;
     gap: 0;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
     overflow: hidden;
   }
   .density button {
     background: transparent;
     border: none;
     padding: 4px 10px;
-    color: var(--text-secondary);
+    color: var(--ink-2);
     font-size: 12px;
     cursor: pointer;
   }
   .density button.active {
-    background: var(--accent);
-    color: white;
+    background: var(--amber);
+    color: var(--ink);
   }
 </style>

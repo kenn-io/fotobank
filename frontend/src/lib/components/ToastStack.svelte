@@ -57,12 +57,10 @@
        looser visual. */
     gap: 10px;
     padding: 10px var(--space-5);
-    border-radius: var(--radius-sm);
-    background: var(--bg-elevated);
+    background: var(--surface-2);
     border: 1px solid var(--border);
-    box-shadow: var(--shadow-sm);
     font-size: var(--text-base);
-    color: var(--text-primary);
+    color: var(--ink);
   }
 
   .toast--error {
@@ -84,7 +82,7 @@
     margin: var(--space-2) 0 0;
     padding-left: var(--space-6);
     font-size: var(--text-sm);
-    color: var(--text-secondary);
+    color: var(--ink-2);
   }
 
   .toast-details li {
@@ -96,7 +94,7 @@
     background: none;
     border: none;
     cursor: pointer;
-    color: var(--text-muted);
+    color: var(--ink-3);
     /* 18px: dismiss × keeps the existing tap-target glyph; 16px (text-lg)
        reads too small and 24px wraps. No scale stop matches. */
     font-size: 18px;
@@ -105,6 +103,6 @@
   }
 
   .toast-dismiss:hover {
-    color: var(--text-primary);
+    color: var(--ink);
   }
 </style>

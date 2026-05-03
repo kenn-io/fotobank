@@ -59,17 +59,16 @@
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.6px;
-    color: var(--text-muted);
+    color: var(--ink-3);
     padding: 4px 8px 2px;
   }
   .entry {
     display: block;
     padding: 5px 10px;
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
+    color: var(--ink);
     text-decoration: none;
     font-size: 13px;
   }
-  .entry:hover { background: var(--bg-elevated); }
-  .entry.active { background: var(--accent); color: white; }
+  .entry:hover { background: var(--surface-2); }
+  .entry.active { background: var(--amber); color: var(--ink); }
 </style>

@@ -74,22 +74,16 @@
     height: 28px;
     padding: 0 10px;
     border: 1px solid var(--border);
-    background: var(--bg-surface);
-    color: var(--text-primary);
+    background: var(--surface);
+    color: var(--ink);
     font-size: 13px;
     cursor: pointer;
   }
   .search-sort-segment button:not(:first-child) {
     border-left: none;
   }
-  .search-sort-segment button:first-child {
-    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
-  }
-  .search-sort-segment button:last-child {
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  }
   .search-sort-segment button.selected {
-    background: var(--bg-elevated);
+    background: var(--surface-2);
     font-weight: 600;
   }
 </style>

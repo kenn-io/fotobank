@@ -183,10 +183,10 @@
     />
 
     {#if hiddenMediaStore.loading}
-      <div style="padding:12px; color: var(--text-muted)">Loading…</div>
+      <div style="padding:12px; color: var(--ink-3)">Loading…</div>
     {/if}
     {#if hiddenMediaStore.months.length === 0 && !hiddenMediaStore.loading}
-      <div style="padding:24px; color: var(--text-secondary)">No hidden photos.</div>
+      <div style="padding:24px; color: var(--ink-2)">No hidden photos.</div>
     {/if}
   {/snippet}
 </HiddenGate>

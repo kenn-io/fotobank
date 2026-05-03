@@ -153,22 +153,20 @@
 <style>
   .modal-backdrop {
     position: fixed; inset: 0;
-    background: var(--bg-overlay);
+    background: rgba(10, 10, 13, 0.92);
     display: flex; align-items: center; justify-content: center;
     z-index: 100;
   }
   .modal {
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
+    background: var(--surface-2);
+    border: 1px solid var(--border-2);
     padding: var(--space-6);
     min-width: 400px;
     max-width: 480px;
-    box-shadow: var(--shadow-md);
   }
   .modal h2 { margin-top: 0; }
   .summary {
-    color: var(--text-muted);
+    color: var(--ink-3);
     font-size: var(--text-base);
     margin-bottom: var(--space-5);
   }
@@ -176,7 +174,7 @@
   label { display: flex; flex-direction: column; gap: var(--space-2); }
   label.checkbox { flex-direction: row; align-items: center; gap: var(--space-4); }
   .grantee { font-family: var(--font-mono); }
-  .helper { font-size: var(--text-sm); color: var(--text-muted); }
+  .helper { font-size: var(--text-sm); color: var(--ink-3); }
   .warn { color: var(--warn); font-size: var(--text-base); }
   .error { color: var(--danger); font-size: var(--text-base); }
   .actions { display: flex; gap: var(--space-4); justify-content: flex-end; }

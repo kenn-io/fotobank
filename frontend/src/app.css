@@ -1,44 +1,86 @@
 /* frontend/src/app.css */
+* { box-sizing: border-box; }
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/IBMPlexSans-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/IBMPlexSans-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/IBMPlexSans-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/IBMPlexMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/IBMPlexMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Fraunces";
+  src: url("/fonts/Fraunces-VariableFont.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  color-scheme: dark;
+  /* Palette */
+  --bg:        #0a0a0d;
+  --surface:   #14141a;
+  --surface-2: #1d1d24;
+  --border:    #25252c;
+  --border-2:  #2e2e36;
 
-  /* Surfaces */
-  --bg-base:     #0c0e12;
-  --bg-surface:  #14171c;
-  --bg-elevated: #1a1e25;
-  --bg-hover:    #20242c;
-  --bg-overlay:  rgba(0, 0, 0, 0.78);
+  --ink:   #ecebe6;
+  --ink-2: #99968d;
+  --ink-3: #5a5751;
+  --ink-4: #3a3833;
 
-  /* Text */
-  --text-primary:   #e6e9ef;
-  --text-secondary: #a4abb6;
-  --text-muted:     #6c7480;
+  --amber:      #e8a44b;
+  --amber-deep: #c98935;
+  --amber-glow: rgba(232, 164, 75, 0.45);
 
-  /* Accent */
-  --accent:       #3a7bd5;
-  --accent-hover: #4a8bea;
-  --accent-fg:    #ffffff;
-
-  /* Borders */
-  --border:        #232831;
-  --border-strong: #2c333d;
-
-  /* Status */
+  --ok:     #4aaa6a;
   --danger: #d04545;
   --warn:   #d68a3a;
-  --ok:     #4aaa6a;
-  --orange: #d97706;
+  --orange: #d97706;  /* preserved for AI status dot */
 
   /* Type */
-  --font-ui:   system-ui, -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
-  --text-xs:   11px;
-  --text-sm:   12px;
-  --text-base: 13px;
-  --text-md:   14px;
-  --text-lg:   16px;
+  --font-display: "Fraunces", "Iowan Old Style", "Cambria", serif;
+  --font-ui:      "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono:    "IBM Plex Mono", "JetBrains Mono", "SF Mono", Menlo, monospace;
 
-  /* Spacing */
+  --text-xs:   10.5px;
+  --text-sm:   11px;
+  --text-base: 12.5px;
+  --text-md:   13px;
+  --text-lg:   15px;
+  --text-xl:   24px;
+
+  --label-track: 0.085em;
+
+  /* Spacing (carry forward) */
   --space-1: 2px;
   --space-2: 4px;
   --space-3: 6px;
@@ -48,24 +90,31 @@
   --space-7: 24px;
   --space-8: 32px;
 
-  /* Radii */
-  --radius-none: 0;
-  --radius-sm:   2px;
-  --radius-md:   4px;
-
-  /* Shadows */
-  --shadow-none: none;
-  --shadow-sm:   0 1px 0 rgba(0, 0, 0, 0.4);
-  --shadow-md:   0 8px 24px rgba(0, 0, 0, 0.45);
-
-  font-family: var(--font-ui);
-  font-size: var(--text-base);
+  color-scheme: dark;
 }
 
-body {
+html, body {
+  height: 100%;
   margin: 0;
-  background: var(--bg-base);
-  color: var(--text-primary);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 1.45;
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-* { box-sizing: border-box; }
+/* Film-grain overlay (canonical: see darkroom mockup §body::before) */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 220 220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.92  0 0 0 0 0.91  0 0 0 0 0.86  0 0 0 0.18 0'/></filter><rect width='220' height='220' filter='url(%23n)'/></svg>");
+  background-size: 220px;
+  mix-blend-mode: overlay;
+  opacity: 0.6;
+  z-index: 100;
+}

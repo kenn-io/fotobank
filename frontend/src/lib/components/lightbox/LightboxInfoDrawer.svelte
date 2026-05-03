@@ -32,8 +32,8 @@
   .lb-drawer {
     position: absolute; top: 0; right: 0; bottom: 0;
     width: min(360px, 40vw);
-    background: var(--bg-surface);
-    border-left: 1px solid var(--border-strong);
+    background: var(--surface);
+    border-left: 1px solid var(--border-2);
     display: flex; flex-direction: column;
   }
   .lb-drawer-head {
@@ -43,7 +43,7 @@
   }
   .lb-drawer-head button {
     background: transparent;
-    color: var(--text-primary);
+    color: var(--ink);
     border: none;
     font-size: var(--text-lg);
     cursor: pointer;
@@ -53,7 +53,7 @@
   .lb-drawer-body {
     padding: var(--space-6);
     overflow: auto;
-    color: var(--text-primary);
+    color: var(--ink);
   }
-  .lb-drawer-body :global(a) { color: var(--text-primary); }
+  .lb-drawer-body :global(a) { color: var(--ink); }
 </style>

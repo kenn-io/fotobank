@@ -98,14 +98,13 @@
 <style>
   .bs-backdrop {
     position: fixed; inset: 0;
-    background: var(--bg-overlay);
+    background: rgba(10, 10, 13, 0.92);
     z-index: 200;
     display: flex; align-items: flex-end; justify-content: center;
   }
   .bs-sheet {
-    background: var(--bg-surface);
-    border-top: 1px solid var(--border-strong);
-    border-radius: var(--radius-none);
+    background: var(--surface);
+    border-top: 1px solid var(--border-2);
     width: 100%;
     max-height: 50vh;
     display: flex; flex-direction: column;
@@ -115,7 +114,6 @@
   .bs-handle {
     align-self: center;
     width: 40px; height: 4px;
-    border-radius: var(--radius-sm);
     background: var(--border);
     margin: var(--space-4) 0 var(--space-5);
     border: none;

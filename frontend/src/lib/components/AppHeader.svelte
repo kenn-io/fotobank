@@ -149,21 +149,19 @@
     gap: var(--space-5);
     padding: var(--space-3) var(--space-5);
     border-bottom: 1px solid var(--border);
-    background: var(--bg-elevated);
+    background: var(--surface-2);
     height: 44px;
-    box-shadow: var(--shadow-sm);
   }
   .brand { font-weight: 600; font-size: var(--text-md); }
-  .identity { font-size: var(--text-sm); color: var(--text-secondary); }
+  .identity { font-size: var(--text-sm); color: var(--ink-2); }
   .search {
     flex: 1;
     max-width: 540px;
     height: 28px;
     padding: 0 var(--space-4);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text-primary);
+    background: var(--surface);
+    color: var(--ink);
     font-size: var(--text-base);
     margin-left: auto;
   }

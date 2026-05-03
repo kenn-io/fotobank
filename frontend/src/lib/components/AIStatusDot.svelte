@@ -59,6 +59,6 @@
   }
   .icon {
     font-size: 9px;
-    color: var(--text-muted);
+    color: var(--ink-3);
   }
 </style>

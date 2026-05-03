@@ -49,8 +49,8 @@
     padding: 0 8px;
     border: 1px solid var(--border);
     border-radius: 999px;
-    background: var(--bg-elevated);
-    color: var(--text-secondary);
+    background: var(--surface-2);
+    color: var(--ink-2);
     font-size: 12px;
     line-height: 1;
     white-space: nowrap;

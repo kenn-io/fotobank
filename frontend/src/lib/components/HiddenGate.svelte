@@ -85,7 +85,7 @@
   .gate-cta {
     padding: 64px 16px;
     text-align: center;
-    color: var(--text-secondary);
+    color: var(--ink-2);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -93,7 +93,7 @@
   }
   .gate-cta code {
     font-family: monospace;
-    background: var(--bg-elevated);
+    background: var(--surface-2);
     padding: 2px 6px;
     border-radius: 4px;
   }
@@ -112,13 +112,12 @@
     width: 100%;
   }
   .gate-form h2 { margin: 0; font-size: 18px; }
-  .gate-hint { margin: 0; color: var(--text-secondary); font-size: 13px; }
+  .gate-hint { margin: 0; color: var(--ink-2); font-size: 13px; }
   .gate-form input {
     padding: 8px 10px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-elevated);
-    color: var(--text-primary);
+    background: var(--surface-2);
+    color: var(--ink);
     font-size: 14px;
     width: 100%;
     box-sizing: border-box;

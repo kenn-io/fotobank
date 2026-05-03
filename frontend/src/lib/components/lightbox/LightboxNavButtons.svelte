@@ -23,10 +23,9 @@
 <style>
   .lb-nav {
     position: absolute; top: 50%; transform: translateY(-50%);
-    background: var(--bg-elevated);
-    color: var(--text-primary);
+    background: var(--surface-2);
+    color: var(--ink);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
     width: 48px; height: 48px;
     display: flex; align-items: center; justify-content: center;
     /* 28px chevron keeps the existing tap-target weight; --text-lg (16px) reads too small. */
@@ -34,5 +33,5 @@
   }
   .lb-prev { left: var(--space-6); }
   .lb-next { right: var(--space-6); }
-  .lb-nav:hover { background: var(--bg-hover); }
+  .lb-nav:hover { background: var(--surface-2); }
 </style>

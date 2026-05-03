@@ -379,14 +379,14 @@
   }
   .title-row { display: flex; align-items: baseline; gap: 12px; }
   .title-row h1 { margin: 0; font-size: 20px; }
-  .count { color: var(--text-muted); font-size: 14px; }
+  .count { color: var(--ink-3); font-size: 14px; }
   .hidden-chip {
     font-size: 12px;
     padding: 2px 8px;
     border-radius: 10px;
-    background: var(--bg-elevated);
+    background: var(--surface-2);
     border: 1px solid var(--border);
-    color: var(--text-muted);
+    color: var(--ink-3);
   }
   .action-row {
     display: flex;
@@ -395,20 +395,20 @@
     margin-top: 8px;
   }
   .actions { display: flex; gap: 8px; }
-  .sort { font-size: 13px; color: var(--text-muted); }
-  .empty { padding: 64px 16px; text-align: center; color: var(--text-secondary); }
-  .loading { padding: 12px; color: var(--text-muted); }
-  .danger { background: var(--danger); color: white; border-color: var(--danger); }
+  .sort { font-size: 13px; color: var(--ink-3); }
+  .empty { padding: 64px 16px; text-align: center; color: var(--ink-2); }
+  .loading { padding: 12px; color: var(--ink-3); }
+  .danger { background: var(--danger); color: var(--ink); border-color: var(--danger); }
   .conflict-toast {
     position: fixed; bottom: 16px; right: 16px;
-    background: var(--bg-elevated); border: 1px solid var(--danger);
+    background: var(--surface-2); border: 1px solid var(--danger);
     padding: 12px 16px; border-radius: 6px; z-index: 200;
     display: flex; align-items: center; gap: 12px;
   }
   .conflict-toast code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 12px;
-    background: var(--bg-surface);
+    background: var(--surface);
     padding: 2px 6px;
     border-radius: 4px;
   }

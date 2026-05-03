@@ -119,16 +119,16 @@
      the same dark token palette so the metadata reads cleanly with
      the default text color. */
   .lb-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; }
-  .lb-meta dt { font-weight: 600; color: var(--text-secondary); }
+  .lb-meta dt { font-weight: 600; color: var(--ink-2); }
   .lb-meta a { color: inherit; }
   /* Numeric/technical values render in monospace with tabular-nums so
      vertical columns (file size, coords, search relevance) line up. */
   .lb-meta .numeric {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    color: var(--text-primary);
+    color: var(--ink);
   }
-  .lb-meta .coord { display: block; color: var(--text-secondary); font-size: 0.85em; }
+  .lb-meta .coord { display: block; color: var(--ink-2); font-size: 0.85em; }
   .relevance {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
@@ -138,7 +138,7 @@
   .relevance .rel-label {
     display: inline-block;
     min-width: 56px;
-    color: var(--text-secondary);
+    color: var(--ink-2);
   }
-  .relevance .rel-num { color: var(--text-primary); }
+  .relevance .rel-num { color: var(--ink); }
 </style>

@@ -64,17 +64,15 @@
 <style>
   .modal-backdrop {
     position: fixed; inset: 0;
-    background: var(--bg-overlay);
+    background: rgba(10, 10, 13, 0.92);
     display: flex; align-items: center; justify-content: center;
     z-index: 100;
   }
   .modal {
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
+    background: var(--surface-2);
+    border: 1px solid var(--border-2);
     padding: var(--space-6);
     min-width: 320px; max-width: 480px;
-    box-shadow: var(--shadow-md);
   }
   .modal h2 { margin-top: 0; }
   .actions {
@@ -83,7 +81,7 @@
   }
   .danger {
     background: var(--danger);
-    color: var(--accent-fg);
+    color: var(--ink);
     border-color: var(--danger);
   }
 </style>

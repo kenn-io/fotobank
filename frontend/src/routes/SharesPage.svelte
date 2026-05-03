@@ -180,10 +180,10 @@
     gap: 6px;
     align-items: center;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--ink-3);
   }
   .filter-banner {
-    background: var(--bg-elevated);
+    background: var(--surface-2);
     padding: 8px 16px;
     display: flex;
     gap: 12px;
@@ -196,11 +196,11 @@
   .empty {
     padding: 64px 16px;
     text-align: center;
-    color: var(--text-secondary);
+    color: var(--ink-2);
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 12px;
   }
-  .loading { padding: 12px; color: var(--text-muted); }
+  .loading { padding: 12px; color: var(--ink-3); }
 </style>

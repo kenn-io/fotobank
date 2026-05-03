@@ -114,7 +114,7 @@
     font-size: 9px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--text-muted);
+    color: var(--ink-3);
     margin: 8px 0 2px;
   }
   .chips {
@@ -128,24 +128,24 @@
   .chip {
     padding: 2px 8px;
     border-radius: 10px;
-    background: var(--bg-surface);
+    background: var(--surface);
     border: 1px solid var(--border);
     font-size: 10px;
-    color: var(--text-secondary);
+    color: var(--ink-2);
   }
   .more {
     font-size: 10px;
-    color: var(--text-muted);
+    color: var(--ink-3);
     align-self: center;
   }
   .caption {
     font-size: 11px;
-    color: var(--text-secondary);
+    color: var(--ink-2);
     margin: 0;
   }
   .provenance {
     font-size: 9px;
-    color: var(--text-muted);
+    color: var(--ink-3);
     margin: 2px 0 0;
   }
   .provenance a {
@@ -165,7 +165,7 @@
   }
   .muted {
     font-size: 10px;
-    color: var(--text-muted);
+    color: var(--ink-3);
     margin: 0;
   }
 </style>

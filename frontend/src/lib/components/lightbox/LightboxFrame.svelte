@@ -26,7 +26,7 @@
 <style>
   .lb-backdrop {
     position: fixed; inset: 0;
-    background: var(--bg-overlay);
+    background: rgba(10, 10, 13, 0.92);
     z-index: 150;
     display: flex; align-items: center; justify-content: center;
   }

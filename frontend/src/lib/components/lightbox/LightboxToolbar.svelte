@@ -30,19 +30,18 @@
     position: absolute; top: 0; left: 0; right: 0;
     display: flex; justify-content: space-between; align-items: center;
     padding: var(--space-5) var(--space-6);
-    color: var(--text-primary);
+    color: var(--ink);
   }
   .lb-toolbar-left, .lb-toolbar-right {
     display: flex; gap: var(--space-4); align-items: center;
   }
   .lb-btn {
-    background: var(--bg-elevated);
-    color: var(--text-primary);
+    background: var(--surface-2);
+    color: var(--ink);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
     padding: var(--space-3) var(--space-5);
     cursor: pointer;
     font-size: var(--text-lg);
   }
-  .lb-btn:hover { background: var(--bg-hover); }
+  .lb-btn:hover { background: var(--surface-2); }
 </style>

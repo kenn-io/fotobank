@@ -62,15 +62,15 @@
     align-items: center;
     gap: 12px;
     padding: 6px 16px;
-    background: var(--bg-elevated);
+    background: var(--surface-2);
     border-bottom: 1px solid var(--border);
     font-size: 13px;
-    color: var(--text-secondary);
+    color: var(--ink-2);
   }
 
   .lock-strip-label {
     font-weight: 500;
-    color: var(--text-primary);
+    color: var(--ink);
   }
 
   .lock-strip-countdown {
@@ -83,16 +83,15 @@
     margin-left: auto;
     padding: 4px 10px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text-primary);
+    background: var(--surface);
+    color: var(--ink);
     font-size: 13px;
     cursor: pointer;
   }
 
   button:hover {
-    background: var(--bg-elevated);
-    border-color: var(--accent);
-    color: var(--accent);
+    background: var(--surface-2);
+    border-color: var(--amber);
+    color: var(--amber);
   }
 </style>

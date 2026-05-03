@@ -60,14 +60,14 @@
     height: 100%;
   }
   a.selected {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--amber);
     outline-offset: -2px;
     border-radius: 2px;
   }
   .placeholder {
     width: 100%;
     height: 100%;
-    background: var(--bg-elevated);
+    background: var(--surface-2);
     border-radius: 2px;
   }
 </style>

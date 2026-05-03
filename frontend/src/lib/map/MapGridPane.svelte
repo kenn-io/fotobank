@@ -87,6 +87,6 @@
   }
   .empty {
     padding: 24px;
-    color: var(--text-secondary, #6b7280);
+    color: var(--ink-2);
   }
 </style>

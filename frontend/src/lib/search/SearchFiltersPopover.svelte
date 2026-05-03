@@ -302,8 +302,7 @@
     gap: 8px;
     padding: 8px 12px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-elevated);
+    background: var(--surface-2);
   }
   .filter-row {
     display: flex;
@@ -319,15 +318,14 @@
     flex-direction: column;
     gap: 2px;
     font-size: 12px;
-    color: var(--text-secondary);
+    color: var(--ink-2);
   }
   .filter-label input {
     height: 26px;
     padding: 0 8px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-surface);
-    color: var(--text-primary);
+    background: var(--surface);
+    color: var(--ink);
     font-size: 13px;
   }
   .suggestions {
@@ -344,18 +342,17 @@
     width: 100%;
     padding: 4px 8px;
     border: none;
-    border-radius: var(--radius-sm);
     background: transparent;
-    color: var(--text-primary);
+    color: var(--ink);
     font-size: 13px;
     text-align: left;
     cursor: pointer;
   }
   .suggestion:hover {
-    background: var(--bg-surface);
+    background: var(--surface);
   }
   .suggestion-count {
-    color: var(--text-secondary);
+    color: var(--ink-2);
     font-size: 11px;
   }
   .segment {
@@ -363,18 +360,16 @@
     height: 28px;
     padding: 0 8px;
     border: 1px solid var(--border);
-    background: var(--bg-surface);
-    color: var(--text-primary);
+    background: var(--surface);
+    color: var(--ink);
     font-size: 13px;
     cursor: pointer;
   }
   .segment:not(:first-child) {
     border-left: none;
   }
-  .segment:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
-  .segment:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
   .segment[aria-pressed="true"] {
-    background: var(--bg-elevated);
+    background: var(--surface-2);
     font-weight: 600;
   }
   .filter-toggle {
@@ -382,6 +377,6 @@
     align-items: center;
     gap: 6px;
     font-size: 12px;
-    color: var(--text-secondary);
+    color: var(--ink-2);
   }
 </style>

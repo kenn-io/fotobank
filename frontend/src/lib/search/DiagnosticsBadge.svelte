@@ -65,7 +65,7 @@
     padding: 0 6px;
     border-radius: 4px;
     background: rgba(0, 0, 0, 0.65);
-    color: white;
+    color: var(--ink);
     font-size: 10px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-variant-numeric: tabular-nums;

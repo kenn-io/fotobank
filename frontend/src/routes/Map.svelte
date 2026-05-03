@@ -316,7 +316,7 @@
   .error,
   .empty {
     padding: 24px;
-    color: var(--text-secondary, #6b7280);
+    color: var(--ink-2);
   }
   .map-page-header {
     display: flex;
@@ -331,7 +331,7 @@
     align-items: center;
     gap: 6px;
     font-size: 13px;
-    color: var(--text-secondary, #6b7280);
+    color: var(--ink-2);
     cursor: pointer;
     margin-left: auto;
   }
@@ -346,12 +346,12 @@
     padding: 4px 12px;
     font-size: 13px;
     cursor: pointer;
-    color: var(--text-secondary, #6b7280);
+    color: var(--ink-2);
   }
   .tabs button.active {
-    background: var(--accent, #2563eb);
-    border-color: var(--accent, #2563eb);
-    color: #fff;
+    background: var(--amber);
+    border-color: var(--amber);
+    color: var(--ink);
   }
   .map-page-grid {
     display: grid;

@@ -33,11 +33,11 @@
   .scrubber button {
     background: transparent;
     border: none;
-    color: var(--text-muted);
+    color: var(--ink-3);
     font-size: 10px;
     padding: 1px 6px;
     cursor: pointer;
     border-radius: 6px;
   }
-  .scrubber button:hover { background: var(--bg-elevated); color: var(--text-primary); }
+  .scrubber button:hover { background: var(--surface-2); color: var(--ink); }
 </style>
