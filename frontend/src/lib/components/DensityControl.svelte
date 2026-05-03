@@ -8,6 +8,9 @@
   $effect(() => {
     function onKey(e: KeyboardEvent) {
       if (isEditableTarget(e.target)) return;
+      // Skip when a modifier is held so the browser's ⌘+/⌘- (and
+      // Ctrl+/Ctrl-) page-zoom shortcuts pass through unmolested.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === "+" || e.key === "=") {
         store.nudge(1);
         e.preventDefault();

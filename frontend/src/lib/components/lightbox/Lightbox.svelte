@@ -533,6 +533,10 @@
   function onKey(e: KeyboardEvent) {
     if (!modalStack.isTopmost(modalId)) return;
     if (isEditableTarget(e.target)) return;
+    // Let the browser's ⌘+/⌘- (and Ctrl+/Ctrl-) page-zoom shortcuts
+    // through. Without this guard, the +/- cases below preventDefault
+    // every Cmd-+ press, blocking the user from zooming the whole app.
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     switch (e.key) {
       case "ArrowLeft":
         e.preventDefault();
