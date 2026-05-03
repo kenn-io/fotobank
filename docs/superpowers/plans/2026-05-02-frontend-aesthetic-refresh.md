@@ -396,15 +396,18 @@ Beyond the rename already done in Task 1, the search input still has `border-rad
 Run BOTH greps over the same target list — hex literals AND rgba/rgb literals. The original draft of this plan only checked hex; rgba leftovers (the lightbox toolbar's old `rgba(0,0,0,0.5)` etc.) could pass that one verification. (Caught by roborev #17080.)
 
 ```sh
-SCRUB_TARGETS="src/lib/components/lightbox \
-  src/lib/components/BottomSheet.svelte \
-  src/lib/components/ConfirmModal.svelte \
-  src/lib/components/AddToAlbumModal.svelte \
-  src/lib/components/ShareModal.svelte \
-  src/lib/components/ToastStack.svelte \
-  src/lib/components/AppHeader.svelte"
-cd frontend && rg "#[0-9a-fA-F]{3,8}\b" $SCRUB_TARGETS
-cd frontend && rg "rgba?\(" $SCRUB_TARGETS
+(
+  cd frontend
+  SCRUB_TARGETS="src/lib/components/lightbox \
+    src/lib/components/BottomSheet.svelte \
+    src/lib/components/ConfirmModal.svelte \
+    src/lib/components/AddToAlbumModal.svelte \
+    src/lib/components/ShareModal.svelte \
+    src/lib/components/ToastStack.svelte \
+    src/lib/components/AppHeader.svelte"
+  rg "#[0-9a-fA-F]{3,8}\b" $SCRUB_TARGETS
+  rg "rgba?\(" $SCRUB_TARGETS
+)
 ```
 
 Both greps should return zero or near-zero matches. Any remaining hits must have a comment explaining why (e.g. `transparent` is fine, an SVG fill that has to be inline, an `rgba(...)` declaration that's the underlying value of `var(--bg-overlay)` itself, etc.).
