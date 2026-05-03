@@ -3,7 +3,13 @@ import { test, expect } from "@playwright/test";
 test("library route renders shell + sidebar", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("fotobank")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Library" })).toBeVisible();
+  // Two surfaces now expose a "Library" link — the AppHeader nav and the
+  // Sidebar BROWSE group. The original test predates the AppHeader nav;
+  // scope to the sidebar to assert sidebar mounts (the brand text above
+  // already proves the AppHeader is up).
+  await expect(
+    page.getByRole("complementary").getByRole("link", { name: "Library" }),
+  ).toBeVisible();
 });
 
 test("sessions route renders", async ({ page }) => {

@@ -35,10 +35,14 @@ test.describe("F2.4 hidden privacy", () => {
   // -------------------------------------------------------------------------
   test("sidebar Hidden link is present and navigates to /hidden", async ({ page }) => {
     await page.goto("/library");
-    // Sidebar renders the "BROWSE" group with a "Hidden" entry.
-    // exact: true prevents substring matches against "Photo hidden-target-1"
-    // grid cells (MediaCell renders <a aria-label="Photo hidden-target-1">).
-    const hiddenLink = page.getByRole("link", { name: "Hidden", exact: true });
+    // The AppHeader nav also exposes a "Hidden" link — scope to the
+    // sidebar (`<aside role="complementary">`) so this stays a sidebar
+    // contract test rather than tripping strict mode against two
+    // matches. exact: true prevents substring matches against
+    // "Photo hidden-target-1" grid cells.
+    const hiddenLink = page
+      .getByRole("complementary")
+      .getByRole("link", { name: "Hidden", exact: true });
     await expect(hiddenLink).toBeVisible();
     await hiddenLink.click();
     await expect(page).toHaveURL(/\/hidden$/);
