@@ -63,11 +63,13 @@ test.describe("W1 Search", () => {
     await expect(searchInput).toBeFocused();
 
     // Type a query that matches one of the seeded keyword cycles.
-    // 10 of the 30 visible photos carry a "beach" tag/caption.
+    // 10 of the 30 visible photos carry a "beach" tag/caption. The
+    // SearchBar contract is Enter-to-submit (no debounce-on-input
+    // navigation), so press Enter explicitly to commit.
     await searchInput.fill("beach");
+    await searchInput.press("Enter");
 
-    // Wait for the debounce + URL update. The URL contract is
-    // /search?q=beach (replace on /search, push otherwise).
+    // The URL contract is /search?q=beach (replace on /search, push otherwise).
     await expect(page).toHaveURL(/\/search\?.*q=beach/, { timeout: 5_000 });
     // At least one seeded result must render. MediaCell sets
     // aria-label="Photo <id>" for each grid cell. The first vis fixture
