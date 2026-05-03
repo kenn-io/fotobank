@@ -333,6 +333,111 @@ admin_listen = "127.0.0.1:0"
 		baseline, after, tolerance)
 }
 
+func TestServerShutdownEvictsSSEConnections(t *testing.T) {
+	// Regression: srv.Shutdown waits for in-flight handlers to return,
+	// but the /api/v1/events SSE stream blocks on r.Context().Done()
+	// indefinitely. Without BaseContext wiring sigCtx into request
+	// contexts, an open SSE subscriber holds Shutdown until the 30s
+	// shutdownTimeout force-closes it — the symptom that made Ctrl-C
+	// feel hung. With BaseContext set, sigCtx cancellation propagates
+	// to every r.Context() and the SSE handler exits immediately.
+	//
+	// Strategy: boot the server, open an SSE connection, read the
+	// "hello" frame so we know the handler is parked in its select
+	// loop, then cancel and assert RunContext returns in well under
+	// the 30s shutdownTimeout. A 5s ceiling is generous enough to
+	// tolerate CI scheduling noise without masking the regression.
+	r := require.New(t)
+	tmp := t.TempDir()
+	nasRoot := filepath.Join(tmp, "nas")
+	r.NoError(os.MkdirAll(nasRoot, 0o700))
+
+	cfgPath := filepath.Join(tmp, "c.toml")
+	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
+[nas]
+root = %q
+[flash]
+root = %q
+[identity]
+mode = "stub"
+[identity.stub]
+hub = "h"
+user_id = "u"
+[http]
+listen_address = "127.0.0.1:0"
+[observability]
+admin_listen = "127.0.0.1:0"
+`, nasRoot, filepath.Join(tmp, "flash")), 0o600))
+
+	addrFile := filepath.Join(tmp, "addr")
+	t.Setenv("FOTOBANK_CONFIG", cfgPath)
+	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
+	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	errCh := make(chan int, 1)
+	go func() {
+		var out, eout bytes.Buffer
+		errCh <- cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &out, &eout)
+	}()
+
+	var resolved string
+	for range 200 {
+		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
+			resolved = strings.TrimSpace(string(b))
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	r.NotEmpty(resolved, "server never published its bind address")
+
+	// Open the SSE subscription. We read until we see the "hello"
+	// frame so we know the handler has flushed its bootstrap and is
+	// blocked on its select loop — that's the state where Shutdown
+	// would otherwise hang.
+	req, err := http.NewRequest(http.MethodGet, "http://"+resolved+"/api/v1/events", nil)
+	r.NoError(err)
+	resp, err := http.DefaultClient.Do(req)
+	r.NoError(err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	r.Equal(http.StatusOK, resp.StatusCode)
+
+	helloSeen := make(chan struct{})
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, rerr := resp.Body.Read(buf)
+			if n > 0 && bytes.Contains(buf[:n], []byte("event: hello")) {
+				close(helloSeen)
+				return
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+	select {
+	case <-helloSeen:
+	case <-time.After(2 * time.Second):
+		r.FailNow("never received SSE hello frame")
+	}
+
+	start := time.Now()
+	cancel()
+	select {
+	case code := <-errCh:
+		r.Equal(0, code)
+		// Generous ceiling: anything under shutdownTimeout (30s) catches
+		// the regression. The success path completes in milliseconds.
+		r.Lessf(time.Since(start), 5*time.Second,
+			"shutdown took %s — SSE connection likely held srv.Shutdown until its deadline",
+			time.Since(start))
+	case <-time.After(10 * time.Second):
+		r.FailNow("server did not shut down within 10s")
+	}
+}
+
 func TestFlashJanitorLeavesSiblingFlashStateAlone(t *testing.T) {
 	// Regression: FlashCache.Evict walks its root and prunes by age. The
 	// cache root must be a dedicated subdirectory of cfg.Flash.Root so

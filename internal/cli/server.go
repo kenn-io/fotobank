@@ -585,6 +585,15 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		Handler:      handler,
 		ReadTimeout:  cfg.HTTP.RequestTimeout,
 		WriteTimeout: cfg.HTTP.WriteTimeout,
+		// BaseContext returns sigCtx so every in-flight request inherits
+		// signal-driven cancellation. Long-lived handlers — notably the
+		// /api/v1/events SSE stream — block on r.Context().Done() and
+		// would otherwise hold srv.Shutdown until its 30s deadline force-
+		// closed them, making Ctrl-C feel hung. With this wired, SIGINT
+		// cancels sigCtx, every r.Context() cancels with it, the SSE for-
+		// select loop returns immediately, and Shutdown drains in
+		// microseconds.
+		BaseContext: func(net.Listener) context.Context { return sigCtx },
 	}
 
 	// Bind the admin listener BEFORE any bgWG-tracked goroutine is
