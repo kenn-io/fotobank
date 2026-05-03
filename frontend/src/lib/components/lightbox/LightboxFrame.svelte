@@ -30,5 +30,4 @@
     z-index: 150;
     display: flex; align-items: center; justify-content: center;
   }
-  .lb-backdrop.fallback { background: var(--bg-overlay); }
 </style>

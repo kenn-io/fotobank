@@ -123,13 +123,12 @@
   .lb-meta a { color: inherit; }
   /* Numeric/technical values render in monospace with tabular-nums so
      vertical columns (file size, coords, search relevance) line up. */
-  .lb-meta dd.numeric,
   .lb-meta .numeric {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     color: var(--text-primary);
   }
-  .coord { display: block; color: var(--text-secondary); font-size: 0.85em; }
+  .lb-meta .coord { display: block; color: var(--text-secondary); font-size: 0.85em; }
   .relevance {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;

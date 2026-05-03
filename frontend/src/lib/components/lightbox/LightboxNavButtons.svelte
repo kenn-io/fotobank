@@ -29,6 +29,7 @@
     border-radius: var(--radius-sm);
     width: 48px; height: 48px;
     display: flex; align-items: center; justify-content: center;
+    /* 28px chevron keeps the existing tap-target weight; --text-lg (16px) reads too small. */
     font-size: 28px; cursor: pointer; padding: 0;
   }
   .lb-prev { left: var(--space-6); }

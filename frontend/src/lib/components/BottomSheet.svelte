@@ -105,7 +105,7 @@
   .bs-sheet {
     background: var(--bg-surface);
     border-top: 1px solid var(--border-strong);
-    border-radius: 0;
+    border-radius: var(--radius-none);
     width: 100%;
     max-height: 50vh;
     display: flex; flex-direction: column;
