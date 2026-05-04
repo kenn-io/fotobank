@@ -10,18 +10,26 @@ export type ActiveFilters = {
   mediaType: "photo" | "video" | null;
 };
 
-const EMPTY: ActiveFilters = {
-  cameras: [], lenses: [], tagKeys: [], hasGps: null, mediaType: null,
-};
+// emptyFilters is a factory, not a constant. A spread of a shared
+// constant ({ ...EMPTY }) shallow-copies the wrapper but leaves
+// `cameras`, `lenses`, and `tagKeys` pointing at the constant's own
+// arrays — any in-place mutation downstream would permanently
+// poison the "empty" baseline for every subsequent caller. The
+// factory hands every caller a fresh wrapper plus fresh arrays.
+function emptyFilters(): ActiveFilters {
+  return {
+    cameras: [], lenses: [], tagKeys: [], hasGps: null, mediaType: null,
+  };
+}
 
 const FILTER_PARAM_KEYS = ["camera", "lens", "facet_tag", "has_gps", "media_type"];
 
-/** Extract the active filter set from the route. Non-filter routes return EMPTY. */
+/** Extract the active filter set from the route. Non-filter routes return an empty filter set. */
 export function fromRoute(r: RouteMatch): ActiveFilters {
   if (r.route !== "library" && r.route !== "search" && r.route !== "map") {
-    return { ...EMPTY };
+    return emptyFilters();
   }
-  const f: ActiveFilters = { ...EMPTY };
+  const f = emptyFilters();
   if ("camera" in r && r.camera) f.cameras = [...r.camera];
   if ("lens" in r && r.lens) f.lenses = [...r.lens];
   if ("facet_tag" in r && r.facet_tag) f.tagKeys = [...r.facet_tag];
