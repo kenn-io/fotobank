@@ -82,6 +82,19 @@ Design docs live in `docs/superpowers/specs/`, plans in `docs/superpowers/plans/
 - **Plan E** — Sharing: scopes, broker registration, outbox worker, cross-owner reads. **Done (owner side; grantee-side viewing deferred).**
 - **Observability** — Structured logging (slog), Prometheus metrics, /readyz, admin HTTP listener. **Done.**
 
+## Task tracking
+
+Outstanding work for fotobank is tracked in **kata** (`kata` CLI). The workspace is bound — `.kata.toml` points at project `github.com/wesm/fotobank`.
+
+- Search before creating: `kata search "<phrase>" --json`
+- Create: `kata create "<title>" --body "..." --label <label> --idempotency-key <stable-key> --json`
+- Inspect: `kata show <id> --json`, `kata list --json`, `kata ready --json` (open issues with no blockers)
+- Update: `kata comment <id> --body "..."`, `kata label add <id> <label>`, `kata block <blocker> <blocked>`, `kata parent <child> <parent>`
+- Close: `kata close <id> --reason done` — only when work is actually complete
+- Never run `kata delete` or `kata purge` unless the user explicitly asks for that exact destructive action and issue number
+
+Don't track ad-hoc one-turn tasks in kata — it's for outstanding designed/planned work that survives across sessions. In-conversation step tracking belongs in TaskCreate/TaskList.
+
 ## Instructions for agents
 
 - Commit directly to master. No feature branches, no worktrees.
