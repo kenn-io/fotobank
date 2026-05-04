@@ -323,6 +323,9 @@
         {mediaStore}
         {hiddenStore}
         {toastStore}
+        {activeFilters}
+        {tagLabels}
+        {onFiltersChange}
       />
     {:else}
       <NotFound />

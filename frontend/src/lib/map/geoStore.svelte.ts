@@ -12,6 +12,18 @@
 import type { Client } from "../api/client";
 import { toMedia, type Media } from "../media/mediaStore.svelte";
 
+// GeoLoadOptions narrows the geotagged set the same way ActiveFilters
+// narrows /api/v1/media on /library and /search. has_gps is
+// intentionally absent — /geo is geotagged-only by contract. Empty
+// arrays / null are treated as "no filter" by load() so callers can
+// pass the empty filter shape unconditionally.
+export type GeoLoadOptions = {
+  cameras?: string[];
+  lenses?: string[];
+  facetTags?: string[];
+  mediaType?: "photo" | "video" | null;
+};
+
 export class GeoStore {
   private _items = $state<Media[]>([]);
   // _rawItems retains the unparsed server payload so callers (Map.svelte)
@@ -22,6 +34,12 @@ export class GeoStore {
   private _ready = $state(false);
   private _error = $state<string | null>(null);
   private _includedHidden = $state(false);
+  // _filterKey records the filter narrowing the cache was fetched
+  // under, alongside _includedHidden. It's compared in load() so a
+  // narrowed re-fetch (e.g. user toggles a Camera chip) clears stale
+  // items synchronously — same protocol as the include_hidden→false
+  // transition, just keyed off the active filters as well.
+  private _filterKey = $state<string>("");
   // Monotonic request token. Each load() increments this and only
   // applies its result if the token still matches at resolution time.
   // Without it, a slow include_hidden=false response landing AFTER a
@@ -47,31 +65,46 @@ export class GeoStore {
     return this._includedHidden;
   }
 
-  async load(includeHidden: boolean): Promise<void> {
+  async load(includeHidden: boolean, opts: GeoLoadOptions = {}): Promise<void> {
     const myReq = ++this.requestSeq;
     this._error = null;
-    // Narrowing the visible set (include_hidden=true → include_hidden=false)
-    // must clear stale hidden-aware items synchronously: otherwise the
-    // map would re-render the previously fetched hidden markers between
-    // the request kick-off and its resolution. This bites the
-    // retry-after-error path too — the error branch leaves the cached
-    // hidden-aware items in place, and the retry's onRetryLoad drops to
-    // include_hidden=false; without this clear, the user would briefly
-    // see hidden markers again right after clicking Retry.
+
+    const cameras = opts.cameras ?? [];
+    const lenses = opts.lenses ?? [];
+    const facetTags = opts.facetTags ?? [];
+    const mediaType = opts.mediaType ?? null;
+    const nextKey = computeFilterKey({ includeHidden, cameras, lenses, facetTags, mediaType });
+
+    // Narrowing the visible set (include_hidden=true → include_hidden=false,
+    // OR any change to the camera/lens/tag/mediaType filters) must clear
+    // stale items synchronously: otherwise the map would re-render the
+    // previously fetched markers between the request kick-off and its
+    // resolution. This bites the retry-after-error path too — the
+    // error branch leaves the cached items in place, and a retry's
+    // narrower request would briefly flash the old set.
     //
-    // The widening case (false → true) keeps existing items rendered
-    // during the load, since the new result is a superset and showing
-    // them avoids an unnecessary "Loading…" flash on toggle-on.
-    if (this._includedHidden && !includeHidden) {
+    // We treat any filter-key change as a narrowing event for the cache:
+    // even an additive widening (e.g. unchecking a chip that was
+    // previously narrowing) resets the displayed items so the user
+    // never sees rows mixed across two distinct filter sets.
+    if (this._ready && this._filterKey !== nextKey) {
       this._items = [];
       this._rawItems = [];
       this._ready = false;
       this._includedHidden = false;
     }
     try {
-      const opts: { params?: { query: { include_hidden: true } } } = {};
-      if (includeHidden) opts.params = { query: { include_hidden: true } };
-      const { data, error } = await this.client.GET("/api/v1/media/geo", opts);
+      const query: Record<string, unknown> = {};
+      if (includeHidden) query["include_hidden"] = true;
+      if (cameras.length > 0) query["camera"] = [...cameras];
+      if (lenses.length > 0) query["lens"] = [...lenses];
+      if (facetTags.length > 0) query["facet_tag"] = [...facetTags];
+      if (mediaType !== null) query["media_type"] = mediaType;
+      const fetchOpts =
+        Object.keys(query).length > 0
+          ? ({ params: { query } } as unknown as Parameters<Client["GET"]>[1])
+          : undefined;
+      const { data, error } = await this.client.GET("/api/v1/media/geo", fetchOpts);
       if (myReq !== this.requestSeq) return;
       if (error || !data) {
         this._error = "geo fetch failed";
@@ -86,6 +119,7 @@ export class GeoStore {
       this._items = parsed;
       this._rawItems = raws;
       this._includedHidden = includeHidden;
+      this._filterKey = nextKey;
       this._ready = true;
     } catch (e) {
       if (myReq !== this.requestSeq) return;
@@ -96,4 +130,20 @@ export class GeoStore {
   findById(id: string): Media | undefined {
     return this._items.find((m) => m.id === id);
   }
+}
+
+function computeFilterKey(input: {
+  includeHidden: boolean;
+  cameras: string[];
+  lenses: string[];
+  facetTags: string[];
+  mediaType: "photo" | "video" | null;
+}): string {
+  return JSON.stringify({
+    includeHidden: input.includeHidden,
+    cameras: [...input.cameras].sort(),
+    lenses: [...input.lenses].sort(),
+    facetTags: [...input.facetTags].sort(),
+    mediaType: input.mediaType,
+  });
 }

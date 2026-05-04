@@ -112,4 +112,56 @@ describe("GeoStore", () => {
     await s.load(false);
     expect(s.rawItems).toEqual([raw]);
   });
+
+  it("forwards camera/lens/facet_tag/media_type into the query", async () => {
+    const client = makeClient({
+      "/api/v1/media/geo": { data: { items: [sampleItem] } },
+    });
+    const s = new GeoStore(client as unknown as Pick<Client, "GET">);
+    await s.load(false, {
+      cameras: ["Sony A7R IV"],
+      lenses: ["Sony FE 24-70 GM"],
+      facetTags: ["dog", "beach"],
+      mediaType: "photo",
+    });
+    expect(client.calls[0]?.params).toMatchObject({
+      query: {
+        camera: ["Sony A7R IV"],
+        lens: ["Sony FE 24-70 GM"],
+        facet_tag: ["dog", "beach"],
+        media_type: "photo",
+      },
+    });
+  });
+
+  it("clears stale items when filters narrow between loads", async () => {
+    // First load returns two pins under the unfiltered set; the second
+    // load narrows to a single camera and the cache must be cleared
+    // synchronously between the two so a slow render doesn't flash
+    // the old pins under the new filter.
+    const calls: Array<Record<string, unknown>> = [];
+    let next = 0;
+    const responses = [
+      { data: { items: [sampleItem, { ...sampleItem, id: "b" }] } },
+      { data: { items: [{ ...sampleItem, id: "b" }] } },
+    ];
+    const client = {
+      GET: async (_path: string, opts?: { params?: { query?: Record<string, unknown> } }) => {
+        calls.push(opts?.params?.query ?? {});
+        return responses[next++] ?? { error: { status: 500 } };
+      },
+    };
+    const s = new GeoStore(client as unknown as Pick<Client, "GET">);
+    await s.load(false);
+    expect(s.items.length).toBe(2);
+
+    const p = s.load(false, { cameras: ["Sony A7R IV"] });
+    // Synchronous reset: items must be empty BEFORE the second response
+    // resolves so the UI doesn't transiently render the wider set.
+    expect(s.items.length).toBe(0);
+    expect(s.ready).toBe(false);
+    await p;
+    expect(s.items.length).toBe(1);
+    expect(calls[1]).toMatchObject({ camera: ["Sony A7R IV"] });
+  });
 });

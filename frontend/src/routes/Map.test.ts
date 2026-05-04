@@ -60,6 +60,9 @@ function mapProps(geoStore: GeoStore) {
   // The four route-derived params mirror the App.svelte call site: the
   // router emits `T | undefined`, so the prop types accept undefined and
   // tests must supply each key explicitly (exactOptionalPropertyTypes).
+  // SF-19 added activeFilters / tagLabels / onFiltersChange — tests
+  // default to the empty filter set so existing focus / hidden /
+  // tabs assertions remain unaffected.
   return {
     z: undefined,
     c: undefined,
@@ -69,6 +72,15 @@ function mapProps(geoStore: GeoStore) {
     mediaStore: stubMediaStore(),
     hiddenStore: stubHiddenStore(),
     toastStore: stubToastStore(),
+    activeFilters: {
+      cameras: [],
+      lenses: [],
+      tagKeys: [],
+      hasGps: null,
+      mediaType: null,
+    },
+    tagLabels: {},
+    onFiltersChange: () => {},
   };
 }
 

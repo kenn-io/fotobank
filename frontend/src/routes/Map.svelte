@@ -10,6 +10,8 @@
   import type L from "leaflet";
   import MapPane from "../lib/map/MapPane.svelte";
   import MapGridPane from "../lib/map/MapGridPane.svelte";
+  import FilterChipStrip from "../lib/filters/FilterChipStrip.svelte";
+  import { filterKey, type ActiveFilters } from "../lib/filters/activeFilters";
   import type { GeoStore } from "../lib/map/geoStore.svelte";
   import type { MediaStore } from "../lib/media/mediaStore.svelte";
   import type { ToastStore } from "../lib/toasts/toastStore.svelte";
@@ -23,6 +25,11 @@
   // `T | undefined` (not `?:`) because exactOptionalPropertyTypes:true
   // rejects assigning `undefined` to a `?` optional, and the router can
   // supply undefined.
+  //
+  // SF-19 added activeFilters / tagLabels / onFiltersChange so the
+  // FilterChipStrip can mount above the map and chip toggles re-fetch
+  // /api/v1/media/geo with the narrowed param set. has_gps is
+  // intentionally NOT forwarded — /geo's contract is geotagged-only.
   let {
     z,
     c,
@@ -32,6 +39,9 @@
     mediaStore,
     hiddenStore,
     toastStore,
+    activeFilters,
+    tagLabels,
+    onFiltersChange,
   }: {
     z: number | undefined;
     c: [number, number] | undefined;
@@ -41,6 +51,9 @@
     mediaStore: MediaStore;
     hiddenStore: HiddenStore;
     toastStore: ToastStore;
+    activeFilters: ActiveFilters;
+    tagLabels: Record<string, string>;
+    onFiltersChange: (next: ActiveFilters) => void;
   } = $props();
 
   // viewportIds is populated by MapPane's onViewportChange callback;
@@ -74,7 +87,19 @@
     cState = state.c;
     if (writeTimer !== undefined) clearTimeout(writeTimer);
     writeTimer = setTimeout(() => {
-      const sp = new URLSearchParams();
+      // Preserve every existing query param except z/c/focus/tab so the
+      // sidebar facet selection (camera/lens/facet_tag/has_gps/media_type)
+      // survives a pan-zoom. Without this the user-facing chips stay in
+      // ActiveFilters but the URL gets rewritten to bare ?z&c, and a
+      // page refresh would drop the filter set. Tab is also stripped so
+      // a /map?tab=photos URL the user is actively viewing isn't churned
+      // by the live map view-state writer (the tab state lives in
+      // activeTab, not the URL — re-emitting it would no-op anyway).
+      const sp = new URLSearchParams(window.location.search);
+      sp.delete("z");
+      sp.delete("c");
+      sp.delete("focus");
+      sp.delete("tab");
       sp.set("z", String(state.z));
       sp.set("c", `${state.c[0]},${state.c[1]}`);
       // Preserve focus if the URL had it — F7 wires the focus prop
@@ -112,8 +137,18 @@
   // refreshed on every Leaflet moveend/zoomend (via onMapViewState)
   // and seeded from the initial route params, so this works whether
   // the user just landed on /map or has been panning around.
+  //
+  // SF-19: also preserve the active filter params (camera/lens/
+  // facet_tag/has_gps/media_type) by reading window.location.search
+  // and stripping the ones the writer owns (z/c/focus/tab). Without
+  // this a user on /map?camera=Sony who clicks a photo and closes the
+  // lightbox would land on /map?z=…&c=… with the camera chip dropped.
   function currentMapReturnHref(): string {
-    const sp = new URLSearchParams();
+    const sp = new URLSearchParams(window.location.search);
+    sp.delete("z");
+    sp.delete("c");
+    sp.delete("focus");
+    sp.delete("tab");
     if (zState !== undefined) sp.set("z", String(zState));
     if (cState !== undefined) sp.set("c", `${cState[0]},${cState[1]}`);
     const q = sp.toString();
@@ -165,8 +200,18 @@
   // toggle, and retry all behave the same way. mergeRaw drops hidden
   // rows by design (MediaStore is the visible-only index) — hidden geo
   // rows still surface in MapGridPane via the geoStore fallback chain.
+  //
+  // SF-19: forward the four facet param groups from activeFilters into
+  // geoStore.load. has_gps is intentionally excluded — /geo's contract
+  // is geotagged-only, so passing it would be a wasted round-trip at
+  // best and a contract mismatch at worst.
   async function loadAndMerge(includeHidden: boolean): Promise<void> {
-    await geoStore.load(includeHidden);
+    await geoStore.load(includeHidden, {
+      cameras: activeFilters.cameras,
+      lenses: activeFilters.lenses,
+      facetTags: activeFilters.tagKeys,
+      mediaType: activeFilters.mediaType,
+    });
     mediaStore.mergeRaw(geoStore.rawItems);
   }
 
@@ -227,9 +272,35 @@
     includeHiddenToggle = false;
     void loadAndMerge(false);
   }
+
+  // SF-19: re-fetch the geo set when the active filters change. We
+  // gate on `lastFilterKey !== currentKey` so the effect does NOT
+  // double-fire on mount: initialLoad runs from onMount and seeds
+  // lastFilterKey on entry, so by the time this effect first runs the
+  // keys match and the body is a no-op. Subsequent filter toggles
+  // (chip strip clicks, sidebar facet clicks via App.onFiltersChange)
+  // change the URL → activeFilters changes → this effect runs once
+  // per change. lastFilterKey is captured eagerly with
+  // state_referenced_locally so the seed reflects the route's initial
+  // filter set, not "" (which would always trigger one unwanted run).
+  // svelte-ignore state_referenced_locally
+  let lastFilterKey = $state<string>(filterKey(activeFilters));
+  $effect(() => {
+    const currentKey = filterKey(activeFilters);
+    if (currentKey === lastFilterKey) return;
+    lastFilterKey = currentKey;
+    void loadAndMerge(includeHiddenToggle);
+  });
 </script>
 
 <section class="map-page" data-testid="map-page">
+  <!-- SF-19: chip strip mounts above the rest of the page so filter
+       state is always visible regardless of which load-state branch is
+       rendering (loading / error / empty / loaded). The component
+       returns an empty fragment when activeFilters is empty, so a user
+       on /map with no chips active sees no extra chrome. -->
+  <FilterChipStrip filters={activeFilters} {tagLabels} onChange={onFiltersChange} />
+
   <!-- Header is rendered for every state branch (loading/error/empty/loaded)
        once unlocked, so an unlocked user with zero visible geotagged
        photos can still flip on Include hidden to reveal hidden-only
