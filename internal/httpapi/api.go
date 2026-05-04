@@ -17,6 +17,7 @@ import (
 	"github.com/wesm/fotobank/internal/obs"
 	"github.com/wesm/fotobank/internal/service"
 	aiservice "github.com/wesm/fotobank/internal/service/ai"
+	facetssvc "github.com/wesm/fotobank/internal/service/facets"
 	searchsvc "github.com/wesm/fotobank/internal/service/search"
 	"github.com/wesm/fotobank/internal/service/usersettings"
 	"github.com/wesm/fotobank/internal/share"
@@ -111,6 +112,9 @@ type Deps struct {
 	// so the OpenAPI dumper can pass an empty Deps without wiring a
 	// search service.
 	Search *searchsvc.Service
+	// Facets backs GET /api/v1/facets. Nil leaves the route
+	// unregistered so the OpenAPI dumper can pass an empty Deps.
+	Facets *facetssvc.Service
 }
 
 // New constructs the Fotobank HTTP handler. The full middleware chain is:
@@ -187,6 +191,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerHiddenMedia(api, deps.MediaService, deps.HiddenAuth)
 	registerAIRoutes(api, deps.AIService, deps.AIVisionProbe, deps.AIEnabled)
 	registerSearchRoutes(api, deps.Search, deps.Metrics)
+	registerFacetsRoutes(api, deps.Facets)
 	return mux, api
 }
 
