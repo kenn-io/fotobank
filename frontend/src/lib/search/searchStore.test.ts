@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createSearchStore } from "./searchStore.svelte";
+import { createSearchStore, emptyFilters } from "./searchStore.svelte";
 import { SearchHTTPError, type SearchClient } from "./client";
 import type { SearchResponse } from "./types";
 
@@ -165,5 +165,37 @@ describe("searchStore", () => {
     // and the third call issued without the stale cursor.
     expect(store.cursor).toBe(null);
     expect(callCount).toBe(3);
+  });
+
+  it("setFilters forwards camera/lens/facet_tag/has_gps/media_type to client.search", async () => {
+    // SF-18 added cameras/lenses/facetTagKeys/hasGps to SearchFilters
+    // and threaded them through buildParams. The existing tests scaffold
+    // the empty arrays but never assert the populated fields actually
+    // round-trip. This test pins the wire shape so a regression in
+    // buildParams (forgetting to forward a field, dropping the
+    // serialization) surfaces here rather than in production.
+    const { client, calls } = makeClient([canned()]);
+    const store = createSearchStore({ client });
+    await store.setFilters({
+      ...emptyFilters(),
+      cameras: ["Sony A7R IV"],
+      lenses: ["FE 24-70mm F2.8 GM"],
+      facetTagKeys: ["dog"],
+      hasGps: true,
+      mediaType: "photo",
+    });
+    expect(calls.length).toBe(1);
+    const params = calls[0] as {
+      camera?: string[];
+      lens?: string[];
+      facet_tag?: string[];
+      has_gps?: boolean;
+      media_type?: string;
+    };
+    expect(params.camera).toEqual(["Sony A7R IV"]);
+    expect(params.lens).toEqual(["FE 24-70mm F2.8 GM"]);
+    expect(params.facet_tag).toEqual(["dog"]);
+    expect(params.has_gps).toBe(true);
+    expect(params.media_type).toBe("photo");
   });
 });

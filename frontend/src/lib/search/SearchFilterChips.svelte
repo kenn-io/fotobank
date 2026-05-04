@@ -45,23 +45,10 @@
     emit(next);
   }
 
-  function removeMediaType(): void {
-    const next: SearchFilters = { ...filters };
-    delete next.mediaType;
-    emit(next);
-  }
-
   function removeIncludeHidden(): void {
     const next: SearchFilters = { ...filters };
     delete next.includeHidden;
     emit(next);
-  }
-
-  // mediaTypeLabel surfaces the user-friendly form of the wire value.
-  // Photos / Videos in plural for consistency with the segmented
-  // control's button labels.
-  function mediaTypeLabel(t: "photo" | "video"): string {
-    return t === "photo" ? "Photos" : "Videos";
   }
 </script>
 
@@ -111,18 +98,6 @@
         data-testid="chip-remove"
         aria-label="Remove location filter"
         onclick={removeLocation}
-      >×</button>
-    </span>
-  {/if}
-  {#if filters.mediaType !== undefined}
-    <span class="chip" data-testid="chip-media-type">
-      <span class="chip-text">{mediaTypeLabel(filters.mediaType)}</span>
-      <button
-        type="button"
-        class="chip-remove"
-        data-testid="chip-remove"
-        aria-label="Remove media-type filter"
-        onclick={removeMediaType}
       >×</button>
     </span>
   {/if}

@@ -296,3 +296,57 @@ describe("Map page mediaStore merge", () => {
     expect(mediaStore.mergeRaw).toHaveBeenCalledWith([visibleItem]);
   });
 });
+
+describe("Map page filter changes", () => {
+  // Regression: when the filter set changes, the in-memory cluster
+  // selection (clusterIds) must reset alongside the geo re-fetch.
+  // Without the reset, MapGridPane keeps using the prior set of IDs
+  // (it prefers clusterIds over viewportIds), so the right-grid renders
+  // rows from the previous filter set even though the map markers now
+  // reflect the new one.
+  //
+  // Triggering a real cluster click in JSDOM isn't viable — Leaflet
+  // doesn't render and MapPane.onClusterClick is wired to the cluster
+  // group's "clusterclick" event. The test below pins the change-effect
+  // path: a filter mutation must re-issue geoStore.load with the new
+  // params. The clusterIds-reset itself is a single line in the same
+  // effect; if the re-fetch fires, the reset fires too.
+  const visibleItem = {
+    id: "v1",
+    timestamp: "2024-06-15T14:30:22Z",
+    width: 1,
+    height: 1,
+    thumb_version: 0,
+    latitude: 1,
+    longitude: 2,
+  };
+
+  it("re-fetches /media/geo with new params when activeFilters changes", async () => {
+    const { store, calls } = makeSequencedGeoStore([
+      { items: [visibleItem] },
+      { items: [visibleItem] },
+    ]);
+    const baseProps = mapProps(store);
+    const { rerender } = render(Map, { props: baseProps });
+    // Initial load: no filter params, no query passed.
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect(calls[0]?.params).toBeUndefined();
+
+    // Re-render with a populated filter set; the change-effect must
+    // re-fire geoStore.load with the new wire shape.
+    await rerender({
+      ...baseProps,
+      activeFilters: {
+        cameras: ["Sony A7R IV"],
+        lenses: [],
+        tagKeys: [],
+        hasGps: null,
+        mediaType: null,
+      },
+    });
+    await waitFor(() => expect(calls.length).toBe(2));
+    expect(calls[1]?.params).toMatchObject({
+      query: { camera: ["Sony A7R IV"] },
+    });
+  });
+});

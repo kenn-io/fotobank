@@ -71,15 +71,21 @@ describe("SearchFilterChips", () => {
     expect(getByText(/Paris, France/)).toBeTruthy();
   });
 
-  it("renders a media-type chip", () => {
+  it("does NOT render a media-type chip even when mediaType is set", () => {
+    // The media-type chip is rendered by FilterChipStrip (the sidebar
+    // facet's canonical chip surface), not here. SearchFilterChips owns
+    // search-scope filters (date range, typed tags, location,
+    // includeHidden); rendering mediaType here too produced two chips
+    // for the same URL param. SearchFiltersPopover keeps its
+    // All/Photos/Videos toggle buttons — they still mutate the URL —
+    // but the chip itself lives in FilterChipStrip.
     const filters: SearchFilters = {
       tags: [], cameras: [], lenses: [], facetTagKeys: [], mediaType: "photo",
     };
-    const { container, getByText } = render(SearchFilterChips, {
+    const { container } = render(SearchFilterChips, {
       props: { filters, onChange: vi.fn() },
     });
-    expect(container.querySelector("[data-testid='chip-media-type']")).toBeTruthy();
-    expect(getByText(/Photo/i)).toBeTruthy();
+    expect(container.querySelector("[data-testid='chip-media-type']")).toBeNull();
   });
 
   it("removing a date chip dispatches change with the chip absent", async () => {
@@ -161,23 +167,4 @@ describe("SearchFilterChips", () => {
     });
   });
 
-  it("removing the media-type chip dispatches change with mediaType absent", async () => {
-    const onChange = vi.fn();
-    const filters: SearchFilters = {
-      tags: [], cameras: [], lenses: [], facetTagKeys: [], mediaType: "video",
-    };
-    const { container } = render(SearchFilterChips, {
-      props: { filters, onChange },
-    });
-    const removeMediaType = container.querySelector(
-      "[data-testid='chip-media-type'] [data-testid='chip-remove']",
-    ) as HTMLButtonElement;
-    await fireEvent.click(removeMediaType);
-    // mediaType absent (not undefined-as-property) so the wire shape
-    // drops it. Use the actual call args rather than toHaveBeenCalledWith
-    // so we can assert on key presence, not just deep equality.
-    const args = onChange.mock.calls[0]![0] as SearchFilters;
-    expect(args.mediaType).toBeUndefined();
-    expect(args.tags).toEqual([]);
-  });
 });

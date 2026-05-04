@@ -289,6 +289,14 @@
     const currentKey = filterKey(activeFilters);
     if (currentKey === lastFilterKey) return;
     lastFilterKey = currentKey;
+    // Clear the cluster filter before re-fetching: a cluster selection
+    // is a slice of the prior result set (the IDs the user clicked into),
+    // and that slice's identity is invalidated the moment the filter set
+    // changes. Without this, MapGridPane would keep using the stale
+    // clusterIds (which it prefers over viewportIds) and render rows
+    // from the previous filter set even though the map markers now
+    // reflect the new one.
+    clusterIds = null;
     void loadAndMerge(includeHiddenToggle);
   });
 </script>
