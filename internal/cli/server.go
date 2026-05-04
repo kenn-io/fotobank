@@ -46,6 +46,7 @@ import (
 	"github.com/wesm/fotobank/internal/search/index"
 	"github.com/wesm/fotobank/internal/service"
 	aiservice "github.com/wesm/fotobank/internal/service/ai"
+	facetssvc "github.com/wesm/fotobank/internal/service/facets"
 	searchsvc "github.com/wesm/fotobank/internal/service/search"
 	"github.com/wesm/fotobank/internal/service/usersettings"
 	"github.com/wesm/fotobank/internal/share"
@@ -490,6 +491,14 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		)
 	}
 
+	// Facets service: aggregates per-library counts for the sidebar.
+	// Built unconditionally — unlike search, the facet queries hit only
+	// the catalog (media + media_tags + media_places) and don't depend
+	// on embeddings. Reuses hiddenCheckAdapter, which structurally
+	// satisfies facets.HiddenChecker (same Valid signature as
+	// searchsvc.HiddenChecker).
+	facetsService := facetssvc.New(d.ReadDB(), hiddenCheckAdapter{})
+
 	apiHandler, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: idp,
 		OwnerService:     ownerSvc,
@@ -520,6 +529,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		AIEnabled:       cfg.AI.Enabled,
 		SharingEnabled:  cfg.UI.SharingEnabled,
 		Search:          searchService,
+		Facets:          facetsService,
 	})
 	if err != nil {
 		return err
