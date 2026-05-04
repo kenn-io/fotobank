@@ -13,6 +13,7 @@ import (
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/testutil"
+	"github.com/wesm/fotobank/internal/testutil/mediaseed"
 )
 
 func testOwner() owners.Principal {
@@ -1695,60 +1696,6 @@ func idsOf(ms []media.Media) []string {
 	return out
 }
 
-// insertMedia inserts a primary photo for owner with the supplied
-// fields overlaid on baseMedia. The path and checksum are derived
-// from id so tests using the SF-2 filter helpers can stage multiple
-// rows without colliding on the (owner, checksum) or (owner, path)
-// unique indexes. Mirrors insertMediaGPS's shape but takes a full
-// Media template so the caller can stamp Make/Model/LensModel.
-func insertMedia(t *testing.T, rw *sql.DB, p owners.Principal, id string, m media.Media) {
-	t.Helper()
-	repo := media.NewRepo(rw, rw)
-	row := baseMedia(id, p)
-	row.Path = "2024/" + id + ".jpg"
-	row.Checksum = "cs-" + id
-	if m.Type != "" {
-		row.Type = m.Type
-	}
-	if m.Make != "" {
-		row.Make = m.Make
-	}
-	if m.Model != "" {
-		row.Model = m.Model
-	}
-	if m.LensModel != "" {
-		row.LensModel = m.LensModel
-	}
-	if m.Latitude != nil {
-		row.Latitude = m.Latitude
-	}
-	if m.Longitude != nil {
-		row.Longitude = m.Longitude
-	}
-	require.NoError(t, repo.Insert(context.Background(), row))
-}
-
-// insertTag inserts an active ai_results row for (owner, mediaID) plus
-// one media_tags row keyed on (key, label). Multiple calls for the
-// same media each create a distinct ai_results row in 'stale' status
-// for all but the first, mirroring how the AI tag pipeline carries
-// supersession (see internal/ai/results/repo.go); SF-2 only relies on
-// status='active' so a single tag per media keeps the fixtures small.
-func insertTag(t *testing.T, rw *sql.DB, _ owners.Principal, mediaID, key, label string) {
-	t.Helper()
-	ctx := context.Background()
-	resultID := uuid.NewString()
-	_, err := rw.ExecContext(ctx,
-		`INSERT INTO ai_results(id, media_id, task, model_id, prompt_version, prompt_hash,
-			input_profile, status, generated_at) VALUES (?,?, 'tag', ?, ?, ?, ?, 'active', ?)`,
-		resultID, mediaID, "test-model", "tag-v1", "test-hash", "test-profile", time.Now().UTC())
-	require.NoError(t, err)
-	_, err = rw.ExecContext(ctx,
-		`INSERT INTO media_tags(result_id, tag_key, tag_label, rank) VALUES (?,?,?,?)`,
-		resultID, key, label, 1)
-	require.NoError(t, err)
-}
-
 // TestRepoList_Cameras narrows on (make || ' ' || model) IN (...).
 // The values are the canonical "<make> <model>" strings used as both
 // URL params and chip labels.
@@ -1759,9 +1706,9 @@ func TestRepoList_Cameras(t *testing.T) {
 	owner := testOwner()
 	seedOwner(t, d.WriteDB(), owner, "sk-cam")
 
-	insertMedia(t, d.WriteDB(), owner, "id-sony", media.Media{Make: "Sony", Model: "A7R IV"})
-	insertMedia(t, d.WriteDB(), owner, "id-canon", media.Media{Make: "Canon", Model: "EOS R5"})
-	insertMedia(t, d.WriteDB(), owner, "id-iphone", media.Media{Make: "Apple", Model: "iPhone 15 Pro"})
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-sony", media.Media{Make: "Sony", Model: "A7R IV"})
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-canon", media.Media{Make: "Canon", Model: "EOS R5"})
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-iphone", media.Media{Make: "Apple", Model: "iPhone 15 Pro"})
 
 	got, err := repo.List(t.Context(), media.ListFilter{
 		Owner:   owner,
@@ -1781,8 +1728,8 @@ func TestRepoList_Lenses(t *testing.T) {
 	owner := testOwner()
 	seedOwner(t, d.WriteDB(), owner, "sk-lens-fac")
 
-	insertMedia(t, d.WriteDB(), owner, "id-2470", media.Media{LensModel: "FE 24-70mm F2.8 GM"})
-	insertMedia(t, d.WriteDB(), owner, "id-50", media.Media{LensModel: "FE 50mm F1.4 GM"})
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-2470", media.Media{LensModel: "FE 24-70mm F2.8 GM"})
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-50", media.Media{LensModel: "FE 50mm F1.4 GM"})
 
 	got, err := repo.List(t.Context(), media.ListFilter{
 		Owner:  owner,
@@ -1800,9 +1747,9 @@ func TestRepoList_HasGPS_True(t *testing.T) {
 	owner := testOwner()
 	seedOwner(t, d.WriteDB(), owner, "sk-gps-true")
 
-	insertMedia(t, d.WriteDB(), owner, "id-geo",
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-geo",
 		media.Media{Latitude: new(48.8), Longitude: new(2.3)})
-	insertMedia(t, d.WriteDB(), owner, "id-nogeo", media.Media{})
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-nogeo", media.Media{})
 
 	got, err := repo.List(t.Context(), media.ListFilter{Owner: owner, HasGPS: new(true)})
 	r.NoError(err)
@@ -1817,9 +1764,9 @@ func TestRepoList_HasGPS_False(t *testing.T) {
 	owner := testOwner()
 	seedOwner(t, d.WriteDB(), owner, "sk-gps-false")
 
-	insertMedia(t, d.WriteDB(), owner, "id-geo",
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-geo",
 		media.Media{Latitude: new(48.8), Longitude: new(2.3)})
-	insertMedia(t, d.WriteDB(), owner, "id-nogeo", media.Media{})
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-nogeo", media.Media{})
 
 	got, err := repo.List(t.Context(), media.ListFilter{Owner: owner, HasGPS: new(false)})
 	r.NoError(err)
@@ -1835,12 +1782,12 @@ func TestRepoList_AnyTagKeys(t *testing.T) {
 	owner := testOwner()
 	seedOwner(t, d.WriteDB(), owner, "sk-anytag")
 
-	insertMedia(t, d.WriteDB(), owner, "id-dog", media.Media{})
-	insertMedia(t, d.WriteDB(), owner, "id-cat", media.Media{})
-	insertMedia(t, d.WriteDB(), owner, "id-tree", media.Media{})
-	insertTag(t, d.WriteDB(), owner, "id-dog", "dog", "Dog")
-	insertTag(t, d.WriteDB(), owner, "id-cat", "cat", "Cat")
-	insertTag(t, d.WriteDB(), owner, "id-tree", "tree", "Tree")
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-dog", media.Media{})
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-cat", media.Media{})
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-tree", media.Media{})
+	mediaseed.InsertTag(t, d.WriteDB(), owner, "id-dog", "dog", "Dog")
+	mediaseed.InsertTag(t, d.WriteDB(), owner, "id-cat", "cat", "Cat")
+	mediaseed.InsertTag(t, d.WriteDB(), owner, "id-tree", "tree", "Tree")
 
 	got, err := repo.List(t.Context(), media.ListFilter{
 		Owner:      owner,
@@ -1860,16 +1807,16 @@ func TestRepoListGeo_Cameras(t *testing.T) {
 	owner := testOwner()
 	seedOwner(t, d.WriteDB(), owner, "sk-geo-cam")
 
-	insertMedia(t, d.WriteDB(), owner, "id-sony-geo", media.Media{
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-sony-geo", media.Media{
 		Make: "Sony", Model: "A7R IV",
 		Latitude: new(48.8), Longitude: new(2.3),
 	})
-	insertMedia(t, d.WriteDB(), owner, "id-canon-geo", media.Media{
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-canon-geo", media.Media{
 		Make: "Canon", Model: "EOS R5",
 		Latitude: new(40.7), Longitude: new(-74.0),
 	})
 	// Non-geotagged Sony — must NOT appear (ListGeo's contract).
-	insertMedia(t, d.WriteDB(), owner, "id-sony-nogeo", media.Media{
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-sony-nogeo", media.Media{
 		Make: "Sony", Model: "A7R IV",
 	})
 
@@ -1889,11 +1836,11 @@ func TestRepoListGeo_Type(t *testing.T) {
 	owner := testOwner()
 	seedOwner(t, d.WriteDB(), owner, "sk-geo-type")
 
-	insertMedia(t, d.WriteDB(), owner, "id-photo", media.Media{
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-photo", media.Media{
 		Type:     media.TypePhoto,
 		Latitude: new(48.8), Longitude: new(2.3),
 	})
-	insertMedia(t, d.WriteDB(), owner, "id-video", media.Media{
+	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-video", media.Media{
 		Type:     media.TypeVideo,
 		Latitude: new(48.8), Longitude: new(2.3),
 	})
