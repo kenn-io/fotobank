@@ -1618,6 +1618,14 @@ export interface operations {
                 offset?: number;
                 /** @description sort by timestamp DESC when true */
                 sort_desc?: boolean;
+                /** @description narrow to rows whose '<make> <model>' matches any value (OR-composed; repeatable) */
+                camera?: string[] | null;
+                /** @description narrow to rows whose lens_model matches any value (OR-composed; repeatable) */
+                lens?: string[] | null;
+                /** @description narrow to rows that carry at least one tag matching any key (repeatable) */
+                facet_tag?: string[] | null;
+                /** @description true: only geotagged rows; false: only non-geotagged; omit for no filter */
+                has_gps?: "true" | "false";
             };
             header?: never;
             path?: never;

@@ -239,6 +239,101 @@ func TestListMediaOmitsNextOffsetAtExactPageBoundary(t *testing.T) {
 	r.Nil(body.NextOffset, "next_offset must be nil when the page exhausts the result set")
 }
 
+func TestListMediaFiltersByCamera(t *testing.T) {
+	// Pins the new ?camera= query binding (SF-17): seeds two cameras'
+	// rows for the same owner, then ?camera=Sony+A7R+IV must return
+	// only the Sony row. seedMedia doesn't set make/model, so we
+	// backfill via the writeable repo.
+	r := require.New(t)
+	fx := newMediaAPITest(t)
+
+	sony := seedMedia(t, fx.repo, fx.owner, "2024/sony.jpg", "cs-sony", media.TypePhoto)
+	canon := seedMedia(t, fx.repo, fx.owner, "2024/canon.jpg", "cs-canon", media.TypePhoto)
+	_, err := fx.rw.ExecContext(context.Background(),
+		`UPDATE media SET make = ?, model = ? WHERE id = ?`, "Sony", "A7R IV", sony.ID)
+	r.NoError(err)
+	_, err = fx.rw.ExecContext(context.Background(),
+		`UPDATE media SET make = ?, model = ? WHERE id = ?`, "Canon", "EOS R5", canon.ID)
+	r.NoError(err)
+
+	resp, err := http.Get(fx.srv.URL + "/api/v1/media?camera=Sony+A7R+IV")
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusOK, resp.StatusCode)
+	body := decodeList(t, resp)
+	r.Len(body.Items, 1)
+	r.Equal(sony.ID, body.Items[0].ID)
+}
+
+func TestListMediaFiltersByCameraExplodeBindsRepeats(t *testing.T) {
+	// Pins the ,explode binding: ?camera=A&camera=B must OR the two
+	// values together, not collapse to the last value silently.
+	r := require.New(t)
+	fx := newMediaAPITest(t)
+
+	sony := seedMedia(t, fx.repo, fx.owner, "2024/sony.jpg", "cs-sony", media.TypePhoto)
+	canon := seedMedia(t, fx.repo, fx.owner, "2024/canon.jpg", "cs-canon", media.TypePhoto)
+	leica := seedMedia(t, fx.repo, fx.owner, "2024/leica.jpg", "cs-leica", media.TypePhoto)
+	for _, row := range []struct {
+		id, make, model string
+	}{
+		{sony.ID, "Sony", "A7R IV"},
+		{canon.ID, "Canon", "EOS R5"},
+		{leica.ID, "Leica", "Q3"},
+	} {
+		_, err := fx.rw.ExecContext(context.Background(),
+			`UPDATE media SET make = ?, model = ? WHERE id = ?`, row.make, row.model, row.id)
+		r.NoError(err)
+	}
+
+	resp, err := http.Get(
+		fx.srv.URL + "/api/v1/media?camera=Sony+A7R+IV&camera=Canon+EOS+R5",
+	)
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusOK, resp.StatusCode)
+	body := decodeList(t, resp)
+	r.Len(body.Items, 2)
+	got := map[string]bool{}
+	for _, it := range body.Items {
+		got[it.ID] = true
+	}
+	r.True(got[sony.ID])
+	r.True(got[canon.ID])
+	r.False(got[leica.ID])
+}
+
+func TestListMediaFiltersByHasGPS(t *testing.T) {
+	// Pins the has_gps=true binding: only geotagged rows survive.
+	r := require.New(t)
+	fx := newMediaAPITest(t)
+
+	noGPS := seedMedia(t, fx.repo, fx.owner, "2024/no-gps.jpg", "cs-no", media.TypePhoto)
+	withGPSID := uuid.NewString()
+	lat, lon := 48.8566, 2.3522
+	r.NoError(fx.repo.Insert(context.Background(), media.Media{
+		ID: withGPSID, Owner: fx.owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		Path: "2024/with-gps.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "cs-yes",
+		Latitude: &lat, Longitude: &lon, ThumbStatus: "pending",
+	}))
+
+	resp, err := http.Get(fx.srv.URL + "/api/v1/media?has_gps=true")
+	r.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	r.Equal(http.StatusOK, resp.StatusCode)
+	body := decodeList(t, resp)
+	r.Len(body.Items, 1)
+	r.Equal(withGPSID, body.Items[0].ID)
+
+	resp2, err := http.Get(fx.srv.URL + "/api/v1/media?has_gps=false")
+	r.NoError(err)
+	defer func() { _ = resp2.Body.Close() }()
+	r.Equal(http.StatusOK, resp2.StatusCode)
+	body2 := decodeList(t, resp2)
+	r.Len(body2.Items, 1)
+	r.Equal(noGPS.ID, body2.Items[0].ID)
+}
+
 func TestListMediaIncludesNextOffsetOnFullPage(t *testing.T) {
 	r := require.New(t)
 	fx := newMediaAPITest(t)

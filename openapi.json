@@ -2166,6 +2166,68 @@
               "description": "sort by timestamp DESC when true",
               "type": "boolean"
             }
+          },
+          {
+            "description": "narrow to rows whose '\u003cmake\u003e \u003cmodel\u003e' matches any value (OR-composed; repeatable)",
+            "explode": true,
+            "in": "query",
+            "name": "camera",
+            "schema": {
+              "description": "narrow to rows whose '\u003cmake\u003e \u003cmodel\u003e' matches any value (OR-composed; repeatable)",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "narrow to rows whose lens_model matches any value (OR-composed; repeatable)",
+            "explode": true,
+            "in": "query",
+            "name": "lens",
+            "schema": {
+              "description": "narrow to rows whose lens_model matches any value (OR-composed; repeatable)",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "narrow to rows that carry at least one tag matching any key (repeatable)",
+            "explode": true,
+            "in": "query",
+            "name": "facet_tag",
+            "schema": {
+              "description": "narrow to rows that carry at least one tag matching any key (repeatable)",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "true: only geotagged rows; false: only non-geotagged; omit for no filter",
+            "explode": false,
+            "in": "query",
+            "name": "has_gps",
+            "schema": {
+              "description": "true: only geotagged rows; false: only non-geotagged; omit for no filter",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "type": "string"
+            }
           }
         ],
         "responses": {

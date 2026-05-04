@@ -100,10 +100,18 @@ func toMediaDTO(m media.Media) mediaDTO {
 }
 
 type listMediaInput struct {
-	MediaType string `query:"media_type" doc:"photo or video; anything else returns zero rows"`
-	Limit     int    `query:"limit" doc:"max rows to return (default 100, cap 1000)"`
-	Offset    int    `query:"offset" doc:"pagination offset"`
-	SortDesc  bool   `query:"sort_desc" doc:"sort by timestamp DESC when true"`
+	MediaType string   `query:"media_type" doc:"photo or video; anything else returns zero rows"`
+	Limit     int      `query:"limit" doc:"max rows to return (default 100, cap 1000)"`
+	Offset    int      `query:"offset" doc:"pagination offset"`
+	SortDesc  bool     `query:"sort_desc" doc:"sort by timestamp DESC when true"`
+	Camera    []string `query:"camera,explode" doc:"narrow to rows whose '<make> <model>' matches any value (OR-composed; repeatable)"`
+	Lens      []string `query:"lens,explode" doc:"narrow to rows whose lens_model matches any value (OR-composed; repeatable)"`
+	FacetTag  []string `query:"facet_tag,explode" doc:"narrow to rows that carry at least one tag matching any key (repeatable)"`
+	// HasGPS is a string with enum {"true","false"} so the tri-state
+	// (true / false / unset) round-trips cleanly. huma v2 does not support
+	// pointer-typed query params (panics at registration), so we mirror
+	// the /facets workaround and decode the literal string in the handler.
+	HasGPS string `query:"has_gps" enum:"true,false" doc:"true: only geotagged rows; false: only non-geotagged; omit for no filter"`
 }
 
 type listMediaOutput struct {
@@ -158,14 +166,24 @@ func registerMedia(api huma.API, svc *service.MediaService) {
 		// real continuation row exists, not merely because the page was
 		// full by coincidence.
 		filter := media.ListFilter{
-			Owner:    id.Principal.OwnersPrincipal(),
-			Limit:    limit + 1,
-			Offset:   in.Offset,
-			SortDesc: in.SortDesc,
+			Owner:      id.Principal.OwnersPrincipal(),
+			Limit:      limit + 1,
+			Offset:     in.Offset,
+			SortDesc:   in.SortDesc,
+			Cameras:    in.Camera,
+			Lenses:     in.Lens,
+			AnyTagKeys: in.FacetTag,
 		}
 		if in.MediaType != "" {
 			t := media.Type(in.MediaType)
 			filter.Type = &t
+		}
+		// HasGPS arrives as the literal "true"/"false" string (or "" for
+		// "not supplied") because huma v2 panics on *bool query params.
+		// Decode here into the pointer-shaped media.ListFilter field.
+		if in.HasGPS != "" {
+			v := in.HasGPS == "true"
+			filter.HasGPS = &v
 		}
 		rows, err := svc.List(ctx, filter, id.Principal.OwnersPrincipal())
 		if err != nil {
