@@ -549,7 +549,7 @@ func TestMediaService_ListGeo_OwnerScoped(t *testing.T) {
 	insertTestMediaGPS(t, fx.repo, fx.owner, "2024/p1.jpg", "cs-a", 10.0, 20.0)
 	insertTestMediaGPS(t, fx.repo, ownerB, "2024/p2.jpg", "cs-b", 30.0, 40.0)
 
-	rows, err := fx.svc.ListGeo(ctx, fx.owner, false)
+	rows, err := fx.svc.ListGeo(ctx, fx.owner, false, nil, nil, nil, nil)
 	r.NoError(err)
 	r.Len(rows, 1)
 	r.Equal("2024/p1.jpg", rows[0].Path)
@@ -564,12 +564,12 @@ func TestMediaService_ListGeo_PropagatesIncludeHidden(t *testing.T) {
 	hidden := insertTestMediaGPS(t, fx.repo, fx.owner, "2024/h.jpg", "cs-hid", 30.0, 40.0)
 	markHidden(t, fx.rw, hidden.ID)
 
-	visOnly, err := fx.svc.ListGeo(ctx, fx.owner, false)
+	visOnly, err := fx.svc.ListGeo(ctx, fx.owner, false, nil, nil, nil, nil)
 	r.NoError(err)
 	r.Len(visOnly, 1)
 	r.Equal(visible.ID, visOnly[0].ID)
 
-	all, err := fx.svc.ListGeo(ctx, fx.owner, true)
+	all, err := fx.svc.ListGeo(ctx, fx.owner, true, nil, nil, nil, nil)
 	r.NoError(err)
 	r.Len(all, 2)
 	ids := []string{all[0].ID, all[1].ID}

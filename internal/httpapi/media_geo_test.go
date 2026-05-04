@@ -43,6 +43,25 @@ func seedMediaGPS(
 	return m
 }
 
+// seedMediaGPSWithCamera inserts a GPS-tagged primary and immediately
+// backfills make/model via the writeable repo. seedMediaGPS doesn't
+// write make/model directly — the camera-narrowing geo tests need
+// concrete values, so this helper composes the two steps.
+func seedMediaGPSWithCamera(
+	t *testing.T,
+	fx hiddenMediaFixture,
+	path, checksum string,
+	lat, lon float64,
+	make, model string,
+) media.Media {
+	t.Helper()
+	m := seedMediaGPS(t, fx.repo, fx.owner, path, checksum, lat, lon)
+	_, err := fx.rw.ExecContext(context.Background(),
+		`UPDATE media SET make = ?, model = ? WHERE id = ?`, make, model, m.ID)
+	require.NoError(t, err)
+	return m
+}
+
 func TestGeoRoute_EmptyOwnerReturnsEmptyItems(t *testing.T) {
 	r := require.New(t)
 	fx := newHiddenMediaFixture(t)
@@ -114,6 +133,30 @@ func TestGeoRoute_IncludeHiddenWithValidClaimReturnsHidden(t *testing.T) {
 	r.Len(body.Items, 2)
 	ids := []any{body.Items[0]["id"], body.Items[1]["id"]}
 	r.ElementsMatch([]any{visible.ID, hidden.ID}, ids)
+}
+
+// TestGeoRoute_FiltersByCamera pins SF-19's ?camera= narrowing on the
+// geotagged surface. Two geo-tagged rows with distinct cameras are
+// seeded; the route is hit with one of them and only that row must
+// return.
+func TestGeoRoute_FiltersByCamera(t *testing.T) {
+	r := require.New(t)
+	fx := newHiddenMediaFixture(t)
+
+	sony := seedMediaGPSWithCamera(t, fx, "2024/sony.jpg", "cs-sony", 10.0, 20.0, "Sony", "A7R IV")
+	seedMediaGPSWithCamera(t, fx, "2024/canon.jpg", "cs-canon", 30.0, 40.0, "Canon", "EOS R5")
+
+	resp, err := http.Get(fx.srv.URL + "/api/v1/media/geo?camera=Sony+A7R+IV")
+	r.NoError(err)
+	defer resp.Body.Close()
+	r.Equal(http.StatusOK, resp.StatusCode)
+
+	var body struct {
+		Items []map[string]any `json:"items"`
+	}
+	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
+	r.Len(body.Items, 1)
+	r.Equal(sony.ID, body.Items[0]["id"])
 }
 
 // TestGeoRoute_ResolvesAsListNotDetail asserts that GET /api/v1/media/geo

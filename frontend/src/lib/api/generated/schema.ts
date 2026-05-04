@@ -1658,6 +1658,14 @@ export interface operations {
             query?: {
                 /** @description Return hidden geotagged media; requires a valid hidden-unlock cookie. */
                 include_hidden?: boolean;
+                /** @description Narrow to media whose canonical camera ("<make> <model>") matches any of these. OR-composed. */
+                camera?: string[] | null;
+                /** @description Narrow to media whose lens_model matches any of these. OR-composed. */
+                lens?: string[] | null;
+                /** @description Narrow to media that carry at least one of the supplied tag keys. OR-composed. */
+                facet_tag?: string[] | null;
+                /** @description Narrow to photo or video. Omit for both. */
+                media_type?: "photo" | "video";
             };
             header?: never;
             path?: never;

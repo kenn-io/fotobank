@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -31,6 +32,7 @@ type hiddenMediaFixture struct {
 	srv        *httptest.Server
 	owner      owners.Principal
 	repo       *media.Repo
+	rw         *sql.DB
 	store      *storage.NASOnly
 	hiddenSvc  *hidden.Service
 	hiddenRepo *hidden.Repo
@@ -76,6 +78,7 @@ func newHiddenMediaFixture(t *testing.T) hiddenMediaFixture {
 		srv:        srv,
 		owner:      p,
 		repo:       mediaRepo,
+		rw:         d.WriteDB(),
 		store:      store,
 		hiddenSvc:  hiddenSvc,
 		hiddenRepo: hiddenRepo,

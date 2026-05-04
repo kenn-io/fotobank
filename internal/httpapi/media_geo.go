@@ -8,11 +8,22 @@ import (
 
 	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/errs"
+	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/service"
 )
 
 type listMediaGeoInput struct {
 	IncludeHidden bool `query:"include_hidden" doc:"Return hidden geotagged media; requires a valid hidden-unlock cookie."`
+	// has_gps is intentionally NOT exposed: /geo's contract is
+	// geotagged-only, so every returned row already has lat/lon.
+	Camera   []string `query:"camera,explode" doc:"Narrow to media whose canonical camera (\"<make> <model>\") matches any of these. OR-composed."`
+	Lens     []string `query:"lens,explode"   doc:"Narrow to media whose lens_model matches any of these. OR-composed."`
+	FacetTag []string `query:"facet_tag,explode" doc:"Narrow to media that carry at least one of the supplied tag keys. OR-composed."`
+	// MediaType is a plain string with enum {"photo","video"}; "" means
+	// "unset" (return both). huma v2 panics on *string query params, so
+	// we mirror the /api/v1/media handler's pattern and decode the empty
+	// string as the tri-state's null branch.
+	MediaType string `query:"media_type" enum:"photo,video" doc:"Narrow to photo or video. Omit for both."`
 }
 
 type listMediaGeoOutput struct {
@@ -55,7 +66,20 @@ func registerMediaGeo(api huma.API, svc *service.MediaService, hiddenAuth *hidde
 			}
 		}
 
-		rows, err := svc.ListGeo(ctx, caller, in.IncludeHidden)
+		var mediaType *media.Type
+		if in.MediaType != "" {
+			t := media.Type(in.MediaType)
+			mediaType = &t
+		}
+		rows, err := svc.ListGeo(
+			ctx,
+			caller,
+			in.IncludeHidden,
+			mediaType,
+			in.Camera,
+			in.Lens,
+			in.FacetTag,
+		)
 		if err != nil {
 			return nil, Translate(err)
 		}

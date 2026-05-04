@@ -268,13 +268,26 @@ func (s *MediaService) ListHidden(
 // The service does not enforce the unlock-claim gate — the gate is in
 // httpapi.registerMediaGeo so the 403 response shape stays inside the
 // transport layer (matching list-hidden-media).
+//
+// mediaType / cameras / lenses / anyTagKeys narrow the geotagged set
+// the same way the /library and /search facet params do. /geo's
+// contract is geotagged-only, so HasGPS is intentionally absent from
+// this signature — every returned row already has lat and lon.
 func (s *MediaService) ListGeo(
 	ctx context.Context,
 	caller owners.Principal,
 	includeHidden bool,
+	mediaType *media.Type,
+	cameras []string,
+	lenses []string,
+	anyTagKeys []string,
 ) ([]media.Media, error) {
 	return s.repo.ListGeo(ctx, media.ListGeoFilter{
 		Owner:         caller,
 		IncludeHidden: includeHidden,
+		Type:          mediaType,
+		Cameras:       cameras,
+		Lenses:        lenses,
+		AnyTagKeys:    anyTagKeys,
 	})
 }

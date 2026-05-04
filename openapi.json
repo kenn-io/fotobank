@@ -2268,6 +2268,68 @@
               "description": "Return hidden geotagged media; requires a valid hidden-unlock cookie.",
               "type": "boolean"
             }
+          },
+          {
+            "description": "Narrow to media whose canonical camera (\"\u003cmake\u003e \u003cmodel\u003e\") matches any of these. OR-composed.",
+            "explode": true,
+            "in": "query",
+            "name": "camera",
+            "schema": {
+              "description": "Narrow to media whose canonical camera (\"\u003cmake\u003e \u003cmodel\u003e\") matches any of these. OR-composed.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Narrow to media whose lens_model matches any of these. OR-composed.",
+            "explode": true,
+            "in": "query",
+            "name": "lens",
+            "schema": {
+              "description": "Narrow to media whose lens_model matches any of these. OR-composed.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Narrow to media that carry at least one of the supplied tag keys. OR-composed.",
+            "explode": true,
+            "in": "query",
+            "name": "facet_tag",
+            "schema": {
+              "description": "Narrow to media that carry at least one of the supplied tag keys. OR-composed.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Narrow to photo or video. Omit for both.",
+            "explode": false,
+            "in": "query",
+            "name": "media_type",
+            "schema": {
+              "description": "Narrow to photo or video. Omit for both.",
+              "enum": [
+                "photo",
+                "video"
+              ],
+              "type": "string"
+            }
           }
         ],
         "responses": {
