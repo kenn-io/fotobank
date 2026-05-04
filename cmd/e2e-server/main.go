@@ -782,6 +782,10 @@ func seedFixtures(dbPath, nasRoot string) error {
 		return fmt.Errorf("seed search fixtures: %w", err)
 	}
 
+	if err := seedFacetFixtures(ctx, d, repo, owner); err != nil {
+		return fmt.Errorf("seed facet fixtures: %w", err)
+	}
+
 	return nil
 }
 
@@ -1272,4 +1276,110 @@ func vecToBlob(vec []float32) []byte {
 		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(v))
 	}
 	return buf
+}
+
+// seedFacetFixtures inserts the SF-20 sidebar-facet fixtures: 10 rows
+// across 3 cameras / 2 lenses / a "dog" + "cat" tag distribution / a
+// mixed GPS posture / one video. Counts by group:
+//
+//   - Cameras:    Sony A7R IV (5), Canon EOS R5 (3), Apple iPhone 15 Pro (2)
+//   - Lenses:     FE 24-70mm F2.8 GM (5), RF 50mm F1.2 L USM (3)
+//   - Tag "dog":  3 rows;  Tag "cat":  2 rows
+//   - GPS:        4 rows;  No GPS:     6 rows
+//   - Photo:      9 rows;  Video:      1 row
+//
+// IDs use a "facet-fixture-" prefix so they don't collide with the
+// existing search/hidden/album/AI fixtures, and ImportedAt walks
+// backwards from a base date that's distinct from those fixtures so
+// the newest-first sort stays deterministic.
+func seedFacetFixtures(
+	ctx context.Context,
+	d *db.DB,
+	mediaRepo *media.Repo,
+	owner owners.Principal,
+) error {
+	base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	type facetSeed struct {
+		id        string
+		mediaType media.Type
+		make      string
+		model     string
+		lens      string
+		tag       string // "" → no tag
+		gps       bool
+		caption   string
+	}
+	type geoLabel struct {
+		lat, lon float64
+		label    string
+	}
+	// Rotate GPS coordinates so the geotagged rows land at distinct
+	// locations — useful for /map and Places facet assertions, and
+	// avoids any LocationLabel collisions with the search fixtures.
+	gpsCoords := []geoLabel{
+		{48.8566, 2.3522, "Paris, Île-de-France, France"},
+		{40.7128, -74.0060, "New York, New York, USA"},
+		{37.7749, -122.4194, "San Francisco, California, USA"},
+		{51.5074, -0.1278, "London, England, United Kingdom"},
+	}
+
+	rows := []facetSeed{
+		{"facet-fixture-sony-1", media.TypePhoto, "Sony", "A7R IV", "FE 24-70mm F2.8 GM", "dog", false, "A dog playing"},
+		{"facet-fixture-sony-2", media.TypePhoto, "Sony", "A7R IV", "FE 24-70mm F2.8 GM", "dog", true, "A dog with city background"},
+		{"facet-fixture-sony-3", media.TypePhoto, "Sony", "A7R IV", "FE 24-70mm F2.8 GM", "cat", false, "A cat sleeping"},
+		{"facet-fixture-sony-4", media.TypePhoto, "Sony", "A7R IV", "FE 24-70mm F2.8 GM", "", true, "A landscape photo"},
+		{"facet-fixture-sony-5", media.TypeVideo, "Sony", "A7R IV", "FE 24-70mm F2.8 GM", "", false, "A short video clip"},
+		{"facet-fixture-canon-1", media.TypePhoto, "Canon", "EOS R5", "RF 50mm F1.2 L USM", "dog", true, "A dog portrait"},
+		{"facet-fixture-canon-2", media.TypePhoto, "Canon", "EOS R5", "RF 50mm F1.2 L USM", "cat", false, "A cat closeup"},
+		{"facet-fixture-canon-3", media.TypePhoto, "Canon", "EOS R5", "RF 50mm F1.2 L USM", "", false, "A still life"},
+		{"facet-fixture-iphone-1", media.TypePhoto, "Apple", "iPhone 15 Pro", "", "", true, "A street photo"},
+		{"facet-fixture-iphone-2", media.TypePhoto, "Apple", "iPhone 15 Pro", "", "", false, "A food photo"},
+	}
+
+	mimeFor := func(t media.Type) string {
+		if t == media.TypeVideo {
+			return "video/mp4"
+		}
+		return "image/jpeg"
+	}
+	pathFor := func(id string, t media.Type) string {
+		if t == media.TypeVideo {
+			return id + ".mp4"
+		}
+		return id + ".jpg"
+	}
+
+	gpsIdx := 0
+	for i, fs := range rows {
+		row := media.Media{
+			ID:          fs.id,
+			Owner:       owner,
+			Type:        fs.mediaType,
+			MimeType:    mimeFor(fs.mediaType),
+			Path:        pathFor(fs.id, fs.mediaType),
+			ImportedAt:  base.Add(-time.Duration(i) * time.Minute),
+			Size:        1,
+			Checksum:    "checksum-" + fs.id,
+			Make:        fs.make,
+			Model:       fs.model,
+			LensModel:   fs.lens,
+			ThumbStatus: "ready",
+		}
+		if fs.gps {
+			g := gpsCoords[gpsIdx]
+			row.Latitude = &g.lat
+			row.Longitude = &g.lon
+			row.LocationLabel = g.label
+			gpsIdx = (gpsIdx + 1) % len(gpsCoords)
+		}
+		if err := mediaRepo.Insert(ctx, row); err != nil {
+			return fmt.Errorf("seed %s: %w", fs.id, err)
+		}
+		if fs.tag != "" {
+			if err := writeSearchAIResults(ctx, d, fs.id, fs.tag, fs.caption); err != nil {
+				return fmt.Errorf("seed ai results for %s: %w", fs.id, err)
+			}
+		}
+	}
+	return nil
 }
