@@ -1534,10 +1534,10 @@ Add an import:
 facetssvc "github.com/wesm/fotobank/internal/service/facets"
 ```
 
-Construct the service alongside the others (it only needs the read-only `*sql.DB` — same pool used elsewhere for read paths):
+Construct the service alongside the others. Per SF-5 (commit 2c728e2) the constructor signature is `facetssvc.New(ro *sql.DB, hiddenChecker HiddenChecker) *Service` — it takes the read-only `*sql.DB` and a `HiddenChecker`. The project's `*hidden.Service` does NOT implement `HiddenChecker` directly (no `Valid` method on that exact name — search the codebase for the existing adapter pattern; SF-6 used a route-test-local fake, but production wiring needs the adapter shim that mirrors how `searchsvc` consumes the same checker, see `internal/cli/server.go` for the existing precedent). Reuse the existing adapter if one exists; otherwise add a tiny one alongside the search service's wiring:
 
 ```go
-facetsService := facetssvc.New(roDB)
+facetsService := facetssvc.New(roDB, hiddenCheckAdapter{hiddenAuth})
 ```
 
 Set `Facets: facetsService` in the `httpapi.Deps{...}` literal.
