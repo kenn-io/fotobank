@@ -94,8 +94,9 @@ func (in Input) WithHidden(v bool) Input {
 // (id, timestamp, imported_at) FROM media so the hybrid Engine can
 // wrap it as a SELECT-only subquery. The arg order is deterministic
 // and load-bearing: hub, userID, then (date_after?, date_before?,
-// tag_keys..., location?, media_type?). IncludeHidden contributes no
-// arg in either branch.
+// tag_keys..., location?, media_type?, cameras..., lenses...,
+// any_tag_keys...). HasGPS and IncludeHidden contribute no arg in
+// either branch.
 func Resolve(in Input) (cte string, args []any) {
 	conds := []string{"m.owner_hub = ?", "m.owner_user_id = ?"}
 	args = []any{in.Owner.Hub, in.Owner.UserID}
