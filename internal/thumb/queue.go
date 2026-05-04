@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,10 +20,15 @@ var ErrClaimLost = errors.New("thumb: claim lost (sweep or regenerate won)")
 
 // Claim is one row handed out by ClaimBatch: the media to process
 // plus the claim token (thumb_claimed_at) the worker must pass back
-// into Mark* calls.
+// into Mark* calls. priorityKey is the COALESCE(timestamp,
+// imported_at) value used to sort the batch newest-first; it's
+// internal to the queue and not exposed on the public Claim type
+// (the worker doesn't need it).
 type Claim struct {
 	Media     media.Media
 	ClaimedAt time.Time
+
+	priorityKey time.Time
 }
 
 // EnqueueFilter narrows which rows Enqueue targets. Either All or at
@@ -52,6 +58,16 @@ func NewQueue(rw, ro *sql.DB) *Queue {
 	return &Queue{rw: rw, ro: ro}
 }
 
+// claimBatchSQL drains pending rows newest-first so the photos a user
+// will actually look at right after import (the latest ones, which
+// land at the top of /library) get thumbs before the long tail of
+// older imports. We sort by the photo's EXIF-derived `timestamp`
+// when present, falling back to `imported_at` for rows missing EXIF
+// dates, then by `id` for a deterministic tiebreaker. The previous
+// FIFO ordering by imported_at meant a user importing today's shoot
+// after a 200-frame archive backfill would see the newest day's
+// thumbs last — which manifested as a "broken" library on first
+// open even though the worker was making steady progress.
 const claimBatchSQL = `
 UPDATE media
    SET thumb_status     = 'working',
@@ -59,11 +75,12 @@ UPDATE media
  WHERE id IN (
      SELECT id FROM media
       WHERE thumb_status = 'pending'
-      ORDER BY imported_at ASC, id ASC
+      ORDER BY COALESCE(timestamp, imported_at) DESC, id ASC
       LIMIT ?
  )
 RETURNING id, owner_hub, owner_user_id, media_type, mime_type, path,
-          thumb_version, checksum, thumb_claimed_at
+          thumb_version, checksum, thumb_claimed_at,
+          COALESCE(timestamp, imported_at) AS priority_key
 `
 
 // ClaimBatch transitions up to n pending rows to 'working' and returns
@@ -90,14 +107,26 @@ func (q *Queue) ClaimBatch(ctx context.Context, n int) ([]Claim, error) {
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("claim rows: %w", err)
 	}
+	// SQLite's UPDATE...RETURNING does NOT preserve the inner
+	// SELECT's ORDER BY — the rows we wanted (newest-first) come
+	// back in some implementation-defined order. Sort the slice
+	// here so the worker dispatches them in priority order.
+	// Stable sort with priorityKey desc, then id asc as tiebreak.
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].priorityKey.Equal(out[j].priorityKey) {
+			return out[i].priorityKey.After(out[j].priorityKey)
+		}
+		return out[i].Media.ID < out[j].Media.ID
+	})
 	return out, nil
 }
 
 func scanClaim(rows *sql.Rows) (Claim, error) {
 	var (
-		c         Claim
-		mediaType string
-		claimedAt time.Time
+		c              Claim
+		mediaType      string
+		claimedAt      time.Time
+		priorityKeyRaw string
 	)
 	if err := rows.Scan(
 		&c.Media.ID,
@@ -109,11 +138,22 @@ func scanClaim(rows *sql.Rows) (Claim, error) {
 		&c.Media.ThumbVersion,
 		&c.Media.Checksum,
 		&claimedAt,
+		&priorityKeyRaw,
 	); err != nil {
 		return Claim{}, fmt.Errorf("scan claim: %w", err)
 	}
 	c.Media.Type = media.Type(mediaType)
 	c.ClaimedAt = claimedAt
+	// COALESCE through sqlite returns a TEXT, not a typed timestamp,
+	// so the mattn driver's automatic time.Time materialization
+	// doesn't kick in. Parse the RFC3339 form the schema writes.
+	// A bad parse falls back to imported_at — never zero, never
+	// nil — so SortStable below still has a valid ordering key.
+	if t, err := time.Parse(time.RFC3339Nano, priorityKeyRaw); err == nil {
+		c.priorityKey = t
+	} else if t, err := time.Parse(time.RFC3339, priorityKeyRaw); err == nil {
+		c.priorityKey = t
+	}
 	return c, nil
 }
 
