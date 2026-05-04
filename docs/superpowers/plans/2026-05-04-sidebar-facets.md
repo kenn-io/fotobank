@@ -1325,12 +1325,15 @@ func registerFacetsRoutes(api huma.API, svc *facets.Service, hiddenAuth *hidden.
 }
 
 // facetsInput is the bound query-string surface. Multi-value params
-// (Camera, Lens, FacetTag, Tag) bind via huma's repeat-param convention.
+// (Camera, Lens, FacetTag, Tag) bind via huma's repeat-param convention,
+// which requires the `,explode` modifier — without it, repeated
+// `?camera=A&camera=B` collapses to the last value silently. Mirrors
+// the existing /search route's `Tag []string `query:"tag,explode"``.
 type facetsInput struct {
-	Camera        []string `query:"camera"`
-	Lens          []string `query:"lens"`
-	FacetTag      []string `query:"facet_tag"`
-	Tag           []string `query:"tag"`
+	Camera        []string `query:"camera,explode"`
+	Lens          []string `query:"lens,explode"`
+	FacetTag      []string `query:"facet_tag,explode"`
+	Tag           []string `query:"tag,explode"`
 	HasGPS        *bool    `query:"has_gps"`
 	MediaType     *string  `query:"media_type" enum:"photo,video"`
 	DateAfter     *string  `query:"date_after"`
@@ -2211,7 +2214,17 @@ export class FacetsStore {
       return Promise.resolve();
     }
 
+    // If a previous debounced call is in flight, resolve its returned
+    // promise before clearing the timer — otherwise the earlier
+    // caller's `await fetch(...)` would hang forever because the
+    // settle path in the timeout closure never runs. Resolve (don't
+    // reject); callers care about reaching the latest state, not
+    // about each individual call's success.
     if (this.debounceTimer !== null) clearTimeout(this.debounceTimer);
+    if (this.pendingResolve) {
+      this.pendingResolve();
+      this.pendingResolve = null;
+    }
 
     return new Promise<void>((resolve) => {
       this.pendingResolve = resolve;
@@ -3503,9 +3516,37 @@ EOF
 ## Task 17 — Mount `FilterChipStrip` in `Library.svelte`; pass filters to mediaStore
 
 **Files:**
+- Modify: `internal/httpapi/media.go` (extend `listMediaInput` with new query fields; map into `media.ListFilter`)
+- Modify: `internal/httpapi/media_test.go` (add a route-level test that hits `/api/v1/media?camera=…&lens=…&facet_tag=…&has_gps=1` and asserts the narrowed result set)
 - Modify: `frontend/src/routes/Library.svelte`
+- Modify: `frontend/src/App.svelte` (thread `tagLabels` + `onFiltersChange` props to Library)
 
-Library.svelte already exists; mount the chip strip above the grid and call `mediaStore.setFilters(activeFilters)` whenever `activeFilters` changes.
+Library.svelte already exists; mount the chip strip above the grid and call `mediaStore.setFilters(activeFilters)` whenever `activeFilters` changes. **Backend gap:** `media.ListFilter` accepts the new fields after Task 2, but the `/api/v1/media` HTTP route still ignores `camera`, `lens`, `facet_tag`, and `has_gps`. Extend the input first so the frontend filter call actually narrows the response.
+
+- [ ] **Step 0: Extend `/api/v1/media` HTTP route inputs**
+
+Open `internal/httpapi/media.go` and locate `listMediaInput`. Add the four facet fields (note `,explode` for slices, mirroring `/search`'s `Tag []string `query:"tag,explode"`):
+
+```go
+Camera   []string `query:"camera,explode"`
+Lens     []string `query:"lens,explode"`
+FacetTag []string `query:"facet_tag,explode"`
+HasGPS   *bool    `query:"has_gps"`
+```
+
+In the handler that maps `listMediaInput` → `media.ListFilter`, forward these:
+
+```go
+ListFilter{
+    // ... existing fields
+    Cameras:    in.Camera,
+    Lenses:     in.Lens,
+    AnyTagKeys: in.FacetTag,
+    HasGPS:     in.HasGPS,
+}
+```
+
+Add a route test (Go side) that seeds two cameras' rows for one owner, hits `/api/v1/media?camera=Sony%20A7R%20IV`, and asserts only the matching IDs come back. Re-run `make api-generate` to refresh `openapi.json`.
 
 - [ ] **Step 1: Inspect Library.svelte structure**
 
@@ -3630,10 +3671,35 @@ EOF
 ## Task 18 — Wire filters into `Search.svelte`
 
 **Files:**
+- Modify: `internal/httpapi/search.go` (extend `searchInput` with new query fields)
+- Modify: `internal/service/search/service.go` (extend `searchsvc.Request` and propagate into `hybrid.Input`)
+- Modify: `internal/httpapi/search_test.go` and/or `internal/service/search/service_test.go`
 - Modify: `frontend/src/routes/Search.svelte`
 - Modify: `frontend/src/lib/search/searchStore.svelte.ts`
 
-Search already supports `?q=` and a few filter params. Extend its store call to include the new facet params.
+Search already supports `?q=` and a few filter params. Extend its store call to include the new facet params. **Backend gap:** `hybrid.Input` accepts the four new fields after Task 1, but `/api/v1/search` still ignores `camera`, `lens`, `facet_tag`, and `has_gps` — the searchInput query struct, `searchsvc.Request`, and the service-to-`hybrid.Input` mapping all need extending before the frontend call honours these filters.
+
+- [ ] **Step 0: Extend `/api/v1/search` backend**
+
+In `internal/httpapi/search.go`, add to the search input struct (mirror the `,explode` convention already in use for `Tag`):
+
+```go
+Camera   []string `query:"camera,explode"`
+Lens     []string `query:"lens,explode"`
+FacetTag []string `query:"facet_tag,explode"`
+HasGPS   *bool    `query:"has_gps"`
+```
+
+In `internal/service/search/service.go`, extend `searchsvc.Request` with the same fields and forward them in the `hybrid.Input` build:
+
+```go
+Cameras:    req.Cameras,
+Lenses:     req.Lenses,
+AnyTagKeys: req.FacetTag,
+HasGPS:     req.HasGPS,
+```
+
+Add a service-level test that exercises one new field end-to-end, and a route-level test that confirms repeated `?camera=A&camera=B` binds to a 2-element slice (regression for the `,explode` modifier). Re-run `make api-generate`.
 
 - [ ] **Step 1: Inspect searchStore**
 
@@ -3703,10 +3769,26 @@ EOF
 ## Task 19 — Wire filters into `Map.svelte`
 
 **Files:**
+- Modify: `internal/httpapi/media_geo.go` (extend the geo handler input with new query fields; map into `media.ListGeoFilter`)
+- Modify: `internal/service/media_service.go` (extend `MediaService.ListGeo` to accept and forward the new fields)
+- Modify: `internal/httpapi/media_geo_test.go` (route test for repeated facet params)
 - Modify: `frontend/src/routes/Map.svelte`
 - Modify: `frontend/src/lib/geo/geoStore.svelte.ts` (or wherever the geo data is fetched)
 
-The geo store is one-shot per page-load — on filter change we re-fetch from `/api/v1/media/geo` with the new params. Note that `has_gps` is NOT a /map param.
+The geo store is one-shot per page-load — on filter change we re-fetch from `/api/v1/media/geo` with the new params. Note that `has_gps` is NOT a /map param. **Backend gap:** `media.ListGeoFilter` accepts the new fields after Task 3, but `/api/v1/media/geo` and `MediaService.ListGeo` still ignore them — extend the route input + service wrapper first so the frontend re-fetch actually narrows the pin set.
+
+- [ ] **Step 0: Extend `/api/v1/media/geo` backend**
+
+In `internal/httpapi/media_geo.go`, add to the geo input struct (note: `has_gps` is intentionally excluded — `/geo`'s contract is geotagged-only):
+
+```go
+Camera    []string `query:"camera,explode"`
+Lens      []string `query:"lens,explode"`
+FacetTag  []string `query:"facet_tag,explode"`
+MediaType *string  `query:"media_type" enum:"photo,video"`
+```
+
+In the handler, forward these into the `MediaService.ListGeo` call. Extend `MediaService.ListGeo` (and `ListGeoFilter` already extended in Task 3) to accept and forward the new fields. Add a route test that hits `/api/v1/media/geo?camera=…` and asserts pin narrowing. Re-run `make api-generate`.
 
 - [ ] **Step 1: Extend the geo fetch URL**
 
