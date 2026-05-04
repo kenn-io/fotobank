@@ -953,10 +953,20 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	select {
 	case err := <-serveErr:
 		// Serve exited on its own (bind loss, unrecoverable error).
-		// Cancel sigCtx so background workers unwind, then join them
-		// before returning so deferred d.Close cannot race.
+		// srv has stopped accepting new connections, but in-flight
+		// handlers (notably long-lived /api/v1/events SSE streams) are
+		// still running and would outlive this goroutine; without
+		// draining them, deferred d.Close races with mid-flight DB
+		// reads. Mirror the sigCtx branch: Shutdown with a bounded
+		// timeout, force-close on timeout, then cancel sigCtx so
+		// background workers unwind and join them.
 		ready.Store(false)
 		stop()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if serr := srv.Shutdown(shutdownCtx); serr != nil {
+			_ = srv.Close()
+		}
 		bgWG.Wait()
 		shutdownAdmin()
 		return err
