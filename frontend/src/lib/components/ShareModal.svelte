@@ -155,7 +155,9 @@
     position: fixed; inset: 0;
     background: rgba(10, 10, 13, 0.78);
     display: flex; align-items: center; justify-content: center;
-    z-index: 100;
+    /* Above the lightbox (z-index: 150) so a Share opened from the
+       lightbox stacks in front of the lightbox backdrop. */
+    z-index: 200;
   }
   .modal {
     background: var(--surface);

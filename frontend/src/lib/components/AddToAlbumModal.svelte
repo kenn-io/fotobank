@@ -158,7 +158,12 @@
     position: fixed; inset: 0;
     background: rgba(10, 10, 13, 0.78);
     display: flex; align-items: center; justify-content: center;
-    z-index: 100;
+    /* Above the lightbox (z-index: 150 in LightboxFrame). When the
+       Add-to-album button is clicked from inside the lightbox the
+       modal MUST stack on top of the lightbox backdrop, otherwise
+       it opens but stays invisible behind it and feels like a
+       broken button. */
+    z-index: 200;
   }
   .modal {
     background: var(--surface);

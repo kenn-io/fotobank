@@ -28,6 +28,13 @@
        scrollbar" the user reported. */
     height: calc(100vh - 46px);
     width: 100vw;
+    /* Reserved width for the timeline rail (right side of .main).
+       YearScrubber is position:fixed and reads `right` from the
+       viewport, so the scrubber and this rail must agree on width.
+       Anything that sits inside .main (DensityControl strip, photo
+       grid day-header) bottoms out at the rail's left edge so the
+       Select group button stops colliding with the scrubber. */
+    --rail-width: 48px;
   }
   .sidebar {
     background: var(--surface);
@@ -40,6 +47,19 @@
   .main {
     overflow: auto;
     background: var(--bg);
+    /* Right-side rail: padding-right reserves the gutter that
+       YearScrubber lives in. The browser places the overflow
+       scrollbar at .main's outer right edge (outside the padding),
+       so the visual order — scrolling content → rail gutter →
+       scrollbar — is exactly what the design needs. The DensityControl
+       header and the VirtualGrid both sit inside the padded content
+       box, so neither bleeds under the scrubber.
+       scrollbar-gutter: stable keeps the layout from twitching when
+       overflow toggles (a short library doesn't need a scrollbar,
+       a long one does — without `stable` the rail width would
+       briefly compress on the transition). */
+    padding-right: var(--rail-width);
+    scrollbar-gutter: stable;
   }
   .detail {
     background: var(--surface);
