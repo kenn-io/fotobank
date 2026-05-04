@@ -3,7 +3,14 @@
 import type { SearchSort } from "../search/types";
 
 export type RouteMatch =
-  | { route: "library" }
+  | {
+      route: "library";
+      camera?: string[];
+      lens?: string[];
+      facet_tag?: string[];
+      has_gps?: boolean;
+      media_type?: "photo" | "video";
+    }
   | { route: "sessions" }
   | { route: "settings" }
   | { route: "settings.ai" }
@@ -18,6 +25,11 @@ export type RouteMatch =
       c?: [number, number];
       focus?: string;
       tab?: "map" | "photos";
+      camera?: string[];
+      lens?: string[];
+      facet_tag?: string[];
+      media_type?: "photo" | "video";
+      // No has_gps on /map (route is geotagged-only).
     }
   | {
       route: "search";
@@ -29,15 +41,74 @@ export type RouteMatch =
       location?: string;
       media_type?: "photo" | "video";
       include_hidden?: boolean;
+      camera?: string[];
+      lens?: string[];
+      facet_tag?: string[];
+      has_gps?: boolean;
     }
   | { route: "notfound"; path: string };
+
+// parseFilterParams reads the multi-value sidebar facet params shared
+// across /library, /map, and /search. camera, lens, and facet_tag use
+// the repeat convention (?camera=A&camera=B → ["A","B"]); empty
+// repetitions are kept (URLSearchParams.getAll preserves them) but the
+// field is omitted entirely when no values are present so a bare route
+// stays bare. media_type narrows to "photo"|"video" — unknown values
+// fall through (the field is omitted).
+function parseFilterParams(sp: URLSearchParams): {
+  camera?: string[];
+  lens?: string[];
+  facet_tag?: string[];
+  media_type?: "photo" | "video";
+} {
+  const out: {
+    camera?: string[];
+    lens?: string[];
+    facet_tag?: string[];
+    media_type?: "photo" | "video";
+  } = {};
+  const camera = sp.getAll("camera");
+  if (camera.length > 0) out.camera = camera;
+  const lens = sp.getAll("lens");
+  if (lens.length > 0) out.lens = lens;
+  const facetTag = sp.getAll("facet_tag");
+  if (facetTag.length > 0) out.facet_tag = facetTag;
+  const mt = sp.get("media_type");
+  if (mt === "photo" || mt === "video") out.media_type = mt;
+  return out;
+}
+
+// parseHasGps narrows ?has_gps= to boolean. Per the sidebar-facets
+// plan, the canonical wire format is "1"/"0" (not "true"/"false") so
+// it composes cleanly with the rest of the filter chip URL surface.
+// Anything else falls through to undefined → field omitted.
+function parseHasGps(sp: URLSearchParams): boolean | undefined {
+  const v = sp.get("has_gps");
+  if (v === "1") return true;
+  if (v === "0") return false;
+  return undefined;
+}
+
+// buildLibraryRoute is shared by `^/$` and `^/library$`; the two URLs
+// resolve to the same in-app surface so they parse the same query
+// params. Kept as a helper to avoid drift between the two slots.
+function buildLibraryRoute(): RouteMatch {
+  const sp = new URLSearchParams(window.location.search);
+  const filters = parseFilterParams(sp);
+  const hasGps = parseHasGps(sp);
+  return {
+    route: "library" as const,
+    ...filters,
+    ...(hasGps !== undefined ? { has_gps: hasGps } : {}),
+  };
+}
 
 // Anchored patterns. Order doesn't matter — each regex tests in
 // isolation; first match wins. Search and hash are stripped before
 // matching so /media/abc?x=1 matches /media/:id.
 const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }> = [
-  { re: /^\/$/,           build: () => ({ route: "library" }) },
-  { re: /^\/library$/,    build: () => ({ route: "library" }) },
+  { re: /^\/$/,           build: () => buildLibraryRoute() },
+  { re: /^\/library$/,    build: () => buildLibraryRoute() },
   { re: /^\/sessions$/,   build: () => ({ route: "sessions" }) },
   { re: /^\/settings\/ai\/?$/, build: () => ({ route: "settings.ai" }) },
   { re: /^\/settings$/,   build: () => ({ route: "settings" }) },
@@ -85,6 +156,7 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
       ? cRaw.split(",").map((s) => toFiniteNumber(s))
       : [];
     const tab = tabRaw === "photos" || tabRaw === "map" ? tabRaw : null;
+    const filters = parseFilterParams(sp);
     return {
       route: "map" as const,
       ...(Number.isFinite(z) ? { z } : {}),
@@ -93,6 +165,10 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
         : {}),
       ...(focusRaw !== null && focusRaw !== "" ? { focus: focusRaw } : {}),
       ...(tab !== null ? { tab } : {}),
+      ...filters,
+      // No has_gps on /map: the route is geotagged-only by definition,
+      // so the toggle would be a no-op. The sidebar suppresses the
+      // chip on /map; the parser ignores any inbound has_gps query.
     };
   } },
   // /search accepts the full filter/sort surface as query params.
@@ -109,9 +185,12 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
     const dateBefore = sp.get("date_before");
     const tags = sp.getAll("tag").filter((t) => t !== "");
     const location = sp.get("location");
-    const mediaTypeRaw = sp.get("media_type");
-    const mediaType = parseMediaType(mediaTypeRaw);
     const includeHidden = sp.get("include_hidden") === "true";
+    // parseFilterParams provides camera/lens/facet_tag/media_type using
+    // the same "photo"|"video" narrower as /library and /map, so /search
+    // gets media_type from the shared helper instead of a local copy.
+    const filters = parseFilterParams(sp);
+    const hasGps = parseHasGps(sp);
     return {
       route: "search" as const,
       ...(q != null && q !== "" ? { q } : {}),
@@ -120,8 +199,9 @@ const PATTERNS: Array<{ re: RegExp; build: (m: RegExpMatchArray) => RouteMatch }
       ...(dateBefore != null && dateBefore !== "" ? { date_before: dateBefore } : {}),
       ...(tags.length > 0 ? { tag: tags } : {}),
       ...(location != null && location !== "" ? { location } : {}),
-      ...(mediaType !== null ? { media_type: mediaType } : {}),
       ...(includeHidden ? { include_hidden: true } : {}),
+      ...filters,
+      ...(hasGps !== undefined ? { has_gps: hasGps } : {}),
     };
   } },
 ];
@@ -144,13 +224,6 @@ function toFiniteNumber(raw: string | null): number {
 // values fall through to null so the route omits the field entirely.
 function parseSearchSort(raw: string | null): SearchSort | null {
   if (raw === "relevance" || raw === "newest" || raw === "oldest") return raw;
-  return null;
-}
-
-// parseMediaType narrows ?media_type= to "photo" | "video". Unknown
-// values fall through to null so the route omits the field.
-function parseMediaType(raw: string | null): "photo" | "video" | null {
-  if (raw === "photo" || raw === "video") return raw;
   return null;
 }
 

@@ -402,6 +402,111 @@ describe("RouterStore — from=map", () => {
   });
 });
 
+describe("RouterStore — sidebar facet query params", () => {
+  beforeEach(() => setLocation("/"));
+
+  it("/library parses camera, lens, facet_tag, has_gps=1, media_type", () => {
+    setLocation(
+      "/library?camera=Sony+A7R+IV&camera=iPhone+15+Pro" +
+        "&lens=FE+24-70mm+F2.8+GM&facet_tag=dog&has_gps=1&media_type=photo",
+    );
+    const r = new RouterStore();
+    expect(r.current).toEqual({
+      route: "library",
+      camera: ["Sony A7R IV", "iPhone 15 Pro"],
+      lens: ["FE 24-70mm F2.8 GM"],
+      facet_tag: ["dog"],
+      has_gps: true,
+      media_type: "photo",
+    });
+  });
+
+  it("/library with has_gps=0 carries the boolean false", () => {
+    setLocation("/library?has_gps=0");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "library", has_gps: false });
+  });
+
+  it("/library drops has_gps when value is neither '0' nor '1'", () => {
+    setLocation("/library?has_gps=true");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "library" });
+  });
+
+  it("/library drops media_type when value is unknown", () => {
+    setLocation("/library?media_type=audio");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "library" });
+  });
+
+  it("/library with no params remains a bare library route", () => {
+    setLocation("/library");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "library" });
+  });
+
+  it("/ (root) parses sidebar facet params just like /library", () => {
+    setLocation("/?camera=Sony+A7R+IV&facet_tag=dog");
+    const r = new RouterStore();
+    expect(r.current).toEqual({
+      route: "library",
+      camera: ["Sony A7R IV"],
+      facet_tag: ["dog"],
+    });
+  });
+
+  it("/map parses camera, lens, facet_tag, media_type but never has_gps", () => {
+    setLocation(
+      "/map?camera=Sony+A7R+IV&lens=FE+24-70mm+F2.8+GM" +
+        "&facet_tag=cat&media_type=video&has_gps=1",
+    );
+    const r = new RouterStore();
+    const cur = r.current;
+    expect(cur).toMatchObject({
+      route: "map",
+      camera: ["Sony A7R IV"],
+      lens: ["FE 24-70mm F2.8 GM"],
+      facet_tag: ["cat"],
+      media_type: "video",
+    });
+    expect(cur).not.toHaveProperty("has_gps");
+  });
+
+  it("/map preserves existing z, c, focus, tab alongside new facet params", () => {
+    setLocation("/map?z=10&c=40.7,-74.0&tab=photos&camera=Sony+A7R+IV");
+    const r = new RouterStore();
+    expect(r.current).toEqual({
+      route: "map",
+      z: 10,
+      c: [40.7, -74.0],
+      tab: "photos",
+      camera: ["Sony A7R IV"],
+    });
+  });
+
+  it("/search merges new facet params alongside existing ones", () => {
+    setLocation(
+      "/search?q=mountain&tag=Dog&camera=Sony+A7R+IV" +
+        "&facet_tag=cat&has_gps=0",
+    );
+    const r = new RouterStore();
+    expect(r.current).toEqual({
+      route: "search",
+      q: "mountain",
+      tag: ["Dog"],
+      camera: ["Sony A7R IV"],
+      facet_tag: ["cat"],
+      has_gps: false,
+    });
+  });
+
+  it("/search with has_gps=1 carries the boolean true", () => {
+    setLocation("/search?has_gps=1");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "search", has_gps: true });
+  });
+});
+
 describe("handleInternalLinkClick", () => {
   it("preventDefaults and navigates on plain left click", () => {
     setLocation("/");
