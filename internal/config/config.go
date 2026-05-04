@@ -221,15 +221,20 @@ func expandHomePaths(c *Config) error {
 
 // expandHome returns p with a leading "~" or "~/" replaced by $HOME.
 // Empty strings, absolute paths, and relative paths that don't start
-// with "~" pass through unchanged. A bare "~user" form is rejected
-// (we only support the current user's home, matching shell defaults
-// for `~`).
+// with "~" pass through unchanged. The "~user" form is rejected with
+// an explicit error so a config of `root = "~alice/photos"` doesn't
+// silently fall through to a literal `~alice/photos` directory under
+// CWD — we only support the current user's home, matching shell
+// defaults for `~`.
 func expandHome(p string) (string, error) {
 	if p == "" {
 		return p, nil
 	}
-	if p != "~" && !strings.HasPrefix(p, "~/") {
+	if !strings.HasPrefix(p, "~") {
 		return p, nil
+	}
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return "", fmt.Errorf("path %q: ~user form is not supported, use ~ or ~/<rest>", p)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

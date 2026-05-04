@@ -766,3 +766,31 @@ listen_address = "127.0.0.1:0"
 	r.NoError(err)
 	r.Equal(home, cfg.NAS.Root)
 }
+
+// TestLoadRejectsTildeUserForm pins the contract that "~alice/photos"
+// is rejected with a clear error rather than silently passed through
+// as a relative path. Without this guard, a config like
+// `root = "~alice/photos"` would create a literal `./~alice/photos`
+// directory under CWD on first write — surprising and silent.
+func TestLoadRejectsTildeUserForm(t *testing.T) {
+	r := require.New(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "~alice/photos"
+[identity]
+mode = "stub"
+[identity.stub]
+hub = "h"
+user_id = "u"
+[http]
+listen_address = "127.0.0.1:0"
+`), 0o600))
+	_, err := config.Load(p)
+	r.Error(err)
+	r.Contains(err.Error(), "~user form")
+}

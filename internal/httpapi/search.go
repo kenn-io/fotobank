@@ -344,13 +344,19 @@ type searchBody struct {
 // ScoreComponents is omitted when the underlying Hit didn't carry one
 // (e.g. an early degradation path that didn't compute per-signal ranks).
 type searchResultDTO struct {
-	MediaID         string              `json:"media_id"`
-	MediaType       string              `json:"media_type"`
-	Timestamp       *time.Time          `json:"timestamp"`
-	ImportedAt      time.Time           `json:"imported_at"`
-	Width           *int                `json:"width"`
-	Height          *int                `json:"height"`
-	ThumbVersion    int                 `json:"thumb_version"`
+	MediaID      string     `json:"media_id"`
+	MediaType    string     `json:"media_type"`
+	Timestamp    *time.Time `json:"timestamp"`
+	ImportedAt   time.Time  `json:"imported_at"`
+	Width        *int       `json:"width"`
+	Height       *int       `json:"height"`
+	ThumbVersion int        `json:"thumb_version"`
+	// ThumbStatus is forwarded so the SPA's grid can render a shimmer
+	// (pending/working) or a static placeholder (failed/no_preview)
+	// instead of attempting an <img> that 404s. Without this column
+	// the search route would treat every result as ready and the
+	// retry-on-version-bump path stayed broken.
+	ThumbStatus     string              `json:"thumb_status"`
 	Score           float64             `json:"score,omitempty"`
 	ScoreComponents *scoreComponentsDTO `json:"score_components,omitempty"`
 }
@@ -403,6 +409,7 @@ func toSearchResultDTO(h index.Hit, explain bool) searchResultDTO {
 		Width:        h.Width,
 		Height:       h.Height,
 		ThumbVersion: h.ThumbVersion,
+		ThumbStatus:  h.ThumbStatus,
 		Score:        h.Score,
 	}
 	if explain && h.ScoreComponents != nil {

@@ -166,6 +166,14 @@ func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Opti
 	}); err != nil {
 		return Result{}, fmt.Errorf("discover: %w", err)
 	}
+	// Emit the discovery event before the empty-candidates short-circuit
+	// so callers always observe the documented "Total: N" initial frame
+	// — even when N is 0. CLI progress UIs key off this frame to print
+	// the "Discovered 0 candidate(s)" line; without it an empty source
+	// directory would print nothing and look like a hang.
+	if opts.Progress != nil {
+		opts.Progress(ProgressEvent{Total: len(candidates)})
+	}
 	if len(candidates) == 0 {
 		return Result{}, nil
 	}
@@ -173,10 +181,6 @@ func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Opti
 	workers := max(opts.ConcurrentWorkers, 1)
 	jobs := make(chan Candidate, len(candidates))
 	results := make(chan candidateOutcome, len(candidates))
-
-	if opts.Progress != nil {
-		opts.Progress(ProgressEvent{Total: len(candidates)})
-	}
 
 	var wg sync.WaitGroup
 	for range workers {

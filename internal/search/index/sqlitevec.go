@@ -197,7 +197,7 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	sb.WriteString("    FROM ann a LEFT JOIN bm25 b ON b.id = a.id\n")
 	sb.WriteString("    WHERE b.id IS NULL\n")
 	sb.WriteString("  )\n")
-	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version,\n")
+	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version, m.thumb_status,\n")
 	sb.WriteString("       (CASE WHEN fused.rank_bm25 IS NOT NULL THEN 1.0 / (? + fused.rank_bm25) ELSE 0 END +\n")
 	sb.WriteString("        CASE WHEN fused.rank_vector IS NOT NULL THEN 1.0 / (? + fused.rank_vector) ELSE 0 END) AS rrf,\n")
 	sb.WriteString("       fused.bm25, fused.vec, fused.rank_bm25, fused.rank_vector\n")
@@ -262,7 +262,7 @@ func (b *SQLiteVecBackend) BM25Only(ctx context.Context, in SearchInput) ([]Hit,
 	sb.WriteString("    SELECT id, score, ROW_NUMBER() OVER (ORDER BY score) AS rank_bm25\n")
 	sb.WriteString("    FROM bm25_raw\n")
 	sb.WriteString("  )\n")
-	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version,\n")
+	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version, m.thumb_status,\n")
 	sb.WriteString("       bm25.score AS bm25, bm25.rank_bm25\n")
 	sb.WriteString("FROM bm25 JOIN media m ON m.id = bm25.id\n")
 	// Same candidates-by-relevance / page-by-date split as
@@ -292,7 +292,7 @@ func (b *SQLiteVecBackend) BM25Only(ctx context.Context, in SearchInput) ([]Hit,
 			rankBM25  sql.NullInt64
 		)
 		if err := rows.Scan(
-			&h.MediaID, &h.MediaType, &ts, &h.ImportedAt, &width, &height, &h.ThumbVersion,
+			&h.MediaID, &h.MediaType, &ts, &h.ImportedAt, &width, &height, &h.ThumbVersion, &h.ThumbStatus,
 			&bm25Score, &rankBM25,
 		); err != nil {
 			return nil, fmt.Errorf("scan bm25 hit: %w", err)
@@ -332,7 +332,7 @@ func (b *SQLiteVecBackend) FilterOnly(ctx context.Context, in SearchInput) ([]Hi
 	sb.WriteString("WITH filter AS (")
 	sb.WriteString(in.Filter.SQL)
 	sb.WriteString(")\n")
-	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version\n")
+	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version, m.thumb_status\n")
 	sb.WriteString("FROM filter f JOIN media m ON m.id = f.id\n")
 	switch in.Sort {
 	case SortOldest:
@@ -365,7 +365,7 @@ func (b *SQLiteVecBackend) FilterOnly(ctx context.Context, in SearchInput) ([]Hi
 			height sql.NullInt64
 		)
 		if err := rows.Scan(
-			&h.MediaID, &h.MediaType, &ts, &h.ImportedAt, &width, &height, &h.ThumbVersion,
+			&h.MediaID, &h.MediaType, &ts, &h.ImportedAt, &width, &height, &h.ThumbVersion, &h.ThumbStatus,
 		); err != nil {
 			return nil, fmt.Errorf("scan filter hit: %w", err)
 		}
@@ -399,7 +399,7 @@ func scanFusedHits(rows *sql.Rows) ([]Hit, error) {
 			rankVector sql.NullInt64
 		)
 		if err := rows.Scan(
-			&h.MediaID, &h.MediaType, &ts, &h.ImportedAt, &width, &height, &h.ThumbVersion,
+			&h.MediaID, &h.MediaType, &ts, &h.ImportedAt, &width, &height, &h.ThumbVersion, &h.ThumbStatus,
 			&rrf, &bm25Score, &vecScore, &rankBM25, &rankVector,
 		); err != nil {
 			return nil, fmt.Errorf("scan fused hit: %w", err)

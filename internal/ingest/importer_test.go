@@ -12,7 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -734,16 +734,21 @@ func TestImporter_VideoImportSkipsAllThreeTasksWhenEmbedEnabled(t *testing.T) {
 // not in a single burst at the end of the run. The original feature
 // landed with the result-drain loop running AFTER wg.Wait(), which
 // made the import LOOK hung from the user's terminal: every progress
-// event fired in microseconds at the very end. The fix moves the
-// drain into a goroutine that runs concurrently with workers; this
-// test reproduces the symptom by parking each candidate's worker
-// behind a per-candidate gate and asserting Progress fires for
-// candidate K before candidate K+1 is ever released.
+// event fired in microseconds at the very end.
+//
+// The earlier version of this test compared two timestamps both
+// captured AFTER ImportDirectory returned, so it would have passed
+// even under the broken drain-after-wait order. This version proves
+// liveness directly: it blocks INSIDE the first per-candidate
+// callback, then asserts ImportDirectory has not returned. That
+// state is only reachable when the drain goroutine is running
+// concurrently with the workers and pumps each result into the
+// callback as it lands. Under the broken order, the callback
+// wouldn't fire until wg.Wait completed, so this test would deadlock
+// and time out instead of passing trivially.
 func TestImportProgressFiresIncrementally(t *testing.T) {
 	r := require.New(t)
 	f := newImporterFixture(t)
-	// Three real fixtures so the importer's pipeline has actual bytes
-	// to checksum and write — we don't need to fake processCandidate.
 	src := seedSource(t,
 		"photo-with-timestamp.jpg",
 		"photo-no-exif.jpg",
@@ -751,46 +756,71 @@ func TestImportProgressFiresIncrementally(t *testing.T) {
 	)
 	imp := ingest.NewImporter(f.store, f.repo, nil)
 
-	// Sequential workers (1) so the per-candidate ordering is
-	// deterministic regardless of OS scheduler whims.
-	var (
-		mu           sync.Mutex
-		seenDone     []int
-		seenAt       []time.Time
-		announceSeen bool
-	)
+	firstProgress := make(chan struct{})
+	release := make(chan struct{})
+	var firstFired atomic.Bool
 	progress := func(ev ingest.ProgressEvent) {
-		mu.Lock()
-		defer mu.Unlock()
-		if ev.Done == 0 && !announceSeen {
-			announceSeen = true
+		if ev.Done == 0 {
+			// Discovery announce — let it through unconditionally.
 			return
 		}
-		seenDone = append(seenDone, ev.Done)
-		seenAt = append(seenAt, time.Now())
+		if firstFired.CompareAndSwap(false, true) {
+			close(firstProgress)
+			<-release
+		}
 	}
 
-	start := time.Now()
-	res, err := imp.ImportDirectory(context.Background(), src, ingest.Options{
-		Owner:             f.owner,
-		ConcurrentWorkers: 1,
-		Progress:          progress,
-	})
-	r.NoError(err)
-	r.Equal(3, res.Imported)
+	type result struct {
+		res ingest.Result
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		res, err := imp.ImportDirectory(context.Background(), src, ingest.Options{
+			Owner:             f.owner,
+			ConcurrentWorkers: 1,
+			Progress:          progress,
+		})
+		done <- result{res: res, err: err}
+	}()
 
-	// Three per-candidate events with monotonically increasing Done.
-	r.True(announceSeen, "announce event must fire before per-candidate events")
-	r.Equal([]int{1, 2, 3}, seenDone)
+	// Wait for the first per-candidate progress callback. With a
+	// concurrent drain this fires after candidate 1 finishes — well
+	// before the goroutine returns. A 5s ceiling catches the
+	// drain-after-wait regression: under that bug the callback would
+	// only fire once every candidate has been processed, and the
+	// ImportDirectory goroutine would try to publish on `done` before
+	// `firstProgress` ever closed (the callback blocks the drain
+	// goroutine, but the import has nothing left to do by then —
+	// this select would observe done first).
+	select {
+	case <-firstProgress:
+	case res := <-done:
+		r.Failf("import returned too early",
+			"ImportDirectory returned before any per-candidate progress: err=%v", res.err)
+	case <-time.After(5 * time.Second):
+		r.FailNow("first per-candidate progress event never arrived")
+	}
 
-	// Liveness: the FIRST per-candidate event must arrive STRICTLY
-	// before the import call returns. The original drain-after-wait
-	// bug made all three events arrive in a microsecond burst at
-	// import-completion time; this assertion fails under that bug.
-	r.Less(seenAt[0].Sub(start), time.Since(start),
-		"first progress event must arrive before ImportDirectory returns")
-	// Sanity: total wall time should be at least an OS time tick so
-	// the timestamp comparison above is meaningful (paranoia against
-	// a too-fast machine where everything happens in 0ns).
-	r.Greater(time.Since(start), time.Microsecond)
+	// At this point Progress is parked inside the callback, which
+	// blocks the drain goroutine, which blocks ImportDirectory from
+	// returning. Confirm the goroutine hasn't completed.
+	select {
+	case res := <-done:
+		r.Failf("import returned mid-callback",
+			"ImportDirectory returned while a progress callback was still blocking: err=%v", res.err)
+	default:
+	}
+
+	close(release)
+	r.Eventually(func() bool {
+		select {
+		case res := <-done:
+			r.NoError(res.err)
+			r.Equal(3, res.res.Imported)
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond, "ImportDirectory did not return after release")
 }

@@ -90,13 +90,19 @@ type SearchInput struct {
 // columns are nullable; ImportedAt is non-nullable, so a value type is
 // fine.
 type Hit struct {
-	MediaID         string
-	MediaType       string
-	Timestamp       *time.Time
-	ImportedAt      time.Time
-	Width           *int
-	Height          *int
-	ThumbVersion    int
+	MediaID      string
+	MediaType    string
+	Timestamp    *time.Time
+	ImportedAt   time.Time
+	Width        *int
+	Height       *int
+	ThumbVersion int
+	// ThumbStatus mirrors media.thumb_status. Forwarded to the wire DTO
+	// so the SPA's grid can branch between "render the thumb",
+	// "shimmer (still working)", and "placeholder (no preview)" — the
+	// /thumb endpoint 404s for any state other than "ready", and
+	// without this column the frontend would attempt and fail.
+	ThumbStatus     string
 	Score           float64          // RRF or BM25 depending on engine mode
 	ScoreComponents *ScoreComponents // populated by every Backend mode
 }

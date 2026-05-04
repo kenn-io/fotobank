@@ -31,6 +31,12 @@ type EventBus struct {
 	mu     sync.Mutex
 	bufs   map[owners.Principal]*ring
 	bufLen int
+	// closed flips to true when Close fires. Subsequent subscribeFrom
+	// calls return a pre-closed channel so a request that arrives in
+	// the seam between listener-close and RegisterOnShutdown firing
+	// (or vice versa) doesn't park forever; the SSE handler observes
+	// the closed channel on its first <-ch read and returns.
+	closed bool
 }
 
 // Event is a single SSE payload. ID is monotonic per principal (the
@@ -238,11 +244,19 @@ func snapshotLocked(r *ring, bufLen int, lastID int64) (events []Event, oldestID
 // smallest event ID currently retained in the ring (0 when the ring
 // is empty), which the handler uses to decide whether the client's
 // Last-Event-ID predates the retained window.
+//
+// If the bus has been Closed, returns a pre-closed channel and a no-op
+// unsub so the handler exits its for-select on the first <-ch read.
 func (b *EventBus) subscribeFrom(p owners.Principal, lastID int64) (
 	replay []Event, oldestID int64, ch chan Event, unsub func(),
 ) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.closed {
+		ch = make(chan Event)
+		close(ch)
+		return nil, 0, ch, func() {}
+	}
 	r := b.bufs[p]
 	if r == nil {
 		r = &ring{events: make([]Event, 0, b.bufLen)}
@@ -253,6 +267,33 @@ func (b *EventBus) subscribeFrom(p owners.Principal, lastID int64) (
 	r.subs = append(r.subs, ch)
 	unsub = b.makeUnsub(p, ch)
 	return replay, oldestID, ch, unsub
+}
+
+// Close closes every active subscriber channel and rejects future
+// subscriptions. The HTTP server invokes this from RegisterOnShutdown
+// so /api/v1/events handlers — which block on a per-subscription
+// channel and would otherwise hold srv.Shutdown until its 30s
+// shutdownTimeout force-closed them — return immediately when the
+// channel-close signals open=false on the next read. Idempotent.
+//
+// This replaces the prior approach of wiring sigCtx into srv.BaseContext:
+// that fix worked for SSE but also cancelled every other r.Context()
+// the moment SIGINT fired, defeating graceful shutdown for normal
+// requests. Targeting only the SSE path preserves the shutdownTimeout
+// drain window for everything else.
+func (b *EventBus) Close() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return
+	}
+	b.closed = true
+	for _, r := range b.bufs {
+		for _, ch := range r.subs {
+			close(ch)
+		}
+		r.subs = nil
+	}
 }
 
 // eventsHandler returns the raw HTTP handler that serves

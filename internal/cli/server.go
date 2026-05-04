@@ -590,16 +590,17 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		Handler:      handler,
 		ReadTimeout:  cfg.HTTP.RequestTimeout,
 		WriteTimeout: cfg.HTTP.WriteTimeout,
-		// BaseContext returns sigCtx so every in-flight request inherits
-		// signal-driven cancellation. Long-lived handlers — notably the
-		// /api/v1/events SSE stream — block on r.Context().Done() and
-		// would otherwise hold srv.Shutdown until its 30s deadline force-
-		// closed them, making Ctrl-C feel hung. With this wired, SIGINT
-		// cancels sigCtx, every r.Context() cancels with it, the SSE for-
-		// select loop returns immediately, and Shutdown drains in
-		// microseconds.
-		BaseContext: func(net.Listener) context.Context { return sigCtx },
 	}
+	// Unblock the SSE stream specifically when shutdown begins.
+	// /api/v1/events parks on a per-subscription channel forever; without
+	// targeted eviction, srv.Shutdown waits the full 30s shutdownTimeout
+	// before force-closing. RegisterOnShutdown fires after listeners
+	// stop accepting new connections, so EventBus.Close() unblocks every
+	// active subscriber and they exit their for-select. Normal API
+	// requests still get the full shutdownTimeout drain window — only
+	// the SSE long-poll is targeted, which is what the prior
+	// BaseContext=sigCtx approach got wrong (it cancelled everything).
+	srv.RegisterOnShutdown(func() { eventBus.Close() })
 
 	// Bind the admin listener BEFORE any bgWG-tracked goroutine is
 	// spawned, so a port-conflict (or other bind failure) on the admin
