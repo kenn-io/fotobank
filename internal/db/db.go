@@ -7,6 +7,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 )
 
 // DB holds separate read-write and read-only connections to the SQLite
@@ -25,6 +27,15 @@ type DB struct {
 // if a caller forgets and invokes Exec against ReadDB().
 func Open(path string) (*DB, error) {
 	RegisterSqliteVec()
+	// SQLite won't create missing parent directories; do it ourselves
+	// so a fresh-install flash root (e.g. ~/.fotobank) is materialized
+	// on first run instead of erroring with "no such file or directory"
+	// from the WAL pragma.
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, fmt.Errorf("create db parent dir %q: %w", dir, err)
+		}
+	}
 	rwDSN := path + "?_busy_timeout=5000&_fk=1"
 	rw, err := sql.Open("sqlite3", rwDSN)
 	if err != nil {

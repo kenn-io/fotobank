@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -27,6 +28,31 @@ func TestOpenEnablesWALAndReturnsBothPools(t *testing.T) {
 
 	r.NotNil(d.WriteDB())
 	r.NotNil(d.ReadDB())
+}
+
+// TestOpenCreatesMissingParentDir pins the fresh-install behavior:
+// a brand-new flash root (e.g. ~/.fotobank on a clean machine) has
+// no DB parent dir yet, and SQLite refuses to create one for us. Open
+// must MkdirAll the parent before issuing the WAL pragma. Without
+// this, the import command erroneously surfaces "enable WAL: ... no
+// such file or directory" before any work begins.
+func TestOpenCreatesMissingParentDir(t *testing.T) {
+	r := require.New(t)
+	root := t.TempDir()
+	// Two levels of missing parent so MkdirAll's recursive behavior
+	// is actually exercised (a single missing level would also work
+	// with plain Mkdir).
+	dbPath := filepath.Join(root, "nested", "deeper", "fotobank.sqlite")
+
+	d, err := db.Open(dbPath)
+	r.NoError(err)
+	defer d.Close()
+
+	// Sanity: the file landed where we asked, parents exist.
+	_, err = os.Stat(dbPath)
+	r.NoError(err)
+	_, err = os.Stat(filepath.Dir(dbPath))
+	r.NoError(err)
 }
 
 func TestTxCommitsOnNilError(t *testing.T) {

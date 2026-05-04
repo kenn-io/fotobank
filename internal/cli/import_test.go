@@ -201,3 +201,87 @@ file_lock_path = %q
 	r.NotEmpty(rows[0].LocationLabel,
 		"geo resolver wiring missing — LocationLabel was not populated")
 }
+
+// TestFotobankImportColdStartFromTildePaths is the end-to-end regression
+// the existing tests didn't cover. It pins the fresh-install
+// expectations the user actually faces:
+//
+//  1. Config contains tilde-prefixed paths ("~/fotobank", "~/.fotobank").
+//     The loader expands them to $HOME/... rather than treating "~" as
+//     a literal directory.
+//  2. Neither the NAS root, the flash root, nor the DB parent dir
+//     exist on the user's machine yet. The import command creates them.
+//  3. After import, photos land in $HOME/fotobank and the SQLite DB
+//     lands in $HOME/.fotobank — not in a literal "~" subdir of CWD.
+//
+// Three previously-shipped bugs would each fail at least one assertion
+// here: the missing-tilde-expansion bug (#1), the missing-parent-dir
+// MkdirAll bug (#2 — db.Open), and any future regression where the
+// default flash root quietly drifts (#3 from the same incident).
+func TestFotobankImportColdStartFromTildePaths(t *testing.T) {
+	r := require.New(t)
+
+	// Seed the source dir BEFORE Chdir; the seedImportSource helper
+	// reads fixtures via a CWD-relative path, and we want to chdir
+	// into a deliberately unrelated dir to expose any literal-"~"
+	// leak. So copy fixtures out first while we still know where
+	// they are.
+	src := seedImportSource(t,
+		"photo-with-timestamp.jpg",
+		"photo-no-exif.jpg",
+	)
+
+	// Synthetic HOME so the tilde expansion hits a clean tempdir
+	// instead of clobbering the developer's actual ~/fotobank.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	// Run from a deliberately unrelated CWD so any literal-"~" bug
+	// would land debris there, where this assertion can catch it.
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+
+	// Config exclusively uses tilde forms — no absolute paths
+	// anywhere except the toml file itself, which the test writes
+	// outside HOME so the test never depends on something living
+	// under the synthetic HOME for it to be findable.
+	cfgRoot := t.TempDir()
+	cfgPath := filepath.Join(cfgRoot, "c.toml")
+	r.NoError(os.WriteFile(cfgPath, []byte(`
+[nas]
+root = "~/fotobank"
+[flash]
+root = "~/.fotobank"
+[identity]
+mode = "stub"
+[identity.stub]
+hub = "local"
+user_id = "alice"
+storage_key = "sk"
+`), 0o600))
+
+	var out, eout bytes.Buffer
+	code := cli.RunContext(context.Background(),
+		[]string{"import", "--config", cfgPath, src},
+		&out, &eout)
+	r.Equal(0, code, "stderr=%s stdout=%s", eout.String(), out.String())
+	r.Contains(out.String(), "imported=2", "stdout=%s", out.String())
+
+	// Resolved paths are visible up-front so a bad config can't sneak
+	// past the user. The startup banner is part of the contract.
+	r.Contains(out.String(), filepath.Join(home, "fotobank"))
+	r.Contains(out.String(), filepath.Join(home, ".fotobank", "fotobank.sqlite"))
+
+	// Photos landed under $HOME/fotobank/<storage_key>/...
+	r.FileExists(filepath.Join(home, "fotobank", "sk", "2024", "20240615_143022_0.jpg"))
+	r.FileExists(filepath.Join(home, "fotobank", "sk", "unknown_date", "photo-no-exif_0.jpg"))
+
+	// DB landed under $HOME/.fotobank, not in CWD or under a literal "~".
+	_, err := os.Stat(filepath.Join(home, ".fotobank", "fotobank.sqlite"))
+	r.NoError(err)
+
+	// Crucially: NO literal "~" subdirectory leaked into CWD.
+	_, err = os.Stat(filepath.Join(cwd, "~"))
+	r.True(os.IsNotExist(err),
+		"literal '~' subdirectory leaked into CWD %q — tilde expansion regressed", cwd)
+}
