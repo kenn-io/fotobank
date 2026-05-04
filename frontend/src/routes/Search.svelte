@@ -10,7 +10,7 @@
      into the UI; an SSE handler invalidates the store's requestHash
      when the activator promotes a new generation. -->
 <script lang="ts">
-  import { createSearchStore, type SearchStore } from "../lib/search/searchStore.svelte";
+  import { createSearchStore, emptyFilters, type SearchStore } from "../lib/search/searchStore.svelte";
   import { searchClient } from "../lib/search/client";
   import type { SearchClient } from "../lib/search/client";
   import type { SearchFilters, SearchSort, SearchScoreComponents } from "../lib/search/types";
@@ -20,6 +20,8 @@
   import IndexingStatusPill from "../lib/search/IndexingStatusPill.svelte";
   import IndexingStatusBanner from "../lib/search/IndexingStatusBanner.svelte";
   import DiagnosticsBadge from "../lib/search/DiagnosticsBadge.svelte";
+  import FilterChipStrip from "../lib/filters/FilterChipStrip.svelte";
+  import type { ActiveFilters } from "../lib/filters/activeFilters";
   import VirtualGrid from "../lib/grid/VirtualGrid.svelte";
   import type { Month, Media, ThumbStatus } from "../lib/media/mediaStore.svelte";
   import { router } from "../lib/router/router.svelte";
@@ -45,11 +47,32 @@
   // DiagnosticsBadge overlay on each cell. Tests inject a stubbed
   // store; production builds a real one, loads the persisted value
   // (silently ignoring failures), and reads `enabled` reactively.
-  let { store, client = searchClient, events, inspectionStore = new AIInspectionStore(api) }: {
+  //
+  // activeFilters / tagLabels / onFiltersChange are the sidebar-facet
+  // surface threaded down from App.svelte. The chip strip writes
+  // through onFiltersChange to mutate the URL; the URL-sync effect
+  // below picks the change up via filtersFromMatch and propagates it
+  // into the searchStore. Tests omit these props; the route falls
+  // back to an empty filter set and a no-op writer so isolated
+  // renders don't require an App-level harness.
+  let {
+    store,
+    client = searchClient,
+    events,
+    inspectionStore = new AIInspectionStore(api),
+    activeFilters = {
+      cameras: [], lenses: [], tagKeys: [], hasGps: null, mediaType: null,
+    },
+    tagLabels = {},
+    onFiltersChange = (_: ActiveFilters) => {},
+  }: {
     store?: SearchStore;
     client?: SearchClient;
     events?: EventsStore;
     inspectionStore?: AIInspectionStore;
+    activeFilters?: ActiveFilters;
+    tagLabels?: Record<string, string>;
+    onFiltersChange?: (next: ActiveFilters) => void;
   } = $props();
   // svelte-ignore state_referenced_locally
   void inspectionStore.load().catch(() => {});
@@ -92,12 +115,12 @@
   // computeKey serialises the canonical search shape into a string the
   // two effects compare against. The shape mirrors what the URL would
   // encode: q, sort, date filters, tag labels (already strings, sorted
-  // for stable order), location label, media_type, include_hidden.
-  // Sort defaults to "relevance" on both sides so the empty-state
-  // /search and a freshly-hydrated relevance store produce the same
-  // key. Tag arrays are sorted because route → tag arrives in URL
-  // order while store → tag is in user-add order; without sorting the
-  // round-trip would diverge.
+  // for stable order), location label, media_type, include_hidden, and
+  // the four SF-18 sidebar fields. Sort defaults to "relevance" on
+  // both sides so the empty-state /search and a freshly-hydrated
+  // relevance store produce the same key. Tag arrays are sorted
+  // because route → tag arrives in URL order while store → tag is in
+  // user-add order; without sorting the round-trip would diverge.
   function computeKey(shape: {
     q: string;
     sort: SearchSort;
@@ -107,6 +130,10 @@
     location?: string;
     mediaType?: "photo" | "video";
     includeHidden: boolean;
+    cameras: string[];
+    lenses: string[];
+    facetTagKeys: string[];
+    hasGps: boolean | null;
   }): string {
     return JSON.stringify({
       q: shape.q,
@@ -117,6 +144,10 @@
       location: shape.location ?? "",
       media_type: shape.mediaType ?? "",
       include_hidden: shape.includeHidden,
+      camera: [...shape.cameras].sort(),
+      lens: [...shape.lenses].sort(),
+      facet_tag: [...shape.facetTagKeys].sort(),
+      has_gps: shape.hasGps,
     });
   }
 
@@ -128,8 +159,14 @@
   // a canonical key); without the canonical key we mirror label → key,
   // which the store dedupes by tag_key when it computes the request
   // hash.
+  //
+  // The four SF-18 sidebar fields (camera, lens, facet_tag, has_gps)
+  // also arrive on the wire and must round-trip through the store —
+  // otherwise the URL-sync writer would drop them on its first run
+  // when the chip strip mutates the URL but the store doesn't yet
+  // know about them.
   function filtersFromMatch(m: Extract<typeof router.current, { route: "search" }>): SearchFilters {
-    const out: SearchFilters = { tags: [] };
+    const out: SearchFilters = emptyFilters();
     if (m.date_after !== undefined) out.dateAfter = m.date_after;
     if (m.date_before !== undefined) out.dateBefore = m.date_before;
     if (m.tag !== undefined) {
@@ -138,6 +175,10 @@
     if (m.location !== undefined) out.location = { location_label: m.location };
     if (m.media_type !== undefined) out.mediaType = m.media_type;
     if (m.include_hidden === true) out.includeHidden = true;
+    if (m.camera !== undefined) out.cameras = [...m.camera];
+    if (m.lens !== undefined) out.lenses = [...m.lens];
+    if (m.facet_tag !== undefined) out.facetTagKeys = [...m.facet_tag];
+    if (m.has_gps !== undefined) out.hasGps = m.has_gps;
     return out;
   }
 
@@ -145,7 +186,16 @@
   // callbacks (Svelte 5 idiom — no on:/bind: required). Each handler
   // routes the new value through the corresponding setter on the store
   // so the cursor is reset and a fresh page is fetched.
-  function onFiltersChange(next: SearchFilters): void {
+  //
+  // onSearchFiltersChange is distinct from the route-level
+  // onFiltersChange prop: the popover/chip strip mutates the typed-chip
+  // search surface (date range / tag labels / location / media_type /
+  // include_hidden); the sidebar-facet onFiltersChange writes the four
+  // sidebar dimensions through the URL via App.svelte. Keeping the two
+  // surfaces separate matches the AND/OR composition contract — typed
+  // chips are AND-composed and resolved server-side; sidebar facets
+  // are OR-composed and ride raw tag_keys.
+  function onSearchFiltersChange(next: SearchFilters): void {
     void s.setFilters(next);
   }
   function onSortChange(next: SearchSort): void {
@@ -181,6 +231,10 @@
       ...(m.location !== undefined ? { location: m.location } : {}),
       ...(m.media_type !== undefined ? { mediaType: m.media_type } : {}),
       includeHidden: m.include_hidden ?? false,
+      cameras: m.camera ?? [],
+      lenses: m.lens ?? [],
+      facetTagKeys: m.facet_tag ?? [],
+      hasGps: m.has_gps ?? null,
     });
     if (key === lastHydratedKey) return;
     if (key === lastSyncedKey) {
@@ -224,6 +278,10 @@
         : {}),
       ...(s.filters.mediaType !== undefined ? { mediaType: s.filters.mediaType } : {}),
       includeHidden: s.filters.includeHidden === true,
+      cameras: s.filters.cameras,
+      lenses: s.filters.lenses,
+      facetTagKeys: s.filters.facetTagKeys,
+      hasGps: s.filters.hasGps ?? null,
     });
     if (key === lastSyncedKey) return;
     lastSyncedKey = key;
@@ -242,6 +300,15 @@
     }
     if (s.filters.mediaType !== undefined) params.set("media_type", s.filters.mediaType);
     if (s.filters.includeHidden === true) params.set("include_hidden", "true");
+    // SF-18 sidebar facets — match the wire convention used by /library
+    // and /map: camera/lens/facet_tag are repeated; has_gps is "1"/"0"
+    // (parseHasGps in router.svelte.ts narrows on this canonical form).
+    for (const c of s.filters.cameras) params.append("camera", c);
+    for (const l of s.filters.lenses) params.append("lens", l);
+    for (const tk of s.filters.facetTagKeys) params.append("facet_tag", tk);
+    if (s.filters.hasGps !== undefined) {
+      params.set("has_gps", s.filters.hasGps ? "1" : "0");
+    }
     const qs = params.toString();
     const target = qs.length > 0 ? `/search?${qs}` : "/search";
     // replace: true so typing into a filter doesn't fill the back stack.
@@ -376,6 +443,10 @@
         : {}),
       ...(s.filters.mediaType !== undefined ? { mediaType: s.filters.mediaType } : {}),
       includeHidden: s.filters.includeHidden === true,
+      cameras: s.filters.cameras,
+      lenses: s.filters.lenses,
+      facetTagKeys: s.filters.facetTagKeys,
+      hasGps: s.filters.hasGps ?? null,
     });
     lightboxSession.open({
       source: { kind: "search" },
@@ -396,11 +467,12 @@
 
 <div class="search-page">
   <div class="search-toolbar">
-    <SearchFiltersPopover filters={s.filters} onChange={onFiltersChange} />
+    <SearchFiltersPopover filters={s.filters} onChange={onSearchFiltersChange} />
     <SearchSortSegment sort={s.sort} query={s.query} onChange={onSortChange} />
     <IndexingStatusPill completeness={s.embeddingCompleteness} />
   </div>
-  <SearchFilterChips filters={s.filters} onChange={onFiltersChange} />
+  <SearchFilterChips filters={s.filters} onChange={onSearchFiltersChange} />
+  <FilterChipStrip filters={activeFilters} {tagLabels} onChange={onFiltersChange} />
   <IndexingStatusBanner
     completeness={s.embeddingCompleteness}
     semanticUnavailable={s.semanticUnavailable}

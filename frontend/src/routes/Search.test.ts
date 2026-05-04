@@ -60,7 +60,7 @@ type StoreSeed = {
 function makeStore(seed: StoreSeed = {}): SearchStore {
   return {
     query: seed.query ?? "",
-    filters: seed.filters ?? { tags: [] },
+    filters: seed.filters ?? { tags: [], cameras: [], lenses: [], facetTagKeys: [] },
     sort: seed.sort ?? "relevance",
     results: seed.results ?? [],
     cursor: seed.cursor ?? null,
@@ -137,6 +137,9 @@ describe("Search.svelte", () => {
       sort: "newest",
       filters: {
         tags: [{ tag_key: "dog", tag_label: "Dog" }],
+        cameras: [],
+        lenses: [],
+        facetTagKeys: [],
         dateAfter: "2025-01-01",
         mediaType: "photo",
       },
@@ -293,7 +296,7 @@ describe("Search.svelte", () => {
     const store = makeStore({
       query: "trees",
       sort: "newest",
-      filters: { tags: [] },
+      filters: { tags: [], cameras: [], lenses: [], facetTagKeys: [] },
     });
     const inspectionStore = makeInspectionStore();
     render(Search, { props: { store, client: makeClient(), inspectionStore } });
@@ -302,19 +305,22 @@ describe("Search.svelte", () => {
     await tick();
 
     // Assert the setters were called EXACTLY once each, with the
-    // seeded URL's values (the URL was /search with no params, so
-    // the hydration ran with q="", sort="relevance", filters={tags:[]}).
-    // The URL-sync then wrote /search?q=trees&sort=newest from the
-    // seeded store state, which mutated router.current. If echo
-    // suppression failed, we'd see a second hydration call here with
-    // setQuery("trees") and setSort("newest") — the assertions below
-    // would fail with a 2-count or with "trees"/"newest" arguments.
+    // seeded URL's values (the URL was /search with no params, so the
+    // hydration ran with q="", sort="relevance", and the canonical
+    // empty-filters shape that filtersFromMatch produces). The URL-sync
+    // then wrote /search?q=trees&sort=newest from the seeded store
+    // state, which mutated router.current. If echo suppression failed,
+    // we'd see a second hydration call here with setQuery("trees") and
+    // setSort("newest") — the assertions below would fail with a
+    // 2-count or with "trees"/"newest" arguments.
     const setQueryMock = store.setQuery as ReturnType<typeof vi.fn>;
     const setSortMock = store.setSort as ReturnType<typeof vi.fn>;
     const setFiltersMock = store.setFilters as ReturnType<typeof vi.fn>;
     expect(setQueryMock.mock.calls).toEqual([[""]]);
     expect(setSortMock.mock.calls).toEqual([["relevance"]]);
-    expect(setFiltersMock.mock.calls).toEqual([[{ tags: [] }]]);
+    expect(setFiltersMock.mock.calls).toEqual([[
+      { tags: [], cameras: [], lenses: [], facetTagKeys: [] },
+    ]]);
 
     // Bump the URL via syncFromLocation again. The URL still matches
     // lastSyncedKey from the prior writeback, so hydration must
@@ -324,7 +330,9 @@ describe("Search.svelte", () => {
     await tick();
     expect(setQueryMock.mock.calls).toEqual([[""]]);
     expect(setSortMock.mock.calls).toEqual([["relevance"]]);
-    expect(setFiltersMock.mock.calls).toEqual([[{ tags: [] }]]);
+    expect(setFiltersMock.mock.calls).toEqual([[
+      { tags: [], cameras: [], lenses: [], facetTagKeys: [] },
+    ]]);
   });
 
   it("waits for AIInspection to load before the first search", async () => {
@@ -506,6 +514,9 @@ describe("Search.svelte", () => {
       sort: "newest",
       filters: {
         tags: [{ tag_key: "dog", tag_label: "Dog" }],
+        cameras: [],
+        lenses: [],
+        facetTagKeys: [],
         dateAfter: "2025-01-01",
         mediaType: "photo",
       },

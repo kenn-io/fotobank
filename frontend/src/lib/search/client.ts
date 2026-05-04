@@ -57,6 +57,26 @@ function buildSearchQuery(p: SearchRequestParams): URLSearchParams {
   if (p.cursor != null && p.cursor !== "") q.set("cursor", p.cursor);
   if (p.include_hidden) q.set("include_hidden", "true");
   if (p.explain) q.set("explain", "true");
+  // SF-18 sidebar facets. camera/lens/facet_tag are repeated query
+  // params (huma's `,explode` modifier on the searchInput field).
+  // has_gps is the literal string "true"/"false" — the backend's enum
+  // constraint rejects "1"/"0" (matching the /facets convention).
+  if (p.camera) {
+    for (const c of p.camera) {
+      if (c !== "") q.append("camera", c);
+    }
+  }
+  if (p.lens) {
+    for (const l of p.lens) {
+      if (l !== "") q.append("lens", l);
+    }
+  }
+  if (p.facet_tag) {
+    for (const t of p.facet_tag) {
+      if (t !== "") q.append("facet_tag", t);
+    }
+  }
+  if (p.has_gps !== undefined) q.set("has_gps", p.has_gps ? "true" : "false");
   return q;
 }
 

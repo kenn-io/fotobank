@@ -29,7 +29,7 @@ function makeClient(opts: {
 // emptyFilters mirrors searchStore.emptyFilters — the canonical
 // no-filters-set shape.
 function emptyFilters(): SearchFilters {
-  return { tags: [] };
+  return { tags: [], cameras: [], lenses: [], facetTagKeys: [] };
 }
 
 describe("SearchFiltersPopover", () => {
@@ -64,6 +64,9 @@ describe("SearchFiltersPopover", () => {
     await fireEvent.input(after, { target: { value: "2025-01-01" } });
     expect(onChange).toHaveBeenLastCalledWith({
       tags: [],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
       dateAfter: "2025-01-01",
     });
 
@@ -71,7 +74,9 @@ describe("SearchFiltersPopover", () => {
     // re-renders with the new filters. Mirror that by re-rendering
     // the popover with dateAfter set, then type into Before.
     await rerender({
-      filters: { tags: [], dateAfter: "2025-01-01" },
+      filters: {
+        tags: [], cameras: [], lenses: [], facetTagKeys: [], dateAfter: "2025-01-01",
+      },
       onChange,
       client,
     });
@@ -82,6 +87,9 @@ describe("SearchFiltersPopover", () => {
     await fireEvent.input(before, { target: { value: "2025-02-01" } });
     expect(onChange).toHaveBeenLastCalledWith({
       tags: [],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
       dateAfter: "2025-01-01",
       dateBefore: "2025-02-01",
     });
@@ -117,6 +125,9 @@ describe("SearchFiltersPopover", () => {
 
     expect(onChange).toHaveBeenLastCalledWith({
       tags: [{ tag_key: "dog", tag_label: "Dog" }],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
     });
     // Input clears after a successful add so the user can type the next.
     expect(tagInput.value).toBe("");
@@ -145,6 +156,9 @@ describe("SearchFiltersPopover", () => {
 
     expect(onChange).toHaveBeenLastCalledWith({
       tags: [],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
       location: { location_label: "Paris, France" },
     });
     expect(locInput.value).toBe("");
@@ -170,16 +184,32 @@ describe("SearchFiltersPopover", () => {
     expect(allBtn).toBeTruthy();
 
     await fireEvent.click(photoBtn);
-    expect(onChange).toHaveBeenLastCalledWith({ tags: [], mediaType: "photo" });
+    expect(onChange).toHaveBeenLastCalledWith({
+      tags: [], cameras: [], lenses: [], facetTagKeys: [], mediaType: "photo",
+    });
 
     // Re-render with the photo filter applied so the next click toggles
     // back through onChange. The component owns the visual selection
     // off the filters prop.
-    await rerender({ filters: { tags: [], mediaType: "photo" }, onChange, client: makeClient() });
+    await rerender({
+      filters: {
+        tags: [], cameras: [], lenses: [], facetTagKeys: [], mediaType: "photo",
+      },
+      onChange,
+      client: makeClient(),
+    });
     await fireEvent.click(videoBtn);
-    expect(onChange).toHaveBeenLastCalledWith({ tags: [], mediaType: "video" });
+    expect(onChange).toHaveBeenLastCalledWith({
+      tags: [], cameras: [], lenses: [], facetTagKeys: [], mediaType: "video",
+    });
 
-    await rerender({ filters: { tags: [], mediaType: "video" }, onChange, client: makeClient() });
+    await rerender({
+      filters: {
+        tags: [], cameras: [], lenses: [], facetTagKeys: [], mediaType: "video",
+      },
+      onChange,
+      client: makeClient(),
+    });
     await fireEvent.click(allBtn);
     // "All" clears mediaType — the field should be absent rather than
     // explicit undefined so the wire serializer drops it.
@@ -195,6 +225,9 @@ describe("SearchFiltersPopover", () => {
     // carry dateAfter/dateBefore must show those values in the inputs.
     const filters: SearchFilters = {
       tags: [],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
       dateAfter: "2025-01-01",
       dateBefore: "2025-02-01",
       mediaType: "photo",
@@ -263,12 +296,17 @@ describe("SearchFiltersPopover", () => {
     await fireEvent.change(toggle, { target: { checked: true } });
     expect(onChange).toHaveBeenLastCalledWith({
       tags: [],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
       includeHidden: true,
     });
 
     // Re-render with the flag applied so unchecking flows through.
     await rerender({
-      filters: { tags: [], includeHidden: true },
+      filters: {
+        tags: [], cameras: [], lenses: [], facetTagKeys: [], includeHidden: true,
+      },
       onChange,
       client,
     });

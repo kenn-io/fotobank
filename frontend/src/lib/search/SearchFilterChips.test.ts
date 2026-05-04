@@ -6,7 +6,7 @@ import type { SearchFilters } from "./types";
 describe("SearchFilterChips", () => {
   it("renders nothing when filters are empty", () => {
     const { container } = render(SearchFilterChips, {
-      props: { filters: { tags: [] }, onChange: vi.fn() },
+      props: { filters: { tags: [], cameras: [], lenses: [], facetTagKeys: [] }, onChange: vi.fn() },
     });
     // Container present but no chips rendered.
     const chips = container.querySelectorAll("[data-testid^='chip-']");
@@ -20,6 +20,9 @@ describe("SearchFilterChips", () => {
     // both values appear in the rendered text.
     const filters: SearchFilters = {
       tags: [],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
       dateAfter: "2025-01-01",
       dateBefore: "2025-02-01",
     };
@@ -40,6 +43,9 @@ describe("SearchFilterChips", () => {
         { tag_key: "dog", tag_label: "Dog" },
         { tag_key: "beach", tag_label: "Beach" },
       ],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
     };
     const { container, getByText } = render(SearchFilterChips, {
       props: { filters, onChange: vi.fn() },
@@ -53,6 +59,9 @@ describe("SearchFilterChips", () => {
   it("renders a location chip", () => {
     const filters: SearchFilters = {
       tags: [],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
       location: { location_label: "Paris, France" },
     };
     const { container, getByText } = render(SearchFilterChips, {
@@ -63,7 +72,9 @@ describe("SearchFilterChips", () => {
   });
 
   it("renders a media-type chip", () => {
-    const filters: SearchFilters = { tags: [], mediaType: "photo" };
+    const filters: SearchFilters = {
+      tags: [], cameras: [], lenses: [], facetTagKeys: [], mediaType: "photo",
+    };
     const { container, getByText } = render(SearchFilterChips, {
       props: { filters, onChange: vi.fn() },
     });
@@ -75,6 +86,9 @@ describe("SearchFilterChips", () => {
     const onChange = vi.fn();
     const filters: SearchFilters = {
       tags: [],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
       dateAfter: "2025-01-01",
       dateBefore: "2025-02-01",
     };
@@ -88,6 +102,9 @@ describe("SearchFilterChips", () => {
     await fireEvent.click(removeAfter);
     expect(onChange).toHaveBeenCalledWith({
       tags: [],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
       dateBefore: "2025-02-01",
     });
   });
@@ -99,6 +116,9 @@ describe("SearchFilterChips", () => {
         { tag_key: "dog", tag_label: "Dog" },
         { tag_key: "beach", tag_label: "Beach" },
       ],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
     };
     const { container } = render(SearchFilterChips, {
       props: { filters, onChange },
@@ -111,6 +131,9 @@ describe("SearchFilterChips", () => {
     await fireEvent.click(removeBeach);
     expect(onChange).toHaveBeenCalledWith({
       tags: [{ tag_key: "dog", tag_label: "Dog" }],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
     });
   });
 
@@ -118,6 +141,9 @@ describe("SearchFilterChips", () => {
     const onChange = vi.fn();
     const filters: SearchFilters = {
       tags: [{ tag_key: "dog", tag_label: "Dog" }],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
       location: { location_label: "Paris, France" },
     };
     const { container } = render(SearchFilterChips, {
@@ -129,12 +155,17 @@ describe("SearchFilterChips", () => {
     await fireEvent.click(removeLocation);
     expect(onChange).toHaveBeenCalledWith({
       tags: [{ tag_key: "dog", tag_label: "Dog" }],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
     });
   });
 
   it("removing the media-type chip dispatches change with mediaType absent", async () => {
     const onChange = vi.fn();
-    const filters: SearchFilters = { tags: [], mediaType: "video" };
+    const filters: SearchFilters = {
+      tags: [], cameras: [], lenses: [], facetTagKeys: [], mediaType: "video",
+    };
     const { container } = render(SearchFilterChips, {
       props: { filters, onChange },
     });

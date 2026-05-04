@@ -108,14 +108,31 @@
 
   // Refetch facets whenever the route or the filter selection
   // changes. The store internally debounces (100ms) and caches by
-  // (route, filterKey) so back-to-back navigations or rapid toggle
-  // clicks coalesce into a single GET. Other routes leave the
-  // store untouched — its last response stays cached for when
-  // the user navigates back.
+  // (route, filterKey, scopeKey) so back-to-back navigations or rapid
+  // toggle clicks coalesce into a single GET. Other routes leave the
+  // store untouched — its last response stays cached for when the
+  // user navigates back.
+  //
+  // /search alone receives the search-scope payload (q + typed tag
+  // labels + date range + location + include_hidden). Without it the
+  // /search facet counts would surface alternatives drawn from the
+  // entire library, ignoring the user's typed query and chip strip
+  // (roborev finding 17964 #2). /library and /map don't carry that
+  // surface, so their fetch calls stay bare and the store's cache
+  // stays simple.
   $effect(() => {
-    const r = router.current.route;
-    if (r === "library" || r === "search" || r === "map") {
-      void facetsStore.fetch(r, activeFilters);
+    const r = router.current;
+    if (r.route === "library" || r.route === "map") {
+      void facetsStore.fetch(r.route, activeFilters);
+    } else if (r.route === "search") {
+      void facetsStore.fetch("search", activeFilters, {
+        ...(r.q !== undefined ? { q: r.q } : {}),
+        ...(r.date_after !== undefined ? { dateAfter: r.date_after } : {}),
+        ...(r.date_before !== undefined ? { dateBefore: r.date_before } : {}),
+        ...(r.tag !== undefined ? { tagLabels: r.tag } : {}),
+        ...(r.location !== undefined ? { location: r.location } : {}),
+        ...(r.include_hidden === true ? { includeHidden: true } : {}),
+      });
     }
   });
 
@@ -295,7 +312,7 @@
     {:else if router.current.route === "settings.ai"}
       <SettingsAI />
     {:else if router.current.route === "search"}
-      <Search {events} />
+      <Search {events} {activeFilters} {tagLabels} {onFiltersChange} />
     {:else if router.current.route === "map"}
       <Map
         z={router.current.z}

@@ -18,6 +18,13 @@ export type SearchSort = "relevance" | "newest" | "oldest";
 // includeHidden is a boolean toggle that opts the request into the
 // hidden library; the wire param is `include_hidden=true` (absent or
 // `false` is treated identically by the engine).
+//
+// SF-18 sidebar-facet additions: cameras, lenses, facetTagKeys, hasGps.
+// These are distinct from `tags` (the AND-composed typed-chip surface
+// resolved server-side via TagLabels → tag_keys). facetTagKeys is
+// OR-composed and carries raw tag_keys directly because the sidebar
+// already shows labels — there's no label-resolution step. cameras
+// and lenses match exact "make model" / lens_model values.
 export interface SearchFilters {
   dateAfter?: string;
   dateBefore?: string;
@@ -25,6 +32,10 @@ export interface SearchFilters {
   location?: { location_label: string };
   mediaType?: "photo" | "video";
   includeHidden?: boolean;
+  cameras: string[];
+  lenses: string[];
+  facetTagKeys: string[];
+  hasGps?: boolean;
 }
 
 // SearchScoreComponents is the diagnostics-mode payload. RRF is the
@@ -115,6 +126,12 @@ export interface AutocompleteLocationsResponse {
 // Optional fields are only serialized when set — empty strings, zero
 // times, and zero limits are dropped at the client boundary so the
 // server sees exactly the params the user chose.
+//
+// SF-18 sidebar facets: camera/lens/facet_tag are repeatable wire
+// params (huma's `,explode` modifier on the searchInput field). They
+// arrive at the wire as repeated `?camera=A&camera=B`. has_gps is a
+// boolean here — the client serialiser forwards `true`/`false` as the
+// literal string the backend's enum requires.
 export interface SearchRequestParams {
   q?: string;
   sort?: SearchSort;
@@ -127,4 +144,8 @@ export interface SearchRequestParams {
   cursor?: string;
   include_hidden?: boolean;
   explain?: boolean;
+  camera?: string[];
+  lens?: string[];
+  facet_tag?: string[];
+  has_gps?: boolean;
 }

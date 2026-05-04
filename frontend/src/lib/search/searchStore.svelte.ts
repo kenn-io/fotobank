@@ -33,9 +33,12 @@ export interface SearchStore {
 }
 
 // emptyFilters is the canonical "no filters set" shape. Used at
-// construction and to reset the store on a fresh search.
-function emptyFilters(): SearchFilters {
-  return { tags: [] };
+// construction and to reset the store on a fresh search. Exported so
+// Search.svelte can build a SearchFilters from the route match without
+// duplicating the array-default invariants (every multi-value field
+// starts as an empty array, never undefined).
+export function emptyFilters(): SearchFilters {
+  return { tags: [], cameras: [], lenses: [], facetTagKeys: [] };
 }
 
 // computeRequestHash derives a client-side cache token from the
@@ -46,6 +49,13 @@ function emptyFilters(): SearchFilters {
 // permutations to match the backend's normalization.
 function computeRequestHash(query: string, sort: SearchSort, filters: SearchFilters): string {
   const tagKeys = filters.tags.map((t) => t.tag_key).slice().sort();
+  // The four SF-18 sidebar fields are sorted on the way in so the
+  // client-side cache token is stable across click-order permutations
+  // (the sidebar may yield ["B","A"] one render and ["A","B"] another;
+  // both should map to the same hash).
+  const cameras = filters.cameras.slice().sort();
+  const lenses = filters.lenses.slice().sort();
+  const facetTagKeys = filters.facetTagKeys.slice().sort();
   return JSON.stringify({
     q: query,
     s: sort,
@@ -55,6 +65,10 @@ function computeRequestHash(query: string, sort: SearchSort, filters: SearchFilt
     loc: filters.location?.location_label ?? "",
     mt: filters.mediaType ?? "",
     ih: filters.includeHidden ?? false,
+    cam: cameras,
+    lens: lenses,
+    ftk: facetTagKeys,
+    hg: filters.hasGps ?? null,
   });
 }
 
@@ -88,6 +102,13 @@ function buildParams(
   }
   if (filters.mediaType !== undefined) params.media_type = filters.mediaType;
   if (filters.includeHidden === true) params.include_hidden = true;
+  // SF-18 sidebar facets. Empty arrays are dropped so a zero-cameras
+  // request doesn't ship a bare `?camera=` (which would 422 huma-side
+  // anyway, but skipping at the boundary keeps the wire clean).
+  if (filters.cameras.length > 0) params.camera = filters.cameras;
+  if (filters.lenses.length > 0) params.lens = filters.lenses;
+  if (filters.facetTagKeys.length > 0) params.facet_tag = filters.facetTagKeys;
+  if (filters.hasGps !== undefined) params.has_gps = filters.hasGps;
   if (cursor !== null) params.cursor = cursor;
   if (explain) params.explain = true;
   return params;
