@@ -71,15 +71,13 @@ func registerMediaGeo(api huma.API, svc *service.MediaService, hiddenAuth *hidde
 			t := media.Type(in.MediaType)
 			mediaType = &t
 		}
-		rows, err := svc.ListGeo(
-			ctx,
-			caller,
-			in.IncludeHidden,
-			mediaType,
-			in.Camera,
-			in.Lens,
-			in.FacetTag,
-		)
+		rows, err := svc.ListGeo(ctx, caller, service.ListGeoOptions{
+			IncludeHidden: in.IncludeHidden,
+			Type:          mediaType,
+			Cameras:       in.Camera,
+			Lenses:        in.Lens,
+			AnyTagKeys:    in.FacetTag,
+		})
 		if err != nil {
 			return nil, Translate(err)
 		}

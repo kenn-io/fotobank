@@ -78,14 +78,17 @@ function parseFilterParams(sp: URLSearchParams): {
   return out;
 }
 
-// parseHasGps narrows ?has_gps= to boolean. Per the sidebar-facets
-// plan, the canonical wire format is "1"/"0" (not "true"/"false") so
-// it composes cleanly with the rest of the filter chip URL surface.
-// Anything else falls through to undefined → field omitted.
+// parseHasGps narrows ?has_gps= to boolean. The SPA-canonical wire
+// format is "1"/"0" (composes cleanly with the rest of the filter
+// chip URL surface), but the backend's `/api/v1/facets` and
+// `/api/v1/media` accept "true"/"false" as well, so a bookmarked or
+// hand-typed URL using the backend form would otherwise drop the
+// filter. Accept both case-insensitively; the URL writer keeps
+// emitting the canonical "1"/"0" form. Anything else → undefined.
 function parseHasGps(sp: URLSearchParams): boolean | undefined {
-  const v = sp.get("has_gps");
-  if (v === "1") return true;
-  if (v === "0") return false;
+  const v = sp.get("has_gps")?.toLowerCase();
+  if (v === "1" || v === "true") return true;
+  if (v === "0" || v === "false") return false;
   return undefined;
 }
 

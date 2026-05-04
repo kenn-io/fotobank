@@ -261,33 +261,37 @@ func (s *MediaService) ListHidden(
 	return s.repo.ListHidden(ctx, caller, limit, offset)
 }
 
+// ListGeoOptions narrows ListGeo's result set. /geo is geotagged-only
+// by contract, so HasGPS is intentionally absent — every returned row
+// already has lat and lon. The struct mirrors the SF-supported facet
+// surface on /library and /search; an empty value (zero arrays, nil
+// Type, IncludeHidden=false) means "no narrowing".
+type ListGeoOptions struct {
+	IncludeHidden bool
+	Type          *media.Type
+	Cameras       []string
+	Lenses        []string
+	AnyTagKeys    []string
+}
+
 // ListGeo returns geotagged primaries owned by caller. When
-// includeHidden is true, hidden rows are included; the handler is
+// opts.IncludeHidden is true, hidden rows are included; the handler is
 // expected to have validated an unlock claim before calling.
 //
 // The service does not enforce the unlock-claim gate — the gate is in
 // httpapi.registerMediaGeo so the 403 response shape stays inside the
 // transport layer (matching list-hidden-media).
-//
-// mediaType / cameras / lenses / anyTagKeys narrow the geotagged set
-// the same way the /library and /search facet params do. /geo's
-// contract is geotagged-only, so HasGPS is intentionally absent from
-// this signature — every returned row already has lat and lon.
 func (s *MediaService) ListGeo(
 	ctx context.Context,
 	caller owners.Principal,
-	includeHidden bool,
-	mediaType *media.Type,
-	cameras []string,
-	lenses []string,
-	anyTagKeys []string,
+	opts ListGeoOptions,
 ) ([]media.Media, error) {
 	return s.repo.ListGeo(ctx, media.ListGeoFilter{
 		Owner:         caller,
-		IncludeHidden: includeHidden,
-		Type:          mediaType,
-		Cameras:       cameras,
-		Lenses:        lenses,
-		AnyTagKeys:    anyTagKeys,
+		IncludeHidden: opts.IncludeHidden,
+		Type:          opts.Type,
+		Cameras:       opts.Cameras,
+		Lenses:        opts.Lenses,
+		AnyTagKeys:    opts.AnyTagKeys,
 	})
 }

@@ -427,8 +427,19 @@ describe("RouterStore — sidebar facet query params", () => {
     expect(r.current).toEqual({ route: "library", has_gps: false });
   });
 
-  it("/library drops has_gps when value is neither '0' nor '1'", () => {
+  it("/library accepts has_gps in 'true'/'false' form alongside the canonical '1'/'0'", () => {
+    // SPA-canonical form is '1'/'0'. The backend's facets/media endpoints
+    // accept 'true'/'false', so a bookmarked URL using the backend form
+    // would otherwise drop the filter. Both forms (case-insensitive)
+    // resolve to the same boolean.
     setLocation("/library?has_gps=true");
+    expect(new RouterStore().current).toEqual({ route: "library", has_gps: true });
+    setLocation("/library?has_gps=False");
+    expect(new RouterStore().current).toEqual({ route: "library", has_gps: false });
+  });
+
+  it("/library drops has_gps when value is unrecognised", () => {
+    setLocation("/library?has_gps=maybe");
     const r = new RouterStore();
     expect(r.current).toEqual({ route: "library" });
   });
