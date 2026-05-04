@@ -29,9 +29,13 @@
 </aside>
 
 <style>
+  /* Fills the LightboxFrame's drawer column (CSS grid track sized
+     to --lb-drawer-width). The previous absolute-positioned variant
+     overlaid the photo even at large window sizes; the column-based
+     layout reflows the stage so the image stays clear of the drawer. */
   .lb-drawer {
-    position: absolute; top: 0; right: 0; bottom: 0;
-    width: min(360px, 40vw);
+    width: 100%;
+    height: 100%;
     background: var(--surface);
     border-left: 1px solid var(--border);
     display: flex; flex-direction: column;

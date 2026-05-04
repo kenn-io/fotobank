@@ -65,6 +65,24 @@
       },
       // beforeWheel default = allow zoom; no override needed.
     });
+    // Snap translation back to zero once the scale returns to the 1x
+    // floor. Repro: wheel-zoom in, drag-pan, wheel-zoom out. panzoom
+    // doesn't auto-recenter when scale hits minZoom, so the image
+    // stays translated — and since beforeMouseDown blocks pan at <=1x
+    // (so backdrop click + swipe-to-prev still work), the user can't
+    // drag the image back into view. Detection on the `zoom` event
+    // (not `transform`) avoids re-entrancy: `moveTo` emits `pan`,
+    // not `zoom`, so calling moveTo here doesn't fire this handler
+    // again. Epsilon (1.001) absorbs the float-add drift of long
+    // wheel sequences. We only snap when the translation is actually
+    // off-zero so we don't churn the transform on no-op wheel ticks.
+    pz.on("zoom", () => {
+      if (!pz) return;
+      const t = pz.getTransform();
+      if (t.scale <= 1.001 && (Math.abs(t.x) > 0.5 || Math.abs(t.y) > 0.5)) {
+        pz.moveTo(0, 0);
+      }
+    });
     imgEl.addEventListener("dblclick", onDblClick);
     onReady?.({ zoomIn, zoomOut, resetZoom, toggleZoom });
   });

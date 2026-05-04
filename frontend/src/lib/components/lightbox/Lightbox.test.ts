@@ -22,6 +22,7 @@ vi.mock("panzoom", () => ({
     zoomTo: vi.fn(),
     zoomAbs: vi.fn(),
     moveTo: vi.fn(),
+    on: vi.fn(),
   }),
 }));
 

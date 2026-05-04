@@ -613,7 +613,29 @@
 
 <svelte:window onkeydown={onKey} />
 
-<LightboxFrame mode={fallbackMode ? "fallback" : "full"} onBackdropClick={close}>
+<!-- Top-level snippet: must precede the LightboxFrame element so the
+     `drawer={...}` prop expression below can reference `infoDrawer` by
+     name. Snippets declared inside a component element aren't in scope
+     for that element's own prop expressions. -->
+{#snippet infoDrawer()}
+  {#if media}
+    {#if activeScoreComponents}
+      <LightboxInfoDrawer
+        {media}
+        scoreComponents={activeScoreComponents}
+        onClose={() => (infoOpen = false)}
+      />
+    {:else}
+      <LightboxInfoDrawer {media} onClose={() => (infoOpen = false)} />
+    {/if}
+  {/if}
+{/snippet}
+
+<LightboxFrame
+  mode={fallbackMode ? "fallback" : "full"}
+  onBackdropClick={close}
+  drawer={!fallbackMode && media && infoOpen && !isMobile ? infoDrawer : undefined}
+>
   {#if fallbackMode}
     <LightboxToolbar onClose={close} />
   {:else}
@@ -682,25 +704,19 @@
         onReady={(api) => (imageApi = api)}
       />
     {/if}
-    {#if infoOpen}
-      {#if isMobile}
-        {#if activeScoreComponents}
-          <LightboxInfoSheet
-            {media}
-            scoreComponents={activeScoreComponents}
-            onClose={() => (infoOpen = false)}
-          />
-        {:else}
-          <LightboxInfoSheet {media} onClose={() => (infoOpen = false)} />
-        {/if}
-      {:else if activeScoreComponents}
-        <LightboxInfoDrawer
+    {#if infoOpen && isMobile}
+      <!-- Mobile keeps the sheet as a full-stage overlay (it covers the
+           image rather than reflowing it). The desktop drawer flows
+           through the LightboxFrame's `drawer` snippet — see infoDrawer
+           below — so the photo area shrinks instead of bleeding under. -->
+      {#if activeScoreComponents}
+        <LightboxInfoSheet
           {media}
           scoreComponents={activeScoreComponents}
           onClose={() => (infoOpen = false)}
         />
       {:else}
-        <LightboxInfoDrawer {media} onClose={() => (infoOpen = false)} />
+        <LightboxInfoSheet {media} onClose={() => (infoOpen = false)} />
       {/if}
     {/if}
   {:else}
