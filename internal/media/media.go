@@ -104,11 +104,25 @@ type ListFilter struct {
 	HasGPS *bool
 }
 
-// ListGeoFilter scopes a ListGeo query.
+// ListGeoFilter scopes a ListGeo query. ListGeo's contract is
+// geotagged-only, so HasGPS is intentionally absent from this filter
+// (every returned row already has lat and lon set).
 type ListGeoFilter struct {
 	Owner owners.Principal
 	// IncludeHidden, when false (default), excludes rows whose
 	// hidden_at IS NOT NULL. Set true only by callers that have
 	// validated an unlock claim before calling.
 	IncludeHidden bool
+	// Type narrows on media_type. nil means both photo and video.
+	Type *Type
+	// Cameras, when non-empty, narrows on (make || ' ' || model)
+	// matching any value (OR-composed). Each value is the canonical
+	// "<make> <model>" string used as both URL param and chip label.
+	Cameras []string
+	// Lenses, when non-empty, narrows on lens_model matching any value
+	// (OR-composed).
+	Lenses []string
+	// AnyTagKeys, when non-empty, narrows to media that carry AT LEAST
+	// ONE of the supplied tag keys (OR-composed via a single EXISTS).
+	AnyTagKeys []string
 }

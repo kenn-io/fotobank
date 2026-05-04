@@ -1707,6 +1707,9 @@ func insertMedia(t *testing.T, rw *sql.DB, p owners.Principal, id string, m medi
 	row := baseMedia(id, p)
 	row.Path = "2024/" + id + ".jpg"
 	row.Checksum = "cs-" + id
+	if m.Type != "" {
+		row.Type = m.Type
+	}
 	if m.Make != "" {
 		row.Make = m.Make
 	}
@@ -1847,4 +1850,58 @@ func TestRepoList_AnyTagKeys(t *testing.T) {
 	gotIDs := idsOf(got)
 	sort.Strings(gotIDs)
 	r.Equal([]string{"id-cat", "id-dog"}, gotIDs)
+}
+
+// TestRepoListGeo_Cameras narrows geotagged rows by camera.
+func TestRepoListGeo_Cameras(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := testOwner()
+	seedOwner(t, d.WriteDB(), owner, "sk-geo-cam")
+
+	insertMedia(t, d.WriteDB(), owner, "id-sony-geo", media.Media{
+		Make: "Sony", Model: "A7R IV",
+		Latitude: new(48.8), Longitude: new(2.3),
+	})
+	insertMedia(t, d.WriteDB(), owner, "id-canon-geo", media.Media{
+		Make: "Canon", Model: "EOS R5",
+		Latitude: new(40.7), Longitude: new(-74.0),
+	})
+	// Non-geotagged Sony — must NOT appear (ListGeo's contract).
+	insertMedia(t, d.WriteDB(), owner, "id-sony-nogeo", media.Media{
+		Make: "Sony", Model: "A7R IV",
+	})
+
+	got, err := repo.ListGeo(t.Context(), media.ListGeoFilter{
+		Owner:   owner,
+		Cameras: []string{"Sony A7R IV"},
+	})
+	r.NoError(err)
+	r.Equal([]string{"id-sony-geo"}, idsOf(got))
+}
+
+// TestRepoListGeo_Type narrows geotagged rows by media_type.
+func TestRepoListGeo_Type(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := testOwner()
+	seedOwner(t, d.WriteDB(), owner, "sk-geo-type")
+
+	insertMedia(t, d.WriteDB(), owner, "id-photo", media.Media{
+		Type:     media.TypePhoto,
+		Latitude: new(48.8), Longitude: new(2.3),
+	})
+	insertMedia(t, d.WriteDB(), owner, "id-video", media.Media{
+		Type:     media.TypeVideo,
+		Latitude: new(48.8), Longitude: new(2.3),
+	})
+
+	got, err := repo.ListGeo(t.Context(), media.ListGeoFilter{
+		Owner: owner,
+		Type:  new(media.TypeVideo),
+	})
+	r.NoError(err)
+	r.Equal([]string{"id-video"}, idsOf(got))
 }

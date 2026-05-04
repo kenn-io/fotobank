@@ -1133,22 +1133,47 @@ func (r *Repo) ListHidden(
 // idiom matching ListHidden so rows with a non-NULL timestamp appear
 // before NULL-timestamp rows.
 func (r *Repo) ListGeo(ctx context.Context, f ListGeoFilter) ([]Media, error) {
-	var q string
-	if f.IncludeHidden {
-		q = mediaSelect + `
- WHERE owner_hub = ? AND owner_user_id = ?
-   AND latitude IS NOT NULL AND longitude IS NOT NULL
-   AND paired_with_id IS NULL
- ORDER BY timestamp IS NULL ASC, timestamp DESC, imported_at DESC, id DESC`
-	} else {
-		q = mediaSelect + `
- WHERE owner_hub = ? AND owner_user_id = ?
-   AND latitude IS NOT NULL AND longitude IS NOT NULL
-   AND paired_with_id IS NULL
-   AND hidden_at IS NULL
- ORDER BY timestamp IS NULL ASC, timestamp DESC, imported_at DESC, id DESC`
+	conds := []string{
+		"owner_hub = ?", "owner_user_id = ?",
+		"latitude IS NOT NULL", "longitude IS NOT NULL",
+		"paired_with_id IS NULL",
 	}
-	rows, err := r.ro.QueryContext(ctx, q, f.Owner.Hub, f.Owner.UserID)
+	args := []any{f.Owner.Hub, f.Owner.UserID}
+
+	if !f.IncludeHidden {
+		conds = append(conds, "hidden_at IS NULL")
+	}
+	if f.Type != nil {
+		conds = append(conds, "media_type = ?")
+		args = append(args, string(*f.Type))
+	}
+	if len(f.Cameras) > 0 {
+		conds = append(conds,
+			"(make || ' ' || model) IN ("+placeholders(len(f.Cameras))+")")
+		for _, v := range f.Cameras {
+			args = append(args, v)
+		}
+	}
+	if len(f.Lenses) > 0 {
+		conds = append(conds, "lens_model IN ("+placeholders(len(f.Lenses))+")")
+		for _, v := range f.Lenses {
+			args = append(args, v)
+		}
+	}
+	if len(f.AnyTagKeys) > 0 {
+		conds = append(conds,
+			`EXISTS (SELECT 1 FROM media_tags mt
+                      JOIN ai_results r ON mt.result_id = r.id
+                     WHERE r.media_id = media.id AND r.task = 'tag' AND r.status = 'active'
+                       AND mt.tag_key IN (`+placeholders(len(f.AnyTagKeys))+`))`)
+		for _, v := range f.AnyTagKeys {
+			args = append(args, v)
+		}
+	}
+
+	q := mediaSelect + " WHERE " + strings.Join(conds, " AND ") +
+		" ORDER BY timestamp IS NULL ASC, timestamp DESC, imported_at DESC, id DESC"
+	rows, err := r.ro.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list geo: %w", err)
 	}
