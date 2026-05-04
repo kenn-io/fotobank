@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/wesm/fotobank/internal/ai"
 	"github.com/wesm/fotobank/internal/ai/embedding"
@@ -170,13 +171,16 @@ func runImport(ctx context.Context, opts importOpts) error {
 	}
 	imp.SetAIEnqueuer(enq)
 
+	progress := newImportProgress(opts.stdout)
 	res, err := imp.ImportDirectory(ctx, opts.source, ingest.Options{
 		Owner:             owner,
 		ConcurrentWorkers: workers,
+		Progress:          progress.handle,
 	})
 	if err != nil {
 		return err
 	}
+	progress.finish()
 
 	fmt.Fprintf(opts.stdout, "imported=%d\tduplicates=%d\tpath_collisions=%d\tfailures=%d\n",
 		res.Imported, res.Duplicates, res.PathCollisions, len(res.Failures))
@@ -188,4 +192,94 @@ func runImport(ctx context.Context, opts importOpts) error {
 		return fmt.Errorf("import completed with %d failure(s)", len(res.Failures))
 	}
 	return nil
+}
+
+// importProgress prints live progress for `fotobank import`. On a TTY
+// it refreshes a single line via carriage return and rate-limits paints
+// to ~10 Hz so a fast import doesn't drown stdout. When stdout is piped
+// (CI, tee'd to a file) it falls back to a one-line-per-50-files
+// summary so logs stay readable. handle and finish are safe to call in
+// any order — finish is a no-op if no Progress events arrived.
+type importProgress struct {
+	w         io.Writer
+	tty       bool
+	lastLen   int
+	lastTick  time.Time
+	announced bool
+}
+
+func newImportProgress(w io.Writer) *importProgress {
+	return &importProgress{w: w, tty: isTerminal(w)}
+}
+
+func (p *importProgress) handle(ev ingest.ProgressEvent) {
+	// Discovery announcement (Done=0) — print once unconditionally so the
+	// user knows discovery completed and how big the run is.
+	if ev.Done == 0 && !p.announced {
+		p.announced = true
+		fmt.Fprintf(p.w, "Discovered %d candidate(s). Importing…\n", ev.Total)
+		return
+	}
+	if p.tty {
+		// Rate-limit TTY paints; always paint the final event.
+		now := time.Now()
+		if ev.Done < ev.Total && now.Sub(p.lastTick) < 100*time.Millisecond {
+			return
+		}
+		p.lastTick = now
+		line := formatProgressLine(ev)
+		// Pad to last length so a shrinking line doesn't leave residue
+		// (file-name shorter than the previous one).
+		pad := ""
+		if n := p.lastLen - len(line); n > 0 {
+			pad = pad + spaces(n)
+		}
+		fmt.Fprintf(p.w, "\r%s%s", line, pad)
+		p.lastLen = len(line)
+		return
+	}
+	// Non-TTY: emit a line every 50 candidates and on the final event.
+	if ev.Done%50 != 0 && ev.Done != ev.Total {
+		return
+	}
+	fmt.Fprintln(p.w, formatProgressLine(ev))
+}
+
+func (p *importProgress) finish() {
+	if p.tty && p.lastLen > 0 {
+		fmt.Fprintln(p.w)
+		p.lastLen = 0
+	}
+}
+
+func formatProgressLine(ev ingest.ProgressEvent) string {
+	name := filepath.Base(ev.Path)
+	return fmt.Sprintf(
+		"  %d/%d · imported=%d dup=%d skip=%d fail=%d · %s",
+		ev.Done, ev.Total,
+		ev.Imported, ev.Duplicates, ev.PathCollisions, ev.Failures,
+		name,
+	)
+}
+
+func spaces(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = ' '
+	}
+	return string(b)
+}
+
+// isTerminal returns true if w is *os.File pointing at a terminal.
+// Anything else (bytes.Buffer in tests, pipes, redirects) returns false
+// so callers fall back to the line-per-batch path.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(f.Fd()))
 }

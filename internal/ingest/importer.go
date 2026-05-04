@@ -44,6 +44,27 @@ type PlaceResolver interface {
 type Options struct {
 	Owner             owners.Principal
 	ConcurrentWorkers int
+	// Progress, if non-nil, is invoked once after discovery (with
+	// Done=0, Total=<candidate count>, Path=""), then again after each
+	// candidate completes with running totals. The CLI uses this to
+	// render live progress; tests typically leave it nil. Called from
+	// the goroutine draining results, so handlers do not need their
+	// own synchronization.
+	Progress func(ProgressEvent)
+}
+
+// ProgressEvent reports running import progress to a caller-supplied
+// callback. Done counts results received so far; Total is the
+// pre-discovered candidate count. Path is the file the most recent
+// outcome corresponds to (empty on the initial discovery event).
+type ProgressEvent struct {
+	Done           int
+	Total          int
+	Imported       int
+	Duplicates     int
+	PathCollisions int
+	Failures       int
+	Path           string
 }
 
 // Result summarises an import run.
@@ -106,13 +127,17 @@ func (imp *Importer) refreshFTS(ctx context.Context, mediaID string) {
 
 // candidateOutcome is what a worker reports per candidate. id is set
 // only when imported is true; the post-barrier pairing pass collects
-// these to compute (owner, dir) keys touched by this batch.
+// these to compute (owner, dir) keys touched by this batch. path is
+// the candidate's source path, attached by the worker after the
+// pipeline call so progress callbacks can name the file just
+// processed.
 type candidateOutcome struct {
 	imported      bool
 	duplicate     bool
 	pathCollision bool
 	id            string
 	err           error
+	path          string
 }
 
 // ImportDirectory walks root, imports every supported candidate, and
@@ -149,15 +174,21 @@ func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Opti
 	jobs := make(chan Candidate, len(candidates))
 	results := make(chan candidateOutcome, len(candidates))
 
+	if opts.Progress != nil {
+		opts.Progress(ProgressEvent{Total: len(candidates)})
+	}
+
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Go(func() {
 			for c := range jobs {
 				if err := ctx.Err(); err != nil {
-					results <- candidateOutcome{err: err}
+					results <- candidateOutcome{err: err, path: c.Path}
 					continue
 				}
-				results <- imp.processCandidate(ctx, c, opts.Owner, sourceRoot)
+				out := imp.processCandidate(ctx, c, opts.Owner, sourceRoot)
+				out.path = c.Path
+				results <- out
 			}
 		})
 	}
@@ -170,6 +201,7 @@ func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Opti
 
 	var res Result
 	var importedIDs []string
+	done := 0
 	for out := range results {
 		switch {
 		case out.imported:
@@ -184,6 +216,18 @@ func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Opti
 		}
 		if out.err != nil {
 			res.Failures = append(res.Failures, out.err)
+		}
+		done++
+		if opts.Progress != nil {
+			opts.Progress(ProgressEvent{
+				Done:           done,
+				Total:          len(candidates),
+				Imported:       res.Imported,
+				Duplicates:     res.Duplicates,
+				PathCollisions: res.PathCollisions,
+				Failures:       len(res.Failures),
+				Path:           out.path,
+			})
 		}
 	}
 
