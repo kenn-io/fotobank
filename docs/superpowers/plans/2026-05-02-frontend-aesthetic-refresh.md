@@ -397,7 +397,7 @@ Run BOTH greps over the same target list — hex literals AND rgba/rgb literals.
 
 ```sh
 (
-  cd frontend
+  cd frontend || exit 1
   SCRUB_TARGETS="src/lib/components/lightbox \
     src/lib/components/BottomSheet.svelte \
     src/lib/components/ConfirmModal.svelte \

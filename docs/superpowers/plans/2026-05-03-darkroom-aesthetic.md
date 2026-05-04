@@ -249,20 +249,28 @@ Props: `principal: Principal | null`, `ready: boolean`,
 `error?: boolean` (optional; use to flip the dot from `--ok` to
 `--danger`).
 
-Renders `null` when `!ready`. Otherwise renders two `<div class="id-chip">`
-elements per the mockup. Use `data-testid="id-chip-hub"` and
-`data-testid="id-chip-user"` on the wrappers. Style block lifted
-from the mockup. Keep the status dot `<span class="id-chip-dot">` only
-inside the HUB chip.
+Renders `null` when `!ready`. When `ready` but `principal === null`
+(the `/me` fetch failed), render the same two chips with `error=true`
+forced and bracketed placeholder text — `[hub unavailable]` /
+`[user unavailable]` — so the failure is observable instead of
+crashing on `principal.hub`/`principal.handle`. Otherwise renders
+two `<div class="id-chip">` elements per the mockup. Use
+`data-testid="id-chip-hub"` and `data-testid="id-chip-user"` on the
+wrappers. Style block lifted from the mockup. Keep the status dot
+`<span class="id-chip-dot">` only inside the HUB chip.
 
 - [ ] **Step 2: Write `IdentityChips.test.ts`.**
 
-Three tests:
+Four tests:
 1. renders nothing when `ready=false`
 2. renders both chips when `ready=true` with non-null principal,
    and the value text matches `principal.hub` and `principal.handle`
 3. dot color flips when `error=true` (assert via inline style or
    class)
+4. when `ready=true` and `principal === null`, renders the bracketed
+   "[hub unavailable]" / "[user unavailable]" placeholders and the
+   dot is in the error state — pins the `/me` failure path so a
+   later refactor can't silently regress to a NPE.
 
 ```sh
 bun run test src/lib/components/IdentityChips.test.ts
@@ -288,7 +296,9 @@ CSS lifted from the mockup. Use `data-testid="search-input"`.
 - [ ] **Step 4: Write `SearchBar.test.ts`.**
 
 Four tests:
-1. input renders with placeholder "Search photos, cameras, places…"
+1. input renders with placeholder "Search photos, cameras, places, dates…"
+   (must match the mockup verbatim — earlier draft of this plan said
+   "places…" and would have locked the wrong canonical UI in)
 2. ⌘K (or Ctrl+K) focuses the input
 3. kbd hint becomes invisible (`opacity: 0`) on focus
 4. Enter calls `onsubmit` with the trimmed query
@@ -296,8 +306,10 @@ Four tests:
 - [ ] **Step 5: Rewrite `AppHeader.svelte`.**
 
 Props: `principal: Principal | null`, `ready: boolean`,
-`onsearch: (q: string) => void`. Drop existing identity rendering
-(currently raw `dev-local: owner` text) and the search-hint button.
+`route: string` (the current router route key, e.g. `"library"` —
+needed for the active-tab class), `onsearch: (q: string) => void`.
+Drop existing identity rendering (currently raw `dev-local: owner`
+text) and the search-hint button.
 
 Structure:
 
@@ -333,7 +345,7 @@ Wire the search submit handler:
 ```ts
 function onSearchSubmit(q: string) {
   if (!q) return;
-  router.push(`/search?q=${encodeURIComponent(q)}`);
+  router.navigate(`/search?q=${encodeURIComponent(q)}`);
 }
 ```
 
