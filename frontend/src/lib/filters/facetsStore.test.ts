@@ -181,6 +181,21 @@ describe("FacetsStore", () => {
     expect(calls[0]).toContain("has_gps=true");
   });
 
+  it("populates this.error when response has neither data nor error", async () => {
+    // openapi-fetch always populates one of (data, error) on a settled
+    // response, but the type surface admits neither. Without a fallback
+    // the prior this.response would remain visible with no error
+    // signal — the caller would think the new filter set succeeded
+    // and showed the previous counts. Pin the fallback here.
+    const seq: Array<{ data?: FacetsResponse; error?: unknown }> = [{}];
+    let i = 0;
+    const GET = vi.fn(async () => seq[i++]);
+    const s = new FacetsStore({ GET } as never, 0);
+    await s.fetch("library", empty);
+    expect(s.error).toContain("missing both data and error");
+    expect(s.response).toBeNull();
+  });
+
   it("populates this.error and leaves this.response unchanged on backend error", async () => {
     // openapi-fetch surfaces non-2xx on res.error (not via thrown
     // exception). Without reading res.error the store would silently

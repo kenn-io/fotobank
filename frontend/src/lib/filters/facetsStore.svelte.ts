@@ -107,6 +107,15 @@ export class FacetsStore {
           } else if (r.data) {
             this.cache.set(key, r.data);
             this.response = r.data;
+          } else {
+            // openapi-fetch always populates data OR error on a settled
+            // response, but the type surface allows neither in principle.
+            // Without an explicit fallback, the prior this.response would
+            // remain visible with no error signal — the caller would
+            // think the latest filter set succeeded and showed the
+            // previous counts. Surface a generic error so the UI can at
+            // least flag that something went wrong.
+            this.error = "Facets response missing both data and error";
           }
         } catch (e) {
           if (myToken !== this.fetchToken) return;
