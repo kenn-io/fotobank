@@ -47,21 +47,37 @@ export class FacetsStore {
     const key = `${route}|${filterKey(filters)}`;
     const cached = this.cache.get(key);
     if (cached) {
+      // A cache hit invalidates any in-flight fetch: the user is
+      // already at the latest state, so drain any queued resolvers
+      // and bump the token so a still-running GET cannot overwrite
+      // this.response when its promise settles later.
+      ++this.fetchToken;
+      if (this.debounceTimer !== null) clearTimeout(this.debounceTimer);
       this.response = cached;
+      const resolvers = this.pendingResolvers;
+      this.pendingResolvers = [];
+      for (const r of resolvers) r();
       return Promise.resolve();
     }
 
-    // Rapid calls coalesce: clear the existing timer (the prior call's
-    // request is now superseded) and queue this caller's resolver
-    // alongside any earlier ones. They all settle together when the
-    // latest scheduled fetch completes — each caller's await thus
-    // continues only after `this.response` reflects the latest state.
+    // Rapid calls coalesce: clear the prior debounce timer and bump
+    // fetchToken SYNCHRONOUSLY so any in-flight callback from an
+    // earlier timer immediately becomes stale and short-circuits in
+    // its post-await checks. Without the synchronous bump, an earlier
+    // fetch could resolve and drain pendingResolvers — including this
+    // newer caller's resolver — with stale state still in
+    // this.response.
     if (this.debounceTimer !== null) clearTimeout(this.debounceTimer);
+    const myToken = ++this.fetchToken;
 
     return new Promise<void>((resolve) => {
       this.pendingResolvers.push(resolve);
       this.debounceTimer = setTimeout(async () => {
-        const myToken = ++this.fetchToken;
+        // Defensive: clearTimeout in a later fetch should have
+        // prevented this callback from running, but Node's timer
+        // semantics leave a tiny window if a later schedule happens
+        // between firing and dispatch. Re-check before any work.
+        if (myToken !== this.fetchToken) return;
         this.loading = true;
         this.error = null;
         try {
@@ -83,10 +99,11 @@ export class FacetsStore {
         } finally {
           if (myToken === this.fetchToken) {
             this.loading = false;
-            // Settle every resolver queued while this timer was in
-            // flight. If a newer fetch raced ahead (myToken !==
-            // fetchToken), defer to that fetch's settle path — the
-            // resolvers outlive a stale closure.
+            // Settle every resolver queued while this token was the
+            // latest. A newer fetch would have bumped fetchToken
+            // synchronously, leaving this branch unreachable — its
+            // own settle path will drain the resolvers (including
+            // any pushed during our await) when it lands.
             const resolvers = this.pendingResolvers;
             this.pendingResolvers = [];
             for (const r of resolvers) r();
