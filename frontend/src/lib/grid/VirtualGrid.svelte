@@ -100,7 +100,12 @@
   });
 
   function toLite(items: Media[]): MediaLite[] {
-    return items.map((m) => ({ id: m.id, aspect: m.aspect, thumbUrl: m.thumbUrl }));
+    return items.map((m) => ({
+      id: m.id,
+      aspect: m.aspect,
+      thumbUrl: m.thumbUrl,
+      thumbStatus: m.thumbStatus,
+    }));
   }
 
   // findFullMedia maps a MediaLite (the layout-sliced subset) back to
@@ -113,7 +118,7 @@
   function findFullMedia(items: Media[], id: string): Media {
     const found = items.find((m) => m.id === id);
     if (found) return found;
-    return { id, timestamp: "", aspect: 1, thumbUrl: "", taken: new Date(0), thumbVersion: 0 };
+    return { id, timestamp: "", aspect: 1, thumbUrl: "", thumbStatus: "pending", taken: new Date(0), thumbVersion: 0 };
   }
 
   // Memoize the flattened id list so shift-click doesn't re-allocate

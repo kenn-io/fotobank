@@ -664,12 +664,24 @@
       {onPrev}
       {onNext}
     />
-    <LightboxMedia
-      kind="image"
-      src={visibleSrc}
-      alt={media.location_label ?? media.id}
-      onReady={(api) => (imageApi = api)}
-    />
+    {#if visibleSrc === ""}
+      <!-- Thumbs not ready yet (worker hasn't drained this row, or
+           the preview/large derivatives 404'd). Render a shimmer
+           placeholder rather than letting the browser paint a
+           broken-image icon for src="". The loader will set
+           visibleSrc on the next successful decode and Svelte will
+           swap us into LightboxMedia. -->
+      <div class="lb-thumb-pending" data-thumb-status={media.thumbStatus}>
+        <div class="lb-shimmer" aria-label="Photo still processing"></div>
+      </div>
+    {:else}
+      <LightboxMedia
+        kind="image"
+        src={visibleSrc}
+        alt={media.location_label ?? media.id}
+        onReady={(api) => (imageApi = api)}
+      />
+    {/if}
     {#if infoOpen}
       {#if isMobile}
         {#if activeScoreComponents}
@@ -718,5 +730,36 @@
     color: var(--ink);
     padding: 2rem;
     text-align: center;
+  }
+  /* Lightbox-scale shimmer: matches MediaCell's diagonal sheen but
+     covers the full lightbox stage. Reads as "in flight" without a
+     spinner. Reduced-motion drops the animation but keeps the tone
+     so pending vs. ready cells stay visually distinct. */
+  .lb-thumb-pending {
+    width: 80vw;
+    max-width: 1200px;
+    aspect-ratio: 3 / 2;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .lb-shimmer {
+    width: 100%;
+    height: 100%;
+    border-radius: 6px;
+    background: linear-gradient(
+      110deg,
+      var(--surface-2) 30%,
+      color-mix(in srgb, var(--surface-2) 70%, var(--ink-3)) 50%,
+      var(--surface-2) 70%
+    );
+    background-size: 220% 100%;
+    animation: lb-shimmer 1.6s linear infinite;
+  }
+  @keyframes lb-shimmer {
+    0%   { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lb-shimmer { animation: none; }
   }
 </style>

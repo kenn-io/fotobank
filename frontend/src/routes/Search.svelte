@@ -295,6 +295,10 @@
         timestamp: ts,
         aspect,
         thumbUrl: `/api/v1/media/${r.media_id}/thumb?v=${r.thumb_version}`,
+        // Search responses don't include thumb_status. Default to
+        // "ready" so the cell attempts <img>; on a 404 the cell falls
+        // back to the placeholder via the existing imgError path.
+        thumbStatus: "ready",
         taken: new Date(ts),
         thumbVersion: r.thumb_version,
       };

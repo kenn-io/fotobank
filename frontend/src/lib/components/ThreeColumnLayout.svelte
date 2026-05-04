@@ -21,7 +21,12 @@
   .shell {
     display: grid;
     grid-template-columns: 220px 1fr auto;
-    height: 100vh;
+    /* Subtract the AppHeader height (46px, fixed in AppHeader.svelte's
+       `header.top` rule). With plain `100vh` the shell sits below the
+       header, total document height becomes 100vh + 46px, and the body
+       scrolls 46px — which surfaces as the "phantom right-edge
+       scrollbar" the user reported. */
+    height: calc(100vh - 46px);
     width: 100vw;
   }
   .sidebar {

@@ -1,10 +1,28 @@
 import type { Client } from "../api/client";
 
+// thumb_status mirrors the backend enum on `media.thumb_status`. The
+// grid uses it to decide what to render:
+//   ready   → fetch the real thumb URL (the only state where /thumb
+//             returns 200; every other state 404s)
+//   pending → background worker hasn't started, show a loading shimmer
+//   working → worker has claimed the row, show a loading shimmer
+//   failed  → terminal error, show a dimmed-placeholder distinct from
+//             "still working"
+//   no_preview → format had no embeddable preview (e.g. some video or
+//             unrenderable RAW); show a neutral placeholder
+export type ThumbStatus =
+  | "ready"
+  | "pending"
+  | "working"
+  | "failed"
+  | "no_preview";
+
 export type Media = {
   id: string;
   timestamp: string;
   aspect: number;
   thumbUrl: string;
+  thumbStatus: ThumbStatus;
   taken: Date;
   thumbVersion: number;
   latitude?: number;
@@ -203,7 +221,8 @@ export class MediaStore {
     type _IdentityFieldsCovered = Exclude<
       keyof Media,
       | "id" | "timestamp" | "taken" | "aspect" | "thumbUrl"
-      | "thumbVersion" | "latitude" | "longitude" | "gps_at" | "location_label"
+      | "thumbStatus" | "thumbVersion"
+      | "latitude" | "longitude" | "gps_at" | "location_label"
       | "original_filename" | "size"
       | "paired_with_id" | "paired_with" | "sidecars"
       | "hidden_at"
@@ -253,6 +272,7 @@ export class MediaStore {
       const unchanged = existing !== undefined
         && existing.timestamp === it.timestamp
         && existing.thumbUrl === it.thumbUrl
+        && existing.thumbStatus === it.thumbStatus
         && existing.aspect === it.aspect
         && existing.thumbVersion === it.thumbVersion
         && existing.latitude === it.latitude
@@ -333,6 +353,19 @@ export function toMedia(raw: Record<string, unknown>): Media | null {
   // gap instead of silently rendering nothing on a "good" URL.
   const tv = raw["thumb_version"];
   const thumbVersion = typeof tv === "number" && Number.isFinite(tv) && tv >= 0 ? tv : 0;
+  // thumb_status guards rendering: pending/working should show a
+  // shimmer instead of a 404'd <img>. Default to "pending" when the
+  // backend omits the field — that's the safer default since a 404
+  // would surface as a "broken" state for a row the worker simply
+  // hasn't reached yet.
+  const tsRaw = raw["thumb_status"];
+  let thumbStatus: ThumbStatus = "pending";
+  if (
+    tsRaw === "ready" || tsRaw === "pending" || tsRaw === "working"
+    || tsRaw === "failed" || tsRaw === "no_preview"
+  ) {
+    thumbStatus = tsRaw;
+  }
   // tsconfig has exactOptionalPropertyTypes:true, so the optional fields
   // (declared as `?: T`) reject explicit `undefined`. Build the literal
   // and only assign each optional when its raw value passes a typeof
@@ -343,6 +376,7 @@ export function toMedia(raw: Record<string, unknown>): Media | null {
     taken,
     aspect: wn / hn,
     thumbUrl: `/api/v1/media/${id}/thumb?size=grid&v=${thumbVersion}`,
+    thumbStatus,
     thumbVersion,
   };
   if (typeof raw["latitude"] === "number") m.latitude = raw["latitude"];

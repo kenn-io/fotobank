@@ -1,6 +1,18 @@
 import { computeJustified, type LayoutOptions } from "./justifiedLayout";
+import type { ThumbStatus } from "../media/mediaStore.svelte";
 
-export type MediaLite = { id: string; aspect: number; thumbUrl?: string };
+// MediaLite is the projection VirtualGrid passes to MonthChunk. It
+// carries only what the cell render needs: id (for click handlers),
+// aspect (for justified layout), thumbUrl (for the <img> src), and
+// thumbStatus (so MediaCell can branch between "render the image",
+// "show shimmer", and "show failed/no-preview placeholder" instead
+// of always attempting to load and falling back on 404).
+export type MediaLite = {
+  id: string;
+  aspect: number;
+  thumbUrl?: string;
+  thumbStatus?: ThumbStatus;
+};
 
 // Reserved height for a rendered .day-header inside MonthChunk. Must
 // stay in sync with the component's .day-header rule (16px top + 8px

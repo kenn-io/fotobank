@@ -6,14 +6,14 @@ const months: Month[] = [
   {
     key: "2026-04",
     items: [
-      { id: "a", timestamp: "", aspect: 1, thumbUrl: "", taken: new Date("2026-04-20"), thumbVersion: 0 },
-      { id: "b", timestamp: "", aspect: 1, thumbUrl: "", taken: new Date("2026-04-10"), thumbVersion: 0 },
+      { id: "a", timestamp: "", aspect: 1, thumbUrl: "", thumbStatus: "ready", taken: new Date("2026-04-20"), thumbVersion: 0 },
+      { id: "b", timestamp: "", aspect: 1, thumbUrl: "", thumbStatus: "ready", taken: new Date("2026-04-10"), thumbVersion: 0 },
     ],
   },
   {
     key: "2026-03",
     items: [
-      { id: "c", timestamp: "", aspect: 1, thumbUrl: "", taken: new Date("2026-03-15"), thumbVersion: 0 },
+      { id: "c", timestamp: "", aspect: 1, thumbUrl: "", thumbStatus: "ready", taken: new Date("2026-03-15"), thumbVersion: 0 },
     ],
   },
 ];
@@ -39,10 +39,10 @@ describe("flattenLibraryIds / flattenSessionIds", () => {
       {
         key: "2026-04",
         items: [
-          { id: "later",  timestamp: "", aspect: 1, thumbUrl: "", taken: new Date("2026-04-22T12:00:00Z"), thumbVersion: 0 },
-          { id: "third",  timestamp: "", aspect: 1, thumbUrl: "", taken: new Date("2026-04-20T13:00:00Z"), thumbVersion: 0 },
-          { id: "second", timestamp: "", aspect: 1, thumbUrl: "", taken: new Date("2026-04-20T12:30:00Z"), thumbVersion: 0 },
-          { id: "first",  timestamp: "", aspect: 1, thumbUrl: "", taken: new Date("2026-04-20T12:00:00Z"), thumbVersion: 0 },
+          { id: "later",  timestamp: "", aspect: 1, thumbUrl: "", thumbStatus: "ready", taken: new Date("2026-04-22T12:00:00Z"), thumbVersion: 0 },
+          { id: "third",  timestamp: "", aspect: 1, thumbUrl: "", thumbStatus: "ready", taken: new Date("2026-04-20T13:00:00Z"), thumbVersion: 0 },
+          { id: "second", timestamp: "", aspect: 1, thumbUrl: "", thumbStatus: "ready", taken: new Date("2026-04-20T12:30:00Z"), thumbVersion: 0 },
+          { id: "first",  timestamp: "", aspect: 1, thumbUrl: "", thumbStatus: "ready", taken: new Date("2026-04-20T12:00:00Z"), thumbVersion: 0 },
         ],
       },
     ];

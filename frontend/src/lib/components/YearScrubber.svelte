@@ -23,7 +23,11 @@
 <style>
   .scrubber {
     position: fixed;
-    top: 60px;
+    /* Sits BELOW the route header (~32px DensityControl strip) and
+       the AppHeader (46px), with a gap for breathing room. With the
+       prior 60px the year ticks landed directly on top of the
+       compact/comfortable/large toggle. */
+    top: 96px;
     right: 4px;
     display: flex;
     flex-direction: column;

@@ -3,7 +3,7 @@ import { groupIntoSessions } from "./sessionGrouping";
 import type { Media } from "../media/mediaStore.svelte";
 
 const m = (id: string, iso: string): Media => ({
-  id, timestamp: iso, taken: new Date(iso), aspect: 1, thumbUrl: "", thumbVersion: 0,
+  id, timestamp: iso, taken: new Date(iso), aspect: 1, thumbUrl: "", thumbStatus: "ready", thumbVersion: 0,
 });
 
 describe("groupIntoSessions", () => {
