@@ -183,3 +183,72 @@ func TestNormalizedHash_TagKeysOrderIndependent(t *testing.T) {
 	r.Equal(respA.NextCursor, respB.NextCursor,
 		"TagKeys permutation must not shift the cursor hash")
 }
+
+// TestNormalizedHash_FacetFieldsContributeToCursor pins the contract
+// that the four sidebar-facet fields (Cameras, Lenses, AnyTagKeys,
+// HasGPS) participate in the cursor hash. Without this, a cursor
+// minted on a request with one facet selection could be replayed
+// against a request with a different selection and the next page
+// would silently page through the wrong set.
+//
+// The test asserts two things per field: (1) two requests that differ
+// only in the selection produce different hashes, and (2) two requests
+// that differ only in the multi-valued slice's order produce the same
+// hash (permutation invariant, mirroring TagKeys).
+func TestNormalizedHash_FacetFieldsContributeToCursor(t *testing.T) {
+	r := require.New(t)
+	hashOf := func(f hybrid.Input) string {
+		return hybrid.NormalizedHash(hybrid.NormalizedReq{
+			Q:          "dog",
+			Sort:       "newest",
+			EngineMode: "filter_only",
+			Filter:     hybrid.FlattenFilterForTest(f),
+		})
+	}
+
+	base := hashOf(hybrid.Input{})
+
+	// Cameras: selection shifts hash; permutation does not.
+	camsA := hashOf(hybrid.Input{Cameras: []string{"Sony A7R IV"}})
+	camsB := hashOf(hybrid.Input{Cameras: []string{"Sony A7R IV", "Canon EOS R5"}})
+	camsBPerm := hashOf(hybrid.Input{Cameras: []string{"Canon EOS R5", "Sony A7R IV"}})
+	r.NotEqual(base, camsA, "Cameras selection must contribute to hash")
+	r.NotEqual(camsA, camsB, "different Cameras sets must hash differently")
+	r.Equal(camsB, camsBPerm, "Cameras permutation must not shift hash")
+
+	// Lenses: same shape.
+	lensA := hashOf(hybrid.Input{Lenses: []string{"FE 24-70mm F2.8 GM"}})
+	lensB := hashOf(hybrid.Input{Lenses: []string{"FE 24-70mm F2.8 GM", "FE 50mm F1.4 GM"}})
+	lensBPerm := hashOf(hybrid.Input{Lenses: []string{"FE 50mm F1.4 GM", "FE 24-70mm F2.8 GM"}})
+	r.NotEqual(base, lensA)
+	r.NotEqual(lensA, lensB)
+	r.Equal(lensB, lensBPerm)
+
+	// AnyTagKeys: same shape, distinct from TagKeys (the AND-composed
+	// chip path) so they get their own hash slot.
+	anyA := hashOf(hybrid.Input{AnyTagKeys: []string{"dog"}})
+	anyB := hashOf(hybrid.Input{AnyTagKeys: []string{"dog", "cat"}})
+	anyBPerm := hashOf(hybrid.Input{AnyTagKeys: []string{"cat", "dog"}})
+	r.NotEqual(base, anyA)
+	r.NotEqual(anyA, anyB)
+	r.Equal(anyB, anyBPerm)
+	// AnyTagKeys vs TagKeys must NOT collide — a chip query and a
+	// sidebar facet query that share the same key string are different
+	// requests.
+	r.NotEqual(
+		hashOf(hybrid.Input{AnyTagKeys: []string{"dog"}}),
+		hashOf(hybrid.Input{TagKeys: []string{"dog"}}),
+		"AnyTagKeys and TagKeys must not share a hash slot",
+	)
+
+	// HasGPS: tri-state, all three must be distinguishable.
+	r.NotEqual(base, hashOf(hybrid.Input{HasGPS: new(true)}),
+		"HasGPS=true must shift hash")
+	r.NotEqual(base, hashOf(hybrid.Input{HasGPS: new(false)}),
+		"HasGPS=false must shift hash")
+	r.NotEqual(
+		hashOf(hybrid.Input{HasGPS: new(true)}),
+		hashOf(hybrid.Input{HasGPS: new(false)}),
+		"HasGPS true vs false must hash differently",
+	)
+}

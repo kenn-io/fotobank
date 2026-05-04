@@ -427,11 +427,11 @@ func (e *Engine) buildResponse(req Request, hits []index.Hit, effSort, mode stri
 
 // flattenFilter projects a structured Input into the flat
 // string→string map NormalizedHash hashes over. Multi-valued keys
-// (TagKeys) join their values with "," so a re-order of the slice
-// does not change the hash. Owner is intentionally omitted — the
-// service layer scopes by Owner before the cursor is observed, and a
-// shifted Owner is a different request that should never see another
-// owner's cursor anyway.
+// (TagKeys, Cameras, Lenses, AnyTagKeys) join their sorted values
+// with "," so a re-order of the slice does not change the hash.
+// Owner is intentionally omitted — the service layer scopes by Owner
+// before the cursor is observed, and a shifted Owner is a different
+// request that should never see another owner's cursor anyway.
 func flattenFilter(in Input) map[string]string {
 	out := map[string]string{}
 	if in.DateAfter != nil {
@@ -440,23 +440,17 @@ func flattenFilter(in Input) map[string]string {
 	if in.DateBefore != nil {
 		out["date_before"] = in.DateBefore.UTC().Format("2006-01-02T15:04:05Z")
 	}
-	if len(in.TagKeys) > 0 {
-		// Sort the tag keys before joining so the cursor hash is
-		// independent of the slice order the resolver / caller emitted.
-		// Without this, two requests that differ only in TagKeys
-		// permutation would produce different hashes and a cursor
-		// minted on page 1 would 400 on page 2 simply because the
-		// resolver re-emitted the same labels in a different order.
-		keys := append([]string(nil), in.TagKeys...)
-		sort.Strings(keys)
-		var joined strings.Builder
-		for i, k := range keys {
-			if i > 0 {
-				joined.WriteString(",")
-			}
-			joined.WriteString(k)
-		}
-		out["tags"] = joined.String()
+	if v := joinSorted(in.TagKeys); v != "" {
+		out["tags"] = v
+	}
+	if v := joinSorted(in.Cameras); v != "" {
+		out["cameras"] = v
+	}
+	if v := joinSorted(in.Lenses); v != "" {
+		out["lenses"] = v
+	}
+	if v := joinSorted(in.AnyTagKeys); v != "" {
+		out["any_tags"] = v
 	}
 	if in.LocationLabel != nil {
 		out["location"] = *in.LocationLabel
@@ -464,5 +458,33 @@ func flattenFilter(in Input) map[string]string {
 	if in.MediaType != nil {
 		out["media_type"] = *in.MediaType
 	}
+	if in.HasGPS != nil {
+		if *in.HasGPS {
+			out["has_gps"] = "true"
+		} else {
+			out["has_gps"] = "false"
+		}
+	}
 	return out
+}
+
+// joinSorted returns the input slice's values comma-joined in sorted
+// order, or "" for an empty slice. Used by flattenFilter so two
+// requests that differ only in slice permutation produce the same
+// cursor hash — without this, a resolver / caller that emits the
+// same set in a different order would 400 on page 2.
+func joinSorted(vs []string) string {
+	if len(vs) == 0 {
+		return ""
+	}
+	keys := append([]string(nil), vs...)
+	sort.Strings(keys)
+	var joined strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			joined.WriteString(",")
+		}
+		joined.WriteString(k)
+	}
+	return joined.String()
 }
