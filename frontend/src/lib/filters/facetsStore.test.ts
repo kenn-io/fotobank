@@ -110,6 +110,49 @@ describe("FacetsStore", () => {
     expect(s.response?.cameras[0]?.value).toBe("B-CAM");
   });
 
+  it("encodes has_gps as 'true'/'false' (not '1'/'0') to match backend", async () => {
+    // /api/v1/facets accepts has_gps as literal "true"/"false"
+    // (huma enum constraint, see internal/httpapi/facets.go). Sending
+    // "1"/"0" would 400 — pin the canonical wire format here.
+    const { client, calls } = fakeClient([fakeResponse, fakeResponse]);
+    const s = new FacetsStore(client as never, 0);
+    await s.fetch("library", { ...empty, hasGps: true });
+    expect(calls[0]).toContain("has_gps=true");
+    expect(calls[0]).not.toContain("has_gps=1");
+    await s.fetch("library", { ...empty, hasGps: false });
+    expect(calls[1]).toContain("has_gps=false");
+  });
+
+  it("forces has_gps=true on /map when caller hasn't pinned it", async () => {
+    // /map's facet counts must scope to geotagged photos — the user
+    // can't even pin a non-geotagged photo on the map.
+    const { client, calls } = fakeClient([fakeResponse]);
+    const s = new FacetsStore(client as never, 0);
+    await s.fetch("map", empty);
+    expect(calls[0]).toContain("has_gps=true");
+  });
+
+  it("populates this.error and leaves this.response unchanged on backend error", async () => {
+    // openapi-fetch surfaces non-2xx on res.error (not via thrown
+    // exception). Without reading res.error the store would silently
+    // ignore a 400/5xx and leave a stale this.response visible.
+    const seq: Array<{ data?: FacetsResponse; error?: { detail: string } }> = [
+      { data: fakeResponse },
+      { error: { detail: "boom" } },
+    ];
+    let i = 0;
+    const GET = vi.fn(async () => seq[i++]);
+    const s = new FacetsStore({ GET } as never, 0);
+    await s.fetch("library", empty);
+    expect(s.response).toEqual(fakeResponse);
+    expect(s.error).toBeNull();
+    await s.fetch("library", { ...empty, cameras: ["X"] });
+    expect(s.error).toBe("boom");
+    // Prior response stays visible — UX-side, the FilterSidebar can
+    // keep showing the last-good counts while the error toast fires.
+    expect(s.response).toEqual(fakeResponse);
+  });
+
   it("stale responses are dropped", async () => {
     let resolveFirst: (v: FacetsResponse) => void = () => {};
     const slow = new Promise<FacetsResponse>((r) => (resolveFirst = r));

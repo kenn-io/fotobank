@@ -2261,12 +2261,21 @@ export class FacetsStore {
           const path = this.buildPath(route, filters);
           const res = await this.client.GET(path as never);
           if (myToken !== this.fetchToken) return; // stale, drop
-          // openapi-typescript wraps the body in `data`; adjust if the
-          // generated client surface differs.
-          const body = (res as { data?: FacetsResponse }).data;
-          if (body) {
-            this.cache.set(key, body);
-            this.response = body;
+          // openapi-fetch surfaces non-2xx responses on res.error and
+          // leaves res.data undefined. Without reading res.error a
+          // server-side 400/5xx silently leaves stale this.response
+          // visible. Map huma's {title, detail} (or thrown JS Error
+          // {message}) to a string and bail before writing the cache.
+          const r = res as {
+            data?: FacetsResponse;
+            error?: { detail?: string; title?: string; message?: string };
+          };
+          if (r.error) {
+            const e = r.error;
+            this.error = e.detail ?? e.message ?? e.title ?? "Failed to load facets";
+          } else if (r.data) {
+            this.cache.set(key, r.data);
+            this.response = r.data;
           }
         } catch (e) {
           if (myToken !== this.fetchToken) return;
@@ -2288,13 +2297,24 @@ export class FacetsStore {
     });
   }
 
-  private buildPath(_route: RouteContext, f: ActiveFilters): string {
+  private buildPath(route: RouteContext, f: ActiveFilters): string {
     const sp = new URLSearchParams();
     for (const v of f.cameras) sp.append("camera", v);
     for (const v of f.lenses) sp.append("lens", v);
     for (const v of f.tagKeys) sp.append("facet_tag", v);
-    if (f.hasGps !== null) sp.set("has_gps", f.hasGps ? "1" : "0");
+    // /facets accepts has_gps as the literal strings "true"/"false"
+    // (huma `enum:"true,false"` constraint, see internal/httpapi/facets.go).
+    // The URL convention used elsewhere in the SPA is "1"/"0"; keep
+    // the mapping local rather than spreading two formats.
+    if (f.hasGps !== null) sp.set("has_gps", f.hasGps ? "true" : "false");
     if (f.mediaType !== null) sp.set("media_type", f.mediaType);
+    // /map's facet counts must scope to geotagged photos — the user
+    // can't pin a non-geotagged photo on the map. Force has_gps=true
+    // when the caller hasn't pinned it. (The Places facet is hidden
+    // on /map per SF-14, so the user has no way to toggle this.)
+    if (route === "map" && f.hasGps === null) {
+      sp.set("has_gps", "true");
+    }
     const qs = sp.toString();
     return qs ? `/api/v1/facets?${qs}` : `/api/v1/facets`;
   }
