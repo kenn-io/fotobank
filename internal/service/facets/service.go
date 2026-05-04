@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/wesm/fotobank/internal/auth/hidden"
+	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/search/hybrid"
 )
@@ -45,6 +47,14 @@ type Filters struct {
 	TagKeys       []string // AND-composed (typed-chip resolver path)
 	LocationLabel *string
 	IncludeHidden bool
+
+	// UnlockClaim, when non-nil, is the caller's hidden-unlock claim.
+	// Aggregate validates it via the injected HiddenChecker before
+	// honouring IncludeHidden=true; an invalid or nil claim with
+	// IncludeHidden=true returns errs.ErrPermissionDenied. The gate
+	// lives at the service layer (mirroring search.Service.Search) so
+	// non-HTTP callers (CLI, internal jobs) cannot bypass it.
+	UnlockClaim *hidden.UnlockClaim
 }
 
 // ValueCount is the (value, count) shape used by Cameras, Lenses, and
@@ -95,22 +105,36 @@ type Response struct {
 // buckets (photo, video) so it intentionally skips the LIMIT.
 const facetTopN = 200
 
-// Service is the auth-scoped facet aggregator. The single
-// dependency is the read-pool *sql.DB (writes never happen on this
-// surface). New is the only construction path; the field is
-// unexported so transport code can't reach into the read pool
-// directly.
-type Service struct {
-	ro *sql.DB
+// HiddenChecker validates an unlock claim against the caller. Returns
+// true only when the claim's principal matches caller and the claim
+// has not expired. The service treats a nil claim or a Valid==false
+// outcome as a hard deny — the gate is fail-closed. Mirrors the
+// HiddenChecker shape used by search.Service so tests and production
+// wiring can share a single concrete implementation.
+type HiddenChecker interface {
+	Valid(claim *hidden.UnlockClaim, caller owners.Principal) bool
 }
 
-// New constructs a Service backed by the supplied read-pool handle.
-// The handle is consulted exclusively from Aggregate (one query per
-// facet); pass the same *sql.DB used elsewhere in the daemon's read
-// pool so SQLite's WAL semantics give consistent snapshots across the
-// five queries.
-func New(ro *sql.DB) *Service {
-	return &Service{ro: ro}
+// Service is the auth-scoped facet aggregator. ro is the read-pool
+// *sql.DB (writes never happen on this surface); hiddenChecker gates
+// the IncludeHidden filter so non-HTTP callers cannot bypass the
+// unlock check by routing around the transport. New is the only
+// construction path; both fields are unexported so transport code
+// can't reach in directly.
+type Service struct {
+	ro            *sql.DB
+	hiddenChecker HiddenChecker
+}
+
+// New constructs a Service backed by the supplied read-pool handle
+// and HiddenChecker. The handle is consulted exclusively from
+// Aggregate (one query per facet); pass the same *sql.DB used
+// elsewhere in the daemon's read pool so SQLite's WAL semantics give
+// consistent snapshots across the five queries. hiddenChecker must
+// be non-nil — Aggregate dereferences it on every IncludeHidden=true
+// request.
+func New(ro *sql.DB, hiddenChecker HiddenChecker) *Service {
+	return &Service{ro: ro, hiddenChecker: hiddenChecker}
 }
 
 // Aggregate runs the five facet queries — Cameras, Lenses, Tags,
@@ -121,9 +145,20 @@ func New(ro *sql.DB) *Service {
 // library (the Lightroom exclude-self rule). Errors from any one
 // query short-circuit the whole call and are wrapped with the facet
 // name for diagnosis.
+//
+// IncludeHidden=true requires a valid UnlockClaim: a nil claim or a
+// hiddenChecker rejection short-circuits to errs.ErrPermissionDenied
+// before any query runs. The gate is fail-closed and adjacent to
+// where IncludeHidden actually mutates the SQL (hybrid.Resolve), so
+// non-HTTP callers (CLI, internal jobs) inherit the same protection.
 func (s *Service) Aggregate(
 	ctx context.Context, caller owners.Principal, f Filters,
 ) (Response, error) {
+	if f.IncludeHidden {
+		if f.UnlockClaim == nil || !s.hiddenChecker.Valid(f.UnlockClaim, caller) {
+			return Response{}, errs.ErrPermissionDenied
+		}
+	}
 	in := s.toHybridInput(caller, f)
 
 	cameras, err := s.aggregateCameras(ctx, withoutCameras(in))

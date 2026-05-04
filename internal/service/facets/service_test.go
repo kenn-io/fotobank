@@ -5,9 +5,12 @@ import (
 	"database/sql"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/wesm/fotobank/internal/auth/hidden"
+	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/media"
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service/facets"
@@ -16,6 +19,18 @@ import (
 )
 
 var seedOwner = owners.Principal{Hub: "h", UserID: "u"}
+
+// fakeHiddenChecker drives the unlock-claim gate. valid is what Valid
+// returns regardless of the claim contents — facets tests aim at the
+// service's branching, not the checker's internal contract. Mirrors
+// the fake declared in internal/service/search/service_test.go.
+type fakeHiddenChecker struct {
+	valid bool
+}
+
+func (f fakeHiddenChecker) Valid(*hidden.UnlockClaim, owners.Principal) bool {
+	return f.valid
+}
 
 // insertSeedFixtures plants the canonical 3-row Sony/Canon fixture
 // shape every Aggregate test reuses unless it asserts a more focused
@@ -52,13 +67,24 @@ func seedOwners(t *testing.T, rw *sql.DB, principals ...owners.Principal) {
 	}
 }
 
+// newFacetService bundles a fresh DB plus a default-deny
+// HiddenChecker. Tests that exercise the IncludeHidden gate use
+// newFacetServiceWithChecker to override the checker; the rest accept
+// the deny default since none of them set IncludeHidden=true.
 func newFacetService(t *testing.T) (*facets.Service, *sql.DB) {
+	t.Helper()
+	return newFacetServiceWithChecker(t, fakeHiddenChecker{valid: false})
+}
+
+// newFacetServiceWithChecker is the explicit-checker variant used by
+// the IncludeHidden gate tests.
+func newFacetServiceWithChecker(t *testing.T, hc facets.HiddenChecker) (*facets.Service, *sql.DB) {
 	t.Helper()
 	d := testutil.OpenTestDB(t)
 	rw := d.WriteDB()
 	ro := d.ReadDB()
 	seedOwners(t, rw, seedOwner)
-	return facets.New(ro), rw
+	return facets.New(ro, hc), rw
 }
 
 // TestAggregate_Cameras asserts the camera facet returns each (make,
@@ -209,4 +235,57 @@ func TestAggregate_OwnerScoped(t *testing.T) {
 	}
 	sort.Strings(values)
 	r.Equal([]string{"Canon EOS R5", "Sony A7R IV"}, values)
+}
+
+// TestAggregate_IncludeHidden_RejectedWithoutClaim asserts the
+// service-layer hidden gate is fail-closed: IncludeHidden=true with a
+// nil UnlockClaim must short-circuit to errs.ErrPermissionDenied
+// before any aggregation query runs. The fake checker is set to
+// valid=true to prove the nil-claim path denies on its own — the
+// service must not call into the checker without a non-nil claim, and
+// even if it did, the gate must still deny.
+func TestAggregate_IncludeHidden_RejectedWithoutClaim(t *testing.T) {
+	r := require.New(t)
+	svc, rw := newFacetServiceWithChecker(t, fakeHiddenChecker{valid: true})
+	insertSeedFixtures(t, rw)
+
+	_, err := svc.Aggregate(context.Background(), seedOwner, facets.Filters{
+		IncludeHidden: true,
+		UnlockClaim:   nil,
+	})
+
+	r.ErrorIs(err, errs.ErrPermissionDenied)
+}
+
+// TestAggregate_IncludeHidden_HonoredWithValidClaim asserts the gate
+// passes when the checker returns true and IncludeHidden=true: hidden
+// rows must contribute to the aggregations alongside visible rows.
+// Seeds the canonical 3-row Sony/Canon fixture, then flips the
+// non-geotagged Sony video to hidden via a direct UPDATE (the
+// established pattern across the codebase). With IncludeHidden=true
+// and a valid claim, the camera facet must still count all three rows
+// (Sony=2, Canon=1) — proving hidden rows are not filtered out.
+func TestAggregate_IncludeHidden_HonoredWithValidClaim(t *testing.T) {
+	r := require.New(t)
+	svc, rw := newFacetServiceWithChecker(t, fakeHiddenChecker{valid: true})
+	insertSeedFixtures(t, rw)
+	_, err := rw.ExecContext(context.Background(),
+		`UPDATE media SET hidden_at = ? WHERE id = ?`,
+		time.Now().UTC(), "m-sony-nogeo-video")
+	r.NoError(err)
+
+	claim := &hidden.UnlockClaim{
+		Principal: seedOwner,
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	resp, err := svc.Aggregate(context.Background(), seedOwner, facets.Filters{
+		IncludeHidden: true,
+		UnlockClaim:   claim,
+	})
+	r.NoError(err)
+
+	r.Equal([]facets.ValueCount{
+		{Value: "Sony A7R IV", Count: 2},
+		{Value: "Canon EOS R5", Count: 1},
+	}, resp.Cameras, "hidden Sony video must still be counted under IncludeHidden")
 }
