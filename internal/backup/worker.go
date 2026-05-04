@@ -138,7 +138,7 @@ func (w *Worker) tick(ctx context.Context) {
 			"kept_daily", res.KeptDaily,
 			"deleted", res.Deleted)
 	}
-	w.cfg.Logger.Info("backup snapshot ok", attrs...)
+	w.cfg.Logger.Debug("backup snapshot ok", attrs...)
 }
 
 func (w *Worker) maybeWarnStale(now time.Time) {

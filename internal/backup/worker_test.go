@@ -67,6 +67,39 @@ func TestWorkerRunsTickAndExitsOnContextCancel(t *testing.T) {
 	r.NoError(<-done, "Run must return nil after context cancel")
 }
 
+func TestWorkerDoesNotLogSnapshotSuccessAtInfo(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "src.sqlite")
+	makeSourceDB(t, src)
+	db, err := sql.Open("sqlite3", src+"?_busy_timeout=5000&_fk=1")
+	r.NoError(err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	var buf syncBuf
+	dir := filepath.Join(tmp, "snaps")
+	w := NewWorker(Config{
+		DB:       db,
+		Dir:      dir,
+		Interval: 30 * time.Millisecond,
+		Policy:   Policy{Keep15Min: 4, KeepHourly: 24, KeepDaily: 7},
+		Logger:   slog.New(slog.NewTextHandler(&buf, nil)),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	require.Eventually(t, func() bool {
+		entries, _ := os.ReadDir(dir)
+		return len(entries) >= 1
+	}, 2*time.Second, 10*time.Millisecond)
+	cancel()
+	r.NoError(<-done)
+
+	r.NotContains(buf.String(), "backup snapshot ok")
+}
+
 func TestWorkerLogsSnapshotSuccessFields(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
@@ -82,7 +115,9 @@ func TestWorkerLogsSnapshotSuccessFields(t *testing.T) {
 		Dir:      filepath.Join(tmp, "snaps"),
 		Interval: 30 * time.Millisecond,
 		Policy:   Policy{Keep15Min: 4, KeepHourly: 24, KeepDaily: 7},
-		Logger:   slog.New(slog.NewTextHandler(&buf, nil)),
+		Logger: slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		})),
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -238,7 +273,9 @@ func TestWorkerLogsCarryComponent(t *testing.T) {
 	// a mutex so the worker goroutine's slog writes don't race with the
 	// polling goroutine inside require.Eventually that reads via String().
 	var logBuf syncBuf
-	base := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	base := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
 	w := NewWorker(Config{
 		DB:       db,
 		Dir:      filepath.Join(tmp, "snaps"),
