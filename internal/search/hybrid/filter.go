@@ -130,34 +130,28 @@ func Resolve(in Input) (cte string, args []any) {
 	}
 
 	if len(in.Cameras) > 0 {
-		placeholders := strings.Repeat("?, ", len(in.Cameras))
-		placeholders = placeholders[:len(placeholders)-2] // drop trailing ", "
 		conds = append(conds,
-			fmt.Sprintf("(m.make || ' ' || m.model) IN (%s)", placeholders))
+			fmt.Sprintf("(m.make || ' ' || m.model) IN (%s)", placeholders(len(in.Cameras))))
 		for _, v := range in.Cameras {
 			args = append(args, v)
 		}
 	}
 
 	if len(in.Lenses) > 0 {
-		placeholders := strings.Repeat("?, ", len(in.Lenses))
-		placeholders = placeholders[:len(placeholders)-2]
 		conds = append(conds,
-			fmt.Sprintf("m.lens_model IN (%s)", placeholders))
+			fmt.Sprintf("m.lens_model IN (%s)", placeholders(len(in.Lenses))))
 		for _, v := range in.Lenses {
 			args = append(args, v)
 		}
 	}
 
 	if len(in.AnyTagKeys) > 0 {
-		placeholders := strings.Repeat("?, ", len(in.AnyTagKeys))
-		placeholders = placeholders[:len(placeholders)-2]
 		conds = append(conds, fmt.Sprintf(
 			`EXISTS (SELECT 1 FROM media_tags mt
                       JOIN ai_results r ON mt.result_id = r.id
                      WHERE r.media_id = m.id AND r.task = 'tag' AND r.status = 'active'
                        AND mt.tag_key IN (%s))`,
-			placeholders))
+			placeholders(len(in.AnyTagKeys))))
 		for _, v := range in.AnyTagKeys {
 			args = append(args, v)
 		}
@@ -180,4 +174,14 @@ func Resolve(in Input) (cte string, args []any) {
 		strings.Join(conds, " AND "),
 	)
 	return cte, args
+}
+
+// placeholders returns "?, ?, ..., ?" with n question marks. Used by
+// the IN-list cond emitters; n must be > 0.
+func placeholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	out := strings.Repeat("?, ", n)
+	return out[:len(out)-2]
 }

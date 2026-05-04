@@ -197,15 +197,14 @@ func TestFilter_AnyTagKeys(t *testing.T) {
 // false → (IS NULL OR IS NULL); nil omits the cond.
 func TestFilter_HasGPSTrue(t *testing.T) {
 	r := require.New(t)
-	yes := true
-	cte, args := hybrid.Resolve(hybrid.Input{Owner: testOwner, HasGPS: &yes})
+	cte, args := hybrid.Resolve(hybrid.Input{Owner: testOwner, HasGPS: new(true)})
 	r.Contains(cte, "m.latitude IS NOT NULL AND m.longitude IS NOT NULL")
 	r.Equal([]any{"hub-a", "user-1"}, args)
 }
 
 func TestFilter_HasGPSFalse(t *testing.T) {
 	r := require.New(t)
-	no := false
-	cte, _ := hybrid.Resolve(hybrid.Input{Owner: testOwner, HasGPS: &no})
+	cte, args := hybrid.Resolve(hybrid.Input{Owner: testOwner, HasGPS: new(false)})
 	r.Contains(cte, "(m.latitude IS NULL OR m.longitude IS NULL)")
+	r.Equal([]any{"hub-a", "user-1"}, args)
 }
