@@ -10,7 +10,7 @@ Sub-library navigation by EXIF + AI tags. Click `Sony A7R IV` in the sidebar, th
 
 ## Architecture (one paragraph)
 
-URL is the single source of truth for active filters. Sidebar `FILTERS` group and chip strip both derive from `router.current` and write back via `router.navigate(...)`. A new `GET /api/v1/facets` endpoint returns counts per facet for the current filter context, computing four "exclude-self" aggregations server-side so each dropdown shows reachable alternatives. Three Go filter paths (`Repo.List` for /library, `Repo.ListGeo` for /map, `hybrid.Resolve` for /search and /facets) each grow the same fields independently — refactor to a shared helper deferred until pain emerges.
+URL is the single source of truth for active filters. Sidebar `FILTERS` group and chip strip both derive from `router.current` and write back via `router.navigate(...)`. A new `GET /api/v1/facets` endpoint returns counts per facet for the current filter context, computing five "exclude-self" aggregations server-side so each dropdown shows reachable alternatives. Three Go filter paths (`Repo.List` for /library, `Repo.ListGeo` for /map, `hybrid.Resolve` for /search and /facets) each grow the same fields independently — refactor to a shared helper deferred until pain emerges.
 
 ## UI shape
 
@@ -34,16 +34,20 @@ FILTERS                    Clear
     …
 
   PLACES   ▸             ← collapsed; hidden entirely on /map
+
+  MEDIA TYPE  ▾  2814
+    ☐ Photo           2645
+    ☐ Video            169
 ```
 
 Behavior:
 
 - Each facet sub-section is independently collapsible. Collapsed/expanded state persists in `localStorage`.
 - Collapsed headers show an active-count badge when filters are set (`CAMERAS ▸ 2`) so collapsed filters never become invisible state.
-- Multi-select within a group with **OR** semantics. Multi-group AND.
+- Multi-select within a group with **OR** semantics. Multi-group AND. (Media Type is single-select-or-none in practice — selecting both photo + video is equivalent to no filter — but it follows the same multi-select component for consistency.)
 - Counts are *contextual* and *exclude the facet's own selection* — when Sony is selected, the Camera dropdown still shows `Canon (200)` so swapping is one click. (Lightroom rule.)
-- Item search appears at >8 items. Substring/`includes` match (matches agentsview's mental model and is better for lens names with useful tokens in the middle).
-- `Clear` link next to the `FILTERS` group label appears when any filter is active; clears all five facets at once.
+- Item search appears at >8 items. Substring/`includes` match (matches agentsview's mental model and is better for lens names with useful tokens in the middle). Media Type's two-row body never gets a search input.
+- `Clear` link next to the `FILTERS` group label appears when any filter is active; clears all facets at once.
 - The Places sub-section is hidden entirely on `/map` (the route's contract is geotagged-media; HasGPS is implicitly forced true).
 
 ### Chip strip — above the photo grid
@@ -136,27 +140,90 @@ CREATE INDEX media_owner_lens_visible_idx
 
 ### `GET /api/v1/facets`
 
-New huma route in `internal/httpapi/facets.go`. Same param surface as /library/search/map (subset depending on what the calling route accepts).
+New huma route in `internal/httpapi/facets.go`. Accepts the union of v1-relevant filter params from /library/search/map (subset depending on what the calling route accepts).
+
+**Filter params honored** (full FilterCTE context, so sidebar counts on a route match the visible-result context for chip-shaped state):
+
+- New facet params: `camera`, `lens`, `facet_tag` (→ `AnyTagKeys`), `has_gps`, `media_type`.
+- /search-only existing params: `date_after`, `date_before`, `tag` (→ AND-on-labels `TagKeys`), `location`, `include_hidden`.
+
+**Filter param NOT honored — `q` (the FTS lexical query) on /search.** `q` drives BM25/ANN scoring in the hybrid engine, not the FilterCTE. Plumbing it into /facets would turn /facets into "search-with-aggregation" and add latency for every dropdown open. **For v1**, sidebar counts on `/search?q=mountain` reflect "photos matching the FilterCTE", not "photos matching q AND the FilterCTE". The chip strip remains exact for the chips themselves; the slight overstatement only affects the in-dropdown counts. Revisit in v2 if the discrepancy is noticed.
 
 Response:
 
 ```json
 {
-  "cameras": [{"value": "Sony A7R IV", "count": 845}, ...],
-  "lenses":  [{"value": "FE 24-70mm F2.8 GM", "count": 412}, ...],
-  "tags":    [{"key": "dog", "label": "Dog", "count": 234}, ...],
-  "places":  {"with_gps": 2103, "without_gps": 567}
+  "cameras":     [{"value": "Sony A7R IV", "count": 845}, ...],
+  "lenses":      [{"value": "FE 24-70mm F2.8 GM", "count": 412}, ...],
+  "tags":        [{"key": "dog", "label": "Dog", "count": 234}, ...],
+  "places":      {"with_gps": 2103, "without_gps": 567},
+  "media_types": [{"value": "photo", "count": 2645}, {"value": "video", "count": 169}]
 }
 ```
 
-- Top **200 per facet** by count desc, then value asc as tiebreaker (deterministic ordering for cache stability).
+- Top **200 per facet** by count desc, then value asc as tiebreaker (deterministic ordering for cache stability). Media Types is always two rows max so the limit is moot there.
 - Each facet's count is computed against a FilterCTE built **without that facet's own selection** but with all other facets applied (the exclude-self rule).
 - Tags include both `tag_key` (canonical, used as URL param value) and `tag_label` (display).
-- `places.with_gps` / `without_gps` honor the `media_type` and other non-facet-self filters.
+- `places.with_gps` / `without_gps` honor the other non-facet-self filters.
+
+### Aggregation SQL shape
+
+`hybrid.Resolve` projects only `(id, timestamp, imported_at)` from the `filter` CTE — aggregations needing EXIF columns must JOIN `media` back by id, and tag aggregations must JOIN through `ai_results` + `media_tags`. The five queries (one per facet, each built from a FilterCTE that *omits the facet's own selection*) look like:
+
+```sql
+-- Cameras
+WITH filter AS ( /* hybrid.Resolve output without Cameras applied */ )
+SELECT (m.make || ' ' || m.model) AS value, COUNT(*) AS count
+FROM filter f
+JOIN media m ON m.id = f.id
+WHERE m.make IS NOT NULL AND m.model IS NOT NULL
+GROUP BY value
+ORDER BY count DESC, value ASC
+LIMIT 200;
+
+-- Lenses
+WITH filter AS ( /* without Lenses applied */ )
+SELECT m.lens_model AS value, COUNT(*) AS count
+FROM filter f
+JOIN media m ON m.id = f.id
+WHERE m.lens_model IS NOT NULL
+GROUP BY value
+ORDER BY count DESC, value ASC
+LIMIT 200;
+
+-- Tags
+WITH filter AS ( /* without AnyTagKeys applied */ )
+SELECT mt.tag_key AS value, MAX(mt.tag_label) AS label, COUNT(DISTINCT f.id) AS count
+FROM filter f
+JOIN ai_results r ON r.media_id = f.id
+                 AND r.task = 'tag' AND r.status = 'active'
+JOIN media_tags mt ON mt.result_id = r.id
+GROUP BY mt.tag_key
+ORDER BY count DESC, value ASC
+LIMIT 200;
+
+-- Places
+WITH filter AS ( /* without HasGPS applied */ )
+SELECT
+  COUNT(*) FILTER (WHERE m.latitude IS NOT NULL AND m.longitude IS NOT NULL) AS with_gps,
+  COUNT(*) FILTER (WHERE m.latitude IS NULL OR m.longitude IS NULL) AS without_gps
+FROM filter f
+JOIN media m ON m.id = f.id;
+
+-- Media Types
+WITH filter AS ( /* without MediaType applied */ )
+SELECT m.media_type AS value, COUNT(*) AS count
+FROM filter f
+JOIN media m ON m.id = f.id
+GROUP BY value
+ORDER BY count DESC;
+```
+
+Tags uses `COUNT(DISTINCT f.id)` because one media row can carry multiple tags (the JOIN otherwise inflates the count). `MAX(mt.tag_label)` is a deterministic-but-arbitrary pick when multiple labels share a key — in practice each `tag_key` has one canonical label, but the MAX guards the invariant.
 
 ### Service layer
 
-New `FacetService` at `internal/service/facets/` — owner-scoped, takes `ActiveFilters`, returns the response struct above. Sits next to existing `internal/service/search/`. The four sub-aggregations build separate `hybrid.Input` values (each missing one facet's selection), call `hybrid.Resolve` for each, and run `SELECT ... FROM (filter_cte) GROUP BY ...` for that facet.
+New `FacetService` at `internal/service/facets/` — owner-scoped, takes `ActiveFilters`, returns the response struct above. Sits next to existing `internal/service/search/`. The five sub-aggregations build separate `hybrid.Input` values (each missing one facet's selection), call `hybrid.Resolve` for each, and run the SQL above for that facet.
 
 ## Frontend
 
@@ -233,10 +300,20 @@ export function withFilters(current: URLSearchParams, f: ActiveFilters): URLSear
 **Existing components touched:**
 
 - `Sidebar.svelte` — append `FilterSidebar` after `MANAGE`. Hide the Places sub-section when route is /map (passed via prop).
-- `Library.svelte` — mount `FilterChipStrip` above the grid; pass `ActiveFilters` to `mediaStore` fetch calls.
-- `Search.svelte` — same; preserve existing q/sort UI.
-- `Map.svelte` — same; preserve existing z/c/focus/tab state.
-- `mediaStore.svelte.ts` — accept filter params, pass through to the API call.
+- `Library.svelte` — mount `FilterChipStrip` above the grid; pass `ActiveFilters` to `mediaStore` fetch calls. On filter-key change, trigger the store's reset path (see below).
+- `Search.svelte` — same; preserve existing q/sort UI. searchStore already resets on q change; extend the reset trigger to include the new facet keys.
+- `Map.svelte` — same; preserve existing z/c/focus/tab state. The existing geo store is one-shot per page-load, so on filter-key change it must be re-fetched (no pagination to reset).
+- `mediaStore.svelte.ts` — accept filter params and implement the **filter-change reset protocol**:
+  1. Compute a stable `filterKey` from `ActiveFilters` (deterministic JSON or sorted-tuple hash).
+  2. When `filterKey` changes:
+     - Increment an internal `fetchToken` (e.g. `Symbol()` or monotonic int).
+     - Cancel/abort any in-flight fetch (or tag responses with the token at issue time and discard responses whose token ≠ current).
+     - Clear the months map and any per-month index caches.
+     - Reset pagination cursor to the start.
+     - Set `loading=true`, then issue the new fetch with the current params.
+  3. Late responses tagged with stale tokens are dropped silently — they never write to the months map.
+
+  Without this protocol, /library can interleave responses from a prior filter with the new filter, producing a grid that mixes old + new results.
 
 ## Routes covered
 
@@ -250,7 +327,7 @@ export function withFilters(current: URLSearchParams, f: ActiveFilters): URLSear
 
 ## Performance
 
-- Backend: each /facets call runs **4 GROUP BY queries** (one per non-place facet) plus 2 simple counts (Places). With proper indexes and partial WHERE clauses, each is sub-100ms on a 100k library.
+- Backend: each /facets call runs **5 aggregation queries** — 4 GROUP BY (Cameras, Lenses, Tags, Media Types) + 1 with two conditional counts (Places, with_gps / without_gps). With proper indexes and partial WHERE clauses, each is sub-100ms on a 100k library.
 - Client: 100ms debounce on filter changes prevents redundant fetches when the user multi-clicks. Per-context cache (full `route + ActiveFilters` key) means navigating back to a previous filter combination is instant.
 - Backend LRU cache: deferred. The 100ms debounce + partial indexes should be enough; revisit if measurements say otherwise.
 
