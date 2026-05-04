@@ -152,3 +152,60 @@ func TestFilter_AllSignalsArgOrder(t *testing.T) {
 		"photo",
 	}, args)
 }
+
+// TestFilter_Cameras — Cameras []string emits a single
+// (make || ' ' || model) IN (?, ?, ...) cond, with one bind per value
+// in input order, after the date conds.
+func TestFilter_Cameras(t *testing.T) {
+	r := require.New(t)
+	cte, args := hybrid.Resolve(hybrid.Input{
+		Owner:   testOwner,
+		Cameras: []string{"Sony A7R IV", "iPhone 15 Pro"},
+	})
+	r.Contains(cte, "(m.make || ' ' || m.model) IN (?, ?)")
+	r.Equal([]any{"hub-a", "user-1", "Sony A7R IV", "iPhone 15 Pro"}, args)
+}
+
+// TestFilter_Lenses — Lenses []string emits a single
+// lens_model IN (?, ...) cond.
+func TestFilter_Lenses(t *testing.T) {
+	r := require.New(t)
+	cte, args := hybrid.Resolve(hybrid.Input{
+		Owner:  testOwner,
+		Lenses: []string{"FE 24-70mm F2.8 GM"},
+	})
+	r.Contains(cte, "m.lens_model IN (?)")
+	r.Equal([]any{"hub-a", "user-1", "FE 24-70mm F2.8 GM"}, args)
+}
+
+// TestFilter_AnyTagKeys — OR-composed tag predicate. Emits ONE EXISTS
+// subquery with tag_key IN (?, ?, ...). Distinct from TagKeys which
+// emits one EXISTS per key (AND across keys).
+func TestFilter_AnyTagKeys(t *testing.T) {
+	r := require.New(t)
+	cte, args := hybrid.Resolve(hybrid.Input{
+		Owner:      testOwner,
+		AnyTagKeys: []string{"dog", "cat"},
+	})
+	// A single EXISTS — the substring 'EXISTS (' should appear once.
+	r.Equal(1, strings.Count(cte, "EXISTS ("))
+	r.Contains(cte, "AND mt.tag_key IN (?, ?)")
+	r.Equal([]any{"hub-a", "user-1", "dog", "cat"}, args)
+}
+
+// TestFilter_HasGPS — pointer tri-state. true → IS NOT NULL pair;
+// false → (IS NULL OR IS NULL); nil omits the cond.
+func TestFilter_HasGPSTrue(t *testing.T) {
+	r := require.New(t)
+	yes := true
+	cte, args := hybrid.Resolve(hybrid.Input{Owner: testOwner, HasGPS: &yes})
+	r.Contains(cte, "m.latitude IS NOT NULL AND m.longitude IS NOT NULL")
+	r.Equal([]any{"hub-a", "user-1"}, args)
+}
+
+func TestFilter_HasGPSFalse(t *testing.T) {
+	r := require.New(t)
+	no := false
+	cte, _ := hybrid.Resolve(hybrid.Input{Owner: testOwner, HasGPS: &no})
+	r.Contains(cte, "(m.latitude IS NULL OR m.longitude IS NULL)")
+}

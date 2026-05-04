@@ -2,11 +2,12 @@
 // fragments and bind args the index.Backend consumes. M1 supplies the
 // `filter` CTE body that scopes a request to one owner's media,
 // optional date range, optional tag set (AND-composed across multiple
-// keys), optional location label / media type, and the hidden-row
-// predicate. The CTE projects (id, timestamp, imported_at) so the
-// Backend's BM25 / ANN / FilterOnly CTEs can JOIN against `f.id` and
-// reuse the timestamps for sort and pagination without revisiting the
-// media row.
+// keys), optional cameras / lenses (OR-composed), optional any-tag
+// set (OR-composed), optional location label / media type, optional
+// GPS-presence tri-state, and the hidden-row predicate. The CTE
+// projects (id, timestamp, imported_at) so the Backend's BM25 / ANN /
+// FilterOnly CTEs can JOIN against `f.id` and reuse the timestamps
+// for sort and pagination without revisiting the media row.
 package hybrid
 
 import (
@@ -45,6 +46,22 @@ type Input struct {
 	// MediaType, when non-nil, exact-matches m.media_type. The
 	// schema's CHECK constraint pins the domain to {'photo','video'}.
 	MediaType *string
+	// Cameras, when non-empty, exact-matches (make || ' ' || model)
+	// against any value (OR-composed). Each value adds one bind in
+	// input order to the args slice.
+	Cameras []string
+	// Lenses, when non-empty, exact-matches lens_model against any
+	// value (OR-composed). Each value adds one bind in input order.
+	Lenses []string
+	// AnyTagKeys lists tag stems where a media is a hit if it carries
+	// ANY of them (OR-composed). Distinct from TagKeys which is
+	// AND-composed across multiple typed search chips. The sidebar
+	// facet drives this field; the chip resolver drives TagKeys.
+	AnyTagKeys []string
+	// HasGPS, when non-nil, narrows on latitude/longitude presence.
+	// *true means latitude AND longitude are both NOT NULL; *false
+	// means either is NULL. nil omits the predicate entirely.
+	HasGPS *bool
 	// IncludeHidden flips the default-on `m.hidden_at IS NULL`
 	// predicate. When false (the zero value), hidden rows are
 	// excluded; when true, the predicate is omitted so hidden rows
@@ -109,6 +126,48 @@ func Resolve(in Input) (cte string, args []any) {
 	if in.MediaType != nil {
 		conds = append(conds, "m.media_type = ?")
 		args = append(args, *in.MediaType)
+	}
+
+	if len(in.Cameras) > 0 {
+		placeholders := strings.Repeat("?, ", len(in.Cameras))
+		placeholders = placeholders[:len(placeholders)-2] // drop trailing ", "
+		conds = append(conds,
+			fmt.Sprintf("(m.make || ' ' || m.model) IN (%s)", placeholders))
+		for _, v := range in.Cameras {
+			args = append(args, v)
+		}
+	}
+
+	if len(in.Lenses) > 0 {
+		placeholders := strings.Repeat("?, ", len(in.Lenses))
+		placeholders = placeholders[:len(placeholders)-2]
+		conds = append(conds,
+			fmt.Sprintf("m.lens_model IN (%s)", placeholders))
+		for _, v := range in.Lenses {
+			args = append(args, v)
+		}
+	}
+
+	if len(in.AnyTagKeys) > 0 {
+		placeholders := strings.Repeat("?, ", len(in.AnyTagKeys))
+		placeholders = placeholders[:len(placeholders)-2]
+		conds = append(conds, fmt.Sprintf(
+			`EXISTS (SELECT 1 FROM media_tags mt
+                      JOIN ai_results r ON mt.result_id = r.id
+                     WHERE r.media_id = m.id AND r.task = 'tag' AND r.status = 'active'
+                       AND mt.tag_key IN (%s))`,
+			placeholders))
+		for _, v := range in.AnyTagKeys {
+			args = append(args, v)
+		}
+	}
+
+	if in.HasGPS != nil {
+		if *in.HasGPS {
+			conds = append(conds, "m.latitude IS NOT NULL AND m.longitude IS NOT NULL")
+		} else {
+			conds = append(conds, "(m.latitude IS NULL OR m.longitude IS NULL)")
+		}
 	}
 
 	if !in.IncludeHidden {
