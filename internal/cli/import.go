@@ -88,6 +88,15 @@ func runImport(ctx context.Context, opts importOpts) error {
 	if dbPath == "" {
 		dbPath = filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
 	}
+	// Print resolved paths up front so a user with a misconfigured root
+	// (e.g. an unexpanded "~" or a typo) sees IMMEDIATELY where bytes
+	// will land, instead of discovering minutes later that the import
+	// landed in the wrong directory. Source path is the canonicalized
+	// form of the user's argument.
+	absSource, _ := filepath.Abs(opts.source)
+	fmt.Fprintf(opts.stdout, "source:    %s\n", absSource)
+	fmt.Fprintf(opts.stdout, "nas root:  %s\n", cfg.NAS.Root)
+	fmt.Fprintf(opts.stdout, "flash db:  %s\n", dbPath)
 	d, err := db.Open(dbPath)
 	if err != nil {
 		return err

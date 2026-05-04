@@ -192,44 +192,56 @@ func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Opti
 			}
 		})
 	}
+
+	// Drain results concurrently with the workers so progress callbacks
+	// fire as each candidate completes — not in a single burst at the
+	// end. The drain goroutine owns res/importedIDs/done; the main
+	// goroutine reads them only after `<-drainDone` so there's no race.
+	var (
+		res         Result
+		importedIDs []string
+		done        int
+	)
+	drainDone := make(chan struct{})
+	go func() {
+		defer close(drainDone)
+		for out := range results {
+			switch {
+			case out.imported:
+				res.Imported++
+				if out.id != "" {
+					importedIDs = append(importedIDs, out.id)
+				}
+			case out.duplicate:
+				res.Duplicates++
+			case out.pathCollision:
+				res.PathCollisions++
+			}
+			if out.err != nil {
+				res.Failures = append(res.Failures, out.err)
+			}
+			done++
+			if opts.Progress != nil {
+				opts.Progress(ProgressEvent{
+					Done:           done,
+					Total:          len(candidates),
+					Imported:       res.Imported,
+					Duplicates:     res.Duplicates,
+					PathCollisions: res.PathCollisions,
+					Failures:       len(res.Failures),
+					Path:           out.path,
+				})
+			}
+		}
+	}()
+
 	for _, c := range candidates {
 		jobs <- c
 	}
 	close(jobs)
 	wg.Wait()
 	close(results)
-
-	var res Result
-	var importedIDs []string
-	done := 0
-	for out := range results {
-		switch {
-		case out.imported:
-			res.Imported++
-			if out.id != "" {
-				importedIDs = append(importedIDs, out.id)
-			}
-		case out.duplicate:
-			res.Duplicates++
-		case out.pathCollision:
-			res.PathCollisions++
-		}
-		if out.err != nil {
-			res.Failures = append(res.Failures, out.err)
-		}
-		done++
-		if opts.Progress != nil {
-			opts.Progress(ProgressEvent{
-				Done:           done,
-				Total:          len(candidates),
-				Imported:       res.Imported,
-				Duplicates:     res.Duplicates,
-				PathCollisions: res.PathCollisions,
-				Failures:       len(res.Failures),
-				Path:           out.path,
-			})
-		}
-	}
+	<-drainDone
 
 	// F2.2 post-barrier pairing pass. Pair-pass failures are
 	// non-fatal: the rows are already in. We surface the error in

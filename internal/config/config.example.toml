@@ -1,7 +1,7 @@
 # Where fotobank stores its SQLite DB and (optionally) flash-cached
 # originals and thumbnails.
 [flash]
-root = "~/.local/state/fotobank"     # default; ~ expanded
+root = "~/.fotobank"                 # default; ~ expanded
 
 # Where durable bytes live. Imports write originals here before the
 # media row is committed; thumbnails are written here asynchronously

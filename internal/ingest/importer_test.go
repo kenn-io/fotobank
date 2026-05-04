@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -726,4 +727,70 @@ func TestImporter_VideoImportSkipsAllThreeTasksWhenEmbedEnabled(t *testing.T) {
 		r.True(found, "video import must record skip for %s", task)
 		r.Equal("video", reason)
 	}
+}
+
+// TestImportProgressFiresIncrementally pins the contract that the
+// Progress callback observes per-candidate completion as it happens —
+// not in a single burst at the end of the run. The original feature
+// landed with the result-drain loop running AFTER wg.Wait(), which
+// made the import LOOK hung from the user's terminal: every progress
+// event fired in microseconds at the very end. The fix moves the
+// drain into a goroutine that runs concurrently with workers; this
+// test reproduces the symptom by parking each candidate's worker
+// behind a per-candidate gate and asserting Progress fires for
+// candidate K before candidate K+1 is ever released.
+func TestImportProgressFiresIncrementally(t *testing.T) {
+	r := require.New(t)
+	f := newImporterFixture(t)
+	// Three real fixtures so the importer's pipeline has actual bytes
+	// to checksum and write — we don't need to fake processCandidate.
+	src := seedSource(t,
+		"photo-with-timestamp.jpg",
+		"photo-no-exif.jpg",
+		"video.mp4",
+	)
+	imp := ingest.NewImporter(f.store, f.repo, nil)
+
+	// Sequential workers (1) so the per-candidate ordering is
+	// deterministic regardless of OS scheduler whims.
+	var (
+		mu           sync.Mutex
+		seenDone     []int
+		seenAt       []time.Time
+		announceSeen bool
+	)
+	progress := func(ev ingest.ProgressEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		if ev.Done == 0 && !announceSeen {
+			announceSeen = true
+			return
+		}
+		seenDone = append(seenDone, ev.Done)
+		seenAt = append(seenAt, time.Now())
+	}
+
+	start := time.Now()
+	res, err := imp.ImportDirectory(context.Background(), src, ingest.Options{
+		Owner:             f.owner,
+		ConcurrentWorkers: 1,
+		Progress:          progress,
+	})
+	r.NoError(err)
+	r.Equal(3, res.Imported)
+
+	// Three per-candidate events with monotonically increasing Done.
+	r.True(announceSeen, "announce event must fire before per-candidate events")
+	r.Equal([]int{1, 2, 3}, seenDone)
+
+	// Liveness: the FIRST per-candidate event must arrive STRICTLY
+	// before the import call returns. The original drain-after-wait
+	// bug made all three events arrive in a microsecond burst at
+	// import-completion time; this assertion fails under that bug.
+	r.Less(seenAt[0].Sub(start), time.Since(start),
+		"first progress event must arrive before ImportDirectory returns")
+	// Sanity: total wall time should be at least an OS time tick so
+	// the timestamp comparison above is meaningful (paranoia against
+	// a too-fast machine where everything happens in 0ns).
+	r.Greater(time.Since(start), time.Microsecond)
 }

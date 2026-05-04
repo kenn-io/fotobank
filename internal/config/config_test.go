@@ -673,3 +673,96 @@ root = "/tmp/nas"
 		require.ErrorIs(t, err, errs.ErrBadConfiguration, "body=%q must reject", body)
 	}
 }
+
+// TestLoadExpandsTildeInPaths covers the regression that wrote a
+// fresh-install user's library to a literal "~" subdirectory of the
+// process CWD because the documented "~ expanded" comment in the
+// example config was lying — Load never actually did the expansion.
+// Every filesystem-path config field gets the expansion: nas root,
+// flash root, the import lock path, and the optional mTLS CA file.
+func TestLoadExpandsTildeInPaths(t *testing.T) {
+	r := require.New(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Clear XDG_STATE_HOME so defaultFlashRoot falls back to $HOME.
+	t.Setenv("XDG_STATE_HOME", "")
+
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[flash]
+root = "~/flash-state"
+[nas]
+root = "~/photos"
+[imports]
+file_lock_path = "~/locks/import.lock"
+[identity]
+mode = "stub"
+[identity.stub]
+hub = "h"
+user_id = "u"
+[http]
+listen_address = "127.0.0.1:0"
+`), 0o600))
+	cfg, err := config.Load(p)
+	r.NoError(err)
+	r.Equal(filepath.Join(home, "flash-state"), cfg.Flash.Root)
+	r.Equal(filepath.Join(home, "photos"), cfg.NAS.Root)
+	r.Equal(filepath.Join(home, "locks", "import.lock"), cfg.Imports.FileLockPath)
+}
+
+// TestLoadLeavesAbsoluteAndRelativePathsAlone proves the expander is
+// a no-op for paths that don't start with "~". Absolute paths must
+// pass through unchanged so deployments writing to /var/lib/fotobank
+// don't get rewritten; relative paths likewise.
+func TestLoadLeavesAbsoluteAndRelativePathsAlone(t *testing.T) {
+	r := require.New(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[flash]
+root = "/var/lib/fotobank"
+[nas]
+root = "./relative-nas"
+[identity]
+mode = "stub"
+[identity.stub]
+hub = "h"
+user_id = "u"
+[http]
+listen_address = "127.0.0.1:0"
+`), 0o600))
+	cfg, err := config.Load(p)
+	r.NoError(err)
+	r.Equal("/var/lib/fotobank", cfg.Flash.Root)
+	r.Equal("./relative-nas", cfg.NAS.Root)
+}
+
+// TestLoadExpandsBareTilde covers the edge case where a path is just
+// "~" with no trailing slash; the expander must return $HOME, not an
+// empty string or "$HOME/".
+func TestLoadExpandsBareTilde(t *testing.T) {
+	r := require.New(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "~"
+[identity]
+mode = "stub"
+[identity.stub]
+hub = "h"
+user_id = "u"
+[http]
+listen_address = "127.0.0.1:0"
+`), 0o600))
+	cfg, err := config.Load(p)
+	r.NoError(err)
+	r.Equal(home, cfg.NAS.Root)
+}

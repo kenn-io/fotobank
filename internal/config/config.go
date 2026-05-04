@@ -186,10 +186,59 @@ func Load(path string) (*Config, error) {
 	}
 	applyDefaults(&cfg, meta)
 	applyEnvOverrides(&cfg)
+	if err := expandHomePaths(&cfg); err != nil {
+		return nil, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// expandHomePaths rewrites filesystem-path config fields so a leading
+// "~" or "~/" expands to $HOME. The example config documents this
+// expansion as a feature; without it a fresh-install user typing
+// `root = "~/fotobank"` ends up with a literal "~" subdirectory of
+// the working directory, with photos and DBs landing in the wrong
+// place. URL-shaped fields (base_url, AI endpoints, CORS origins) are
+// left alone — they don't carry filesystem paths.
+func expandHomePaths(c *Config) error {
+	fields := []*string{
+		&c.Flash.Root,
+		&c.NAS.Root,
+		&c.Imports.FileLockPath,
+		&c.Identity.Header.ProxyMTLSCAFile,
+	}
+	for _, p := range fields {
+		expanded, err := expandHome(*p)
+		if err != nil {
+			return err
+		}
+		*p = expanded
+	}
+	return nil
+}
+
+// expandHome returns p with a leading "~" or "~/" replaced by $HOME.
+// Empty strings, absolute paths, and relative paths that don't start
+// with "~" pass through unchanged. A bare "~user" form is rejected
+// (we only support the current user's home, matching shell defaults
+// for `~`).
+func expandHome(p string) (string, error) {
+	if p == "" {
+		return p, nil
+	}
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("expand %q: %w", p, err)
+	}
+	if p == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, p[2:]), nil
 }
 
 // applyEnvOverrides layers a narrow set of environment-variable overrides
@@ -468,12 +517,18 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	c.Search.ApplyDefaults()
 }
 
+// defaultFlashRoot returns the default location for the SQLite DB,
+// flash cache, and operational state. The default is "~/.fotobank"
+// — a single hidden directory next to the user's photos in
+// "~/fotobank". XDG_STATE_HOME, when set, still wins so containerized
+// or sandboxed deployments can route state under their normal
+// XDG-spec layout, but the bare-shell default is the simpler one.
 func defaultFlashRoot() string {
 	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
 		return filepath.Join(xdg, "fotobank")
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".local", "state", "fotobank")
+		return filepath.Join(home, ".fotobank")
 	}
-	return "./.fotobank-state"
+	return "./.fotobank"
 }
