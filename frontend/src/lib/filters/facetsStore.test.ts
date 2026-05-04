@@ -79,13 +79,16 @@ describe("FacetsStore", () => {
     const GET = vi.fn(async () => ({ data: await slowA }));
     const s = new FacetsStore({ GET } as never, 0);
 
-    // Pre-warm cache for filterB by issuing a quick GET that resolves
-    // immediately, then clearing the GET fake.
+    // Pre-warm cache for filterB. The cache key is
+    // `${route}|${filterKey(filters)}|${scopeKey(scope)}`; on /library
+    // the scope is always undefined → empty trailing slot. Without
+    // matching the trailing slot, the cache lookup misses and the
+    // race the test is meant to exercise never triggers.
     (s as unknown as {
       cache: Map<string, FacetsResponse>;
     }).cache.set(`library|${JSON.stringify({
       cameras: ["B-CAM"], lenses: [], tagKeys: [], hasGps: null, mediaType: null,
-    })}`, respB);
+    })}|`, respB);
 
     // Now start A (slow GET).
     const pA = s.fetch("library", empty);
@@ -179,6 +182,60 @@ describe("FacetsStore", () => {
     const s = new FacetsStore(client as never, 0);
     await s.fetch("map", empty);
     expect(calls[0]).toContain("has_gps=true");
+  });
+
+  it("forwards search-scope params on /search and keys cache by them", async () => {
+    // SF-18 / roborev finding 17964 #2: facet counts on /search must
+    // honour the page's q / typed-tag / date / location / include_hidden
+    // narrowing — otherwise the sidebar surfaces alternatives drawn
+    // from the entire library, not the current search. The /facets
+    // backend already accepts these wire params (see
+    // internal/httpapi/facets.go); SF-18 plumbs them through the
+    // store's fetch signature. Two scopes that differ only by `q`
+    // must produce distinct cache slots so navigating between
+    // /search?q=foo and /search?q=bar issues two GETs (not one).
+    const { client, calls } = fakeClient([fakeResponse, fakeResponse]);
+    const s = new FacetsStore(client as never, 0);
+    await s.fetch("search", empty, {
+      q: "puppy",
+      tagLabels: ["Dog"],
+      dateAfter: "2025-01-01T00:00:00Z",
+      includeHidden: true,
+    });
+    // First request URL carries the scope.
+    expect(calls.length).toBe(1);
+    const u1 = new URL(calls[0]!, "http://localhost");
+    expect(u1.searchParams.get("q")).toBe("puppy");
+    expect(u1.searchParams.getAll("tag")).toEqual(["Dog"]);
+    expect(u1.searchParams.get("date_after")).toBe("2025-01-01T00:00:00Z");
+    expect(u1.searchParams.get("include_hidden")).toBe("true");
+
+    // Same sidebar filters, different q → cache miss, second GET.
+    await s.fetch("search", empty, { q: "kitten" });
+    expect(calls.length).toBe(2);
+    const u2 = new URL(calls[1]!, "http://localhost");
+    expect(u2.searchParams.get("q")).toBe("kitten");
+
+    // Identical scope → cache hit, no third GET.
+    await s.fetch("search", empty, { q: "kitten" });
+    expect(calls.length).toBe(2);
+  });
+
+  it("ignores scope on non-search routes (/library, /map)", async () => {
+    // Passing a scope to /library or /map is permitted (the App-level
+    // effect doesn't have to branch on route before invoking) but the
+    // store wipes it before building the URL or the cache key. The
+    // /library and /map facet endpoints don't accept search-scope
+    // params, and the cache should treat (route=library, filters=X)
+    // as a single slot regardless of any scope a caller passed in.
+    const { client, calls } = fakeClient([fakeResponse, fakeResponse]);
+    const s = new FacetsStore(client as never, 0);
+    await s.fetch("library", empty, { q: "puppy" });
+    await s.fetch("library", empty, { q: "kitten" });
+    // Both calls hit the same cache slot — only the first GET fired.
+    expect(calls.length).toBe(1);
+    // And the URL never carried the scope.
+    expect(calls[0]).not.toContain("q=puppy");
   });
 
   it("populates this.error when response has neither data nor error", async () => {

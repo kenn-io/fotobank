@@ -15,6 +15,27 @@ export type FacetsResponse = {
 
 export type RouteContext = "library" | "search" | "map";
 
+// SearchScope is the search-route-only narrowing surface that gets
+// added to /api/v1/facets when the page is /search. /library and /map
+// don't take a query / typed-tag / location / include-hidden surface,
+// so the scope is omitted on those routes — facets there are computed
+// across the whole library subject only to the sidebar facets.
+//
+// Without this scoping, /search facet counts would surface alternatives
+// from the entire library, ignoring the user's q / typed tags / date
+// range / location / include_hidden — see roborev finding 17964 #2.
+// The /facets backend already accepts these wire params (date_after,
+// date_before, tag, location, include_hidden); SF-18 just plumbs them
+// from App.svelte's router.current down here.
+export type SearchScope = {
+  q?: string;
+  dateAfter?: string;
+  dateBefore?: string;
+  tagLabels?: string[]; // typed-chip strip — distinct from ActiveFilters.tagKeys
+  location?: string;
+  includeHidden?: boolean;
+};
+
 export class FacetsStore {
   response = $state<FacetsResponse | null>(null);
   loading = $state(false);
@@ -42,9 +63,17 @@ export class FacetsStore {
    * Fetch facets for the given route + filters. Identical key → cached.
    * Multiple rapid calls coalesce into the latest one (debounced).
    * Stale responses are dropped via fetchToken.
+   *
+   * scope is honoured only when route === "search" — /library and /map
+   * don't carry a search-scope surface. Passing scope on other routes
+   * is permitted but ignored, so the call site doesn't have to branch
+   * on route before invoking. The cache key incorporates the scope so
+   * /search?q=foo and /search?q=bar produce distinct cache slots even
+   * with identical sidebar filters.
    */
-  fetch(route: RouteContext, filters: ActiveFilters): Promise<void> {
-    const key = `${route}|${filterKey(filters)}`;
+  fetch(route: RouteContext, filters: ActiveFilters, scope?: SearchScope): Promise<void> {
+    const effectiveScope = route === "search" ? scope : undefined;
+    const key = `${route}|${filterKey(filters)}|${scopeKey(effectiveScope)}`;
     const cached = this.cache.get(key);
     if (cached) {
       // A cache hit invalidates any in-flight fetch: the user is
@@ -86,7 +115,7 @@ export class FacetsStore {
         this.loading = true;
         this.error = null;
         try {
-          const path = this.buildPath(route, filters);
+          const path = this.buildPath(route, filters, effectiveScope);
           // TODO: swap the `as never` cast for a properly-typed call
           // once /api/v1/facets lands in the generated openapi schema.
           const res = await this.client.GET(path as never);
@@ -137,7 +166,11 @@ export class FacetsStore {
     });
   }
 
-  private buildPath(route: RouteContext, f: ActiveFilters): string {
+  private buildPath(
+    route: RouteContext,
+    f: ActiveFilters,
+    scope: SearchScope | undefined,
+  ): string {
     const sp = new URLSearchParams();
     for (const v of f.cameras) sp.append("camera", v);
     for (const v of f.lenses) sp.append("lens", v);
@@ -158,7 +191,48 @@ export class FacetsStore {
     if (route === "map" && f.hasGps === null) {
       sp.set("has_gps", "true");
     }
+    // Search-scope params (route === "search" only — buildPath only
+    // receives a non-undefined scope on that route, since fetch()
+    // wipes scope on /library and /map). Without these, the facet
+    // counts on /search would be drawn from the whole library and
+    // miss the user's q / typed-tag / date / location / include_hidden
+    // narrowing (roborev finding 17964 #2).
+    if (scope !== undefined) {
+      if (scope.q !== undefined && scope.q !== "") sp.set("q", scope.q);
+      if (scope.dateAfter !== undefined && scope.dateAfter !== "") {
+        sp.set("date_after", scope.dateAfter);
+      }
+      if (scope.dateBefore !== undefined && scope.dateBefore !== "") {
+        sp.set("date_before", scope.dateBefore);
+      }
+      if (scope.tagLabels) {
+        for (const t of scope.tagLabels) {
+          if (t !== "") sp.append("tag", t);
+        }
+      }
+      if (scope.location !== undefined && scope.location !== "") {
+        sp.set("location", scope.location);
+      }
+      if (scope.includeHidden === true) sp.set("include_hidden", "true");
+    }
     const qs = sp.toString();
     return qs ? `/api/v1/facets?${qs}` : `/api/v1/facets`;
   }
+}
+
+// scopeKey serialises a SearchScope into a stable JSON string so the
+// FacetsStore cache differentiates /search?q=foo from /search?q=bar
+// even when the sidebar filters match. Sort tagLabels for stability:
+// the URL preserves user-add order, but two URLs with permuted tags
+// describe the same scope and should hit the same cache slot.
+function scopeKey(s: SearchScope | undefined): string {
+  if (s === undefined) return "";
+  return JSON.stringify({
+    q: s.q ?? "",
+    da: s.dateAfter ?? "",
+    db: s.dateBefore ?? "",
+    tl: s.tagLabels ? [...s.tagLabels].sort() : [],
+    loc: s.location ?? "",
+    ih: s.includeHidden === true,
+  });
 }
