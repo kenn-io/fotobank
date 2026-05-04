@@ -21,7 +21,7 @@
   import IndexingStatusBanner from "../lib/search/IndexingStatusBanner.svelte";
   import DiagnosticsBadge from "../lib/search/DiagnosticsBadge.svelte";
   import VirtualGrid from "../lib/grid/VirtualGrid.svelte";
-  import type { Month, Media } from "../lib/media/mediaStore.svelte";
+  import type { Month, Media, ThumbStatus } from "../lib/media/mediaStore.svelte";
   import { router } from "../lib/router/router.svelte";
   import type { EventsStore } from "../lib/events/eventsStore.svelte";
   import { AIInspectionStore } from "../lib/ai/inspectionStore.svelte";
@@ -290,15 +290,23 @@
       const aspect = r.width != null && r.height != null && r.height > 0
         ? r.width / r.height
         : 1;
+      // Normalize the wire status into the ThumbStatus union. A
+      // backend that hasn't been re-deployed yet (or that returns
+      // empty for unknown rows) lands here as "pending" — same
+      // default as mediaStore's toMedia, so the cell shows a shimmer
+      // until the row is re-fetched with a real status.
+      const ts_raw = r.thumb_status;
+      const thumbStatus: ThumbStatus =
+        ts_raw === "ready" || ts_raw === "pending" || ts_raw === "working"
+        || ts_raw === "failed" || ts_raw === "no_preview"
+          ? ts_raw
+          : "pending";
       return {
         id: r.media_id,
         timestamp: ts,
         aspect,
         thumbUrl: `/api/v1/media/${r.media_id}/thumb?v=${r.thumb_version}`,
-        // Search responses don't include thumb_status. Default to
-        // "ready" so the cell attempts <img>; on a 404 the cell falls
-        // back to the placeholder via the existing imgError path.
-        thumbStatus: "ready",
+        thumbStatus,
         taken: new Date(ts),
         thumbVersion: r.thumb_version,
       };

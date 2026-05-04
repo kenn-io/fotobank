@@ -351,7 +351,10 @@
   .tabs button.active {
     background: var(--amber);
     border-color: var(--amber);
-    color: var(--ink);
+    /* Dark foreground on the amber pill — pairing the light --ink
+       body color with warm-orange amber gave a low-contrast active
+       label. --bg (canvas dark) restores readable contrast. */
+    color: var(--bg);
   }
   .map-page-grid {
     display: grid;

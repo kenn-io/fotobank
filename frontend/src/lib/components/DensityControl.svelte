@@ -47,6 +47,10 @@
   }
   .density button.active {
     background: var(--amber);
-    color: var(--ink);
+    /* Dark foreground on the amber pill — `var(--ink)` is the light
+       body color and pairs poorly with the warm-orange background.
+       Using `var(--bg)` (the dark canvas) gives the active label
+       enough contrast to remain readable. */
+    color: var(--bg);
   }
 </style>

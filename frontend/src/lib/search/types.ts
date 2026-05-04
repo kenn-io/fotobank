@@ -50,6 +50,13 @@ export interface SearchResult {
   width: number | null;
   height: number | null;
   thumb_version: number;
+  // thumb_status mirrors media.thumb_status. The grid uses it to
+  // decide whether to attempt the thumb (only "ready" succeeds) or
+  // render a shimmer/placeholder instead. Backends that don't
+  // populate it would land empty here; the consumer normalizes
+  // empty/unknown to "pending" — the safer default since a missing
+  // status is "still being computed", not "render the broken image".
+  thumb_status: string;
   score?: number;
   score_components?: SearchScoreComponents;
 }

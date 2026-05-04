@@ -440,6 +440,17 @@
   $effect(() => {
     const m = media;
     if (!m || fallbackMode) return;
+    // Only fire the loader when the thumb is actually available. The
+    // grid-size URL would 404 for pending/working/failed/no_preview
+    // rows, but loader.load publishes gridSrc to onSrc synchronously
+    // before decoding, so visibleSrc would briefly become non-empty
+    // and the shimmer placeholder would never show. Cancel any prior
+    // load so a stale neighbor's onSrc can't land after this clear.
+    if (m.thumbStatus !== "ready") {
+      loader.cancelAll();
+      visibleSrc = "";
+      return;
+    }
     const gridSrc = m.thumbUrl;
     const previewUrl = thumbUrl(m.id, "preview", m.thumbVersion);
     const largeUrl = thumbUrl(m.id, "large", m.thumbVersion);
@@ -454,18 +465,22 @@
     const nextId = nav.nextId;
     const prevMedia = prevId !== null ? mediaStore.get(prevId) : undefined;
     const nextMedia = nextId !== null ? mediaStore.get(nextId) : undefined;
+    // Skip prefetch for neighbors whose thumbs aren't ready — those
+    // requests would 404 and just clog the in-flight slots.
+    const prevReady = prevMedia?.thumbStatus === "ready" ? prevMedia : undefined;
+    const nextReady = nextMedia?.thumbStatus === "ready" ? nextMedia : undefined;
     loader.prefetch({
-      prevPreviewUrl: prevMedia
-        ? thumbUrl(prevMedia.id, "preview", prevMedia.thumbVersion)
+      prevPreviewUrl: prevReady
+        ? thumbUrl(prevReady.id, "preview", prevReady.thumbVersion)
         : null,
-      nextPreviewUrl: nextMedia
-        ? thumbUrl(nextMedia.id, "preview", nextMedia.thumbVersion)
+      nextPreviewUrl: nextReady
+        ? thumbUrl(nextReady.id, "preview", nextReady.thumbVersion)
         : null,
-      prevLargeUrl: prevMedia
-        ? thumbUrl(prevMedia.id, "large", prevMedia.thumbVersion)
+      prevLargeUrl: prevReady
+        ? thumbUrl(prevReady.id, "large", prevReady.thumbVersion)
         : null,
-      nextLargeUrl: nextMedia
-        ? thumbUrl(nextMedia.id, "large", nextMedia.thumbVersion)
+      nextLargeUrl: nextReady
+        ? thumbUrl(nextReady.id, "large", nextReady.thumbVersion)
         : null,
     });
   });

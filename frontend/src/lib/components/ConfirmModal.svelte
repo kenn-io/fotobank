@@ -98,10 +98,12 @@
     border-color: var(--border-2);
   }
   .btn-ghost:disabled { cursor: not-allowed; opacity: 0.6; }
-  /* Amber primary: filled accent for the confirm action. */
+  /* Amber primary: filled accent for the confirm action. Dark
+     foreground (--bg) instead of --ink so the label has readable
+     contrast against the warm-orange fill. */
   .btn-primary {
     background: var(--amber);
-    color: var(--ink);
+    color: var(--bg);
     border: 1px solid var(--amber);
     padding: var(--space-3) var(--space-5);
     cursor: pointer;

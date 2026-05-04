@@ -25,8 +25,15 @@
     drawer?: Snippet | undefined;
   } = $props();
 
+  // The stage covers the entire backdrop area now (it's the grid track
+  // that holds the photo + toolbar + nav buttons), so clicks on the
+  // empty dark margin around the photo land on .lb-stage rather than
+  // .lb-backdrop. Treat self-clicks on either element as backdrop
+  // clicks; child elements (the image, buttons) bubble through with a
+  // different e.target and the equality check rejects them.
   function onClick(e: MouseEvent) {
-    if (e.target === e.currentTarget && onBackdropClick) onBackdropClick(e);
+    if (!onBackdropClick) return;
+    if (e.target === e.currentTarget) onBackdropClick(e);
   }
 </script>
 
@@ -39,7 +46,9 @@
   role="presentation"
   onclick={onClick}
 >
-  <div class="lb-stage">
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="lb-stage" role="presentation" onclick={onClick}>
     {@render children()}
   </div>
   {#if drawer}

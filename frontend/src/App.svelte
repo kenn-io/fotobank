@@ -124,10 +124,29 @@
   // the user presses Enter. Empty inputs are skipped at the SearchBar
   // layer so this only fires with a real string; we still guard
   // defensively because the prop is publicly callable.
+  //
+  // When already on /search, preserve every other URL param (sort, tag,
+  // date_after/before, location, media_type, include_hidden) so changing
+  // the query doesn't silently drop the user's filter selection. Off
+  // the search route, navigate to a fresh /search with only ?q= set.
   function onSearchSubmit(q: string): void {
     if (q === "") return;
+    if (router.current.route === "search") {
+      const sp = new URLSearchParams(window.location.search);
+      sp.set("q", q);
+      router.navigate(`/search?${sp.toString()}`);
+      return;
+    }
     router.navigate(`/search?q=${encodeURIComponent(q)}`);
   }
+
+  // currentSearchQuery feeds AppHeader → SearchBar so the always-
+  // visible input mirrors the current /search?q= value. Empty string
+  // off the search route, or when /search has no q param, so the
+  // input renders blank rather than retaining the prior page's query.
+  const currentSearchQuery = $derived(
+    router.current.route === "search" ? (router.current.q ?? "") : "",
+  );
 
   function activeId(route: RouteMatch): string {
     if (route.route === "sessions") return "sessions";
@@ -153,6 +172,7 @@
 <AppHeader
   principal={appConfig.principal}
   ready={appConfig.ready}
+  query={currentSearchQuery}
   onsearch={onSearchSubmit}
 />
 {#if hiddenStore.unlocked}

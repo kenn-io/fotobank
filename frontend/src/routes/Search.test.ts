@@ -249,6 +249,7 @@ describe("Search.svelte", () => {
         width: 1600,
         height: 1200,
         thumb_version: 1,
+        thumb_status: "ready",
       }],
       cursor: "next-page",
       hasMore: true,
@@ -429,6 +430,7 @@ describe("Search.svelte", () => {
           width: 1600,
           height: 1200,
           thumb_version: 1,
+        thumb_status: "ready",
           score_components: sc1,
         },
         {
@@ -439,6 +441,7 @@ describe("Search.svelte", () => {
           width: 1600,
           height: 1200,
           thumb_version: 1,
+        thumb_status: "ready",
         },
       ],
     });
@@ -515,6 +518,7 @@ describe("Search.svelte", () => {
           width: 1600,
           height: 1200,
           thumb_version: 1,
+        thumb_status: "ready",
         },
       ],
     });

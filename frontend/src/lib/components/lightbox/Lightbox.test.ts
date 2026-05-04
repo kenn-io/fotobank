@@ -62,6 +62,7 @@ const fakeMedia = {
   taken: new Date("2026-04-20T12:00:00Z"),
   aspect: 1,
   thumbUrl: "/api/v1/media/m1/thumb?size=grid&v=0",
+  thumbStatus: "ready" as const,
   thumbVersion: 0,
 };
 

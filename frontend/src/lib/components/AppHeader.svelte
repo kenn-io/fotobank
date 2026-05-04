@@ -12,17 +12,23 @@
   let {
     principal,
     ready,
+    query = "",
     onsearch,
   }: {
     principal: Principal | null;
     ready: boolean;
+    // The current /search?q=… value (or "" elsewhere). Forwarded to
+    // SearchBar so deep-linked searches, reloads, and back/forward
+    // navigation show the same query in the always-visible field as
+    // the result list — not an empty/stale input.
+    query?: string;
     onsearch: (q: string) => void;
   } = $props();
 </script>
 
 <header class="top">
   <span class="brand">fotobank</span>
-  <SearchBar onsubmit={onsearch} />
+  <SearchBar {query} onsubmit={onsearch} />
   <div class="top-right">
     <AIStatusDot />
     <IdentityChips {principal} {ready} />

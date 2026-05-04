@@ -196,7 +196,9 @@
   .btn-ghost:disabled { cursor: not-allowed; opacity: 0.6; }
   .btn-primary {
     background: var(--amber);
-    color: var(--ink);
+    /* Dark foreground on amber so the label stays readable; --ink
+       (light body color) was too low-contrast against the warm fill. */
+    color: var(--bg);
     border: 1px solid var(--amber);
     padding: var(--space-3) var(--space-5);
     cursor: pointer;
