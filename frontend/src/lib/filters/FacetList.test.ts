@@ -58,4 +58,44 @@ describe("FacetList", () => {
     expect(queryByText("Camera-3")).toBeTruthy();
     expect(queryByText("Camera-2")).toBeNull();
   });
+
+  it("ignores stale query when items shrink below threshold", async () => {
+    // The search input only renders when items > 8. If the user types a
+    // query against 10 items, then a filter elsewhere narrows the items
+    // to 5, the search input disappears with no way to clear the query.
+    // Without the gate the rendered list would still apply the stale
+    // filter — a regression that hides matching rows from the user.
+    const big = Array.from({ length: 10 }, (_, i) => ({
+      value: `Camera-${i}`,
+      count: i,
+      selected: false,
+    }));
+    const { getByPlaceholderText, queryByText, rerender } = render(FacetList, {
+      items: big,
+      onToggle: () => {},
+      searchPlaceholder: "Search…",
+    });
+    const input = getByPlaceholderText("Search…");
+    await fireEvent.input(input, { target: { value: "Camera-3" } });
+    expect(queryByText("Camera-3")).toBeTruthy();
+    // Now narrow items to 3 — search disappears, but the surviving rows
+    // must all render regardless of the prior query.
+    const small = big.slice(0, 3);
+    await rerender({ items: small, onToggle: () => {}, searchPlaceholder: "Search…" });
+    expect(queryByText("Camera-0")).toBeTruthy();
+    expect(queryByText("Camera-1")).toBeTruthy();
+    expect(queryByText("Camera-2")).toBeTruthy();
+  });
+
+  it("rows expose checkbox semantics with aria-checked", () => {
+    // Visually the rows behave like checkboxes (check glyph + toggle on
+    // click), so screen readers must see the same affordance. Without
+    // role=checkbox + aria-checked, assistive tech would read each row
+    // as a plain button with no indication of selection state.
+    const { container } = render(FacetList, { items, onToggle: () => {} });
+    const rows = container.querySelectorAll('[role="checkbox"]');
+    expect(rows.length).toBe(items.length);
+    expect(rows[0]?.getAttribute("aria-checked")).toBe("false");
+    expect(rows[1]?.getAttribute("aria-checked")).toBe("true");
+  });
 });

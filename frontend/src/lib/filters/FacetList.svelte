@@ -16,6 +16,12 @@
   let query = $state("");
   const showSearch = $derived(items.length > searchThreshold);
   const filtered = $derived.by((): Item[] => {
+    // When the search input is hidden (items dropped at/below
+    // threshold) the user has no way to clear a stale query. Ignore
+    // it so the list always reflects the current items as-is. Resetting
+    // `query` here would race the parent's reactive read; gating the
+    // filter is the simpler invariant.
+    if (!showSearch) return items;
     const q = query.trim().toLowerCase();
     if (q === "") return items;
     return items.filter((it) =>
@@ -39,9 +45,12 @@
         type="button"
         class="row"
         class:selected={it.selected}
+        role="checkbox"
+        aria-checked={it.selected}
+        aria-label={it.label ?? it.value}
         onclick={() => onToggle(it.value)}
       >
-        <span class="check" class:on={it.selected}>
+        <span class="check" class:on={it.selected} aria-hidden="true">
           {#if it.selected}
             <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true">
               <path
