@@ -2227,9 +2227,14 @@ export class FacetsStore {
       // Cache hit invalidates any in-flight fetch: bump fetchToken so
       // a still-running GET cannot overwrite this.response when its
       // promise settles, drain any queued resolvers, return resolved.
+      // Clear loading + error explicitly: the in-flight GET's finally
+      // won't run its cleanup (its myToken is now stale), so without
+      // these the store could be stranded with loading=true forever.
       ++this.fetchToken;
       if (this.debounceTimer !== null) clearTimeout(this.debounceTimer);
       this.response = cached;
+      this.loading = false;
+      this.error = null;
       const resolvers = this.pendingResolvers;
       this.pendingResolvers = [];
       for (const r of resolvers) r();

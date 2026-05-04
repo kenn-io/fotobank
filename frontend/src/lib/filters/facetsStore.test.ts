@@ -57,6 +57,55 @@ describe("FacetsStore", () => {
     expect(calls[0]).toContain("camera=Canon");
   });
 
+  it("cache hit during in-flight GET clears loading (no stuck spinner)", async () => {
+    // Race: A's GET is in flight (loading=true). Then B comes in for
+    // a key that's already cached (cache hit). The cache-hit path
+    // bumps fetchToken to invalidate A, but A's finally then sees
+    // myToken !== fetchToken and skips its loading=false cleanup.
+    // The cache-hit branch must clear loading explicitly or the
+    // FilterSidebar would render a permanent spinner.
+    let resolveA: (v: FacetsResponse) => void = () => {};
+    const slowA = new Promise<FacetsResponse>((r) => (resolveA = r));
+    const respA: FacetsResponse = {
+      cameras: [{ value: "A-CAM", count: 1 }],
+      lenses: [], tags: [],
+      places: { with_gps: 0, without_gps: 0 }, media_types: [],
+    };
+    const respB: FacetsResponse = {
+      cameras: [{ value: "B-CAM", count: 2 }],
+      lenses: [], tags: [],
+      places: { with_gps: 0, without_gps: 0 }, media_types: [],
+    };
+    const GET = vi.fn(async () => ({ data: await slowA }));
+    const s = new FacetsStore({ GET } as never, 0);
+
+    // Pre-warm cache for filterB by issuing a quick GET that resolves
+    // immediately, then clearing the GET fake.
+    (s as unknown as {
+      cache: Map<string, FacetsResponse>;
+    }).cache.set(`library|${JSON.stringify({
+      cameras: ["B-CAM"], lenses: [], tagKeys: [], hasGps: null, mediaType: null,
+    })}`, respB);
+
+    // Now start A (slow GET).
+    const pA = s.fetch("library", empty);
+    // Yield so A's debounce timer fires and the slow GET is in flight,
+    // setting loading=true.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(s.loading).toBe(true);
+
+    // Now hit cache for filterB. This must clear loading.
+    await s.fetch("library", { ...empty, cameras: ["B-CAM"] });
+    expect(s.loading).toBe(false);
+    expect(s.response?.cameras[0]?.value).toBe("B-CAM");
+
+    // Resolve A. Its finally sees stale token and skips cleanup —
+    // loading remains false (already cleared by the cache-hit branch).
+    resolveA(respA);
+    await pA;
+    expect(s.loading).toBe(false);
+  });
+
   it("a newer fetch awaits the newer response, not an earlier in-flight one", async () => {
     // Race the reviewer flagged: caller B arrives while caller A's GET
     // is in flight. Without the synchronous fetchToken bump at schedule
