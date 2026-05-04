@@ -32,6 +32,12 @@
   import { aiHealthStore } from "./lib/ai/health.svelte";
   import { AppConfigStore } from "./lib/app/appConfig.svelte";
   import { shouldRedirectSharesToHome } from "./lib/app/routeGuards";
+  import { FacetsStore } from "./lib/filters/facetsStore.svelte";
+  import {
+    fromRoute,
+    withFilters,
+    type ActiveFilters,
+  } from "./lib/filters/activeFilters";
 
   const events = new EventsStore();
   events.connect();
@@ -48,6 +54,12 @@
   const geoStore = new GeoStore(api);
   const toastStore = new ToastStore();
   const appConfig = new AppConfigStore(api);
+  // FacetsStore is the single source of truth for the FILTERS sidebar
+  // group across /library, /search, /map. App.svelte owns it because
+  // the response is route-scoped (each route caches its own facet
+  // counts) but the writer (URL → ActiveFilters → router.navigate)
+  // also lives here, alongside the other route-level controllers.
+  const facetsStore = new FacetsStore(api);
   // Initial health snapshot — runs once on mount.
   void aiHealthStore.refresh();
 
@@ -66,6 +78,44 @@
       router.navigate("/", { replace: true });
     }
   });
+
+  // activeFilters is the route-derived snapshot of the four
+  // multi-value facet groups + has_gps + media_type. fromRoute is
+  // pure and returns a stable empty filter set for non-filter
+  // routes, so threading this prop down for /albums or /sessions
+  // is harmless — the Sidebar conditions on `route` and the
+  // FILTERS group never renders.
+  const activeFilters = $derived(fromRoute(router.current));
+
+  // Refetch facets whenever the route or the filter selection
+  // changes. The store internally debounces (100ms) and caches by
+  // (route, filterKey) so back-to-back navigations or rapid toggle
+  // clicks coalesce into a single GET. Other routes leave the
+  // store untouched — its last response stays cached for when
+  // the user navigates back.
+  $effect(() => {
+    const r = router.current.route;
+    if (r === "library" || r === "search" || r === "map") {
+      void facetsStore.fetch(r, activeFilters);
+    }
+  });
+
+  // onFiltersChange is the URL writer for the FILTERS sidebar +
+  // (later) the chip strip. It rewrites only the filter param
+  // keys (camera/lens/facet_tag/has_gps/media_type) — every
+  // other query param (q, sort, date_after/before, location,
+  // include_hidden, z, c, focus, tab) is preserved, so toggling
+  // a camera on /search?q=… doesn't drop the user's query.
+  function onFiltersChange(next: ActiveFilters) {
+    const sp = withFilters(
+      new URLSearchParams(window.location.search),
+      next,
+    );
+    const qs = sp.toString();
+    router.navigate(
+      `${window.location.pathname}${qs !== "" ? `?${qs}` : ""}`,
+    );
+  }
 
   $effect(() => {
     const ev = events.lastEvent;
@@ -180,7 +230,14 @@
 {/if}
 <ThreeColumnLayout>
   {#snippet sidebar()}
-    <Sidebar active={activeId(router.current)} {appConfig} />
+    <Sidebar
+      active={activeId(router.current)}
+      {appConfig}
+      route={router.current.route}
+      {activeFilters}
+      facetsResponse={facetsStore.response}
+      {onFiltersChange}
+    />
   {/snippet}
   {#snippet main()}
     {#if router.current.route === "library"}

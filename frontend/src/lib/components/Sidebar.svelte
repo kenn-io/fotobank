@@ -2,11 +2,33 @@
 <script lang="ts">
   import { handleInternalLinkClick } from "../router/router.svelte";
   import type { AppConfigStore } from "../app/appConfig.svelte";
+  import FilterSidebar from "../filters/FilterSidebar.svelte";
+  import type { ActiveFilters } from "../filters/activeFilters";
+  import type { FacetsResponse } from "../filters/facetsStore.svelte";
 
+  // route is the current RouteMatch route name; FilterSidebar is only
+  // mounted for the three filter-aware routes. Other routes get the
+  // BROWSE/CURATE/MANAGE nav alone — passing dummy filter props for
+  // those routes is fine because the FILTERS group is never rendered.
   let {
     active = "",
     appConfig,
-  }: { active?: string; appConfig: AppConfigStore } = $props();
+    route,
+    activeFilters,
+    facetsResponse,
+    onFiltersChange,
+  }: {
+    active?: string;
+    appConfig: AppConfigStore;
+    route: string;
+    activeFilters: ActiveFilters;
+    facetsResponse: FacetsResponse | null;
+    onFiltersChange: (next: ActiveFilters) => void;
+  } = $props();
+
+  const showFilters = $derived(
+    route === "library" || route === "search" || route === "map",
+  );
 
   const groups = $derived([
     {
@@ -51,6 +73,15 @@
     {/if}
   {/each}
 </nav>
+
+{#if showFilters}
+  <FilterSidebar
+    route={route as "library" | "search" | "map"}
+    filters={activeFilters}
+    response={facetsResponse}
+    onChange={onFiltersChange}
+  />
+{/if}
 
 <style>
   nav {
