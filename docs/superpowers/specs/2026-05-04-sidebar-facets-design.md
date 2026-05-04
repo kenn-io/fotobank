@@ -293,7 +293,7 @@ export function withFilters(current: URLSearchParams, f: ActiveFilters): URLSear
 
 **New fotobank components:**
 
-- `frontend/src/lib/filters/FilterSidebar.svelte` — the FILTERS group containing four `FacetSection`s. Mounted from `Sidebar.svelte`. Reads `ActiveFilters` from route, writes via navigate. Receives `facetsResponse` from the store.
+- `frontend/src/lib/filters/FilterSidebar.svelte` — the FILTERS group containing five `FacetSection`s (Cameras, Lenses, Tags, Places, Media Types). Places is hidden when route is /map. Mounted from `Sidebar.svelte`. Reads `ActiveFilters` from route, writes via navigate. Receives `facetsResponse` from the store.
 - `frontend/src/lib/filters/FacetSection.svelte` — collapsible header (chevron + label + total count + active-count badge when collapsed) wrapping a `FacetList`. Manages its own collapsed state via `localStorage` key.
 - `frontend/src/lib/filters/facetsStore.svelte.ts` — fetches `/api/v1/facets`, caches by full `(route + ActiveFilters)` key. Single response per fetch (the backend handles exclude-self internally). Debounced 100ms on filter changes.
 
