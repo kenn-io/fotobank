@@ -2194,7 +2194,15 @@ export class FacetsStore {
   private cache = new Map<string, FacetsResponse>();
   private fetchToken = 0;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingResolve: (() => void) | null = null;
+  // pendingResolvers accumulates the promise resolvers from every
+  // debounced caller while a timer is in flight. When the timer fires
+  // and the fetch settles, we resolve them all together so each
+  // caller's `await fetch(...)` continues only after the latest state
+  // is in `this.response`. A single pendingResolve scalar would either
+  // leak earlier callers (their resolver gets overwritten) or — if we
+  // resolve them at clearTimeout — let them continue while state is
+  // still stale.
+  private pendingResolvers: Array<() => void> = [];
 
   constructor(
     private client: Pick<Client, "GET">,
@@ -2214,20 +2222,15 @@ export class FacetsStore {
       return Promise.resolve();
     }
 
-    // If a previous debounced call is in flight, resolve its returned
-    // promise before clearing the timer — otherwise the earlier
-    // caller's `await fetch(...)` would hang forever because the
-    // settle path in the timeout closure never runs. Resolve (don't
-    // reject); callers care about reaching the latest state, not
-    // about each individual call's success.
+    // Rapid calls coalesce: clear the existing timer (the prior call's
+    // request is now superseded) and queue this caller's resolver
+    // alongside any earlier ones. They all settle together when the
+    // latest scheduled fetch completes — each caller's await thus
+    // continues only after `this.response` reflects the latest state.
     if (this.debounceTimer !== null) clearTimeout(this.debounceTimer);
-    if (this.pendingResolve) {
-      this.pendingResolve();
-      this.pendingResolve = null;
-    }
 
     return new Promise<void>((resolve) => {
-      this.pendingResolve = resolve;
+      this.pendingResolvers.push(resolve);
       this.debounceTimer = setTimeout(async () => {
         const myToken = ++this.fetchToken;
         this.loading = true;
@@ -2247,10 +2250,15 @@ export class FacetsStore {
           if (myToken !== this.fetchToken) return;
           this.error = e instanceof Error ? e.message : String(e);
         } finally {
-          if (myToken === this.fetchToken) this.loading = false;
-          if (this.pendingResolve) {
-            this.pendingResolve();
-            this.pendingResolve = null;
+          if (myToken === this.fetchToken) {
+            this.loading = false;
+            // Settle every resolver queued while this timer was in
+            // flight. If a newer fetch raced ahead (myToken !==
+            // fetchToken), defer to that fetch's settle path — the
+            // resolvers outlive a stale closure.
+            const resolvers = this.pendingResolvers;
+            this.pendingResolvers = [];
+            for (const r of resolvers) r();
           }
         }
       }, this.debounceMs);
