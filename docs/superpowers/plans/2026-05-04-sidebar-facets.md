@@ -1231,11 +1231,13 @@ func TestFacetsRoute_OwnerScoped(t *testing.T) {
 	r := require.New(t)
 	db := testutil.OpenTestDB(t)
 	seedFacetsRouteFixtures(t, db) // helper inserts 3 media as in Task 5
-	svc := facets.New(db)
+	hiddenAuth := hidden.NewService(...) // mirror /search's test fixture
+	svc := facets.New(db.ReadDB(), hiddenAuth)
 
 	handler, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: testutil.StubIdentity(testutil.PrincipalA),
 		Facets:           svc,
+		HiddenAuth:       hiddenAuth,
 	})
 	r.NoError(err)
 
@@ -1255,11 +1257,13 @@ func TestFacetsRoute_FilterParams(t *testing.T) {
 	r := require.New(t)
 	db := testutil.OpenTestDB(t)
 	seedFacetsRouteFixtures(t, db)
-	svc := facets.New(db)
+	hiddenAuth := hidden.NewService(...) // mirror /search's test fixture
+	svc := facets.New(db.ReadDB(), hiddenAuth)
 
 	handler, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: testutil.StubIdentity(testutil.PrincipalA),
 		Facets:           svc,
+		HiddenAuth:       hiddenAuth,
 	})
 	r.NoError(err)
 
@@ -1310,7 +1314,12 @@ import (
 	"github.com/wesm/fotobank/internal/service/facets"
 )
 
-func registerFacetsRoutes(api huma.API, svc *facets.Service, hiddenAuth *hidden.Service) {
+// registerFacetsRoutes binds GET /api/v1/facets. The IncludeHidden
+// gate lives inside facets.Service.Aggregate (it's the only call site
+// that mutates SQL based on IncludeHidden), so the route only needs
+// the service handle — hiddenAuth is plumbed into the service via
+// facets.New, not threaded through here.
+func registerFacetsRoutes(api huma.API, svc *facets.Service) {
 	if svc == nil {
 		return
 	}
@@ -1320,7 +1329,7 @@ func registerFacetsRoutes(api huma.API, svc *facets.Service, hiddenAuth *hidden.
 		Path:        "/api/v1/facets",
 		Summary:     "Per-facet counts for the caller's library (exclude-self semantics)",
 	}, func(ctx context.Context, in *facetsInput) (*facetsOutput, error) {
-		return handleFacets(ctx, svc, hiddenAuth, in)
+		return handleFacets(ctx, svc, in)
 	})
 }
 
@@ -1371,7 +1380,6 @@ type facetsOutput struct {
 func handleFacets(
 	ctx context.Context,
 	svc *facets.Service,
-	hiddenAuth *hidden.Service,
 	in *facetsInput,
 ) (*facetsOutput, error) {
 	caller, err := identity.PrincipalFromContext(ctx)
@@ -1379,16 +1387,13 @@ func handleFacets(
 		return nil, err
 	}
 
-	// Hidden-unlock gate — match /search's pattern. Honor IncludeHidden
-	// only when the caller has a valid unlock claim.
-	includeHidden := false
-	if in.IncludeHidden && hiddenAuth != nil {
-		claim := hidden.ClaimFromContext(ctx)
-		if hiddenAuth.Valid(claim, caller) {
-			includeHidden = true
-		}
-	}
-
+	// Pass IncludeHidden + UnlockClaim through unchanged. The service
+	// does the validation in Aggregate and returns
+	// errs.ErrPermissionDenied when IncludeHidden=true but the claim
+	// is invalid — that maps to 403 via Translate, matching /search's
+	// hidden gate. Pre-validating here would re-create the bypass
+	// SF-5's commit 2c728e2 closed (non-HTTP callers like the CLI
+	// must inherit the same gate).
 	f := facets.Filters{
 		Cameras:       in.Camera,
 		Lenses:        in.Lens,
@@ -1397,7 +1402,8 @@ func handleFacets(
 		HasGPS:        in.HasGPS,
 		MediaType:     in.MediaType,
 		LocationLabel: in.Location,
-		IncludeHidden: includeHidden,
+		IncludeHidden: in.IncludeHidden,
+		UnlockClaim:   hidden.ClaimFromContext(ctx),
 	}
 	if in.DateAfter != nil {
 		t, err := time.Parse(time.RFC3339, *in.DateAfter)
@@ -1467,7 +1473,7 @@ Add to `Deps` struct (after `Search`):
 In `buildAPI`, add after the `registerSearchRoutes` line:
 
 ```go
-	registerFacetsRoutes(api, deps.Facets, deps.HiddenAuth)
+	registerFacetsRoutes(api, deps.Facets)
 ```
 
 - [ ] **Step 5: Run tests to verify pass**
