@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { MediaStore, monthKey, toMedia } from "./mediaStore.svelte";
+import type { ActiveFilters } from "../filters/activeFilters";
 
 describe("monthKey", () => {
   it("buckets a date into YYYY-MM", () => {
@@ -689,5 +690,202 @@ describe("MediaStore merge with sidecars", () => {
     const after = store.months.find((m) => m.key === "2024-06");
     expect(after).not.toBe(before);
     expect(after?.items[0]?.sidecars?.[0]?.original_filename).toBe("IMG_1_renamed.DNG");
+  });
+});
+
+describe("MediaStore filter-change reset protocol", () => {
+  // The store's wire-format is { items, next_offset }; the mocked GET
+  // here keys items off the camera filter so we can prove the URL
+  // params actually reach the request.
+  type Row = {
+    id: string;
+    timestamp: string;
+    width: number;
+    height: number;
+    thumb_version: number;
+  };
+  function rowsByCameraClient(rowsByCamera: Record<string, Row[]>) {
+    const GET = vi.fn(
+      async (
+        _path: string,
+        opts: { params?: { query?: { camera?: string[] } } },
+      ) => {
+        const cam = opts.params?.query?.camera?.[0] ?? "*";
+        return {
+          data: { items: rowsByCamera[cam] ?? [], next_offset: null },
+          error: undefined,
+        };
+      },
+    );
+    return { GET };
+  }
+
+  const emptyFilters: ActiveFilters = {
+    cameras: [], lenses: [], tagKeys: [], hasGps: null, mediaType: null,
+  };
+
+  it("clears months on filter change and refetches", async () => {
+    const client = rowsByCameraClient({
+      "*": [{ id: "any-1", timestamp: "2025-01-01T00:00:00Z", width: 3, height: 2, thumb_version: 1 }],
+      "Sony A7R IV": [{ id: "sony-1", timestamp: "2025-01-01T00:00:00Z", width: 3, height: 2, thumb_version: 1 }],
+    });
+    const store = new MediaStore(client as never);
+    await store.loadInitial();
+    expect(store.get("any-1")).toBeDefined();
+
+    store.setFilters({ ...emptyFilters, cameras: ["Sony A7R IV"] });
+    await store.loadInitial();
+
+    expect(store.get("any-1")).toBeUndefined(); // cleared
+    expect(store.get("sony-1")).toBeDefined();
+    expect(store.months).toHaveLength(1);
+  });
+
+  it("setFilters with same filterKey is a no-op (preserves cached rows)", async () => {
+    const client = rowsByCameraClient({
+      "*": [{ id: "x", timestamp: "2025-01-01T00:00:00Z", width: 1, height: 1, thumb_version: 1 }],
+    });
+    const store = new MediaStore(client as never);
+    await store.loadInitial();
+    expect(client.GET).toHaveBeenCalledTimes(1);
+
+    // Same key, different array refs — must not clear or trigger any side effect.
+    store.setFilters({ cameras: [], lenses: [], tagKeys: [], hasGps: null, mediaType: null });
+    expect(store.get("x")).toBeDefined();
+    expect(client.GET).toHaveBeenCalledTimes(1);
+  });
+
+  it("late stale response is dropped after setFilters bumps fetchToken", async () => {
+    let resolveStale: (v: unknown) => void = () => {};
+    const stale = new Promise((r) => (resolveStale = r));
+    const fastResponse = {
+      data: {
+        items: [
+          { id: "fast-1", timestamp: "2025-01-01T00:00:00Z", width: 1, height: 1, thumb_version: 1 },
+        ],
+        next_offset: null,
+      },
+      error: undefined,
+    };
+    let call = 0;
+    const client = {
+      GET: vi.fn(async () => (call++ === 0 ? await stale : fastResponse)),
+    };
+    const store = new MediaStore(client as never);
+
+    const p1 = store.loadInitial();
+    store.setFilters({ ...emptyFilters, cameras: ["X"] });
+    const p2 = store.loadInitial();
+    await p2;
+    resolveStale({
+      data: {
+        items: [
+          { id: "STALE-1", timestamp: "2025-01-01T00:00:00Z", width: 1, height: 1, thumb_version: 1 },
+        ],
+        next_offset: null,
+      },
+      error: undefined,
+    });
+    await p1;
+    expect(store.get("STALE-1")).toBeUndefined();
+    expect(store.get("fast-1")).toBeDefined();
+  });
+
+  it("sends camera/lens/facet_tag/has_gps/media_type query params on the GET", async () => {
+    // Forward-leaning: /api/v1/media doesn't honor these yet (SF-17 lands
+    // backend support); huma silently ignores unknown params for now.
+    const client = {
+      GET: vi.fn().mockResolvedValue({
+        data: { items: [], next_offset: null },
+        error: undefined,
+      }),
+    };
+    const store = new MediaStore(client as never);
+    store.setFilters({
+      cameras: ["Sony A7R IV", "Canon EOS R5"],
+      lenses: ["FE 50mm F1.8"],
+      tagKeys: ["place:nyc"],
+      hasGps: true,
+      mediaType: "photo",
+    });
+    await store.loadInitial();
+
+    const call = client.GET.mock.calls[0];
+    const query = call?.[1]?.params?.query as Record<string, unknown> | undefined;
+    expect(query?.["camera"]).toEqual(["Sony A7R IV", "Canon EOS R5"]);
+    expect(query?.["lens"]).toEqual(["FE 50mm F1.8"]);
+    expect(query?.["facet_tag"]).toEqual(["place:nyc"]);
+    // huma expects the literal "true"/"false" strings for *bool query
+    // params (matches facetsStore convention, see SF-10).
+    expect(query?.["has_gps"]).toBe("true");
+    expect(query?.["media_type"]).toBe("photo");
+  });
+
+  it("sends has_gps=false when hasGps is false", async () => {
+    const client = {
+      GET: vi.fn().mockResolvedValue({
+        data: { items: [], next_offset: null },
+        error: undefined,
+      }),
+    };
+    const store = new MediaStore(client as never);
+    store.setFilters({ ...emptyFilters, hasGps: false });
+    await store.loadInitial();
+
+    const query = client.GET.mock.calls[0]?.[1]?.params?.query as
+      | Record<string, unknown>
+      | undefined;
+    expect(query?.["has_gps"]).toBe("false");
+  });
+
+  it("omits filter params when the filters are empty", async () => {
+    const client = {
+      GET: vi.fn().mockResolvedValue({
+        data: { items: [], next_offset: null },
+        error: undefined,
+      }),
+    };
+    const store = new MediaStore(client as never);
+    await store.loadInitial();
+
+    const query = client.GET.mock.calls[0]?.[1]?.params?.query as
+      | Record<string, unknown>
+      | undefined;
+    expect(query?.["camera"]).toBeUndefined();
+    expect(query?.["lens"]).toBeUndefined();
+    expect(query?.["facet_tag"]).toBeUndefined();
+    expect(query?.["has_gps"]).toBeUndefined();
+    expect(query?.["media_type"]).toBeUndefined();
+  });
+
+  it("setFilters resets pagination so loadMore restarts at offset 0", async () => {
+    const page1 = {
+      data: {
+        items: [{ id: "a", timestamp: "2026-04-18T12:00:00Z", width: 1, height: 1, thumb_version: 1 }],
+        next_offset: 200,
+      },
+      error: undefined,
+    };
+    const page2AfterReset = {
+      data: {
+        items: [{ id: "b", timestamp: "2026-04-18T12:00:00Z", width: 1, height: 1, thumb_version: 1 }],
+        next_offset: null,
+      },
+      error: undefined,
+    };
+    const client = {
+      GET: vi.fn().mockResolvedValueOnce(page1).mockResolvedValueOnce(page2AfterReset),
+    };
+    const store = new MediaStore(client as never);
+    await store.loadInitial();
+    expect(client.GET.mock.calls[0]?.[1]?.params?.query?.offset).toBe(0);
+
+    store.setFilters({ ...emptyFilters, cameras: ["X"] });
+    await store.loadInitial();
+
+    // After reset, offset must be 0 again — not the leftover 200.
+    expect(client.GET.mock.calls[1]?.[1]?.params?.query?.offset).toBe(0);
+    expect(store.get("a")).toBeUndefined();
+    expect(store.get("b")).toBeDefined();
   });
 });

@@ -1,4 +1,5 @@
 import type { Client } from "../api/client";
+import { filterKey, type ActiveFilters } from "../filters/activeFilters";
 
 // thumb_status mirrors the backend enum on `media.thumb_status`. The
 // grid uses it to decide what to render:
@@ -83,7 +84,45 @@ export class MediaStore {
   // bus dependency. Subscribers (AlbumStore, toasts) call on/off.
   private hiddenListeners = new Set<(p: MediaHiddenPayload) => void>();
 
+  // Active filter set + reset protocol (SF-11). When the filterKey
+  // changes, the store bumps fetchToken, clears every visible index,
+  // and resets pagination so the next loadMore restarts at offset 0.
+  // In-flight loadMore calls capture the token at issue time and
+  // discard their response if the token has moved on — this is what
+  // prevents stale rows from interleaving with the new filter set.
+  private filters: ActiveFilters = {
+    cameras: [], lenses: [], tagKeys: [], hasGps: null, mediaType: null,
+  };
+  private currentFilterKey = filterKey(this.filters);
+  private fetchToken = 0;
+
   constructor(private client: Pick<Client, "GET">) {}
+
+  /**
+   * Update the active filters. If the filterKey changes, the store
+   * resets pagination, clears all cached rows, drops any in-flight
+   * response, and bumps fetchToken so late completions are dropped.
+   * Callers should re-call loadInitial() (or loadMore()) afterwards.
+   *
+   * If the filterKey is unchanged this is a no-op — protects against
+   * router replays that rebuild ActiveFilters from URL params on every
+   * navigation but don't actually change the filter set.
+   */
+  setFilters(next: ActiveFilters): void {
+    const nextKey = filterKey(next);
+    if (nextKey === this.currentFilterKey) return;
+    this.filters = next;
+    this.currentFilterKey = nextKey;
+    this.fetchToken++;
+    this.byMonth.clear();
+    this.byId.clear();
+    this.byMediaId.clear();
+    this.months = [];
+    this.exhausted = false;
+    this.nextOffset = 0;
+    this.inflight = null;
+    this.loading = false;
+  }
 
   get(id: string): Media | undefined {
     return this.byMediaId.get(id);
@@ -118,6 +157,11 @@ export class MediaStore {
     // here would let the caller's loop spin against `loading=true` and
     // exhaust its attempt cap before the network even returns.
     if (this.inflight !== null) return this.inflight;
+    // Capture the token at issue time so a setFilters that lands while
+    // this fetch is in flight can mark our response stale. Without this
+    // a slow GET could overwrite the cleared store with rows for the
+    // PREVIOUS filter set after the new fetch has already settled.
+    const myToken = this.fetchToken;
     this.loading = true;
     const p = (async () => {
       try {
@@ -125,10 +169,21 @@ export class MediaStore {
           // sort_desc: true so the library opens at the most-recent
           // capture (the backend defaults to ascending). Pagination then
           // walks backwards in time as the user scrolls down.
+          //
+          // The camera/lens/facet_tag/has_gps/media_type params are
+          // forward-leaning: SF-17 wires them into media.ListFilter, but
+          // until then huma silently ignores unknown query params. This
+          // keeps the wire format aligned with what facetsStore sends
+          // and what /api/v1/facets already accepts (huma expects the
+          // literal "true"/"false" strings for *bool query params).
           params: {
-            query: { limit: 200, offset: this.nextOffset ?? 0, sort_desc: true },
+            query: this.buildQuery(),
           } as never,
         });
+        // Stale: a setFilters during the await invalidated us. Drop
+        // every byte of this response so it cannot leak into the
+        // post-reset store.
+        if (myToken !== this.fetchToken) return;
         if (res.error || !res.data) return;
         const items = ((res.data as { items?: Array<Record<string, unknown>> }).items ?? [])
           .map(toMedia)
@@ -138,12 +193,40 @@ export class MediaStore {
         this.nextOffset = next;
         if (next === null) this.exhausted = true;
       } finally {
-        this.loading = false;
-        this.inflight = null;
+        // Only the latest fetch owns the loading flag and the inflight
+        // slot; a stale completion must not clobber state owned by the
+        // newer fetch (e.g. clearing loading=true while the new fetch
+        // is still pending).
+        if (myToken === this.fetchToken) {
+          this.loading = false;
+          this.inflight = null;
+        }
       }
     })();
     this.inflight = p;
     return p;
+  }
+
+  /**
+   * Build the query object for the /api/v1/media GET. Filter params
+   * (camera/lens/facet_tag/has_gps/media_type) ride alongside the
+   * pagination/sort params; SF-17 will start honouring them server-side.
+   */
+  private buildQuery(): Record<string, unknown> {
+    const q: Record<string, unknown> = {
+      limit: 200,
+      offset: this.nextOffset ?? 0,
+      sort_desc: true,
+    };
+    if (this.filters.cameras.length > 0) q["camera"] = [...this.filters.cameras];
+    if (this.filters.lenses.length > 0) q["lens"] = [...this.filters.lenses];
+    if (this.filters.tagKeys.length > 0) q["facet_tag"] = [...this.filters.tagKeys];
+    // huma's *bool query binding accepts the literal "true"/"false"
+    // strings. Match facetsStore's wire format (SF-10) so the moment
+    // SF-17 lands the backend will accept what we send unchanged.
+    if (this.filters.hasGps !== null) q["has_gps"] = this.filters.hasGps ? "true" : "false";
+    if (this.filters.mediaType !== null) q["media_type"] = this.filters.mediaType;
+    return q;
   }
 
   // Public adapter for the on-miss fetch path (e.g. MediaDetail loads
