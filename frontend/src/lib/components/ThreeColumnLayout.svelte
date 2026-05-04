@@ -33,8 +33,12 @@
        viewport, so the scrubber and this rail must agree on width.
        Anything that sits inside .main (DensityControl strip, photo
        grid day-header) bottoms out at the rail's left edge so the
-       Select group button stops colliding with the scrubber. */
-    --rail-width: 48px;
+       Select group button stops colliding with the scrubber.
+       64px = ~17px scrollbar gutter + ~47px of usable rail. The
+       earlier 48px value left only ~31px of usable rail after the
+       scrollbar, which crowded the year ticks against both the
+       scrollbar AND the day-header's Select-group buttons. */
+    --rail-width: 64px;
   }
   .sidebar {
     background: var(--surface);

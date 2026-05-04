@@ -27,13 +27,14 @@
        the AppHeader (46px), with a gap for breathing room. */
     top: 96px;
     /* Lives inside the .main rail (ThreeColumnLayout's --rail-width =
-       48px padding-right on .main) — to the LEFT of the scrollbar
-       and clear of the photo grid's right edge. With scrollbar-gutter:
-       stable on .main the offset is constant whether the scrollbar
-       is currently visible or not. The mono-spaced year ticks are
-       ~26px wide; centering inside the 48px rail places them ~10–12px
-       from the viewport edge. */
-    right: 14px;
+       64px padding-right on .main). scrollbar-gutter:stable on .main
+       reserves ~17px at the inline-end for the OS scrollbar, so the
+       scrubber must sit *right of* that 17px window or it visibly
+       overlaps the scrollbar. The mono-spaced year ticks are ~26px
+       wide; centering them in the (64-17)=47px usable rail places
+       them ~24px from the viewport edge — clear of the scrollbar
+       on every platform that always paints one. */
+    right: 24px;
     display: flex;
     flex-direction: column;
     gap: 4px;
