@@ -45,7 +45,15 @@
   // EventSource accumulates duplicate connections each reload.
   onDestroy(() => events.disconnect());
 
+  // Boot-time hydration: seed the mediaStore's filter set from the
+  // route URL before firing the first fetch. fromRoute returns an
+  // empty filter set on non-filter routes, so this is a no-op for
+  // /albums or /sessions; on /library?camera=Sony URLs it primes the
+  // filter set so the boot fetch lands filtered instead of relying on
+  // Library's mount-time effect to invalidate a wasted unfiltered
+  // request.
   const mediaStore = new MediaStore(api);
+  mediaStore.setFilters(fromRoute(router.current));
   mediaStore.loadInitial();
   const albumsStore = new AlbumsStore(api);
   const sharesStore = new SharesStore(api);
@@ -86,6 +94,17 @@
   // is harmless — the Sidebar conditions on `route` and the
   // FILTERS group never renders.
   const activeFilters = $derived(fromRoute(router.current));
+
+  // tagLabels: tag_key → display label, sourced from the latest
+  // facets response. FilterChipStrip uses this to render
+  // "tag: Dog" instead of "tag: dog". Falls back to the key in the
+  // chip itself when the response hasn't loaded yet — the URL has
+  // tag_keys, but the human label only exists in the facets payload.
+  const tagLabels = $derived.by((): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const t of facetsStore.response?.tags ?? []) out[t.key] = t.label;
+    return out;
+  });
 
   // Refetch facets whenever the route or the filter selection
   // changes. The store internally debounces (100ms) and caches by
@@ -241,7 +260,16 @@
   {/snippet}
   {#snippet main()}
     {#if router.current.route === "library"}
-      <Library {mediaStore} {albumsStore} {hiddenStore} {toastStore} {appConfig} />
+      <Library
+        {mediaStore}
+        {albumsStore}
+        {hiddenStore}
+        {toastStore}
+        {appConfig}
+        {activeFilters}
+        {tagLabels}
+        {onFiltersChange}
+      />
     {:else if router.current.route === "sessions"}
       <Sessions {mediaStore} {albumsStore} {hiddenStore} {toastStore} {appConfig} />
     {:else if router.current.route === "media"}

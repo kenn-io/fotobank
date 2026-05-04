@@ -20,6 +20,8 @@
   import type { AppConfigStore } from "../lib/app/appConfig.svelte";
   import type { CreateShareBody } from "../lib/share/shareTypes";
   import { api } from "../lib/api/client";
+  import FilterChipStrip from "../lib/filters/FilterChipStrip.svelte";
+  import { isEmpty, type ActiveFilters } from "../lib/filters/activeFilters";
 
   let {
     mediaStore,
@@ -27,13 +29,30 @@
     hiddenStore,
     toastStore,
     appConfig,
+    activeFilters,
+    tagLabels,
+    onFiltersChange,
   }: {
     mediaStore: MediaStore;
     albumsStore: AlbumsStore;
     hiddenStore: HiddenStore;
     toastStore: ToastStore;
     appConfig: AppConfigStore;
+    activeFilters: ActiveFilters;
+    tagLabels: Record<string, string>;
+    onFiltersChange: (next: ActiveFilters) => void;
   } = $props();
+
+  // Drive the mediaStore on every filter change. setFilters is a no-op
+  // when the filterKey is unchanged (router replays rebuild
+  // ActiveFilters from URL params on every navigation), so this only
+  // triggers a real reload when the user actually toggled a chip.
+  // loadInitial walks loadMore which is re-entrant — a stale fetch in
+  // flight is invalidated by setFilters bumping fetchToken.
+  $effect(() => {
+    mediaStore.setFilters(activeFilters);
+    void mediaStore.loadInitial();
+  });
 
   const density = new DensityStore(api, "library");
   density.load();
@@ -156,6 +175,8 @@
   <DensityControl store={density} />
 </header>
 
+<FilterChipStrip filters={activeFilters} {tagLabels} onChange={onFiltersChange} />
+
 <VirtualGrid
   months={mediaStore.months}
   onLoadMore={() => mediaStore.loadMore()}
@@ -174,7 +195,27 @@
   <div style="padding:12px; color: var(--ink-3)">Loading…</div>
 {/if}
 {#if mediaStore.months.length === 0 && !mediaStore.loading}
-  <div style="padding:24px; color: var(--ink-2)">No photos yet.</div>
+  {#if !isEmpty(activeFilters)}
+    <div class="empty-filtered" role="status">
+      <p>No photos match these filters.</p>
+      <button
+        type="button"
+        class="clear-all"
+        onclick={() =>
+          onFiltersChange({
+            cameras: [],
+            lenses: [],
+            tagKeys: [],
+            hasGps: null,
+            mediaType: null,
+          })}
+      >
+        Clear all
+      </button>
+    </div>
+  {:else}
+    <div style="padding:24px; color: var(--ink-2)">No photos yet.</div>
+  {/if}
 {/if}
 
 {#if addOpen}
@@ -193,3 +234,35 @@
     onClose={() => (shareOpen = false)}
   />
 {/if}
+
+<style>
+  .empty-filtered {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+    padding: 48px var(--space-4);
+    color: var(--ink-2);
+    text-align: center;
+  }
+  .empty-filtered p {
+    margin: 0;
+    font-size: var(--text-base);
+  }
+  .empty-filtered .clear-all {
+    display: inline-flex;
+    align-items: center;
+    height: 28px;
+    padding: 0 12px;
+    background: color-mix(in srgb, var(--amber) 14%, transparent);
+    color: var(--amber);
+    border: 1px solid color-mix(in srgb, var(--amber) 24%, transparent);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 100ms;
+  }
+  .empty-filtered .clear-all:hover {
+    background: color-mix(in srgb, var(--amber) 22%, transparent);
+  }
+</style>
