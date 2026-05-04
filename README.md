@@ -181,7 +181,7 @@ Validate and run:
 ```sh
 bin/fotobank config validate
 bin/fotobank import /path/to/source
-bin/fotobank server
+bin/fotobank serve
 ```
 
 By default the server listens on `127.0.0.1:8090`.
@@ -189,7 +189,7 @@ By default the server listens on `127.0.0.1:8090`.
 Common commands:
 
 ```sh
-bin/fotobank server            # HTTP API + background workers
+bin/fotobank serve             # HTTP API + background workers
 bin/fotobank config path
 bin/fotobank import <dir>      # import photos/videos
 bin/fotobank reconcile         # NAS ↔ DB drift report

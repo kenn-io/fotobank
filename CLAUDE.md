@@ -10,7 +10,7 @@ This is a **Go project**. An earlier Python prototype was deleted at 2026-04-23;
 make build            # debug binary → bin/fotobank (requires a C compiler; CGO)
 make build-release    # release binary
 make install          # copy to ~/.local/bin or $GOBIN
-make dev              # live-reload via air (runs `server`)
+make dev              # live-reload via air (runs `serve`)
 make test             # go test ./... -shuffle=on
 make test-short       # short tests only
 make lint             # golangci-lint --fix + testify-helper-check
@@ -30,7 +30,7 @@ cmd/
 internal/
 ├── album/                 — albums domain (Plan D; in design)
 ├── broker/                — sharing broker stub (Plan E)
-├── cli/                   — cobra subcommands (server, import, thumbs, …)
+├── cli/                   — cobra subcommands (serve, import, thumbs, …)
 ├── config/                — YAML config loader + defaults
 ├── db/                    — sqlx wrapper + migrations
 │   └── migrations/        — golang-migrate SQL files (up/down pairs)

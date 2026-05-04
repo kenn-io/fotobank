@@ -93,9 +93,14 @@ func newServerCmd() *cobra.Command {
 		listen  string
 	)
 	cmd := &cobra.Command{
-		Use:   "server",
-		Short: "Start the fotobank HTTP server",
-		Args:  usageArgs(cobra.NoArgs),
+		Use: "serve",
+		// "server" stays as an alias so existing muscle memory, scripts,
+		// and docs that predate the rename keep working. The canonical
+		// name is `serve` (matching the Hugo/Caddy/Vite convention);
+		// drop this alias once external references catch up.
+		Aliases: []string{"server"},
+		Short:   "Start the fotobank HTTP server",
+		Args:    usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runServer(cmd.Context(), serverOpts{
 				cfgPath: cfgPath,

@@ -4,11 +4,11 @@ tmp_dir = "tmp"
 [build]
 cmd = "./scripts/dev-backend-build.sh"
 # entrypoint accepts ["binary", "arg", ...] so subcommand args go on
-# the same line. Without "server" the cobra root command prints usage
+# the same line. Without "serve" the cobra root command prints usage
 # and exits non-zero, so air rebuilds in a hot-loop instead of running
 # the daemon. Air's help recommends this array form over the legacy
 # `bin` key (which it warns is deprecated).
-entrypoint = ["./tmp/fotobank", "server"]
+entrypoint = ["./tmp/fotobank", "serve"]
 delay = 500
 exclude_dir = ["frontend", "internal/web/dist", "tmp", "vendor", ".git", "docs"]
 include_ext = ["go", "sql", "html"]
