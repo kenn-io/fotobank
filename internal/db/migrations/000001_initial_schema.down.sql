@@ -13,6 +13,8 @@ DROP TRIGGER IF EXISTS album_media_owner_consistency_update;
 DROP TRIGGER IF EXISTS album_media_owner_consistency_insert;
 DROP TABLE IF EXISTS album_media;
 DROP TABLE IF EXISTS albums;
+DROP INDEX IF EXISTS media_owner_lens_visible_idx;
+DROP INDEX IF EXISTS media_owner_camera_visible_idx;
 DROP TABLE IF EXISTS media;
 DROP TABLE IF EXISTS principal_display;
 DROP TABLE IF EXISTS owners;

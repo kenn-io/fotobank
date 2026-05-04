@@ -102,6 +102,17 @@ CREATE INDEX media_visible_idx
 CREATE INDEX media_owner_type_idx
     ON media(owner_hub, owner_user_id, media_type)
     WHERE hidden_at IS NULL;
+-- Sidebar facets: aggregations on (make || ' ' || model) and lens_model.
+-- Owner-scoped, partial-indexed to skip hidden rows and sidecars (which
+-- are already excluded by every user-facing list query).
+CREATE INDEX media_owner_camera_visible_idx
+    ON media(owner_hub, owner_user_id, (make || ' ' || model))
+    WHERE hidden_at IS NULL AND paired_with_id IS NULL
+        AND make IS NOT NULL AND model IS NOT NULL;
+CREATE INDEX media_owner_lens_visible_idx
+    ON media(owner_hub, owner_user_id, lens_model)
+    WHERE hidden_at IS NULL AND paired_with_id IS NULL
+        AND lens_model IS NOT NULL;
 
 -- Owner-consistency triggers on paired_with_id. Mirrors the
 -- album_media_owner_consistency_* pair below; defence in depth even
