@@ -124,6 +124,50 @@ describe("Lightbox reconstruction", () => {
 });
 
 describe("Lightbox (snapshot path)", () => {
+  it("renders the terminal placeholder for thumbStatus=failed (no shimmer)", async () => {
+    // Lightbox previously routed every non-ready thumb status into the
+    // shimmer branch, which left rows with terminal failed/no_preview
+    // status spinning forever. The fix splits the branches: failed and
+    // no_preview render a static "Preview unavailable" panel; pending
+    // and working keep the shimmer.
+    lightboxSession.close();
+    const failedMedia = {
+      ...fakeMedia,
+      id: "m-failed",
+      thumbStatus: "failed" as const,
+    };
+    const failedStore = {
+      months: [{ key: "2026-04", items: [failedMedia] }],
+      get: (id: string) => (id === "m-failed" ? failedMedia : undefined),
+      mergeRaw: vi.fn(),
+      removeMany: vi.fn(),
+    } as never;
+    lightboxSession.open({
+      source: { kind: "library" },
+      navIds: ["m-failed"],
+      selected: false,
+      scrollY: 0,
+      returnFocusMediaId: "m-failed",
+      returnHref: "/library",
+    });
+    const { container } = render(Lightbox, {
+      props: {
+        id: "m-failed",
+        from: "library",
+        mediaStore: failedStore,
+        albumsStore: { markStale: vi.fn() } as never,
+        hiddenStore: { configured: true } as never,
+        toastStore: { push: vi.fn() } as never,
+        appConfig: defaultAppConfig(),
+      } as never,
+    });
+    await waitFor(() => {
+      expect(container.querySelector(".lb-thumb-terminal")).toBeTruthy();
+    });
+    expect(container.querySelector(".lb-thumb-pending")).toBeNull();
+    expect(container.querySelector(".lb-shimmer")).toBeNull();
+  });
+
   it("renders the active image when session matches", () => {
     lightboxSession.open({
       source: { kind: "library" },

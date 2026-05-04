@@ -702,15 +702,25 @@
       {onNext}
     />
     {#if visibleSrc === ""}
-      <!-- Thumbs not ready yet (worker hasn't drained this row, or
-           the preview/large derivatives 404'd). Render a shimmer
-           placeholder rather than letting the browser paint a
-           broken-image icon for src="". The loader will set
-           visibleSrc on the next successful decode and Svelte will
-           swap us into LightboxMedia. -->
-      <div class="lb-thumb-pending" data-thumb-status={media.thumbStatus}>
-        <div class="lb-shimmer" aria-label="Photo still processing"></div>
-      </div>
+      {#if media.thumbStatus === "failed" || media.thumbStatus === "no_preview"}
+        <!-- Terminal thumb states never become ready, so a shimmer
+             would mislead the user into expecting a render. Show a
+             plain placeholder so they understand the preview won't
+             arrive. The original file may still be openable via
+             /original — but that's outside the lightbox's contract. -->
+        <div class="lb-thumb-terminal" data-thumb-status={media.thumbStatus}>
+          <p>Preview unavailable</p>
+        </div>
+      {:else}
+        <!-- pending / working: thumb is in flight. Render a shimmer
+             placeholder rather than letting the browser paint a
+             broken-image icon for src="". The loader will set
+             visibleSrc on the next successful decode and Svelte will
+             swap us into LightboxMedia. -->
+        <div class="lb-thumb-pending" data-thumb-status={media.thumbStatus}>
+          <div class="lb-shimmer" aria-label="Photo still processing"></div>
+        </div>
+      {/if}
     {:else}
       <LightboxMedia
         kind="image"
@@ -766,13 +776,23 @@
      covers the full lightbox stage. Reads as "in flight" without a
      spinner. Reduced-motion drops the animation but keeps the tone
      so pending vs. ready cells stay visually distinct. */
-  .lb-thumb-pending {
+  .lb-thumb-pending,
+  .lb-thumb-terminal {
     width: 80vw;
     max-width: 1200px;
     aspect-ratio: 3 / 2;
     border-radius: 6px;
     overflow: hidden;
   }
+  .lb-thumb-terminal {
+    background: var(--surface-2);
+    color: var(--ink-3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--text-base);
+  }
+  .lb-thumb-terminal p { margin: 0; }
   .lb-shimmer {
     width: 100%;
     height: 100%;
