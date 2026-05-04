@@ -298,6 +298,36 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Media, error) {
 		conds = append(conds, "timestamp < ?")
 		args = append(args, *f.DateTo)
 	}
+	if len(f.Cameras) > 0 {
+		conds = append(conds,
+			"(make || ' ' || model) IN ("+placeholders(len(f.Cameras))+")")
+		for _, v := range f.Cameras {
+			args = append(args, v)
+		}
+	}
+	if len(f.Lenses) > 0 {
+		conds = append(conds, "lens_model IN ("+placeholders(len(f.Lenses))+")")
+		for _, v := range f.Lenses {
+			args = append(args, v)
+		}
+	}
+	if len(f.AnyTagKeys) > 0 {
+		conds = append(conds,
+			`EXISTS (SELECT 1 FROM media_tags mt
+                      JOIN ai_results r ON mt.result_id = r.id
+                     WHERE r.media_id = media.id AND r.task = 'tag' AND r.status = 'active'
+                       AND mt.tag_key IN (`+placeholders(len(f.AnyTagKeys))+`))`)
+		for _, v := range f.AnyTagKeys {
+			args = append(args, v)
+		}
+	}
+	if f.HasGPS != nil {
+		if *f.HasGPS {
+			conds = append(conds, "latitude IS NOT NULL AND longitude IS NOT NULL")
+		} else {
+			conds = append(conds, "(latitude IS NULL OR longitude IS NULL)")
+		}
+	}
 
 	direction := "ASC"
 	if f.SortDesc {
@@ -932,6 +962,18 @@ func inPlaceholders(n int) string {
 		return ""
 	}
 	return strings.Repeat("?,", n)[:n*2-1]
+}
+
+// placeholders returns "?, ?, ..., ?" with n question marks. Used by
+// the IN-list cond emitters in Repo.List for the SF-2 facet filters
+// (cameras, lenses, any-tag keys); n must be > 0. Mirrors the helper
+// in internal/search/hybrid/filter.go — keep both in sync.
+func placeholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	out := strings.Repeat("?, ", n)
+	return out[:len(out)-2]
 }
 
 // SetHiddenCascade sets hidden_at = at on every owned row whose id IS in

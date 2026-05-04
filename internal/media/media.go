@@ -89,6 +89,19 @@ type ListFilter struct {
 	// internal callers that explicitly need hidden rows (e.g.
 	// the hidden-management service layer).
 	IncludeHidden bool
+	// Cameras, when non-empty, narrows on (make || ' ' || model) matching
+	// any of the values (OR-composed). Each value is the canonical
+	// "<make> <model>" string used as both URL param and chip label.
+	Cameras []string
+	// Lenses, when non-empty, narrows on lens_model matching any of the
+	// values (OR-composed).
+	Lenses []string
+	// AnyTagKeys, when non-empty, narrows to media that carry AT LEAST
+	// ONE of the supplied tag keys (OR-composed via a single EXISTS).
+	AnyTagKeys []string
+	// HasGPS narrows on lat/lng presence. *true → both NOT NULL; *false →
+	// at least one NULL; nil → no predicate.
+	HasGPS *bool
 }
 
 // ListGeoFilter scopes a ListGeo query.
