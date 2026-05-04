@@ -286,10 +286,6 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Media, error) {
 	if !f.IncludeHidden {
 		conds = append(conds, "hidden_at IS NULL")
 	}
-	if f.Type != nil {
-		conds = append(conds, "media_type = ?")
-		args = append(args, string(*f.Type))
-	}
 	if f.DateFrom != nil {
 		conds = append(conds, "timestamp >= ?")
 		args = append(args, *f.DateFrom)
@@ -298,29 +294,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Media, error) {
 		conds = append(conds, "timestamp < ?")
 		args = append(args, *f.DateTo)
 	}
-	if len(f.Cameras) > 0 {
-		conds = append(conds,
-			"(make || ' ' || model) IN ("+placeholders(len(f.Cameras))+")")
-		for _, v := range f.Cameras {
-			args = append(args, v)
-		}
-	}
-	if len(f.Lenses) > 0 {
-		conds = append(conds, "lens_model IN ("+placeholders(len(f.Lenses))+")")
-		for _, v := range f.Lenses {
-			args = append(args, v)
-		}
-	}
-	if len(f.AnyTagKeys) > 0 {
-		conds = append(conds,
-			`EXISTS (SELECT 1 FROM media_tags mt
-                      JOIN ai_results r ON mt.result_id = r.id
-                     WHERE r.media_id = media.id AND r.task = 'tag' AND r.status = 'active'
-                       AND mt.tag_key IN (`+placeholders(len(f.AnyTagKeys))+`))`)
-		for _, v := range f.AnyTagKeys {
-			args = append(args, v)
-		}
-	}
+	appendFacetConds(&conds, &args, f.Type, f.Cameras, f.Lenses, f.AnyTagKeys)
 	if f.HasGPS != nil {
 		if *f.HasGPS {
 			conds = append(conds, "latitude IS NOT NULL AND longitude IS NOT NULL")
@@ -965,15 +939,53 @@ func inPlaceholders(n int) string {
 }
 
 // placeholders returns "?, ?, ..., ?" with n question marks. Used by
-// the IN-list cond emitters in Repo.List for the SF-2 facet filters
-// (cameras, lenses, any-tag keys); n must be > 0. Mirrors the helper
-// in internal/search/hybrid/filter.go — keep both in sync.
+// the repo-level IN-list cond emitters; returns "" when n <= 0.
+// Mirrors the helper in internal/search/hybrid/filter.go — keep both
+// in sync.
 func placeholders(n int) string {
 	if n <= 0 {
 		return ""
 	}
 	out := strings.Repeat("?, ", n)
 	return out[:len(out)-2]
+}
+
+// appendFacetConds emits the Type/Cameras/Lenses/AnyTagKeys conds shared
+// by Repo.List, Repo.ListGeo, and the FacetService aggregator. The
+// hidden, sidecar, GPS, and date-range conds stay caller-specific
+// because not every consumer wants them. Accumulators are mutated in
+// place to match the surrounding append-style call sites.
+func appendFacetConds(
+	conds *[]string, args *[]any,
+	mediaType *Type, cameras, lenses, anyTagKeys []string,
+) {
+	if mediaType != nil {
+		*conds = append(*conds, "media_type = ?")
+		*args = append(*args, string(*mediaType))
+	}
+	if len(cameras) > 0 {
+		*conds = append(*conds,
+			"(make || ' ' || model) IN ("+placeholders(len(cameras))+")")
+		for _, v := range cameras {
+			*args = append(*args, v)
+		}
+	}
+	if len(lenses) > 0 {
+		*conds = append(*conds, "lens_model IN ("+placeholders(len(lenses))+")")
+		for _, v := range lenses {
+			*args = append(*args, v)
+		}
+	}
+	if len(anyTagKeys) > 0 {
+		*conds = append(*conds,
+			`EXISTS (SELECT 1 FROM media_tags mt
+                      JOIN ai_results r ON mt.result_id = r.id
+                     WHERE r.media_id = media.id AND r.task = 'tag' AND r.status = 'active'
+                       AND mt.tag_key IN (`+placeholders(len(anyTagKeys))+`))`)
+		for _, v := range anyTagKeys {
+			*args = append(*args, v)
+		}
+	}
 }
 
 // SetHiddenCascade sets hidden_at = at on every owned row whose id IS in
@@ -1143,33 +1155,7 @@ func (r *Repo) ListGeo(ctx context.Context, f ListGeoFilter) ([]Media, error) {
 	if !f.IncludeHidden {
 		conds = append(conds, "hidden_at IS NULL")
 	}
-	if f.Type != nil {
-		conds = append(conds, "media_type = ?")
-		args = append(args, string(*f.Type))
-	}
-	if len(f.Cameras) > 0 {
-		conds = append(conds,
-			"(make || ' ' || model) IN ("+placeholders(len(f.Cameras))+")")
-		for _, v := range f.Cameras {
-			args = append(args, v)
-		}
-	}
-	if len(f.Lenses) > 0 {
-		conds = append(conds, "lens_model IN ("+placeholders(len(f.Lenses))+")")
-		for _, v := range f.Lenses {
-			args = append(args, v)
-		}
-	}
-	if len(f.AnyTagKeys) > 0 {
-		conds = append(conds,
-			`EXISTS (SELECT 1 FROM media_tags mt
-                      JOIN ai_results r ON mt.result_id = r.id
-                     WHERE r.media_id = media.id AND r.task = 'tag' AND r.status = 'active'
-                       AND mt.tag_key IN (`+placeholders(len(f.AnyTagKeys))+`))`)
-		for _, v := range f.AnyTagKeys {
-			args = append(args, v)
-		}
-	}
+	appendFacetConds(&conds, &args, f.Type, f.Cameras, f.Lenses, f.AnyTagKeys)
 
 	q := mediaSelect + " WHERE " + strings.Join(conds, " AND ") +
 		" ORDER BY timestamp IS NULL ASC, timestamp DESC, imported_at DESC, id DESC"
