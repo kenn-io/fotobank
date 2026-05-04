@@ -571,6 +571,126 @@ func seedAutocompleteTag(t *testing.T, rw *sql.DB, mediaID, tagKey, tagLabel str
 	require.NoError(t, err)
 }
 
+// searchCapturingFakeBackend records the index.SearchInput passed to
+// each engine method so the route test can assert that the sidebar
+// facet wire params reach the engine's filter args. Mirrors
+// searchFakeBackend's call counters; the additional capture lets the
+// SF-18 route test pin the `,explode` query binding.
+type searchCapturingFakeBackend struct {
+	hits        []index.Hit
+	lastFilter  string
+	lastArgs    []any
+	fusedCalls  atomic.Int32
+	bm25Calls   atomic.Int32
+	filterCalls atomic.Int32
+}
+
+func (f *searchCapturingFakeBackend) capture(in index.SearchInput) {
+	f.lastFilter = in.Filter.SQL
+	f.lastArgs = append([]any(nil), in.Filter.Args...)
+}
+
+func (f *searchCapturingFakeBackend) FusedSearch(_ context.Context, in index.SearchInput) ([]index.Hit, error) {
+	f.fusedCalls.Add(1)
+	f.capture(in)
+	return f.hits, nil
+}
+
+func (f *searchCapturingFakeBackend) BM25Only(_ context.Context, in index.SearchInput) ([]index.Hit, error) {
+	f.bm25Calls.Add(1)
+	f.capture(in)
+	return f.hits, nil
+}
+
+func (f *searchCapturingFakeBackend) FilterOnly(_ context.Context, in index.SearchInput) ([]index.Hit, error) {
+	f.filterCalls.Add(1)
+	f.capture(in)
+	return f.hits, nil
+}
+
+// TestRoute_Search_BindsSidebarFacetExplodeParams pins the SF-18 wire
+// contract: ?camera=A&camera=B must bind to a 2-element slice (the
+// `,explode` modifier on the searchInput field is load-bearing —
+// without it huma comma-splits a single value and the second
+// `?camera=B` is silently dropped). lens, facet_tag mirror the same
+// rule. has_gps is a literal "true"/"false". The test inspects the
+// engine's FilterArgs directly so a regression where the wire param
+// reaches the route but never makes it to hybrid.Input lights up here.
+func TestRoute_Search_BindsSidebarFacetExplodeParams(t *testing.T) {
+	r := require.New(t)
+	t.Helper()
+
+	// Build a fixture identical to newSearchAPIFixture but with the
+	// capturing backend so we can read FilterArgs after the call.
+	d := testutil.OpenTestDB(t)
+	rw, ro := d.WriteDB(), d.ReadDB()
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+
+	gens := embedding.NewGenerations(rw, ro)
+	row, err := gens.FindOrCreateBuilding(context.Background(),
+		ai.Fingerprint{ModelID: "fake-model", InputProfile: "fake-profile"}, 64)
+	r.NoError(err)
+	r.NoError(gens.Promote(context.Background(), row.ID))
+
+	be := &searchCapturingFakeBackend{}
+	tc := &searchFakeText{vec: make([]float32, 64)}
+	cfg := search.Config{}
+	cfg.ApplyDefaults()
+	eng := hybrid.NewEngine(be, tc, gens, cfg)
+	checker := &searchFakeChecker{valid: false}
+	svc := searchsvc.New(eng, searchFakeSettings{}, searchFakeTags{}, checker, gens, ro)
+
+	idp := identity.NewStub(owner, "Alice")
+	h, err := httpapi.New(httpapi.Deps{
+		IdentityProvider: idp,
+		Search:           svc,
+	})
+	r.NoError(err)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	q := url.Values{}
+	q.Add("camera", "Sony A7R IV")
+	q.Add("camera", "Canon EOS R5")
+	q.Add("lens", "FE 24-70mm F2.8 GM")
+	q.Add("facet_tag", "dog")
+	q.Add("facet_tag", "beach")
+	q.Set("has_gps", "true")
+	// q is empty so the engine takes the FilterOnly path — that's
+	// what the assertions below read from.
+
+	resp, err := srv.Client().Get(srv.URL + "/api/v1/search?" + q.Encode())
+	r.NoError(err)
+	r.Equal(http.StatusOK, resp.StatusCode)
+	defer func() { _ = resp.Body.Close() }()
+
+	// FilterArgs ordering is documented at hybrid.Resolve: hub, userID,
+	// then optional date_after / date_before / TagKeys / location /
+	// media_type / Cameras / Lenses / AnyTagKeys. With only the
+	// sidebar facets supplied (no date / typed-tag / location /
+	// media_type), the slice tail is exactly the two cameras, then the
+	// lens, then the two facet tags. has_gps contributes no arg.
+	r.Equal(int32(1), be.filterCalls.Load(), "empty Q should route to FilterOnly")
+	args := be.lastArgs
+	r.GreaterOrEqual(len(args), 7, "expected at least owner.Hub + UserID + 2 cameras + 1 lens + 2 facet tags")
+	// The owner pair is first (Hub, UserID); then the sidebar facets in
+	// declaration order. We assert by membership rather than positional
+	// equality to stay loose against future arg-order tweaks while still
+	// pinning that every value reached the engine.
+	flat := make(map[string]bool)
+	for _, v := range args {
+		if s, ok := v.(string); ok {
+			flat[s] = true
+		}
+	}
+	r.True(flat["Sony A7R IV"], "camera=A must reach engine FilterArgs")
+	r.True(flat["Canon EOS R5"], "camera=B must reach engine FilterArgs (regression for ,explode binding)")
+	r.True(flat["FE 24-70mm F2.8 GM"], "lens must reach engine FilterArgs")
+	r.True(flat["dog"], "facet_tag=dog must reach engine FilterArgs")
+	r.True(flat["beach"], "facet_tag=beach must reach engine FilterArgs")
+	r.Contains(be.lastFilter, "latitude IS NOT NULL", "has_gps=true must add the GPS-presence predicate")
+}
+
 // TestRoute_SearchAutocomplete is the HTTP-level smoke test pinning
 // the contract for both autocomplete endpoints in one go: tags
 // surface on the /tags route and locations surface on the /locations

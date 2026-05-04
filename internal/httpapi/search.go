@@ -201,6 +201,9 @@ func handleSearch(ctx context.Context, svc *searchsvc.Service, m *obs.Metrics, i
 		Limit:         in.Limit,
 		Cursor:        in.Cursor,
 		Explain:       in.Explain,
+		Cameras:       in.Camera,
+		Lenses:        in.Lens,
+		FacetTagKeys:  in.FacetTag,
 	}
 	// Optional time filters are only forwarded when the bound query
 	// parameter parsed to a non-zero time. Huma stores zero-values for
@@ -222,6 +225,18 @@ func handleSearch(ctx context.Context, svc *searchsvc.Service, m *obs.Metrics, i
 	if in.MediaType != "" {
 		s := in.MediaType
 		req.MediaType = &s
+	}
+	// HasGPS uses the same "string with enum" workaround as
+	// /api/v1/facets and /api/v1/media: huma v2 panics on *bool query
+	// params, so the wire surface uses literal "true"/"false" and the
+	// handler converts to the pointer-shaped service field.
+	switch in.HasGPS {
+	case "true":
+		t := true
+		req.HasGPS = &t
+	case "false":
+		f := false
+		req.HasGPS = &f
 	}
 	if in.Limit <= 0 {
 		req.Limit = searchDefaultLimit
@@ -304,6 +319,12 @@ func handleSearch(ctx context.Context, svc *searchsvc.Service, m *obs.Metrics, i
 // a slice; the default huma behaviour for a `[]string` query field
 // would otherwise comma-split a single value, which doesn't compose
 // with chip-based UIs that want each chip independently encoded.
+//
+// Camera, Lens, FacetTag, HasGPS are the sidebar-facet narrowers shared
+// with /api/v1/facets and /api/v1/media (SF-17). HasGPS is `string`
+// rather than `*bool` because huma v2 panics on pointer-typed query
+// params; the handler converts the literal to *bool before populating
+// the service request.
 type searchInput struct {
 	Q             string    `query:"q" doc:"free-text query (filter-only browse when empty)"`
 	Sort          string    `query:"sort" enum:"relevance,newest,oldest" doc:"raw sort; engine may coerce (e.g. relevance + empty q → newest)"`
@@ -316,6 +337,10 @@ type searchInput struct {
 	Cursor        string    `query:"cursor" doc:"opaque next-page token from a previous response"`
 	IncludeHidden bool      `query:"include_hidden" doc:"include hidden media; requires a hidden-unlock cookie"`
 	Explain       bool      `query:"explain" doc:"return per-signal score components; gated on the AI Inspection setting"`
+	Camera        []string  `query:"camera,explode" doc:"narrow to rows whose '<make> <model>' matches any value (OR-composed sidebar facet)"`
+	Lens          []string  `query:"lens,explode" doc:"narrow to rows whose lens_model matches any value (OR-composed sidebar facet)"`
+	FacetTag      []string  `query:"facet_tag,explode" doc:"narrow to rows that carry at least one tag matching any key (OR-composed sidebar facet, distinct from typed-chip 'tag')"`
+	HasGPS        string    `query:"has_gps" enum:"true,false" doc:"true: only geotagged rows; false: only non-geotagged"`
 }
 
 // searchOutput wraps the response body so huma can document it. The

@@ -214,6 +214,57 @@ func TestService_ResolvesTagChipsToTagKey(t *testing.T) {
 	r.Equal([]string{"dog", "beach"}, fx.engine.lastReq.Filter.TagKeys, "engine sees canonical keys")
 }
 
+// TestService_ForwardsSidebarFacetsToHybridInput — Cameras / Lenses /
+// FacetTagKeys / HasGPS on the service Request must reach the engine
+// as the corresponding hybrid.Input fields, untransformed (no label
+// resolution: the sidebar publishes raw tag_keys, not labels). The
+// AND-composed TagKeys (typed-chip strip) and the OR-composed
+// AnyTagKeys (sidebar facet) are deliberately distinct binds — pin
+// here so a future refactor can't quietly collapse them.
+func TestService_ForwardsSidebarFacetsToHybridInput(t *testing.T) {
+	r := require.New(t)
+	fx := newFixture()
+	tru := true
+
+	_, err := fx.svc.Search(context.Background(), testCaller, searchsvc.Request{
+		Cameras:      []string{"Sony A7R IV", "Canon EOS R5"},
+		Lenses:       []string{"FE 24-70mm F2.8 GM"},
+		FacetTagKeys: []string{"dog", "beach"},
+		HasGPS:       &tru,
+	})
+
+	r.NoError(err)
+	r.Equal([]string{"Sony A7R IV", "Canon EOS R5"}, fx.engine.lastReq.Filter.Cameras)
+	r.Equal([]string{"FE 24-70mm F2.8 GM"}, fx.engine.lastReq.Filter.Lenses)
+	r.Equal([]string{"dog", "beach"}, fx.engine.lastReq.Filter.AnyTagKeys,
+		"FacetTagKeys must populate AnyTagKeys (OR-composed) on hybrid.Input")
+	r.NotNil(fx.engine.lastReq.Filter.HasGPS)
+	r.True(*fx.engine.lastReq.Filter.HasGPS)
+}
+
+// TestService_TypedTagsAndSidebarFacetTagsAreDistinct pins the
+// AND/OR distinction: TagLabels (typed-chip strip) goes through label
+// resolution and lands as AND-composed TagKeys; FacetTagKeys (sidebar)
+// bypasses resolution and lands as OR-composed AnyTagKeys. A request
+// that supplies both must produce two non-empty engine fields, not a
+// merged list.
+func TestService_TypedTagsAndSidebarFacetTagsAreDistinct(t *testing.T) {
+	r := require.New(t)
+	fx := newFixture()
+	fx.tags.mapping = map[string]string{"Cat": "cat"}
+
+	_, err := fx.svc.Search(context.Background(), testCaller, searchsvc.Request{
+		TagLabels:    []string{"Cat"},
+		FacetTagKeys: []string{"dog"},
+	})
+
+	r.NoError(err)
+	r.Equal([]string{"cat"}, fx.engine.lastReq.Filter.TagKeys,
+		"TagLabels must canonicalise to TagKeys (AND-composed)")
+	r.Equal([]string{"dog"}, fx.engine.lastReq.Filter.AnyTagKeys,
+		"FacetTagKeys must land in AnyTagKeys (OR-composed) untouched")
+}
+
 // TestService_PassesThroughExplainOnlyWhenSettingsAllow — Explain=true
 // in the request is suppressed when AI Inspection is off; preserved
 // when it is on. A settings lookup error must propagate, never silently

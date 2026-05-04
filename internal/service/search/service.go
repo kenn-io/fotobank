@@ -121,6 +121,13 @@ func New(
 // confused caller cannot widen the scope by stuffing a principal into
 // the request body. TagLabels are user-typed chip labels; the service
 // resolves them to canonical tag_keys before invoking the engine.
+//
+// Cameras / Lenses / FacetTagKeys / HasGPS are the sidebar-facet
+// narrowers (SF-18). They flow straight through to hybrid.Input
+// without canonicalisation: the sidebar publishes raw tag_keys (not
+// labels) and exact "make model" / lens_model values that the engine's
+// CTE matches with =. FacetTagKeys is OR-composed (any-of); TagLabels
+// is AND-composed (all-of) and goes through label→key resolution.
 type Request struct {
 	Query         string
 	Sort          string
@@ -134,6 +141,10 @@ type Request struct {
 	Cursor        string
 	Explain       bool
 	UnlockClaim   *hidden.UnlockClaim
+	Cameras       []string
+	Lenses        []string
+	FacetTagKeys  []string
+	HasGPS        *bool
 }
 
 // Search runs the full caller-scoped pipeline:
@@ -179,9 +190,13 @@ func (s *Service) Search(ctx context.Context, caller owners.Principal, req Reque
 		Filter: hybrid.Input{
 			DateAfter:     req.DateAfter,
 			DateBefore:    req.DateBefore,
-			TagKeys:       tagKeys,
+			TagKeys:       tagKeys, // typed-chip strip — AND-composed
 			LocationLabel: req.LocationLabel,
 			MediaType:     req.MediaType,
+			Cameras:       req.Cameras,
+			Lenses:        req.Lenses,
+			AnyTagKeys:    req.FacetTagKeys, // sidebar facet — OR-composed
+			HasGPS:        req.HasGPS,
 		},
 		IncludeHidden: req.IncludeHidden,
 		Limit:         req.Limit,
