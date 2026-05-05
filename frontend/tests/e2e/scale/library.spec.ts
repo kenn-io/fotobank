@@ -7,24 +7,34 @@ import { test, expect, type Page, type Request } from "@playwright/test";
 // SPA renders the broken-image placeholder, and the request count this
 // spec measures includes those 404s, which is what we want to track.
 //
-// The spec is currently SOFT — it logs DOM/heap/request numbers and
-// fails only on egregious regressions (DOM > 50k, /api/v1/media >
-// 200). PS-6 promotes the stable metrics to hard floors once we have
-// spread data across multiple runs.
+// The spec is currently SOFT — it logs DOM/counter/request numbers and
+// fails only on egregious regressions (DOM > 50k, /api/v1/media > 50,
+// /thumb > 5000). PS-6 promotes the stable metrics to hard floors once
+// we have spread data across multiple runs.
 //
 // Output: each capture also gets written to a JSON file under
-// frontend/tests/e2e/scale/.snapshots/ so benchstat-style comparisons
-// across commits are possible without re-parsing log output.
+// frontend/.snapshots/ so benchstat-style comparisons across commits
+// are possible without re-parsing log output.
 
-interface CaptureBefore {
+// CDP Memory.getDOMCounters returns three counts. We don't care about
+// the field shape Playwright generates from the CDP type; this manual
+// shape covers what we read.
+interface DOMCounters {
+  documents: number;
+  nodes: number;
+  jsEventListeners: number;
+}
+
+interface Capture {
   domNodeCount: number;
-  jsHeapUsedSize: number | null;
+  cdpDocuments: number;
+  cdpNodes: number;
+  cdpJSEventListeners: number;
   apiMediaRequests: number;
   thumbRequests: number;
 }
 
-interface CaptureAfterScroll extends CaptureBefore {
-  // Same shape; named separately so the diff fields below are obvious.
+interface CaptureAfterScroll extends Capture {
   pagesScrolled: number;
 }
 
@@ -32,27 +42,14 @@ async function captureDomNodeCount(page: Page): Promise<number> {
   return page.evaluate(() => document.querySelectorAll("*").length);
 }
 
-// jsHeapUsedSize comes from the V8-only performance.memory API; on
-// Chromium it's available unconditionally, but on other browsers the
-// property is undefined. The harness runs Chromium-only (per the
-// projects[] config) so this should always succeed; we still null-
-// guard so a future webkit add-on doesn't crash the spec.
-async function captureHeap(page: Page): Promise<number | null> {
-  return page.evaluate(() => {
-    const m = (performance as unknown as { memory?: { usedJSHeapSize?: number } })
-      .memory;
-    return m?.usedJSHeapSize ?? null;
-  });
-}
-
 test.describe("/library scale (100k rows, no thumb files)", () => {
-  test("DOM, heap, request counts before + after 10-page scroll", async ({
+  test("DOM, CDP counters, request counts before + after 10-page scroll", async ({
     page,
   }) => {
     // Tally requests by URL pattern for the whole test so we can
     // diff before/after counts. Two predicates:
-    //   - /api/v1/media?...  — paged list calls fired by mediaStore
-    //   - /thumb/...         — broken-thumb fetches (every cell 404s)
+    //   - /api/v1/media   — paged list calls fired by mediaStore
+    //   - /thumb suffix   — broken-thumb fetches (every cell 404s)
     let apiMediaCount = 0;
     let thumbCount = 0;
     page.on("request", (req: Request) => {
@@ -66,6 +63,21 @@ test.describe("/library scale (100k rows, no thumb files)", () => {
         thumbCount += 1;
       }
     });
+
+    // CDP session for Memory.getDOMCounters. performance.memory is
+    // quantized to 10MB exactly in this Chromium build (the precision
+    // is reduced when isolated cross-origin context guarantees aren't
+    // proven), so it's not a useful signal. CDP getDOMCounters returns
+    // documents/nodes/jsEventListeners directly from Chrome's internal
+    // accounting and is unaffected by the quantization.
+    const cdp = await page.context().newCDPSession(page);
+
+    async function captureCDPCounters(): Promise<DOMCounters> {
+      // CDP types via @playwright/test only declare the method as
+      // returning unknown; cast to the shape we actually need.
+      const raw = (await cdp.send("Memory.getDOMCounters")) as DOMCounters;
+      return raw;
+    }
 
     // Initial paint. waitForResponse on the first /api/v1/media call so
     // the captures below run against a steady-state grid, not a
@@ -83,9 +95,12 @@ test.describe("/library scale (100k rows, no thumb files)", () => {
       page.locator("[data-media-id]").first(),
     ).toBeVisible({ timeout: 10_000 });
 
-    const before: CaptureBefore = {
+    const cdpBefore = await captureCDPCounters();
+    const before: Capture = {
       domNodeCount: await captureDomNodeCount(page),
-      jsHeapUsedSize: await captureHeap(page),
+      cdpDocuments: cdpBefore.documents,
+      cdpNodes: cdpBefore.nodes,
+      cdpJSEventListeners: cdpBefore.jsEventListeners,
       apiMediaRequests: apiMediaCount,
       thumbRequests: thumbCount,
     };
@@ -120,9 +135,12 @@ test.describe("/library scale (100k rows, no thumb files)", () => {
       ]);
     }
 
+    const cdpAfter = await captureCDPCounters();
     const after: CaptureAfterScroll = {
       domNodeCount: await captureDomNodeCount(page),
-      jsHeapUsedSize: await captureHeap(page),
+      cdpDocuments: cdpAfter.documents,
+      cdpNodes: cdpAfter.nodes,
+      cdpJSEventListeners: cdpAfter.jsEventListeners,
       apiMediaRequests: apiMediaCount,
       thumbRequests: thumbCount,
       pagesScrolled: PAGES,
@@ -152,6 +170,8 @@ test.describe("/library scale (100k rows, no thumb files)", () => {
     //   A regression that re-fetches on every scroll step would
     //   exceed this.
     expect(after.thumbRequests).toBeLessThan(5_000);
+
+    await cdp.detach();
 
     // Capture file written to disk so future runs can diff. The path
     // is intentionally outside test fixtures (a runtime artifact, not
