@@ -101,5 +101,14 @@ SELECT COUNT(*) FROM media_embedding_ids x
 	).Scan(&embedded); err != nil {
 		return 0, fmt.Errorf("embedded count: %w", err)
 	}
-	return float64(embedded) / float64(eligible), nil
+	// Clamp embedded ≤ eligible. The two QueryRowContext calls each
+	// take their own SQLite snapshot, so a concurrent import burst
+	// that adds new visible rows AND maps them between the eligible
+	// read and the embedded read can leave embedded > eligible
+	// transiently (eligible's snapshot froze before the new rows
+	// existed; embedded's snapshot sees the new mappings). Without
+	// the clamp the returned ratio could exceed 1, breaking the
+	// IndexingStatusPill component's "completeness < 1" visibility
+	// gate. The drift converges on the next render.
+	return float64(min(embedded, eligible)) / float64(eligible), nil
 }
