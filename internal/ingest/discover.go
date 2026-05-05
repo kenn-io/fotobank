@@ -25,6 +25,15 @@ type Candidate struct {
 // Candidate.Path is always absolute even when callers pass a relative
 // root. An empty root is rejected so a caller that forgot to pass one
 // does not accidentally scan the process's current working directory.
+//
+// Filesystem-junk filter: Discover skips macOS AppleDouble files
+// (basename "._*"), .DS_Store, Thumbs.db, and desktop.ini regardless
+// of extension; AppleDouble resource forks shadow real files with the
+// same extension (e.g. "._IMG.JPG" for "IMG.JPG") and would otherwise
+// import as 4096-byte non-decodable photos. Walks also skip the
+// well-known macOS/Windows system directories (.Trashes, .fseventsd,
+// .Spotlight-V100, .DocumentRevisions-V100, .TemporaryItems,
+// $RECYCLE.BIN) so an SD-card import doesn't recurse into them.
 func Discover(root string, visit func(Candidate) error) error {
 	if root == "" {
 		return fmt.Errorf("discover: root is empty")
@@ -37,7 +46,16 @@ func Discover(root string, visit func(Candidate) error) error {
 		if err != nil {
 			return err
 		}
+		name := d.Name()
 		if d.IsDir() {
+			// Don't filter the root itself even if its basename happens
+			// to match (the user explicitly asked to scan it).
+			if p != absRoot && skipDir(name) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if skipFile(name) {
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(p))
@@ -47,6 +65,34 @@ func Discover(root string, visit func(Candidate) error) error {
 		}
 		return visit(Candidate{Path: p, Type: t, MimeType: mime})
 	})
+}
+
+// skipFile reports whether a regular file's basename identifies it as
+// filesystem metadata that should never be ingested as media.
+// AppleDouble files (basename "._*") are macOS resource forks that
+// Finder writes as siblings when copying to non-HFS+ filesystems; they
+// share the original's extension but contain only Mach metadata.
+func skipFile(name string) bool {
+	if strings.HasPrefix(name, "._") {
+		return true
+	}
+	switch name {
+	case ".DS_Store", "Thumbs.db", "desktop.ini":
+		return true
+	}
+	return false
+}
+
+// skipDir reports whether a directory basename identifies it as a
+// macOS or Windows system directory that should not be recursed into.
+func skipDir(name string) bool {
+	switch name {
+	case ".Trashes", ".Spotlight-V100", ".fseventsd",
+		".DocumentRevisions-V100", ".TemporaryItems",
+		"$RECYCLE.BIN", "System Volume Information":
+		return true
+	}
+	return false
 }
 
 func classify(ext string) (media.Type, string, bool) {

@@ -45,6 +45,67 @@ func TestDiscoverRejectsEmptyRoot(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestDiscoverSkipsAppleDoubleAndSystemFiles(t *testing.T) {
+	// Pins the macOS/Windows filesystem-junk filter. AppleDouble files
+	// ("._*") are Finder-emitted resource forks that share the
+	// original's extension but contain only metadata; without this
+	// filter they get ingested as 4096-byte non-decodable photos
+	// (observed in production: three "._L1000xxx.JPG" rows from a
+	// Leica SD-card import). .DS_Store / Thumbs.db / desktop.ini are
+	// the equivalent metadata droppings on the file side.
+	r := require.New(t)
+	root := t.TempDir()
+	for _, name := range []string{
+		"real.jpg", "._real.jpg", // AppleDouble shadows the real file
+		"sub/photo.jpg", "sub/._photo.jpg",
+		".DS_Store", "Thumbs.db", "desktop.ini",
+		"._L1000817.JPG", // exact pattern from the live regression
+	} {
+		full := filepath.Join(root, name)
+		r.NoError(os.MkdirAll(filepath.Dir(full), 0o700))
+		r.NoError(os.WriteFile(full, []byte("x"), 0o600))
+	}
+
+	var got []string
+	r.NoError(ingest.Discover(root, func(c ingest.Candidate) error {
+		rel, err := filepath.Rel(root, c.Path)
+		require.NoError(t, err)
+		got = append(got, rel)
+		return nil
+	}))
+	r.ElementsMatch([]string{"real.jpg", filepath.Join("sub", "photo.jpg")}, got)
+}
+
+func TestDiscoverSkipsSystemDirectories(t *testing.T) {
+	// Pins the directory-skip path. macOS write .Trashes, .fseventsd,
+	// .Spotlight-V100 etc. on removable drives; without SkipDir,
+	// Discover would descend into them. The filter is name-only so the
+	// root is exempt — a user explicitly pointing the importer at
+	// .Trashes/ still scans it.
+	r := require.New(t)
+	root := t.TempDir()
+	for _, p := range []string{
+		"top.jpg",
+		".Trashes/junk.jpg",
+		".Spotlight-V100/index.jpg",
+		".fseventsd/log.jpg",
+		"$RECYCLE.BIN/win.jpg",
+	} {
+		full := filepath.Join(root, p)
+		r.NoError(os.MkdirAll(filepath.Dir(full), 0o700))
+		r.NoError(os.WriteFile(full, []byte("x"), 0o600))
+	}
+
+	var got []string
+	r.NoError(ingest.Discover(root, func(c ingest.Candidate) error {
+		rel, err := filepath.Rel(root, c.Path)
+		require.NoError(t, err)
+		got = append(got, rel)
+		return nil
+	}))
+	r.Equal([]string{"top.jpg"}, got)
+}
+
 func TestDiscoverReturnsAbsoluteCandidatePaths(t *testing.T) {
 	// Candidate.Path is documented as absolute. Pin that contract by
 	// passing a relative root and asserting the callback sees absolute
