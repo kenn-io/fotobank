@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import MonthChunk from "./MonthChunk.svelte";
   import type { MediaLite } from "./monthChunkLayout";
   import StickyMonthBar from "../components/StickyMonthBar.svelte";
@@ -36,6 +37,16 @@
   let containerWidth = $state(800);
   let sentinel: HTMLDivElement | null = $state(null);
   let activeMonth = $state<string>("");
+  // outOfWindowKeys holds month keys whose chunks are confirmed to
+  // be outside the windowing IO's rootMargin. Default is empty so
+  // every chunk renders during initial paint; the IO callback below
+  // adds keys as chunks scroll out of the buffer and removes them as
+  // they scroll back in. MonthChunk reads `!outOfWindowKeys.has(key)`
+  // via the inWindow prop. SvelteSet from svelte/reactivity (NOT a
+  // bare Set wrapped in $state) — Svelte 5's runes proxy doesn't
+  // intercept Set/Map mutations, so .add/.delete on a plain Set won't
+  // trigger re-renders.
+  const outOfWindowKeys = new SvelteSet<string>();
 
   $effect(() => {
     if (!containerEl) return;
@@ -95,6 +106,38 @@
         }
       }
     }, { root, rootMargin: "-1px 0px -100% 0px" });
+    containerEl.querySelectorAll<HTMLElement>("[data-month]").forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  });
+
+  // Windowed-mounting IO: observe each [data-month] wrapper against
+  // the scroll container with a generous rootMargin (±2 viewports).
+  // Chunks far outside this buffer get added to outOfWindowKeys so
+  // MonthChunk.inWindow flips false and the cells unmount. The
+  // chunk's wrapper section keeps its min-height so scroll math is
+  // preserved. Re-runs on months.length change so newly added chunks
+  // are observed and removed ones are unobserved.
+  //
+  // Why a Set instead of a Map<key, isInWindow>: the default for an
+  // unobserved chunk should be "render" so initial paint and tests
+  // that mount the component without a real scroll container work
+  // the way the previous code did. Out-of-window is the explicit,
+  // observed state; everything else is in-window by absence.
+  $effect(() => {
+    if (!containerEl) return;
+    months.length;
+    const root = findScrollParent(containerEl);
+    const io = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const key = entry.target.getAttribute("data-month");
+        if (!key) continue;
+        if (entry.isIntersecting) {
+          outOfWindowKeys.delete(key);
+        } else {
+          outOfWindowKeys.add(key);
+        }
+      }
+    }, { root, rootMargin: "200% 0px" });
     containerEl.querySelectorAll<HTMLElement>("[data-month]").forEach((el) => io.observe(el));
     return () => io.disconnect();
   });
@@ -166,6 +209,7 @@
     <YearScrubber {months} onJump={jumpTo} />
   {/if}
   {#each months as month (month.key)}
+    {@const inWindow = !outOfWindowKeys.has(month.key)}
     <div data-month={month.key}>
       {#if timelineChrome}
         {#if headerAction}
@@ -178,6 +222,7 @@
             items={toLite(items)}
             label={month.key}
             options={{ containerWidth, targetRowHeight, gap: 4 }}
+            {inWindow}
           >
             {#snippet headerAction()}
               {@render action(month)}
@@ -201,6 +246,7 @@
             items={toLite(items)}
             label={month.key}
             options={{ containerWidth, targetRowHeight, gap: 4 }}
+            {inWindow}
           >
             {#snippet renderCell(m)}
               <div class="cell-host">
@@ -225,6 +271,7 @@
         <MonthChunk
           items={toLite(items)}
           options={{ containerWidth, targetRowHeight, gap: 4 }}
+          {inWindow}
         >
           {#snippet renderCell(m)}
             <div class="cell-host">

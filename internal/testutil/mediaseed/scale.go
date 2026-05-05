@@ -22,6 +22,17 @@ import (
 // runs. The chosen instant is arbitrary; only its constancy matters.
 var baseTime = time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 
+// rowStride is the per-row decrement applied to imported_at,
+// hidden_at, and ai_results.generated_at — every seeded row gets a
+// timestamp `rowStride` older than its predecessor. 30 minutes spreads
+// 100k rows over ~5.7 years (~70 months), which (a) is plausible for a
+// long-lived photo library and (b) gives the /library scale spec
+// enough month-chunks to actually exercise VirtualGrid's chunk-level
+// windowing IO. A 1-minute stride packed 100k rows into ~58 days
+// (2-3 calendar months), creating chunks tall enough to never exit
+// the windowing rootMargin buffer.
+const rowStride = 30 * time.Minute
+
 // SeedScaleLibrary inserts opts.Total media rows for owner under the
 // supplied skewed distributions and writes them in a single
 // transaction. Returns the slice of inserted IDs in insertion order
@@ -158,13 +169,13 @@ func SeedScaleLibraryToDB(rw *sql.DB, p owners.Principal, opts ScaleOpts) ([]str
 
 		var hiddenAt any
 		if rng.Float64() < opts.HiddenFraction {
-			hiddenAt = base.Add(-time.Duration(i) * time.Minute)
+			hiddenAt = base.Add(-time.Duration(i) * rowStride)
 		}
 
 		if _, err := mediaStmt.ExecContext(ctx,
 			id, p.Hub, p.UserID, "photo", "image/jpeg",
 			"scale/"+id+".jpg", id+".jpg",
-			base.Add(-time.Duration(i)*time.Minute), nil, // imported_at, timestamp
+			base.Add(-time.Duration(i)*rowStride), nil, // imported_at, timestamp
 			int64(1000), "cs-"+id,
 			c.Make, c.Model, l.Model, nil, nil, nil, nil, nil, nil, // EXIF detail nulled
 			nil,                // duration_ms
@@ -189,7 +200,7 @@ func SeedScaleLibraryToDB(rw *sql.DB, p owners.Principal, opts ScaleOpts) ([]str
 		if _, err := resultsStmt.ExecContext(ctx,
 			resultID, id,
 			"scale-model", "tag-v1", "scale-hash", "scale-profile",
-			base.Add(-time.Duration(i)*time.Minute),
+			base.Add(-time.Duration(i)*rowStride),
 		); err != nil {
 			return nil, fmt.Errorf("seed: insert ai_results row %d: %w", i, err)
 		}
@@ -450,7 +461,7 @@ func SeedFTSCorpus(tb testing.TB, rw *sql.DB, p owners.Principal, opts FTSOpts) 
 		_, err := resultsStmt.ExecContext(ctx,
 			resultID, id,
 			"scale-cap-model", "cap-v1", "scale-cap-hash", "scale-cap-profile",
-			baseTime.Add(-time.Duration(i)*time.Minute),
+			baseTime.Add(-time.Duration(i)*rowStride),
 		)
 		require.NoErrorf(tb, err, "fts seed: insert caption ai_results row %d", i)
 
