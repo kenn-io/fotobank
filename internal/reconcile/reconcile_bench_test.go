@@ -87,6 +87,9 @@ func loadReconcileFixture(b *testing.B) (*db.DB, string) {
 		fixNASRoot = nasRoot
 	})
 	require.NoError(b, fixErr)
+	if fixDB == nil {
+		panic("loadReconcileFixture: fixDB nil after error-free seed — fixture init is broken")
+	}
 	return fixDB, fixNASRoot
 }
 

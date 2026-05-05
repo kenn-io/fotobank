@@ -57,6 +57,9 @@ func loadScaleFixture(b *testing.B) *db.DB {
 		fixDB = d
 	})
 	require.NoError(b, fixErr)
+	if fixDB == nil {
+		panic("loadScaleFixture: fixDB nil after error-free seed — fixture init is broken")
+	}
 	return fixDB
 }
 

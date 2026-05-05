@@ -943,7 +943,7 @@ If the smoke pass produced a regression (e.g. a new `database is locked` from a 
 - [x] `make test` passes with `-shuffle=on`. **Verified:** all packages green.
 - [x] `make build-release` produces a non-empty binary. **Verified:** 33MB binary at `bin/fotobank`.
 - [x] `make lint` passes. **Verified:** `0 issues` from golangci-lint, testify-helper-check clean.
-- [ ] `make nilaway` passes (pre-push tier). **TODO:** run before pushing.
+- [x] `make nilaway` passes (pre-push tier). **Verified:** clean (exit 0). Four bench-fixture nil-flow flags surfaced first run (see commit history) — fixed with explicit nil-panic guards after each fixture's `require.NoError(b, fixErr)`, since nilaway can't see through testify's `require.NoError` as a terminator.
 - [x] `internal/db/sqlitevec_test.go` proves `vec_version()` resolves in tests. **Verified:** `TestRegisterSqliteVec_LoadsExtension` PASS; `TestOpenTestDB_VecRegistered` PASS.
 - [x] `internal/db/db_test.go` covers nullable-time, TZ round-trip (with sub-second + offset assertions), and concurrent writers (probe-based busy_timeout test). The plan's originally-specced `TestOpen_RoundTripCoalescedTime` was deliberately omitted — coverage lives in `internal/share/repo_test.go` because mattn's COALESCE behavior is the share-side helper's contract.
 - [x] `internal/backup/snapshot_test.go` covers the snapshot-side DSN's FK enforcement under mattn (writable mode so the FK assertion isn't shadowed by mode=ro).

@@ -79,6 +79,9 @@ func loadActivatorFixture(b *testing.B) (*db.DB, int64) {
 		fixGenerationID = genID
 	})
 	require.NoError(b, fixErr)
+	if fixDB == nil {
+		panic("loadActivatorFixture: fixDB nil after error-free seed — fixture init is broken")
+	}
 	return fixDB, fixGenerationID
 }
 
