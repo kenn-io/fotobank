@@ -334,6 +334,14 @@ test.describe("/map scale (100k rows, ~12k hot-zone markers)", () => {
       // because at z=10 the viewport may still contain a mix of
       // photos and clusters depending on local density.
       expect(last.totalIconCount).toBeGreaterThan(0);
+      // Cluster-split assertion: at z=4 the hot zone is folded into
+      // cluster icons (initial.markerIconCount=0), at z=10 markercluster
+      // disclusters at least some hot-zone points into individual photo
+      // pins (last.markerIconCount=1 in the baseline run). A regression
+      // where cluster expansion silently breaks — same DOM ceiling, no
+      // markers actually disclosed — would slip past the count floors
+      // above. This catches that.
+      expect(last.markerIconCount).toBeGreaterThan(0);
     }
   });
 });
