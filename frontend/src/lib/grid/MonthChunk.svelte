@@ -14,7 +14,20 @@
   let computed = $derived(computeMonthLayout(items, options, !!label));
 </script>
 
-<section class="month" style="min-height: {computed.intrinsicHeight}px;">
+<!-- content-visibility:auto on the chunk itself: when the chunk is far
+     outside the viewport (per the ::view-transition-bound 50% margin
+     rule), Chrome skips its descendant layout/paint cost entirely.
+     contain-intrinsic-size sources from the precomputed
+     intrinsicHeight so the scroll container can reserve the right
+     amount of space without measuring the children — otherwise the
+     chunk would collapse to 0 height when skipped, which would break
+     scroll restoration and the YearScrubber. -->
+<section
+  class="month"
+  style="min-height: {computed.intrinsicHeight}px;
+         content-visibility: auto;
+         contain-intrinsic-size: auto {computed.intrinsicHeight}px;"
+>
   {#if label}
     <header class="day-header">
       <span class="label">{label}</span>
