@@ -144,17 +144,27 @@ func Restore(key, dbPath, nasRoot string, realThumbs bool) (bool, error) {
 	}
 	if realThumbs {
 		cachedNAS := filepath.Join(entry, nasName)
-		if _, err := os.Stat(cachedNAS); err == nil {
+		switch _, err := os.Stat(cachedNAS); {
+		case err == nil:
 			if err := hardlinkTree(cachedNAS, nasRoot); err != nil {
 				return false, fmt.Errorf("hardlink cached nas tree: %w", err)
 			}
-		} else if !errors.Is(err, os.ErrNotExist) {
+		case errors.Is(err, os.ErrNotExist):
+			// realThumbs=true with no cached nas/ subtree is a
+			// corrupted prior Persist (interrupted between dbName
+			// and nasName, or rolled forward against an old code
+			// path that didn't write nas/). Booting the runtime
+			// against the half-restored cache would silently
+			// 404 every /thumb request — surface a miss instead so
+			// the caller reseeds and overwrites the bad entry.
+			return false, fmt.Errorf(
+				"scalecache: cache entry %s lacks %s subtree but realThumbs=true; "+
+					"treating as miss (delete the cache dir to fully recover)",
+				key, nasName,
+			)
+		default:
 			return false, fmt.Errorf("stat cached nas tree: %w", err)
 		}
-		// A realThumbs=true entry without a nas/ dir would be a
-		// corrupted prior write. Returning a hit anyway leaves the
-		// runtime missing the thumb blobs; better to surface that
-		// here so the operator knows to bust the cache.
 	}
 	return true, nil
 }

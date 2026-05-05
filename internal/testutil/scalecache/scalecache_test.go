@@ -117,6 +117,40 @@ func TestPersist_Then_Restore_RoundTrip(t *testing.T) {
 	r.Equal(thumbPayload, gotThumb)
 }
 
+// TestRestore_RealThumbsWithoutNAS_TreatsAsMiss covers the corrupted-
+// entry path: a cache directory that contains scale.db but no nas/
+// subtree (e.g. an interrupted Persist crashed between the DB copy
+// and the hardlink walk) must NOT come back as a hit when realThumbs
+// is true. Booting against the half-restored cache would silently
+// 404 every /thumb request — surfacing an error here forces the
+// caller to reseed and overwrite the bad entry.
+func TestRestore_RealThumbsWithoutNAS_TreatsAsMiss(t *testing.T) {
+	r := require.New(t)
+	withTempCache(t)
+	cacheDir, err := scalecache.Dir()
+	r.NoError(err)
+
+	opts := mediaseed.DefaultScaleOpts(100)
+	key := scalecache.Key(opts, true)
+
+	// Hand-fabricate a corrupted entry: the directory and scale.db
+	// exist but the nas/ subtree is missing. Persist would never
+	// produce this naturally — it does an atomic rename — but a
+	// crash between the DB write and the hardlink would leave a
+	// tmp dir, and a sufficiently determined operator could mv it
+	// into place.
+	entry := filepath.Join(cacheDir, key)
+	r.NoError(os.MkdirAll(entry, 0o700))
+	r.NoError(os.WriteFile(filepath.Join(entry, "scale.db"), []byte("x"), 0o600))
+
+	dstDir := t.TempDir()
+	dstDB := filepath.Join(dstDir, "scale.db")
+	dstNAS := filepath.Join(dstDir, "nas")
+	hit, err := scalecache.Restore(key, dstDB, dstNAS, true)
+	r.False(hit, "corrupted realThumbs entry must not return as a hit")
+	r.Error(err, "corrupted realThumbs entry must surface an error so the caller reseeds")
+}
+
 // TestPersist_Twice_NoOpsSecond covers the race-resolution case:
 // after a successful Persist, a second call with the same key
 // returns nil without churning the cache. Two concurrent e2e-server

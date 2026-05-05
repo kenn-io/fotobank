@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/owners"
 )
 
@@ -26,17 +27,27 @@ var baseTime = time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 // implementation. Bump when the seed's RNG sequence, distribution
 // shape, or per-row output bytes change in a way that invalidates
 // previously-cached fixtures (testutil/scalecache). Schema-shape
-// changes are picked up automatically via Fingerprint, which also
-// hashes mediaInsertSQL — but a logic-only change (e.g. a new RNG
-// reseed point) needs a manual bump here.
+// changes are picked up automatically via Fingerprint, which hashes
+// both mediaInsertSQL and every embedded migration file — but a
+// logic-only change (e.g. a new RNG reseed point) needs a manual bump
+// here.
 const SeedVersion = "scale-2026-05-05-hotzone"
 
 // Fingerprint is the stable identifier for "what bytes this seed
 // would produce, for any opts". scalecache hashes the result into its
-// cache key so new SeedVersion values OR new columns in the media
-// insert SQL bust prior cache entries automatically.
+// cache key, so a new SeedVersion, a new column in the media insert
+// SQL, OR an in-place edit to a migration file all bust prior cache
+// entries automatically.
+//
+// The migration fingerprint matters because the pre-alpha policy
+// edits 000001_initial_schema.{up,down}.sql in place. Without hashing
+// migrations, a schema change that doesn't touch mediaInsertSQL (e.g.
+// a new index, a CHECK constraint added, a sibling table reshaped)
+// would leave the cache reusing a fixture against the old schema —
+// and golang-migrate would skip-up because schema_migrations already
+// records the version, so the live binary would never notice.
 func Fingerprint() string {
-	return SeedVersion + "|" + mediaInsertSQL
+	return SeedVersion + "|" + mediaInsertSQL + "|" + db.MigrationsFingerprint()
 }
 
 // rowStride is the per-row decrement applied to imported_at,
@@ -85,9 +96,13 @@ const (
 //     NumTags keys. Mirrors a real library where popular
 //     concepts ("portrait") tag many photos and obscure
 //     ones tag few.
-//   - GPS      : GPSFraction of rows have non-null lat/lon (uniform
-//     random globally — not realistic but exercises the
-//     same index paths).
+//   - GPS      : GPSFraction of rows have non-null lat/lon. Of
+//     those, HotZoneFraction (default 0.40) fall inside the
+//     2°×2° SF Bay Area hot zone defined below; the rest
+//     spread uniformly across the globe. The bias creates
+//     a dense cluster region for the /map scale spec to
+//     stress; the uniform tail still exercises the same
+//     index paths a realistic library would.
 //   - hidden   : HiddenFraction of rows have non-null hidden_at.
 //
 // Determinism: opts.Seed seeds the RNG and the entire byte-level

@@ -1,12 +1,15 @@
 package db
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -65,6 +68,34 @@ func runMigrations(rw *sql.DB) error {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	return nil
+}
+
+// MigrationsFingerprint returns a stable hex hash of every embedded
+// migration file (name + content), so consumers can include schema
+// shape in cache keys. Renaming a file or editing one byte of SQL
+// changes the result. Used by testutil/scalecache so an in-place edit
+// to 000001_initial_schema.up.sql busts cached fixtures even when the
+// media-insert SQL is unchanged.
+func MigrationsFingerprint() string {
+	files, err := fs.Glob(migrationFiles, "migrations/*.sql")
+	if err != nil {
+		// embed.FS Glob over a literal pattern doesn't return errors
+		// for missing files; an error here means the embed itself is
+		// broken, in which case the binary is unusable.
+		panic(fmt.Errorf("scan migrations for fingerprint: %w", err))
+	}
+	sort.Strings(files)
+	h := sha256.New()
+	for _, f := range files {
+		h.Write([]byte(f))
+		h.Write([]byte{0})
+		b, err := migrationFiles.ReadFile(f)
+		if err != nil {
+			panic(fmt.Errorf("read embedded migration %q: %w", f, err))
+		}
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // latestMigrationVersion returns the highest migration version found in

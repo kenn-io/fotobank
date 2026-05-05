@@ -32,6 +32,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -872,7 +873,24 @@ func seedScaleFixtures(dbPath, nasRoot string, n int, realThumbs bool) error {
 	if !cacheOff {
 		hit, err := scalecache.Restore(cacheKey, dbPath, nasRoot, realThumbs)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "scale-cache: restore %s failed: %v; reseeding\n", cacheKey, err)
+			// A failed Restore can leave dbPath populated (the DB
+			// copy succeeded but the hardlink walk failed) and/or
+			// nasRoot half-mirrored. The fall-through reseed would
+			// then hit "scale-NNNNNNN" duplicate-PK errors against
+			// the partially-populated DB. Wipe both before falling
+			// through so the seed sees a clean slate. nasRoot is
+			// always under a per-run os.MkdirTemp dir (see e2e
+			// boot path) so removal is safe.
+			fmt.Fprintf(os.Stderr, "scale-cache: restore %s failed: %v; resetting and reseeding\n", cacheKey, err)
+			if rmErr := os.RemoveAll(dbPath); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+				return fmt.Errorf("reset partial restored db: %w", rmErr)
+			}
+			if rmErr := os.RemoveAll(nasRoot); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+				return fmt.Errorf("reset partial restored nas tree: %w", rmErr)
+			}
+			if mkErr := os.MkdirAll(nasRoot, 0o700); mkErr != nil {
+				return fmt.Errorf("recreate nas root after reset: %w", mkErr)
+			}
 		} else if hit {
 			fmt.Fprintf(os.Stderr, "scale-cache: hit %s (n=%d real_thumbs=%t)\n", cacheKey, n, realThumbs)
 			return nil
