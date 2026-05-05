@@ -160,11 +160,12 @@
     background: var(--bg);
   }
   .title-display {
-    font-family: var(--font-display);
-    font-style: italic;
-    font-weight: 400;
-    font-size: var(--text-md);
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: var(--text-xs);
     color: var(--ink);
+    text-transform: uppercase;
+    letter-spacing: var(--label-track);
   }
   .title-a11y {
     position: absolute;

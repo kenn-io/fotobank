@@ -85,8 +85,7 @@
     padding-bottom: calc(var(--space-2) - 1px);
   }
   .facet-search::placeholder {
-    font-family: var(--font-display);
-    font-style: italic;
+    font-family: var(--font-ui);
     font-weight: 400;
     color: var(--ink-4);
   }
@@ -153,8 +152,7 @@
   .empty {
     padding: var(--space-5) 0;
     color: var(--ink-3);
-    font-family: var(--font-display);
-    font-style: italic;
+    font-family: var(--font-ui);
     font-size: var(--text-sm);
     text-align: center;
   }

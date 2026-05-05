@@ -114,10 +114,11 @@
     margin: 0 var(--space-2);
   }
   .tag-prefix {
-    font-family: var(--font-display);
-    font-style: italic;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
     color: var(--ink-3);
     margin-right: var(--space-2);
+    text-transform: lowercase;
   }
   .display {
     font-family: var(--font-ui);

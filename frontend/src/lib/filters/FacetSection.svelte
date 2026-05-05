@@ -104,13 +104,12 @@
     margin-left: var(--space-4);
     padding: 0 var(--space-3);
     background: var(--bg);
-    font-family: var(--font-display);
-    font-style: italic;
-    font-weight: 400;
-    font-size: var(--text-base);
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: var(--text-xs);
     color: var(--ink-2);
-    text-transform: lowercase;
-    letter-spacing: 0;
+    text-transform: uppercase;
+    letter-spacing: var(--label-track);
     transition: color 100ms;
   }
   .header.expanded .label { color: var(--ink); }
