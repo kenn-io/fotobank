@@ -14,20 +14,13 @@
   let computed = $derived(computeMonthLayout(items, options, !!label));
 </script>
 
-<!-- content-visibility:auto on the chunk itself: when the chunk is far
-     outside the viewport (per the ::view-transition-bound 50% margin
-     rule), Chrome skips its descendant layout/paint cost entirely.
-     contain-intrinsic-size sources from the precomputed
-     intrinsicHeight so the scroll container can reserve the right
-     amount of space without measuring the children — otherwise the
-     chunk would collapse to 0 height when skipped, which would break
-     scroll restoration and the YearScrubber. -->
-<section
-  class="month"
-  style="min-height: {computed.intrinsicHeight}px;
-         content-visibility: auto;
-         contain-intrinsic-size: auto {computed.intrinsicHeight}px;"
->
+<!-- Cell-level content-visibility:auto (below) defers layout/paint
+     for offscreen cells; chunk-level c-v was tried and reverted —
+     A/B in tests/e2e/scale/library.spec.ts showed it made scroll-to-
+     bottom 5x worse (p95 frame 83ms vs 17ms, 7 longtasks vs 0)
+     because rapid scroll forces Chrome to commit deferred layout
+     for every interleaved chunk in one go. See PS-3c (#28) closeout. -->
+<section class="month" style="min-height: {computed.intrinsicHeight}px;">
   {#if label}
     <header class="day-header">
       <span class="label">{label}</span>
