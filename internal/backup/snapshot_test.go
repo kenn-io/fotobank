@@ -157,22 +157,32 @@ func TestBuildDSNEscapesReserved(t *testing.T) {
 // past timeout, mattn losing pragmas across the snapshot connection)
 // would surface here.
 //
+// Connection topology: the writer uses a separate sql.DB pool to the
+// same SQLite file. testutil.OpenTestDB's pool is MaxOpenConns=1 (the
+// project's standard write-serialisation posture), so sharing it
+// between the writer goroutine and Snapshot would queue them through
+// database/sql instead of letting them contend at SQLite's
+// busy_timeout/lock layer. A second pool exposes the actual
+// concurrency path.
+//
 // Sequence:
-//   - Spawn a writer goroutine that inserts SeedPhoto rows in a tight
-//     loop until stopped, recording per-call errors. Sleeping 5ms
-//     between inserts keeps WAL pressure realistic without exhausting
-//     CPU on slow runners.
-//   - From the main goroutine, run Snapshot once after letting the
-//     writer get going. Snapshot must succeed.
+//   - Open a fresh test DB at a known path; pre-seed a baseline.
+//   - Open a separate sql.DB to the same file for the writer.
+//   - Spawn a writer goroutine that inserts SeedPhoto-shaped rows in
+//     a tight loop until stopped. Sleeping 5ms between inserts keeps
+//     WAL pressure realistic without exhausting CPU on slow runners.
+//   - Sample insertCount immediately before Snapshot starts.
+//   - From the main goroutine, run Snapshot once. Snapshot must
+//     succeed.
 //   - Stop the writer, drain its goroutine.
 //   - Open the snapshot read-only and confirm:
 //   - PRAGMA integrity_check returns "ok" (not a torn copy)
 //   - Row count is somewhere between the pre-snapshot count and the
 //     final live-DB count (i.e. a consistent point-in-time view, not
 //     "all rows" or "no rows")
-//   - The writer goroutine made forward progress (at least 1 insert
-//     succeeded after Snapshot started); a regression that
-//     completely starves writers would zero this.
+//   - The writer goroutine made forward progress between the
+//     pre-Snapshot sample and the final tally — a snapshot that
+//     totally starves writers would leave that delta at zero.
 //
 // Skipped under -short: contention-style test with intentional sleep.
 func TestSnapshot_DuringConcurrentWrites(t *testing.T) {
@@ -180,7 +190,14 @@ func TestSnapshot_DuringConcurrentWrites(t *testing.T) {
 		t.Skip("contention test; not under -short")
 	}
 	r := require.New(t)
-	d := testutil.OpenTestDB(t)
+
+	// OpenTestDBAt pins the SQLite path so we can open a parallel
+	// sql.DB for the writer goroutine. OpenTestDB hides the path and
+	// would force the test to share the single-conn pool — defeating
+	// the SQLite-busy contention this test is supposed to exercise.
+	dbPath := filepath.Join(t.TempDir(), "fotobank.sqlite")
+	d := testutil.OpenTestDBAt(t, dbPath)
+	t.Cleanup(func() { _ = d.Close() })
 	owner := testutil.SeedOwner(t, d.WriteDB(), "self", "u1")
 
 	// Pre-seed a baseline so the snapshot has something even if its
@@ -193,10 +210,19 @@ func TestSnapshot_DuringConcurrentWrites(t *testing.T) {
 		testutil.SeedPhoto(t, d.WriteDB(), owner, "preseed-"+strconv.Itoa(i))
 	}
 
+	// Independent writer pool against the same DB file. Same DSN flags
+	// (_busy_timeout=5000, _fk=1) as internal/db.Open so contention
+	// surfaces at SQLite's busy-retry layer rather than queuing
+	// through database/sql.
+	writerDB, err := sql.Open("sqlite3", dbPath+"?_busy_timeout=5000&_fk=1")
+	r.NoError(err)
+	t.Cleanup(func() { _ = writerDB.Close() })
+
 	stop := make(chan struct{})
+	var stopOnce sync.Once
+	closeStop := func() { stopOnce.Do(func() { close(stop) }) }
 	var wg sync.WaitGroup
 	var insertCount atomic.Int64
-	var snapshotStartedAt atomic.Int64 // unix ns
 	wg.Go(func() {
 		for {
 			select {
@@ -208,7 +234,7 @@ func TestSnapshot_DuringConcurrentWrites(t *testing.T) {
 			// from a non-test goroutine — call the underlying repo path
 			// instead and tally errors locally so the test can decide
 			// what to do with them.
-			id, err := insertOnePhoto(d.WriteDB(), owner)
+			id, err := insertOnePhoto(writerDB, owner)
 			if err != nil {
 				// Don't fail here — busy_timeout exhaustion under
 				// extreme contention is conceivable, and the test's
@@ -221,19 +247,33 @@ func TestSnapshot_DuringConcurrentWrites(t *testing.T) {
 			time.Sleep(5 * time.Millisecond)
 		}
 	})
+	// Cleanup-guarded goroutine drain. If a require below fatals the
+	// test, t.Cleanup still runs in reverse-registration order, so the
+	// writer is signalled to exit and joined before writerDB.Close
+	// (registered above) tears the pool out from under it.
+	t.Cleanup(func() {
+		closeStop()
+		wg.Wait()
+	})
 
 	// Let the writer get a few inserts in before snapshotting so the
 	// snapshot's row count strictly exceeds preSeed (catching a
 	// regression where Snapshot somehow only sees the pre-tx state).
 	time.Sleep(50 * time.Millisecond)
 
+	// Sample insertCount BEFORE Snapshot starts. Forward progress is
+	// the delta between this baseline and the final tally — a true
+	// "writer made progress while Snapshot ran" check that doesn't
+	// depend on the race-prone "did the writer slip in another insert
+	// between Snapshot returning and us closing stop" timing of the
+	// previous version.
+	preSnapshotInsertCount := insertCount.Load()
+
 	dst := filepath.Join(t.TempDir(), "snap.sqlite")
-	snapshotStartedAt.Store(time.Now().UnixNano())
 	r.NoError(Snapshot(context.Background(), d.WriteDB(), dst),
 		"Snapshot must succeed under concurrent writes")
-	preStopInsertCount := insertCount.Load()
 
-	close(stop)
+	closeStop()
 	wg.Wait()
 	finalInsertCount := insertCount.Load()
 
@@ -252,17 +292,16 @@ func TestSnapshot_DuringConcurrentWrites(t *testing.T) {
 		"snapshot row count must not exceed preSeed + total inserts (%d); got %d",
 		int64(preSeed)+finalInsertCount, snapRows)
 
-	// Forward-progress check: writer must have made at least one insert
-	// after Snapshot started. A snapshot that starves the writer would
-	// leave preStopInsertCount unchanged across the snapshot window,
-	// and finalInsertCount would equal whatever the writer had landed
-	// before snapshotStartedAt. We don't have a precise "inserts after
-	// start" counter, so the proxy is: finalInsertCount must exceed
-	// the count we observed *immediately after* Snapshot returned.
-	r.Greater(finalInsertCount, preStopInsertCount,
-		"writer must have completed at least one insert after Snapshot returned; "+
-			"pre-stop=%d final=%d (Snapshot may have starved writers)",
-		preStopInsertCount, finalInsertCount)
+	// Forward-progress check: the writer must have completed at least
+	// one insert between the moment we sampled (immediately before
+	// calling Snapshot) and the moment we stopped it (immediately
+	// after Snapshot returned). A snapshot that completely starves
+	// writers — by holding a lock the busy_timeout can't outwait, or
+	// by serialising at the database/sql layer — would zero this delta.
+	r.Greater(finalInsertCount, preSnapshotInsertCount,
+		"writer must have made forward progress while Snapshot ran; "+
+			"pre-snapshot=%d final=%d (Snapshot may have starved writers)",
+		preSnapshotInsertCount, finalInsertCount)
 }
 
 // insertOnePhoto is a writer-goroutine-friendly variant of
