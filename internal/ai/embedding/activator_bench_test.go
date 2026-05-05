@@ -152,8 +152,15 @@ func BenchmarkActivator_100k_EligibleCount(b *testing.B) {
 	// SQL count using the same predicate. Equality between the two
 	// proves we're benching the intended dataset, not a smaller one
 	// that some future fixture or predicate change might silently
-	// produce. Asserting just `> 0` would let a 1-row fixture pass.
+	// produce. Equality alone isn't enough — a fixture drift that
+	// zeroes out both queries would still pass — so the floor pins
+	// a meaningful cardinality (~half the seeded total after the
+	// hidden/skipped predicates trim it down).
 	expected := directEligibleCount(b, d)
+	const minEligible = benchScale / 2
+	require.GreaterOrEqualf(b, expected, minEligible,
+		"eligible fixture too small (%d < %d) — seed or predicate drifted",
+		expected, minEligible)
 	probe, err := a.EligibleCount(ctx)
 	require.NoError(b, err)
 	require.Equal(b, expected, probe,
@@ -182,6 +189,13 @@ func BenchmarkActivator_100k_EmbeddedCount(b *testing.B) {
 	ctx := context.Background()
 
 	expected := directEmbeddedCount(b, d, genID)
+	// Floor pins meaningful cardinality. Fixture seeds 70% mapping
+	// coverage; after the hidden/skipped predicates the JOIN result
+	// should still be well above benchScale/2.
+	const minEmbedded = benchScale / 2
+	require.GreaterOrEqualf(b, expected, minEmbedded,
+		"embedded fixture too small (%d < %d) — seed or predicate drifted",
+		expected, minEmbedded)
 	probe, err := a.EmbeddedCount(ctx, genID)
 	require.NoError(b, err)
 	require.Equal(b, expected, probe,

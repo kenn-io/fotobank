@@ -644,7 +644,12 @@ func TestQueryContextCancellationInterruptsRead(t *testing.T) {
 	r := require.New(t)
 	d, err := db.Open(filepath.Join(t.TempDir(), "cancel.sqlite"))
 	r.NoError(err)
-	defer d.Close()
+	// Background the close. database/sql Close waits for active
+	// queries to finish; on the hardTimeout path the goroutine is
+	// still blocked on the slow CTE (the regression fired), so a
+	// foreground Close would hang the test indefinitely. Background
+	// it and let the OS reap on process exit.
+	defer func() { go func() { _ = d.Close() }() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

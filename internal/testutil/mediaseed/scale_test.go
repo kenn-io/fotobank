@@ -79,7 +79,7 @@ func TestSeedScaleLibrary_TwoSeedsByteIdentical(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	opts := mediaseed.DefaultScaleOpts(200) // small for speed
 
-	probe := func() (mediaProj string, resultsProj string, ownerProj string) {
+	probe := func() (mediaProj, resultsProj, tagsProj, ownerProj string) {
 		d := testutil.OpenTestDB(t)
 		_ = mediaseed.SeedScaleLibrary(t, d.WriteDB(), owner, opts)
 		ctx := context.Background()
@@ -97,16 +97,25 @@ func TestSeedScaleLibrary_TwoSeedsByteIdentical(t *testing.T) {
 		r.NoError(ro.QueryRowContext(ctx, `
 			SELECT GROUP_CONCAT(id || '|' || media_id || '|' || generated_at, char(10))
 			  FROM (SELECT * FROM ai_results ORDER BY id)`).Scan(&resultsProj))
+		// Tag fan-out is part of the determinism contract — Zipf
+		// pick + tag_label + rank must all be reproducible. Without
+		// this projection a future drift in mediaseed's tag RNG
+		// (different sample, different rank assignment) would slip
+		// through.
+		r.NoError(ro.QueryRowContext(ctx, `
+			SELECT GROUP_CONCAT(result_id || '|' || tag_key || '|' || tag_label || '|' || rank, char(10))
+			  FROM (SELECT * FROM media_tags ORDER BY result_id, tag_key)`).Scan(&tagsProj))
 		r.NoError(ro.QueryRowContext(ctx, `
 			SELECT hub || '|' || user_id || '|' || storage_key || '|' || created_at
 			  FROM owners`).Scan(&ownerProj))
 		return
 	}
 
-	m1, r1, o1 := probe()
-	m2, r2, o2 := probe()
+	m1, r1, t1, o1 := probe()
+	m2, r2, t2, o2 := probe()
 	r.Equal(m1, m2, "media projection diverged across two seeds with identical opts")
 	r.Equal(r1, r2, "ai_results projection diverged across two seeds")
+	r.Equal(t1, t2, "media_tags projection diverged across two seeds")
 	r.Equal(o1, o2, "owners projection diverged across two seeds")
 }
 
