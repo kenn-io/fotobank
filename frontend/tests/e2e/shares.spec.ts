@@ -115,5 +115,11 @@ test.describe("F2.3 owner-side sharing", () => {
     await page.goto(`/shares?album_id=${albumId}`);
     await expect(page.getByText(/Showing shares for album/)).toBeVisible();
     await expect(page.getByText("Active album e2e share")).toBeVisible();
+    // Negative: the seeded media-set share ("Active e2e share", target
+    // gps-fixture-1) shows on /shares without the filter. If
+    // ?album_id=... were silently ignored the row would still be here,
+    // and the positive assertion alone would fail to catch it. Asserting
+    // its absence pins the filter behavior.
+    await expect(page.getByText("Active e2e share", { exact: true })).toHaveCount(0);
   });
 });
