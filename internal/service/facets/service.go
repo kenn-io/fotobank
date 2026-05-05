@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/owners"
@@ -139,18 +141,22 @@ func New(ro *sql.DB, hiddenChecker HiddenChecker) *Service {
 
 // Aggregate runs the five facet queries — Cameras, Lenses, Tags,
 // Places, MediaTypes — against the caller's library and returns one
-// bundle. Each query reuses hybrid.Resolve to build a `filter` CTE
-// from the supplied Filters; the matching facet's own selection is
-// cleared first so the dropdown still surfaces every option in the
-// library (the Lightroom exclude-self rule). Errors from any one
+// bundle. Each query reuses hybrid.ResolveWhere to apply the same
+// predicate set directly on `media`; the matching facet's own
+// selection is cleared first so the dropdown still surfaces every
+// option in the library (the Lightroom exclude-self rule). The five
+// queries run concurrently via errgroup — they are independent reads
+// and SQLite WAL allows concurrent readers, so wall time is bounded
+// by the slowest query rather than their sum. Errors from any one
 // query short-circuit the whole call and are wrapped with the facet
 // name for diagnosis.
 //
 // IncludeHidden=true requires a valid UnlockClaim: a nil claim or a
 // hiddenChecker rejection short-circuits to errs.ErrPermissionDenied
 // before any query runs. The gate is fail-closed and adjacent to
-// where IncludeHidden actually mutates the SQL (hybrid.Resolve), so
-// non-HTTP callers (CLI, internal jobs) inherit the same protection.
+// where IncludeHidden actually mutates the SQL (hybrid.ResolveWhere),
+// so non-HTTP callers (CLI, internal jobs) inherit the same
+// protection.
 func (s *Service) Aggregate(
 	ctx context.Context, caller owners.Principal, f Filters,
 ) (Response, error) {
@@ -161,25 +167,56 @@ func (s *Service) Aggregate(
 	}
 	in := s.toHybridInput(caller, f)
 
-	cameras, err := s.aggregateCameras(ctx, withoutCameras(in))
-	if err != nil {
-		return Response{}, fmt.Errorf("facets cameras: %w", err)
-	}
-	lenses, err := s.aggregateLenses(ctx, withoutLenses(in))
-	if err != nil {
-		return Response{}, fmt.Errorf("facets lenses: %w", err)
-	}
-	tags, err := s.aggregateTags(ctx, withoutAnyTagKeys(in))
-	if err != nil {
-		return Response{}, fmt.Errorf("facets tags: %w", err)
-	}
-	places, err := s.aggregatePlaces(ctx, withoutHasGPS(in))
-	if err != nil {
-		return Response{}, fmt.Errorf("facets places: %w", err)
-	}
-	mediaTypes, err := s.aggregateMediaTypes(ctx, withoutMediaType(in))
-	if err != nil {
-		return Response{}, fmt.Errorf("facets media types: %w", err)
+	var (
+		cameras    []ValueCount
+		lenses     []ValueCount
+		tags       []TagCount
+		places     PlacesCount
+		mediaTypes []ValueCount
+	)
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		var e error
+		cameras, e = s.aggregateCameras(gctx, withoutCameras(in))
+		if e != nil {
+			return fmt.Errorf("facets cameras: %w", e)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		var e error
+		lenses, e = s.aggregateLenses(gctx, withoutLenses(in))
+		if e != nil {
+			return fmt.Errorf("facets lenses: %w", e)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		var e error
+		tags, e = s.aggregateTags(gctx, withoutAnyTagKeys(in))
+		if e != nil {
+			return fmt.Errorf("facets tags: %w", e)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		var e error
+		places, e = s.aggregatePlaces(gctx, withoutHasGPS(in))
+		if e != nil {
+			return fmt.Errorf("facets places: %w", e)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		var e error
+		mediaTypes, e = s.aggregateMediaTypes(gctx, withoutMediaType(in))
+		if e != nil {
+			return fmt.Errorf("facets media types: %w", e)
+		}
+		return nil
+	})
+	if err := g.Wait(); err != nil {
+		return Response{}, err
 	}
 
 	return Response{
@@ -246,16 +283,20 @@ func withoutMediaType(in hybrid.Input) hybrid.Input {
 // pair becomes one bucket via the same `make || ' ' || model` shape
 // the Cameras filter binds against, so values round-trip cleanly
 // between facet count and selection.
+//
+// Predicates apply directly to `media m` via hybrid.ResolveWhere — an
+// earlier version wrapped the same conditions in a `filter` CTE and
+// JOINed `media` back to it on PK, costing one extra B-tree lookup
+// per row at 100k scale.
 func (s *Service) aggregateCameras(ctx context.Context, in hybrid.Input) ([]ValueCount, error) {
-	cte, args := hybrid.Resolve(in)
+	where, args := hybrid.ResolveWhere(in)
 	q := fmt.Sprintf(`
-WITH filter AS (%s)
 SELECT (m.make || ' ' || m.model) AS value, COUNT(*) AS count
-FROM filter f JOIN media m ON m.id = f.id
-WHERE m.make IS NOT NULL AND m.model IS NOT NULL
+FROM media m
+WHERE %s AND m.make IS NOT NULL AND m.model IS NOT NULL
 GROUP BY value
 ORDER BY count DESC, value ASC
-LIMIT %d`, cte, facetTopN)
+LIMIT %d`, where, facetTopN)
 	return scanValueCount(ctx, s.ro, q, args)
 }
 
@@ -263,36 +304,35 @@ LIMIT %d`, cte, facetTopN)
 // lens_model. Rows with NULL lens_model are excluded so the dropdown
 // doesn't surface a meaningless "no lens" bucket.
 func (s *Service) aggregateLenses(ctx context.Context, in hybrid.Input) ([]ValueCount, error) {
-	cte, args := hybrid.Resolve(in)
+	where, args := hybrid.ResolveWhere(in)
 	q := fmt.Sprintf(`
-WITH filter AS (%s)
 SELECT m.lens_model AS value, COUNT(*) AS count
-FROM filter f JOIN media m ON m.id = f.id
-WHERE m.lens_model IS NOT NULL
+FROM media m
+WHERE %s AND m.lens_model IS NOT NULL
 GROUP BY value
 ORDER BY count DESC, value ASC
-LIMIT %d`, cte, facetTopN)
+LIMIT %d`, where, facetTopN)
 	return scanValueCount(ctx, s.ro, q, args)
 }
 
 // aggregateTags runs the Tags facet query. Joins ai_results +
 // media_tags so tags from stale generations don't surface. Uses
-// COUNT(DISTINCT f.id) so a media row that carries multiple tags
+// COUNT(DISTINCT m.id) so a media row that carries multiple tags
 // doesn't inflate any individual bucket. Uses MAX(mt.tag_label) to
 // pick a canonical label per key — in practice each tag_key has a
 // single label, but MAX is deterministic when one row disagrees.
 func (s *Service) aggregateTags(ctx context.Context, in hybrid.Input) ([]TagCount, error) {
-	cte, args := hybrid.Resolve(in)
+	where, args := hybrid.ResolveWhere(in)
 	q := fmt.Sprintf(`
-WITH filter AS (%s)
-SELECT mt.tag_key AS key, MAX(mt.tag_label) AS label, COUNT(DISTINCT f.id) AS count
-FROM filter f
-JOIN ai_results r ON r.media_id = f.id
+SELECT mt.tag_key AS key, MAX(mt.tag_label) AS label, COUNT(DISTINCT m.id) AS count
+FROM media m
+JOIN ai_results r ON r.media_id = m.id
                  AND r.task = 'tag' AND r.status = 'active'
 JOIN media_tags mt ON mt.result_id = r.id
+WHERE %s
 GROUP BY mt.tag_key
 ORDER BY count DESC, key ASC
-LIMIT %d`, cte, facetTopN)
+LIMIT %d`, where, facetTopN)
 	rows, err := s.ro.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -314,13 +354,13 @@ LIMIT %d`, cte, facetTopN)
 // Requires SQLite >= 3.30 for FILTER (WHERE …); the project pins a
 // recent mattn/go-sqlite3 build that more than satisfies that floor.
 func (s *Service) aggregatePlaces(ctx context.Context, in hybrid.Input) (PlacesCount, error) {
-	cte, args := hybrid.Resolve(in)
+	where, args := hybrid.ResolveWhere(in)
 	q := fmt.Sprintf(`
-WITH filter AS (%s)
 SELECT
   COUNT(*) FILTER (WHERE m.latitude IS NOT NULL AND m.longitude IS NOT NULL) AS with_gps,
   COUNT(*) FILTER (WHERE m.latitude IS NULL OR m.longitude IS NULL) AS without_gps
-FROM filter f JOIN media m ON m.id = f.id`, cte)
+FROM media m
+WHERE %s`, where)
 	var pc PlacesCount
 	err := s.ro.QueryRowContext(ctx, q, args...).Scan(&pc.WithGPS, &pc.WithoutGPS)
 	if err != nil {
@@ -333,13 +373,13 @@ FROM filter f JOIN media m ON m.id = f.id`, cte)
 // (photo, video) are guaranteed by the schema's CHECK constraint, so
 // no LIMIT is needed.
 func (s *Service) aggregateMediaTypes(ctx context.Context, in hybrid.Input) ([]ValueCount, error) {
-	cte, args := hybrid.Resolve(in)
+	where, args := hybrid.ResolveWhere(in)
 	q := fmt.Sprintf(`
-WITH filter AS (%s)
 SELECT m.media_type AS value, COUNT(*) AS count
-FROM filter f JOIN media m ON m.id = f.id
+FROM media m
+WHERE %s
 GROUP BY value
-ORDER BY count DESC, value ASC`, cte)
+ORDER BY count DESC, value ASC`, where)
 	return scanValueCount(ctx, s.ro, q, args)
 }
 

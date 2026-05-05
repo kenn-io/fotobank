@@ -98,6 +98,22 @@ func (in Input) WithHidden(v bool) Input {
 // any_tag_keys...). HasGPS and IncludeHidden contribute no arg in
 // either branch.
 func Resolve(in Input) (cte string, args []any) {
+	where, args := ResolveWhere(in)
+	cte = fmt.Sprintf(
+		`SELECT m.id, m.timestamp, m.imported_at FROM media m WHERE %s`,
+		where,
+	)
+	return cte, args
+}
+
+// ResolveWhere returns the same predicate body as Resolve but without
+// the `SELECT m.id, m.timestamp, m.imported_at FROM media m WHERE`
+// wrapper, so callers that already join `media m` directly (the facets
+// aggregations) can apply the predicates inline instead of materialising
+// a `filter` CTE and joining `media` back to it on PK. The conditions
+// are joined with " AND " and bind to columns on alias `m`. Argument
+// order matches Resolve.
+func ResolveWhere(in Input) (where string, args []any) {
 	conds := []string{"m.owner_hub = ?", "m.owner_user_id = ?"}
 	args = []any{in.Owner.Hub, in.Owner.UserID}
 
@@ -169,11 +185,7 @@ func Resolve(in Input) (cte string, args []any) {
 		conds = append(conds, "m.hidden_at IS NULL")
 	}
 
-	cte = fmt.Sprintf(
-		`SELECT m.id, m.timestamp, m.imported_at FROM media m WHERE %s`,
-		strings.Join(conds, " AND "),
-	)
-	return cte, args
+	return strings.Join(conds, " AND "), args
 }
 
 // placeholders returns "?, ?, ..., ?" with n question marks. Used by
