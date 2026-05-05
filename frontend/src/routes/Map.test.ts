@@ -413,6 +413,10 @@ describe("Map page filter changes", () => {
 
     // Restore addLayer so we don't perturb downstream Leaflet ops.
     addLayerSpy.mockRestore();
+    // The waitFor above proves mapInstance is non-null at runtime, but
+    // TS can't narrow through expect(...).not.toBeNull(). The explicit
+    // throw is the type guard the rest of this test relies on.
+    if (mapInstance === null) throw new Error("map instance was not captured");
 
     // Find the MarkerClusterGroup the MapPane added.
     let cluster: L.MarkerClusterGroup | null = null;

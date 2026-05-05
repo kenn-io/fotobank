@@ -16,8 +16,13 @@ async function gotoAndAssertSharingDisabled(
   page: Page,
   path: string,
 ): Promise<void> {
+  // Match /api/v1/me exactly (optionally with a query string). A
+  // looser includes("/api/v1/me") also matches /api/v1/media because
+  // "me" is a prefix of "media", and whichever response resolves
+  // first wins — yielding `body.features` undefined when /media beats
+  // /me to the network. Pin the pathname to avoid that race.
   const responsePromise = page.waitForResponse(
-    (r) => r.url().includes("/api/v1/me") && r.status() === 200,
+    (r) => new URL(r.url()).pathname === "/api/v1/me" && r.status() === 200,
   );
   await page.goto(path);
   const response = await responsePromise;
