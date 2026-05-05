@@ -80,18 +80,26 @@ func hideMedia(t *testing.T, rw *sql.DB, mediaID string) {
 	require.NoError(t, err)
 }
 
-// insertMappingRaw writes a media_embedding_ids row directly. The
-// activator tests use the same trick — the completeness queries only
-// inspect this table's row count + JOIN to media, so synthesising
-// mappings without spinning up a real worker keeps the fixture short.
+// insertMappingRaw writes a media_embedding_ids row directly AND bumps
+// the cached embedding_generations.embedded_count, mirroring what the
+// production worker does (insert mapping → IncEmbeddedCount(+1)).
+// EmbeddingCompleteness now trusts the cached counter for the
+// numerator (see completeness.go's "Read-time vs assertive" doc), so
+// a raw mapping insert without the matching counter bump would yield
+// 0 from the cached read even though the row exists.
 //
 // vecID is supplied positionally because UNIQUE (generation_id, vec_id)
 // forbids reuse within a generation.
 func insertMappingRaw(t *testing.T, rw *sql.DB, generationID int64, mediaID string, vecID int) {
 	t.Helper()
-	_, err := rw.ExecContext(context.Background(),
+	ctx := context.Background()
+	_, err := rw.ExecContext(ctx,
 		`INSERT INTO media_embedding_ids(generation_id, media_id, vec_id) VALUES (?,?,?)`,
 		generationID, mediaID, vecID)
+	require.NoError(t, err)
+	_, err = rw.ExecContext(ctx,
+		`UPDATE embedding_generations SET embedded_count = embedded_count + 1 WHERE id = ?`,
+		generationID)
 	require.NoError(t, err)
 }
 
@@ -181,6 +189,44 @@ func TestCompleteness_IncludeHiddenWithoutClaimDenied(t *testing.T) {
 	_, err := svc.EmbeddingCompleteness(context.Background(), owner, true, nil)
 	r.ErrorIs(err, errs.ErrPermissionDenied,
 		"includeHidden=true with nil claim must deny")
+}
+
+// TestCompleteness_TrustsCachedCounterAfterHide pins the read-time
+// tradeoff. After a previously-mapped row is hidden, the cached
+// embedding_generations.embedded_count is unchanged (the hide event
+// does not decrement it). With includeHidden=false, the visible-only
+// eligible denominator drops by one, but the numerator does NOT — so
+// the ratio appears to have INCREASED relative to a fully-assertive
+// recount that would also drop the numerator.
+//
+// This drift is the tradeoff documented in completeness.go: the pill
+// is rendering progress, not gating behavior. We accept the slight
+// over-report in exchange for skipping a JOIN-heavy query on every
+// search render. The activator's separate assertive embeddedCount
+// (a.embeddedCount) remains the source of truth for promotion.
+//
+// Concretely: 7 visible + 3 hidden, 6 visible mapped → 6/7 visible
+// ratio. Hide the first mapped row → 5 visible mapped + 6 visible
+// eligible. An assertive recount would yield 5/6 (≈0.833); the
+// cached-counter path yields min(6, 6)/6 = 1.0 because embedded_count
+// stays at 6 and the clamp caps it at the eligible denominator.
+func TestCompleteness_TrustsCachedCounterAfterHide(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner, _, mids := seedHiddenAwareFixture(t, d)
+	svc, _ := newCompletenessSvc(t, d)
+
+	// Hide the first mapped row (mids[0]). The cached counter stays
+	// at 6; visible eligible drops from 7 → 6; assertive numerator
+	// would drop from 6 → 5 but we don't compute that anymore.
+	hideMedia(t, d.WriteDB(), mids[0])
+
+	got, err := svc.EmbeddingCompleteness(context.Background(), owner, false, nil)
+	r.NoError(err)
+	r.InDelta(1.0, got, 0.001,
+		"cached counter (6) clamped to eligible (6) yields 1.0; "+
+			"a fully-assertive recount would yield 5/6 (≈0.833). "+
+			"This drift is the documented read-time vs assertive split.")
 }
 
 // TestCompleteness_NoActiveGenReturnsZero exercises the
