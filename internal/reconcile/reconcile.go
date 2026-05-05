@@ -32,10 +32,15 @@ const tmpMarker = ".tmp-"
 
 // Report lists the drift between NAS bytes and the media table.
 type Report struct {
-	Orphans      []Orphan       `json:"orphans"`
-	Missing      []media.Media  `json:"missing"`
-	SizeMismatch []SizeMismatch `json:"size_mismatch"`
-	StaleTemps   []string       `json:"stale_temps"`
+	Orphans []Orphan `json:"orphans"`
+	// Missing carries the slim ReconcileRow projection (id, path, size,
+	// type, lens_model) — sufficient for CLI display and Delete by id.
+	// Reconcile never reads other columns from these rows, so paying
+	// the full Media scan (30 columns, ~22 sql.Null* boxes per row)
+	// for the Missing path was pure overhead.
+	Missing      []media.ReconcileRow `json:"missing"`
+	SizeMismatch []SizeMismatch       `json:"size_mismatch"`
+	StaleTemps   []string             `json:"stale_temps"`
 	// DeletedRows is the number of Missing rows removed when
 	// Options.CommitDeletes is true.
 	DeletedRows int `json:"deleted_rows"`
@@ -114,11 +119,11 @@ func Reconcile(ctx context.Context, mediaRepo *media.Repo, opts Options) (Report
 		return Report{}, err
 	}
 
-	dbRows, err := mediaRepo.ListAll(ctx, opts.Owner)
+	dbRows, err := mediaRepo.ListAllForReconcile(ctx, opts.Owner)
 	if err != nil {
 		return Report{}, fmt.Errorf("list media: %w", err)
 	}
-	dbMap := make(map[string]media.Media, len(dbRows))
+	dbMap := make(map[string]media.ReconcileRow, len(dbRows))
 	for _, m := range dbRows {
 		dbMap[m.Path] = m
 	}
@@ -189,7 +194,7 @@ func backfillLensModel(
 	ctx context.Context,
 	mediaRepo *media.Repo,
 	ownerRoot string,
-	dbRows []media.Media,
+	dbRows []media.ReconcileRow,
 	diskMap map[string]int64,
 ) int {
 	updated := 0

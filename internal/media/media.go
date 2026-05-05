@@ -68,6 +68,21 @@ type Media struct {
 	HiddenAt *time.Time
 }
 
+// ReconcileRow is the slim media projection reconcile uses. Repo.List/
+// scanMedia walks 30-column rows and allocates ~22 sql.Null* boxes per
+// scan; reconcile only needs ID/Path/Size/Type/LensModel and pays the
+// rest of the alloc cost for nothing. ListAllForReconcile scans into
+// this struct directly so a 10k-row pass drops from ~65MB to a fraction
+// of that. Public so both internal/reconcile and any future bulk pass
+// (export, integrity audit) can adopt the same slim shape.
+type ReconcileRow struct {
+	ID        string
+	Path      string
+	Size      int64
+	Type      Type
+	LensModel string
+}
+
 // ListFilter narrows the List query.
 type ListFilter struct {
 	Owner    owners.Principal
