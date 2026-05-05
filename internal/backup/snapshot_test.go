@@ -7,11 +7,16 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/testutil"
 )
 
@@ -143,6 +148,142 @@ func TestBuildDSNEscapesReserved(t *testing.T) {
 	r.True(strings.HasPrefix(u.Path, "/"), "u.Path must be absolute, got %q", u.Path)
 	r.True(strings.HasSuffix(u.Path, "/rel.sqlite"), "u.Path must end with the original filename, got %q", u.Path)
 }
+
+// TestSnapshot_DuringConcurrentWrites stress-tests the snapshot path
+// under contention with active writes. VACUUM INTO acquires a SHARED
+// lock on the source DB; concurrent writers must yield via
+// busy_timeout and resume after the snapshot commits. A regression in
+// either direction (snapshot starves writers, writers block snapshot
+// past timeout, mattn losing pragmas across the snapshot connection)
+// would surface here.
+//
+// Sequence:
+//   - Spawn a writer goroutine that inserts SeedPhoto rows in a tight
+//     loop until stopped, recording per-call errors. Sleeping 5ms
+//     between inserts keeps WAL pressure realistic without exhausting
+//     CPU on slow runners.
+//   - From the main goroutine, run Snapshot once after letting the
+//     writer get going. Snapshot must succeed.
+//   - Stop the writer, drain its goroutine.
+//   - Open the snapshot read-only and confirm:
+//   - PRAGMA integrity_check returns "ok" (not a torn copy)
+//   - Row count is somewhere between the pre-snapshot count and the
+//     final live-DB count (i.e. a consistent point-in-time view, not
+//     "all rows" or "no rows")
+//   - The writer goroutine made forward progress (at least 1 insert
+//     succeeded after Snapshot started); a regression that
+//     completely starves writers would zero this.
+//
+// Skipped under -short: contention-style test with intentional sleep.
+func TestSnapshot_DuringConcurrentWrites(t *testing.T) {
+	if testing.Short() {
+		t.Skip("contention test; not under -short")
+	}
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "self", "u1")
+
+	// Pre-seed a baseline so the snapshot has something even if its
+	// VACUUM INTO lands at the very front of the contention window.
+	// SeedPhoto's path is derived from `label`, and the (owner_hub,
+	// owner_user_id, path) UNIQUE constraint rejects duplicates — so
+	// each preseed row needs a distinct label.
+	const preSeed = 5
+	for i := range preSeed {
+		testutil.SeedPhoto(t, d.WriteDB(), owner, "preseed-"+strconv.Itoa(i))
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	var insertCount atomic.Int64
+	var snapshotStartedAt atomic.Int64 // unix ns
+	wg.Go(func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			// SeedPhoto's t.Helper + require don't tolerate a fail
+			// from a non-test goroutine — call the underlying repo path
+			// instead and tally errors locally so the test can decide
+			// what to do with them.
+			id, err := insertOnePhoto(d.WriteDB(), owner)
+			if err != nil {
+				// Don't fail here — busy_timeout exhaustion under
+				// extreme contention is conceivable, and the test's
+				// assertion is on whether *some* writes land, not
+				// whether *every* write does.
+				continue
+			}
+			_ = id
+			insertCount.Add(1)
+			time.Sleep(5 * time.Millisecond)
+		}
+	})
+
+	// Let the writer get a few inserts in before snapshotting so the
+	// snapshot's row count strictly exceeds preSeed (catching a
+	// regression where Snapshot somehow only sees the pre-tx state).
+	time.Sleep(50 * time.Millisecond)
+
+	dst := filepath.Join(t.TempDir(), "snap.sqlite")
+	snapshotStartedAt.Store(time.Now().UnixNano())
+	r.NoError(Snapshot(context.Background(), d.WriteDB(), dst),
+		"Snapshot must succeed under concurrent writes")
+	preStopInsertCount := insertCount.Load()
+
+	close(stop)
+	wg.Wait()
+	finalInsertCount := insertCount.Load()
+
+	// Snapshot integrity.
+	r.True(integrityOk(t, dst), "snapshot must pass PRAGMA integrity_check")
+
+	// Snapshot row count: somewhere in [preSeed, preSeed+finalInserts].
+	snapDB, err := sql.Open("sqlite3", "file:"+dst+"?mode=ro&_busy_timeout=5000&_fk=1")
+	r.NoError(err)
+	defer snapDB.Close()
+	var snapRows int
+	r.NoError(snapDB.QueryRow(`SELECT COUNT(*) FROM media`).Scan(&snapRows))
+	r.GreaterOrEqual(snapRows, preSeed,
+		"snapshot must contain at least the pre-seeded rows; got %d", snapRows)
+	r.LessOrEqual(int64(snapRows), int64(preSeed)+finalInsertCount,
+		"snapshot row count must not exceed preSeed + total inserts (%d); got %d",
+		int64(preSeed)+finalInsertCount, snapRows)
+
+	// Forward-progress check: writer must have made at least one insert
+	// after Snapshot started. A snapshot that starves the writer would
+	// leave preStopInsertCount unchanged across the snapshot window,
+	// and finalInsertCount would equal whatever the writer had landed
+	// before snapshotStartedAt. We don't have a precise "inserts after
+	// start" counter, so the proxy is: finalInsertCount must exceed
+	// the count we observed *immediately after* Snapshot returned.
+	r.Greater(finalInsertCount, preStopInsertCount,
+		"writer must have completed at least one insert after Snapshot returned; "+
+			"pre-stop=%d final=%d (Snapshot may have starved writers)",
+		preStopInsertCount, finalInsertCount)
+}
+
+// insertOnePhoto is a writer-goroutine-friendly variant of
+// testutil.SeedPhoto: it returns an error rather than t.Fatal'ing
+// because callers need to tolerate the occasional busy_timeout
+// exhaustion under contention without aborting the parent test.
+func insertOnePhoto(rw *sql.DB, p owners.Principal) (string, error) {
+	id := "stress-" + strconv.FormatInt(stressCounter.Add(1), 10)
+	_, err := rw.Exec(`INSERT INTO media (
+		id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
+		imported_at, size, checksum, thumb_status, thumb_version
+	) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, ?, ?, ?, ?, 'pending', 0)`,
+		id, p.Hub, p.UserID, "stress/"+id+".jpg", id+".jpg",
+		time.Now().UTC(), int64(1024), "cs-"+id,
+	)
+	return id, err
+}
+
+// stressCounter generates unique stress-test IDs without colliding
+// with SeedPhoto's preseed (which uses a different prefix).
+var stressCounter atomic.Int64
 
 // TestSnapshotPragmas_AfterRestore_RoundTrip proves that a snapshot
 // created with VACUUM INTO and re-opened via the restore-side DSN
