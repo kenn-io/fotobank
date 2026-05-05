@@ -65,6 +65,16 @@ var baseTime = time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 // ID prefix if the use case actually requires stacked fixtures.
 func SeedScaleLibrary(tb testing.TB, rw *sql.DB, p owners.Principal, opts ScaleOpts) []string {
 	tb.Helper()
+	ids, err := SeedScaleLibraryToDB(rw, p, opts)
+	require.NoError(tb, err, "seed scale library")
+	return ids
+}
+
+// SeedScaleLibraryToDB is the error-returning variant of
+// SeedScaleLibrary, suitable for non-test callers (e.g. cmd/e2e-server's
+// scale-mode boot path). The contract — distribution shape, byte-level
+// determinism, multi-call collision behavior — is identical.
+func SeedScaleLibraryToDB(rw *sql.DB, p owners.Principal, opts ScaleOpts) ([]string, error) {
 	opts = opts.withDefaults()
 
 	rng := rand.New(rand.NewSource(opts.Seed))
@@ -81,7 +91,16 @@ func SeedScaleLibrary(tb testing.TB, rw *sql.DB, p owners.Principal, opts ScaleO
 
 	ctx := context.Background()
 	tx, err := rw.BeginTx(ctx, nil)
-	require.NoError(tb, err, "seed: begin tx")
+	if err != nil {
+		return nil, fmt.Errorf("seed: begin tx: %w", err)
+	}
+	// rollback on error path; explicit Commit below disarms it on success
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 
 	// Owner row first — media has FK to owners(hub, user_id). INSERT
 	// OR IGNORE so callers can call SeedScaleLibrary multiple times
@@ -89,15 +108,18 @@ func SeedScaleLibrary(tb testing.TB, rw *sql.DB, p owners.Principal, opts ScaleO
 	// stack a small fixture on top of an already-seeded owner.
 	// owners.created_at uses the fixed baseTime so the determinism
 	// contract holds across runs.
-	_, err = tx.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at)
 		 VALUES (?, ?, ?, ?)`,
 		p.Hub, p.UserID, "scale-storage", baseTime,
-	)
-	require.NoError(tb, err, "seed: insert owner")
+	); err != nil {
+		return nil, fmt.Errorf("seed: insert owner: %w", err)
+	}
 
 	mediaStmt, err := tx.PrepareContext(ctx, mediaInsertSQL)
-	require.NoError(tb, err, "seed: prepare media")
+	if err != nil {
+		return nil, fmt.Errorf("seed: prepare media: %w", err)
+	}
 	defer mediaStmt.Close()
 
 	resultsStmt, err := tx.PrepareContext(ctx, `
@@ -105,13 +127,17 @@ func SeedScaleLibrary(tb testing.TB, rw *sql.DB, p owners.Principal, opts ScaleO
 			(id, media_id, task, model_id, prompt_version, prompt_hash,
 			 input_profile, status, generated_at)
 		VALUES (?, ?, 'tag', ?, ?, ?, ?, 'active', ?)`)
-	require.NoError(tb, err, "seed: prepare ai_results")
+	if err != nil {
+		return nil, fmt.Errorf("seed: prepare ai_results: %w", err)
+	}
 	defer resultsStmt.Close()
 
 	tagStmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO media_tags (result_id, tag_key, tag_label, rank)
 		VALUES (?, ?, ?, ?)`)
-	require.NoError(tb, err, "seed: prepare media_tags")
+	if err != nil {
+		return nil, fmt.Errorf("seed: prepare media_tags: %w", err)
+	}
 	defer tagStmt.Close()
 
 	base := baseTime
@@ -135,7 +161,7 @@ func SeedScaleLibrary(tb testing.TB, rw *sql.DB, p owners.Principal, opts ScaleO
 			hiddenAt = base.Add(-time.Duration(i) * time.Minute)
 		}
 
-		_, err := mediaStmt.ExecContext(ctx,
+		if _, err := mediaStmt.ExecContext(ctx,
 			id, p.Hub, p.UserID, "photo", "image/jpeg",
 			"scale/"+id+".jpg", id+".jpg",
 			base.Add(-time.Duration(i)*time.Minute), nil, // imported_at, timestamp
@@ -146,8 +172,9 @@ func SeedScaleLibrary(tb testing.TB, rw *sql.DB, p owners.Principal, opts ScaleO
 			"ready", 0, nil, // thumb_status, thumb_version, thumb_updated_at
 			"scale/"+id+".jpg", nil, // import_source_path, paired_with_id
 			hiddenAt,
-		)
-		require.NoErrorf(tb, err, "seed: insert media row %d", i)
+		); err != nil {
+			return nil, fmt.Errorf("seed: insert media row %d: %w", i, err)
+		}
 
 		// Tag fan-out: ~50% of rows get tags, those that do get 1-3.
 		// Skip the rest so the population isn't 100% tagged (real
@@ -159,12 +186,13 @@ func SeedScaleLibrary(tb testing.TB, rw *sql.DB, p owners.Principal, opts ScaleO
 		// would be nondeterministic and break the byte-level
 		// determinism contract documented at the top of this function.
 		resultID := fmt.Sprintf("scale-result-%07d", i)
-		_, err = resultsStmt.ExecContext(ctx,
+		if _, err := resultsStmt.ExecContext(ctx,
 			resultID, id,
 			"scale-model", "tag-v1", "scale-hash", "scale-profile",
 			base.Add(-time.Duration(i)*time.Minute),
-		)
-		require.NoErrorf(tb, err, "seed: insert ai_results row %d", i)
+		); err != nil {
+			return nil, fmt.Errorf("seed: insert ai_results row %d: %w", i, err)
+		}
 		nTags := 1 + rng.Intn(3)
 		seen := make(map[string]struct{}, nTags)
 		for j := range nTags {
@@ -173,13 +201,17 @@ func SeedScaleLibrary(tb testing.TB, rw *sql.DB, p owners.Principal, opts ScaleO
 				continue // PK is (result_id, tag_key) — skip duplicates rather than retry
 			}
 			seen[tagKey] = struct{}{}
-			_, err := tagStmt.ExecContext(ctx, resultID, tagKey, tagKey, j+1)
-			require.NoErrorf(tb, err, "seed: insert media_tags row %d/%d", i, j)
+			if _, err := tagStmt.ExecContext(ctx, resultID, tagKey, tagKey, j+1); err != nil {
+				return nil, fmt.Errorf("seed: insert media_tags row %d/%d: %w", i, j, err)
+			}
 		}
 	}
 
-	require.NoError(tb, tx.Commit(), "seed: commit")
-	return ids
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("seed: commit: %w", err)
+	}
+	committed = true
+	return ids, nil
 }
 
 // ScaleOpts controls SeedScaleLibrary's distribution shape.
