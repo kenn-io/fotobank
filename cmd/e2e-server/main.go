@@ -62,6 +62,7 @@ import (
 	"github.com/wesm/fotobank/internal/service"
 	"github.com/wesm/fotobank/internal/share"
 	"github.com/wesm/fotobank/internal/testutil/mediaseed"
+	"github.com/wesm/fotobank/internal/testutil/scalecache"
 	"github.com/wesm/fotobank/internal/thumb"
 )
 
@@ -829,6 +830,15 @@ func scaleRealThumbsEnabled() bool {
 	return v == "1" || v == "true"
 }
 
+// scaleCacheDisabled returns true when FOTOBANK_E2E_SCALE_NO_CACHE is
+// set to "1" or "true". Used by anyone debugging the seed itself —
+// flipping this off forces every run to re-seed from scratch so a
+// stale cache entry can't paper over a bug in the seed implementation.
+func scaleCacheDisabled() bool {
+	v := os.Getenv("FOTOBANK_E2E_SCALE_NO_CACHE")
+	return v == "1" || v == "true"
+}
+
 // seedScaleFixtures replaces the curated seedFixtures path with a bulk
 // seed of n media rows (and ~50% tagged) via mediaseed.SeedScaleLibrary.
 // The owner matches the stub-identity principal (local/alice) so the
@@ -846,15 +856,37 @@ func scaleRealThumbsEnabled() bool {
 //     returns 200 and the browser does img.decode work. PS-3f's
 //     content-visibility A/B uses this so c-v's deferral can
 //     measurably defer something instead of only bearing its cost.
+//
+// scalecache short-circuits the seed when a prior run with the same
+// inputs has cached the output. FOTOBANK_E2E_SCALE_NO_CACHE=1 disables
+// the cache; cache failures (read or write) are logged to stderr and
+// the runtime falls back to a fresh seed without aborting the boot.
 func seedScaleFixtures(dbPath, nasRoot string, n int, realThumbs bool) error {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		return fmt.Errorf("create db dir: %w", err)
 	}
+
+	opts := mediaseed.DefaultScaleOpts(n)
+	cacheKey := scalecache.Key(opts, realThumbs)
+	cacheOff := scaleCacheDisabled()
+	if !cacheOff {
+		hit, err := scalecache.Restore(cacheKey, dbPath, nasRoot, realThumbs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "scale-cache: restore %s failed: %v; reseeding\n", cacheKey, err)
+		} else if hit {
+			fmt.Fprintf(os.Stderr, "scale-cache: hit %s (n=%d real_thumbs=%t)\n", cacheKey, n, realThumbs)
+			return nil
+		} else {
+			fmt.Fprintf(os.Stderr, "scale-cache: miss %s; seeding\n", cacheKey)
+		}
+	}
+
 	d, err := db.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
-	defer func() { _ = d.Close() }()
+	closeOnce := func() { _ = d.Close() }
+	defer func() { closeOnce() }()
 
 	// SeedScaleLibrary inserts the owner row itself (INSERT OR IGNORE
 	// against owners.{hub,user_id}) with storage_key="scale-storage";
@@ -871,14 +903,43 @@ func seedScaleFixtures(dbPath, nasRoot string, n int, realThumbs bool) error {
 		return fmt.Errorf("seed scale owner: %w", err)
 	}
 
-	ids, err := mediaseed.SeedScaleLibraryToDB(d.WriteDB(), owner,
-		mediaseed.DefaultScaleOpts(n))
+	ids, err := mediaseed.SeedScaleLibraryToDB(d.WriteDB(), owner, opts)
 	if err != nil {
 		return fmt.Errorf("seed scale library: %w", err)
 	}
 	if realThumbs {
 		if err := writeScaleGridThumbs(nasRoot, e2eOwnerStorageK, ids); err != nil {
 			return fmt.Errorf("seed scale thumbs: %w", err)
+		}
+	}
+
+	// Checkpoint the WAL so the SQLite DB file we cache contains every
+	// row the seed just wrote. Without this, the cached scale.db is
+	// missing whatever pages still live in the .wal sidecar — Restore
+	// would copy a torso of a DB and the next run would read truncated
+	// data. PASSIVE checkpoint is enough since we hold the only writer
+	// (no readers yet — the cli server hasn't started). TRUNCATE would
+	// also work but PASSIVE doesn't churn the .wal file's metadata if
+	// the OS is buffering writes.
+	if _, err := d.WriteDB().ExecContext(context.Background(),
+		`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		return fmt.Errorf("checkpoint wal before cache write: %w", err)
+	}
+	// Close the DB before persisting so any buffered SQLite file
+	// handles flush. Persist's copyFile reads dbPath; SQLite's page
+	// cache holding pages back would mean we cache a stale snapshot.
+	closeOnce()
+	closeOnce = func() {} // disarm the deferred Close
+
+	if !cacheOff {
+		if err := scalecache.Persist(cacheKey, dbPath, nasRoot, realThumbs); err != nil {
+			// Persist failures don't break the boot — the seeded
+			// fixture is already on disk. The next run pays the seed
+			// cost again, which is a perf regression, not a
+			// correctness one.
+			fmt.Fprintf(os.Stderr, "scale-cache: persist %s failed: %v\n", cacheKey, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "scale-cache: persist %s ok\n", cacheKey)
 		}
 	}
 	return nil

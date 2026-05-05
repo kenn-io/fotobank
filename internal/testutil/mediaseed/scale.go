@@ -22,6 +22,23 @@ import (
 // runs. The chosen instant is arbitrary; only its constancy matters.
 var baseTime = time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 
+// SeedVersion is the canonical version stamp for SeedScaleLibrary's
+// implementation. Bump when the seed's RNG sequence, distribution
+// shape, or per-row output bytes change in a way that invalidates
+// previously-cached fixtures (testutil/scalecache). Schema-shape
+// changes are picked up automatically via Fingerprint, which also
+// hashes mediaInsertSQL — but a logic-only change (e.g. a new RNG
+// reseed point) needs a manual bump here.
+const SeedVersion = "scale-2026-05-05-hotzone"
+
+// Fingerprint is the stable identifier for "what bytes this seed
+// would produce, for any opts". scalecache hashes the result into its
+// cache key so new SeedVersion values OR new columns in the media
+// insert SQL bust prior cache entries automatically.
+func Fingerprint() string {
+	return SeedVersion + "|" + mediaInsertSQL
+}
+
 // rowStride is the per-row decrement applied to imported_at,
 // hidden_at, and ai_results.generated_at — every seeded row gets a
 // timestamp `rowStride` older than its predecessor. 30 minutes spreads

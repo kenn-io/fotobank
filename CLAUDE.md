@@ -70,6 +70,7 @@ Background workers (e.g. `internal/thumb/worker.go`) follow the same rule: they'
 - Identity: phase 1 is stub mode — one principal per config, set via `identity.mode = "stub"`. Other modes are rejected by the CLI tooling that mutates DB state.
 - Runtime: SQLite via `mattn/go-sqlite3` with the `sqlite-vec` auto-extension and the `sqlite_fts5` build tag. CGO is enabled. One driver registration across the app — see `internal/db/sqlitevec.go`. Direct `go build` / `go test` invocations need `-tags sqlite_fts5`; `make` targets pass it automatically.
 - Cross-build (e.g. macOS host → Linux deploy): set `CC` to a cross-compiler (`zig cc -target x86_64-linux-musl`, `musl-cross`, or equivalent). Plain `GOOS=linux GOARCH=amd64 go build` without a cross `CC` will fail at link time.
+- Scale fixtures (Playwright `test:e2e:scale`) are cached under `~/.cache/fotobank/scale-fixtures/` so repeat runs skip the seed. Bust the cache by bumping `mediaseed.SeedVersion`, setting `FOTOBANK_E2E_SCALE_NO_CACHE=1`, or `trash`-ing the cache dir. See `internal/testutil/scalecache/`.
 
 ## Plans
 
