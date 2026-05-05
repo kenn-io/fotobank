@@ -386,14 +386,36 @@ const realThumbsMode = ((): boolean => {
   return v === "1" || v === "true";
 })();
 
+// PS-6 hard floors (2026-05-05, commit 20171a1). Replace the prior
+// "5-10x" catastrophic floors with "2x of observed" floors so a real
+// regression — chunk-windowing breaks, fetch storm, runaway thumb
+// requests — actually fails the spec instead of slipping through under
+// the catastrophic ceiling. Spread observed across 3 successive runs
+// (M5 Max, scaleRows=100_000):
+//
+//   variant             | domNode | apiMedia | thumbReq
+//   --------------------+---------+----------+---------
+//   cv-disabled-bottom  | 4805    | 11       | 1842
+//   cv-applied-bottom   | 4806    | 11       | 842
+//   cv-disabled-dwell   | 4805    | 11       | 2082
+//   cv-applied-dwell    | 4806    | 11       | 2032
+//
+// All three runs were byte-identical for these counts (the seed is
+// deterministic, scroll-loop is deterministic, IO-windowing is
+// deterministic). Floors below pick ~2x the observed max so they
+// absorb real noise that might appear on a different machine (e.g. CI
+// Linux) but still fail loudly on a 2x regression.
+const FLOOR_DOM_NODE_COUNT_LAST = 10_000; // 2× max observed (4806)
+const FLOOR_API_MEDIA_REQUESTS = 22; // 2× observed (11)
+const FLOOR_THUMB_REQUESTS = 4_500; // ~2× max observed (2082)
+
 function assertSoftFloors(result: ScaleResult): void {
   const last = result.perScroll[result.perScroll.length - 1];
   expect(last).toBeDefined();
   if (last) {
-    // Soft floors — sized to fail on 5-10x regression, not tight.
-    expect(last.domNodeCount).toBeLessThan(50_000);
-    expect(last.apiMediaRequests).toBeLessThan(50);
-    expect(last.thumbRequests).toBeLessThan(5_000);
+    expect(last.domNodeCount).toBeLessThan(FLOOR_DOM_NODE_COUNT_LAST);
+    expect(last.apiMediaRequests).toBeLessThan(FLOOR_API_MEDIA_REQUESTS);
+    expect(last.thumbRequests).toBeLessThan(FLOOR_THUMB_REQUESTS);
 
     // Mode-aware thumb status assertions: every test must see the
     // expected status mix. Real-thumbs mode requires at least one 200

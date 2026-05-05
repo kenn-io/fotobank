@@ -18,8 +18,9 @@ import { test, expect, type Page } from "@playwright/test";
 //     every cluster).
 //   - rAF frame intervals + longtask count across the whole zoom loop.
 //
-// Soft floors only at this stage; PS-6 (kata #25) promotes stable
-// metrics to hard assertions once spread data is collected. The
+// PS-6 (kata #25) tightened the count-based floors from "catastrophic
+// 5-10x ceiling" to "2x of observed" floors after collecting spread
+// across 3 successive runs (see assertScaleFloors below). The
 // page-error assertion is hard — there's no flake budget for "the map
 // crashed under load".
 
@@ -305,18 +306,29 @@ test.describe("/map scale (100k rows, ~12k hot-zone markers)", () => {
     // user-visible regression we want to fail loudly on.
     expect(pageErrors).toEqual([]);
 
-    // Soft floors — sized to fail on 5-10x regression, not tight. PS-6
-    // tightens these once spread data is collected.
+    // PS-6 hard floors (2026-05-05, commit 20171a1). Spread observed
+    // across 3 successive runs (M5 Max, scaleRows=100_000) was
+    // byte-identical for the count metrics — the seed is deterministic,
+    // marker layout is deterministic, and the zoom button drives
+    // Leaflet through the same code path every time:
+    //
+    //   sample        | totalIconCount | domNodeCount
+    //   --------------+----------------+--------------
+    //   initial (z=4) | 303            | 50269
+    //   final  (z=10) | 235            | 8729
+    //
+    // initial.domNodeCount caps DOM growth at the most-clustered zoom
+    // (every hot-zone marker plus all global markers folded into <300
+    // cluster icons). last.domNodeCount caps it at the most-fanned-out
+    // zoom (clusters split into individual photo pins, far fewer
+    // overall). Both 2× observed.
+    const FLOOR_DOM_INITIAL = 100_000; // 2× observed (50269)
+    const FLOOR_DOM_LAST = 18_000; // 2× observed (8729)
+    expect(initial.domNodeCount).toBeLessThan(FLOOR_DOM_INITIAL);
     const last = perZoom[perZoom.length - 1];
     expect(last).toBeDefined();
     if (last) {
-      // At z=10 over the hot zone we expect plenty of markers and few
-      // (or zero) clusters. A regression that breaks the disclosure
-      // tree (e.g. cluster never splits) would leave clusterIconCount
-      // high at z=10; we don't assert on that directly because the
-      // exact split depends on viewport size and Leaflet's internal
-      // grid, but DOM ceiling catches the catastrophic case.
-      expect(last.domNodeCount).toBeLessThan(50_000);
+      expect(last.domNodeCount).toBeLessThan(FLOOR_DOM_LAST);
       // Marker pane must still be attached and populated — a regression
       // that detaches the marker layer would zero this. totalIconCount
       // because at z=10 the viewport may still contain a mix of
