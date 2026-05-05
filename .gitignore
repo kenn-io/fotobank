@@ -136,3 +136,4 @@ coverage.out
 # brainstorm visual companion (only ephemeral output; allow committed
 # artifacts elsewhere under .superpowers/ if needed in future)
 .superpowers/brainstorm/
+/frontend/.snapshots/

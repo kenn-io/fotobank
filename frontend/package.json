@@ -16,8 +16,10 @@
     "build:e2e-server": "cd .. && make frontend && mkdir -p tmp && go build -tags sqlite_fts5 -o tmp/e2e-server ./cmd/e2e-server",
     "pretest:e2e": "bun run build:e2e-server",
     "pretest:e2e:sharing-disabled": "bun run build:e2e-server",
+    "pretest:e2e:scale": "bun run build:e2e-server",
     "test:e2e": "playwright test --config=playwright-e2e.config.ts",
-    "test:e2e:sharing-disabled": "playwright test --config=playwright-e2e-sharing-disabled.config.ts"
+    "test:e2e:sharing-disabled": "playwright test --config=playwright-e2e-sharing-disabled.config.ts",
+    "test:e2e:scale": "playwright test --config=playwright-e2e-scale.config.ts"
   },
   "dependencies": {
     "leaflet": "1.9",

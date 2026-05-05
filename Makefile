@@ -83,6 +83,11 @@ test-e2e: frontend ## Run Playwright e2e suite against built backend
 	go build -tags sqlite_fts5 -o tmp/e2e-server ./cmd/e2e-server
 	cd frontend && bun run test:e2e
 
+scale-e2e: frontend ## Run Playwright /library scale spec (100k rows, no thumbs)
+	mkdir -p tmp
+	go build -tags sqlite_fts5 -o tmp/e2e-server ./cmd/e2e-server
+	cd frontend && bun run test:e2e:scale
+
 bench-scale: ## Run scale benchmarks (100k-row repo / facets / embedding / hybrid, 10k reconcile)
 	go test -tags sqlite_fts5 -run '^$$' -bench . -benchmem -benchtime 3s \
 		./internal/media \

@@ -61,6 +61,7 @@ import (
 	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service"
 	"github.com/wesm/fotobank/internal/share"
+	"github.com/wesm/fotobank/internal/testutil/mediaseed"
 	"github.com/wesm/fotobank/internal/thumb"
 )
 
@@ -244,8 +245,18 @@ activation_threshold = 50
 	// tests can navigate to known IDs without env-var plumbing. The
 	// server reopens the DB on startup; SQLite + golang-migrate
 	// migrations are idempotent, so this is safe.
+	//
+	// Scale mode (FOTOBANK_E2E_SCALE_ROWS=N) skips every fixture
+	// function and instead seeds N rows via mediaseed.SeedScaleLibrary
+	// — used by the /library Playwright scale spec, where the existing
+	// curated fixtures (~50 rows) wouldn't exercise virtualization,
+	// pagination, or the request-fan-out the spec measures.
 	dbPath := filepath.Join(flashRoot, "fotobank.sqlite")
-	if err := seedFixtures(dbPath, nasRoot); err != nil {
+	if scaleRows, ok := scaleModeRows(); ok {
+		if err := seedScaleFixtures(dbPath, scaleRows); err != nil {
+			return fmt.Errorf("seed scale fixtures: %w", err)
+		}
+	} else if err := seedFixtures(dbPath, nasRoot); err != nil {
 		return fmt.Errorf("seed fixtures: %w", err)
 	}
 
@@ -786,6 +797,64 @@ func seedFixtures(dbPath, nasRoot string) error {
 		return fmt.Errorf("seed facet fixtures: %w", err)
 	}
 
+	return nil
+}
+
+// scaleModeRows reads FOTOBANK_E2E_SCALE_ROWS and returns (n, true) when
+// the env var is a positive integer. (0, false) signals scale mode is
+// off. Negative or non-numeric values fail closed (off) — better to
+// boot in normal mode than misinterpret a typo as 0 rows.
+func scaleModeRows() (int, bool) {
+	raw := os.Getenv("FOTOBANK_E2E_SCALE_ROWS")
+	if raw == "" {
+		return 0, false
+	}
+	var n int
+	if _, err := fmt.Sscanf(raw, "%d", &n); err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+// seedScaleFixtures replaces the curated seedFixtures path with a bulk
+// seed of n media rows (and ~50% tagged) via mediaseed.SeedScaleLibrary.
+// The owner matches the stub-identity principal (local/alice) so the
+// SPA receives the same /api/v1/me payload it would in normal mode.
+//
+// No thumb files, no album fixtures, no AI/search/facet fixtures. The
+// /library scale spec measures DOM growth, request fan-out, and heap;
+// none of those need real images. /thumb returns 404 for every cell;
+// the SPA renders the broken-image placeholder, which counts toward
+// the request tally we want to measure.
+func seedScaleFixtures(dbPath string, n int) error {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		return fmt.Errorf("create db dir: %w", err)
+	}
+	d, err := db.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("open db: %w", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	// SeedScaleLibrary inserts the owner row itself (INSERT OR IGNORE
+	// against owners.{hub,user_id}) with storage_key="scale-storage";
+	// override that to "alice-sk" so the SPA's stub identity (which
+	// matches storage_key alice-sk per cli/server.go's stub wiring)
+	// resolves to the seeded principal. We pre-insert the owner so the
+	// IGNORE branch fires inside SeedScaleLibrary.
+	owner := owners.Principal{Hub: e2eOwnerHub, UserID: e2eOwnerUserID}
+	if _, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at)
+		 VALUES (?, ?, ?, ?)`,
+		owner.Hub, owner.UserID, e2eOwnerStorageK, time.Now().UTC(),
+	); err != nil {
+		return fmt.Errorf("seed scale owner: %w", err)
+	}
+
+	if _, err := mediaseed.SeedScaleLibraryToDB(d.WriteDB(), owner,
+		mediaseed.DefaultScaleOpts(n)); err != nil {
+		return fmt.Errorf("seed scale library: %w", err)
+	}
 	return nil
 }
 
