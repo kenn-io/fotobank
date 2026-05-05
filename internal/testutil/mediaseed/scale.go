@@ -33,6 +33,19 @@ var baseTime = time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 // the windowing rootMargin buffer.
 const rowStride = 30 * time.Minute
 
+// Hot-zone bounding box for the GPS bias — a 2°×2° square centered on
+// the SF Bay Area (37.5°N, -122.0°W). HotZoneFraction of geotagged
+// rows fall inside; the rest spread uniformly. The /map scale spec
+// (PS-4) opens at this center to exercise the cluster-split boundary.
+// Plausible for a real library: a US photographer's home city
+// dominates the marker distribution.
+const (
+	hotZoneLatMin = 36.5
+	hotZoneLatMax = 38.5
+	hotZoneLonMin = -123.0
+	hotZoneLonMax = -121.0
+)
+
 // SeedScaleLibrary inserts opts.Total media rows for owner under the
 // supplied skewed distributions and writes them in a single
 // transaction. Returns the slice of inserted IDs in insertion order
@@ -163,8 +176,22 @@ func SeedScaleLibraryToDB(rw *sql.DB, p owners.Principal, opts ScaleOpts) ([]str
 
 		var lat, lon any // any so nullable values flow as NULL
 		if rng.Float64() < opts.GPSFraction {
-			lat = -90 + rng.Float64()*180
-			lon = -180 + rng.Float64()*360
+			// HotZoneFraction of geotagged rows fall inside a 2°×2°
+			// box centered on the SF Bay Area; the rest spread
+			// uniformly across the globe. Without the bias, 30k rows
+			// over 180°×360° give ~0.5 markers per 1° square — too
+			// sparse for the /map scale spec to exercise the
+			// cluster-split boundary. The bias creates a dense region
+			// (e.g. ~12k markers in 2°×2° at GPSFraction=0.30,
+			// HotZoneFraction=0.40, total=100k) so zoom-in stress is
+			// measurable.
+			if rng.Float64() < opts.HotZoneFraction {
+				lat = hotZoneLatMin + rng.Float64()*(hotZoneLatMax-hotZoneLatMin)
+				lon = hotZoneLonMin + rng.Float64()*(hotZoneLonMax-hotZoneLonMin)
+			} else {
+				lat = -90 + rng.Float64()*180
+				lon = -180 + rng.Float64()*360
+			}
 		}
 
 		var hiddenAt any
@@ -227,27 +254,30 @@ func SeedScaleLibraryToDB(rw *sql.DB, p owners.Principal, opts ScaleOpts) ([]str
 
 // ScaleOpts controls SeedScaleLibrary's distribution shape.
 type ScaleOpts struct {
-	Total          int     // total media rows
-	NumCameras     int     // distinct (make,model) pairs
-	NumLenses      int     // distinct lens model names
-	NumTags        int     // distinct tag keys
-	GPSFraction    float64 // fraction with non-null lat/lon, 0..1
-	HiddenFraction float64 // fraction with non-null hidden_at, 0..1
-	Seed           int64   // RNG seed; same opts → same DB content
+	Total           int     // total media rows
+	NumCameras      int     // distinct (make,model) pairs
+	NumLenses       int     // distinct lens model names
+	NumTags         int     // distinct tag keys
+	GPSFraction     float64 // fraction with non-null lat/lon, 0..1
+	HotZoneFraction float64 // of geotagged rows, fraction inside the SF Bay Area hot zone, 0..1
+	HiddenFraction  float64 // fraction with non-null hidden_at, 0..1
+	Seed            int64   // RNG seed; same opts → same DB content
 }
 
 // DefaultScaleOpts returns balanced defaults for a library of total
-// rows: ~50 cameras / 150 lenses / 500 tags, 30% GPS, 5% hidden,
-// deterministic seed=42. Callers can override individual fields.
+// rows: ~50 cameras / 150 lenses / 500 tags, 30% GPS, 40% of geotagged
+// rows in the hot zone, 5% hidden, deterministic seed=42. Callers can
+// override individual fields.
 func DefaultScaleOpts(total int) ScaleOpts {
 	return ScaleOpts{
-		Total:          total,
-		NumCameras:     50,
-		NumLenses:      150,
-		NumTags:        500,
-		GPSFraction:    0.30,
-		HiddenFraction: 0.05,
-		Seed:           42,
+		Total:           total,
+		NumCameras:      50,
+		NumLenses:       150,
+		NumTags:         500,
+		GPSFraction:     0.30,
+		HotZoneFraction: 0.40,
+		HiddenFraction:  0.05,
+		Seed:            42,
 	}
 }
 
@@ -266,6 +296,11 @@ func (o ScaleOpts) withDefaults() ScaleOpts {
 	}
 	if o.GPSFraction < 0 {
 		o.GPSFraction = 0
+	}
+	if o.HotZoneFraction < 0 {
+		o.HotZoneFraction = 0
+	} else if o.HotZoneFraction > 1 {
+		o.HotZoneFraction = 1
 	}
 	if o.HiddenFraction < 0 {
 		o.HiddenFraction = 0
