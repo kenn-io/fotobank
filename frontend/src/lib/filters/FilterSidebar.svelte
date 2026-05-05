@@ -73,9 +73,15 @@
 
 <div class="filter-sidebar">
   <div class="group-header">
-    <span class="label">FILTERS</span>
+    <span class="rule" aria-hidden="true"></span>
+    <span class="title">
+      <span class="title-display" aria-hidden="true">index</span>
+      <span class="title-a11y">FILTERS</span>
+    </span>
     {#if !isEmpty(filters)}
-      <button type="button" class="clear" onclick={clearAll}>Clear</button>
+      <button type="button" class="clear" onclick={clearAll}>
+        clear <span class="clear-glyph" aria-hidden="true">&#x21B5;</span>
+      </button>
     {/if}
   </div>
 
@@ -85,7 +91,7 @@
     items={cameraItems}
     onToggle={(v) => toggle("cameras", v)}
     storageKey="fotobank:facet:cameras"
-    searchPlaceholder="Search cameras…"
+    searchPlaceholder="search cameras…"
   />
   <FacetSection
     label="Lenses"
@@ -93,7 +99,7 @@
     items={lensItems}
     onToggle={(v) => toggle("lenses", v)}
     storageKey="fotobank:facet:lenses"
-    searchPlaceholder="Search lenses…"
+    searchPlaceholder="search lenses…"
   />
   <FacetSection
     label="Tags"
@@ -101,7 +107,7 @@
     items={tagItems}
     onToggle={(v) => toggle("tagKeys", v)}
     storageKey="fotobank:facet:tags"
-    searchPlaceholder="Search tags…"
+    searchPlaceholder="search tags…"
   />
   {#if route !== "map"}
     <FacetSection
@@ -127,20 +133,67 @@
     border-top: 1px solid var(--border);
   }
   .group-header {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: var(--space-3);
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-bottom: var(--space-5);
+    min-height: 18px;
   }
-  .label {
-    font-size: var(--text-xs); font-weight: 600;
-    color: var(--ink-3);
-    text-transform: uppercase;
-    letter-spacing: var(--label-track);
+  /* Horizontal rule running across the full row, behind the label
+     and clear button — both labels paint a bg-coloured pill on top
+     to interrupt it ("─── index ─────────  clear ↵"). */
+  .rule {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    border-top: 1px solid var(--amber);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .title {
+    position: relative;
+    z-index: 1;
+    display: inline-block;
+    padding-right: var(--space-3);
+    background: var(--bg);
+  }
+  .title-display {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 400;
+    font-size: var(--text-md);
+    color: var(--ink);
+  }
+  .title-a11y {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
   .clear {
-    background: transparent; border: 0;
-    color: var(--amber);
-    font-size: var(--text-xs);
+    position: relative;
+    z-index: 1;
+    margin-left: auto;
+    padding: 0 0 0 var(--space-3);
+    background: var(--bg);
+    border: 0;
+    color: var(--ink-3);
     cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    text-transform: lowercase;
+    letter-spacing: 0;
+    transition: color 100ms;
   }
-  .clear:hover { color: var(--amber-deep); }
+  .clear:hover { color: var(--amber); }
+  .clear-glyph {
+    margin-left: 2px;
+  }
 </style>

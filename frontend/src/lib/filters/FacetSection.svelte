@@ -49,15 +49,18 @@
   <button
     type="button"
     class="header"
+    class:expanded
     aria-expanded={expanded}
     onclick={toggle}
   >
-    <span class="chevron" class:expanded>▸</span>
+    <span class="rule" aria-hidden="true"></span>
     <span class="label">{label}</span>
-    {#if !expanded && activeCount > 0}
-      <span class="active-badge">{activeCount}</span>
-    {/if}
-    <span class="total">{totalCount}</span>
+    <span class="right">
+      {#if !expanded && activeCount > 0}
+        <span class="active-badge">{activeCount}</span>
+      {/if}
+      <span class="total">{totalCount}</span>
+    </span>
   </button>
   {#if expanded}
     <div class="body">
@@ -68,59 +71,77 @@
 
 <style>
   .facet-section + :global(.facet-section) {
-    margin-top: var(--space-3);
+    margin-top: var(--space-5);
   }
   .header {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: var(--space-2);
     width: 100%;
     padding: var(--space-2) 0;
+    min-height: 22px;
     background: transparent;
     border: 0;
-    color: var(--ink-3);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: var(--label-track);
+    color: var(--ink);
     cursor: pointer;
+  }
+  /* Rule runs full width behind the label + right group; both
+     paint var(--bg) so the line is interrupted on the masked edges
+     ("── cameras ──────────  845"). */
+  .rule {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    border-top: 1px solid var(--border);
+    pointer-events: none;
+    transition: border-top-color 100ms;
+  }
+  .header:hover .rule { border-top-color: var(--ink-3); }
+  .label {
+    position: relative;
+    z-index: 1;
+    margin-left: var(--space-4);
+    padding: 0 var(--space-3);
+    background: var(--bg);
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 400;
+    font-size: var(--text-base);
+    color: var(--ink-2);
+    text-transform: lowercase;
+    letter-spacing: 0;
     transition: color 100ms;
   }
-  .header:hover {
-    color: var(--ink);
+  .header.expanded .label { color: var(--ink); }
+  .right {
+    position: relative;
+    z-index: 1;
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding-left: var(--space-3);
+    background: var(--bg);
   }
-  .chevron {
-    display: inline-block;
-    width: 10px;
-    transition: transform 120ms;
-    color: var(--ink-4);
-  }
-  .chevron.expanded {
-    transform: rotate(90deg);
-  }
-  .label {
-    flex: 1;
-    text-align: left;
-  }
+  /* Bracketed mono token "[2]" — brackets are pseudo-element
+     content so the textContent of .active-badge stays "2" and
+     getByText(activeCount) keeps matching. */
   .active-badge {
-    background: var(--amber);
-    color: var(--bg);
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    font-size: 10px;
-    padding: 0 5px;
-    border-radius: 8px;
-    min-width: 16px;
-    text-align: center;
-    line-height: 14px;
+    font-size: var(--text-xs);
+    color: var(--amber);
   }
+  .active-badge::before { content: "["; color: var(--amber); }
+  .active-badge::after  { content: "]"; color: var(--amber); }
   .total {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    font-size: 11px;
-    color: var(--ink-4);
+    font-size: var(--text-xs);
+    color: var(--ink-3);
   }
   .body {
-    margin-top: var(--space-2);
+    padding-block: var(--space-3);
   }
 </style>

@@ -50,21 +50,8 @@
         aria-label={it.label ?? it.value}
         onclick={() => onToggle(it.value)}
       >
-        <span class="check" class:on={it.selected} aria-hidden="true">
-          {#if it.selected}
-            <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true">
-              <path
-                d="M1.5 4 L3.2 5.8 L6.5 2.2"
-                fill="none"
-                stroke="white"
-                stroke-width="1.2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          {/if}
-        </span>
         <span class="name">{it.label ?? it.value}</span>
+        <span class="leader" aria-hidden="true"></span>
         <span class="count">{it.count}</span>
       </button>
     {:else}
@@ -77,21 +64,30 @@
   .facet-list {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--space-3);
   }
+  /* Baseline-only input: no box, no fill. The bottom 1px border
+     thickens to 2px amber on focus, with padding-bottom adjusting
+     -1px so the text doesn't shift downward when the rule grows. */
   .facet-search {
     width: 100%;
-    padding: var(--space-2) var(--space-3);
-    background: var(--surface-2);
-    border: 1px solid var(--border);
+    padding: var(--space-2) 0;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--border);
     color: var(--ink);
+    font-family: var(--font-ui);
     font-size: var(--text-sm);
     outline: none;
   }
   .facet-search:focus {
-    border-color: var(--amber);
+    border-bottom: 2px solid var(--amber);
+    padding-bottom: calc(var(--space-2) - 1px);
   }
   .facet-search::placeholder {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 400;
     color: var(--ink-4);
   }
   .rows {
@@ -99,65 +95,66 @@
     flex-direction: column;
     max-height: 220px;
     overflow-y: auto;
-    border: 1px solid var(--border);
   }
+  /* Frame-mark selection: a 2px amber bar on the left edge,
+     drawn via inset box-shadow so selection doesn't shift layout. */
   .row {
     display: flex;
-    align-items: center;
-    gap: var(--space-2);
+    align-items: baseline;
+    gap: 0;
     width: 100%;
-    padding: var(--space-2) var(--space-3);
+    height: 28px;
+    padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
     background: transparent;
     color: var(--ink-2);
     border: 0;
-    border-bottom: 1px solid var(--border);
+    box-shadow: inset 2px 0 0 0 transparent;
     text-align: left;
     cursor: pointer;
+    font-family: var(--font-ui);
     font-size: var(--text-sm);
     transition:
       background 100ms,
-      color 100ms;
+      color 100ms,
+      box-shadow 100ms;
   }
-  .row:last-child {
-    border-bottom: 0;
-  }
-  .row:hover {
-    background: var(--surface-2);
-    color: var(--ink);
-  }
+  .row:hover { color: var(--ink); }
   .row.selected {
     color: var(--amber);
-  }
-  .check {
-    width: 12px;
-    height: 12px;
-    border: 1px solid var(--border-2);
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .check.on {
-    background: var(--amber);
-    border-color: var(--amber);
+    background: color-mix(in srgb, var(--amber) 6%, transparent);
+    box-shadow: inset 2px 0 0 0 var(--amber);
   }
   .name {
-    flex: 1;
+    flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Dot-leader between name and count. The translateY tweak lifts
+     the dotted line up to the typographic baseline of the surrounding
+     text instead of sitting on the descender line. */
+  .leader {
+    flex: 1;
+    min-width: var(--space-3);
+    align-self: baseline;
+    border-bottom: 1px dotted var(--ink-4);
+    margin: 0 var(--space-3);
+    transform: translateY(-3px);
+  }
   .count {
-    flex-shrink: 0;
+    flex: 0 0 auto;
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     font-size: var(--text-xs);
-    color: var(--ink-4);
+    color: var(--ink-3);
   }
+  .row.selected .count { color: var(--amber); }
   .empty {
-    padding: var(--space-3);
-    color: var(--ink-4);
+    padding: var(--space-5) 0;
+    color: var(--ink-3);
+    font-family: var(--font-display);
+    font-style: italic;
     font-size: var(--text-sm);
     text-align: center;
   }
