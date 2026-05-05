@@ -415,6 +415,81 @@ func TestOpen_RoundTripNullableTime(t *testing.T) {
 	r.Nil(got2, "NULL TIMESTAMP must Scan into nil *time.Time")
 }
 
+// TestOpen_RoundTripCoalescedTime pins mattn/go-sqlite3's behavior
+// for TIMESTAMP values returned via expressions (COALESCE, CASE, …).
+// Mattn's column-decode path only auto-parses values into time.Time
+// when the originating column is declared TIMESTAMP/DATETIME/DATE;
+// expression results have no declared type, so the driver returns the
+// underlying TEXT bytes unchanged.
+//
+// internal/share/repo.go::parseSQLiteTimeString exists exactly because
+// of this quirk — ListSharedMediaIDs SELECTs COALESCE'd timestamps and
+// must parse the returned string back into time.Time. If a future
+// mattn upgrade fixes this (and starts auto-parsing expression-typed
+// time columns), this test fails the Scan-into-string branch and
+// alerts us to retire the helper.
+//
+// Two assertions:
+//   - Scanning a COALESCE'd TIMESTAMP into time.Time fails (or returns
+//     a zero/sentinel value) — proving mattn doesn't auto-parse here.
+//   - Scanning into string succeeds and returns a value matching one
+//     of mattn's documented timestamp layouts. The string we get out
+//     is the same one parseSQLiteTimeString consumes downstream.
+func TestOpen_RoundTripCoalescedTime(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	rw := d.WriteDB()
+	ro := d.ReadDB()
+
+	_, err := rw.Exec(`CREATE TABLE t_coalesce (
+		id INTEGER PRIMARY KEY,
+		ts_a TIMESTAMP,
+		ts_b TIMESTAMP
+	)`)
+	r.NoError(err)
+
+	want := time.Date(2026, 5, 5, 12, 30, 45, 123456000, time.UTC)
+	_, err = rw.Exec(`INSERT INTO t_coalesce (id, ts_a, ts_b) VALUES (1, NULL, ?)`, want)
+	r.NoError(err)
+
+	// SELECT via COALESCE: ts_a is NULL so the expression resolves to
+	// ts_b's stored value, but the result column has no declared
+	// affinity and mattn falls back to returning bytes.
+	row := ro.QueryRow(`SELECT COALESCE(ts_a, ts_b) FROM t_coalesce WHERE id=1`)
+
+	// Direct time.Time scan must NOT yield the round-tripped instant.
+	// If a future mattn release adds expression-aware time decoding,
+	// this assertion flips and tells us to drop parseSQLiteTimeString.
+	var direct time.Time
+	directErr := row.Scan(&direct)
+	r.Falsef(directErr == nil && direct.Equal(want),
+		"mattn unexpectedly auto-parsed COALESCE'd TIMESTAMP into time.Time; "+
+			"retire internal/share/repo.go::parseSQLiteTimeString and update this test")
+
+	// Re-fetch via a fresh QueryRow because the previous row was
+	// consumed by the failed Scan above.
+	var asString string
+	r.NoError(ro.QueryRow(`SELECT COALESCE(ts_a, ts_b) FROM t_coalesce WHERE id=1`).Scan(&asString))
+
+	// The returned string must parse cleanly via the same format list
+	// parseSQLiteTimeString uses. We don't import that helper here
+	// because it lives in share/ — instead we mirror the canonical
+	// mattn layout (sqlite3.go's SQLiteTimestampFormats[0]) directly.
+	parsed, err := time.ParseInLocation("2006-01-02 15:04:05.999999999-07:00", asString, time.UTC)
+	if err != nil {
+		// Try the trailing-Z variant mattn also emits when the source
+		// time was UTC; the helper in share/ trims the Z first, so we
+		// do the same here to match.
+		parsed, err = time.ParseInLocation(
+			"2006-01-02 15:04:05.999999999-07:00",
+			strings.TrimSuffix(asString, "Z"),
+			time.UTC,
+		)
+	}
+	r.NoErrorf(err, "COALESCE'd TIMESTAMP must come back as a parseable string; got %q", asString)
+	r.True(parsed.Equal(want), "parsed string must equal the written instant; want %v got %v from %q", want, parsed, asString)
+}
+
 // TestOpen_RoundTripTZ asserts that a TIMESTAMP column written as a
 // non-UTC time round-trips with the same Unix instant AND preserves
 // sub-second precision (mattn stores at microsecond resolution via
