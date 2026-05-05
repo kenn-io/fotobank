@@ -253,7 +253,8 @@ activation_threshold = 50
 	// pagination, or the request-fan-out the spec measures.
 	dbPath := filepath.Join(flashRoot, "fotobank.sqlite")
 	if scaleRows, ok := scaleModeRows(); ok {
-		if err := seedScaleFixtures(dbPath, scaleRows); err != nil {
+		realThumbs := scaleRealThumbsEnabled()
+		if err := seedScaleFixtures(dbPath, nasRoot, scaleRows, realThumbs); err != nil {
 			return fmt.Errorf("seed scale fixtures: %w", err)
 		}
 	} else if err := seedFixtures(dbPath, nasRoot); err != nil {
@@ -816,17 +817,36 @@ func scaleModeRows() (int, bool) {
 	return n, true
 }
 
+// scaleRealThumbsEnabled returns true when FOTOBANK_E2E_SCALE_REAL_THUMBS
+// is "1" or "true". Used by PS-3f's content-visibility re-evaluation:
+// the default scale mode writes no thumb files (every /thumb 404s and
+// the SPA renders the broken-image placeholder), which is what we want
+// for measuring DOM/listener cost. Real-thumbs mode writes a tiny JPEG
+// for every seeded row so img.decode work is actually present, which
+// is what content-visibility's deferral can measurably defer.
+func scaleRealThumbsEnabled() bool {
+	v := os.Getenv("FOTOBANK_E2E_SCALE_REAL_THUMBS")
+	return v == "1" || v == "true"
+}
+
 // seedScaleFixtures replaces the curated seedFixtures path with a bulk
 // seed of n media rows (and ~50% tagged) via mediaseed.SeedScaleLibrary.
 // The owner matches the stub-identity principal (local/alice) so the
 // SPA receives the same /api/v1/me payload it would in normal mode.
 //
-// No thumb files, no album fixtures, no AI/search/facet fixtures. The
-// /library scale spec measures DOM growth, request fan-out, and heap;
-// none of those need real images. /thumb returns 404 for every cell;
-// the SPA renders the broken-image placeholder, which counts toward
-// the request tally we want to measure.
-func seedScaleFixtures(dbPath string, n int) error {
+// No album/AI/search/facet fixtures. The /library scale spec measures
+// DOM growth, request fan-out, and frame timing; none of those need
+// album/search structure.
+//
+// realThumbs gates per-row thumb-blob writes:
+//   - false (default): /thumb returns 404 for every cell, the SPA
+//     renders the broken-image placeholder, and the request tally
+//     includes those 404s — that's the realistic DOM/listener shape.
+//   - true: writes a tiny grid-tier JPEG for every row so /thumb
+//     returns 200 and the browser does img.decode work. PS-3f's
+//     content-visibility A/B uses this so c-v's deferral can
+//     measurably defer something instead of only bearing its cost.
+func seedScaleFixtures(dbPath, nasRoot string, n int, realThumbs bool) error {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		return fmt.Errorf("create db dir: %w", err)
 	}
@@ -851,9 +871,44 @@ func seedScaleFixtures(dbPath string, n int) error {
 		return fmt.Errorf("seed scale owner: %w", err)
 	}
 
-	if _, err := mediaseed.SeedScaleLibraryToDB(d.WriteDB(), owner,
-		mediaseed.DefaultScaleOpts(n)); err != nil {
+	ids, err := mediaseed.SeedScaleLibraryToDB(d.WriteDB(), owner,
+		mediaseed.DefaultScaleOpts(n))
+	if err != nil {
 		return fmt.Errorf("seed scale library: %w", err)
+	}
+	if realThumbs {
+		if err := writeScaleGridThumbs(nasRoot, e2eOwnerStorageK, ids); err != nil {
+			return fmt.Errorf("seed scale thumbs: %w", err)
+		}
+	}
+	return nil
+}
+
+// writeScaleGridThumbs writes a single tiny JPEG to every row's
+// SizeGrid thumb path. Sequential I/O dominates here: at 100k rows
+// this takes a few seconds, well inside the playwright-e2e-scale
+// webServer.timeout budget. The JPEG is encoded once and reused for
+// every row — pixel data doesn't matter, only that the browser has a
+// real image to decode.
+func writeScaleGridThumbs(nasRoot, storageKey string, ids []string) error {
+	jpg, err := smallTestJPEG()
+	if err != nil {
+		return fmt.Errorf("encode scale thumb: %w", err)
+	}
+	thumbsRoot := filepath.Join(nasRoot, storageKey, ".thumbs")
+	if err := os.MkdirAll(thumbsRoot, 0o700); err != nil {
+		return fmt.Errorf("mkdir thumbs root: %w", err)
+	}
+	for _, id := range ids {
+		// Mirror thumb.ThumbKey(id, 0, SizeGrid) under the storage
+		// root: <nasRoot>/<storageKey>/.thumbs/<id>/v0/grid.jpg.
+		dir := filepath.Join(thumbsRoot, id, "v0")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("mkdir %s: %w", id, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "grid.jpg"), jpg, 0o600); err != nil {
+			return fmt.Errorf("write %s: %w", id, err)
+		}
 	}
 	return nil
 }

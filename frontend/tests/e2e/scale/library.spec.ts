@@ -1,11 +1,16 @@
 import { test, expect, type Page, type Request } from "@playwright/test";
 
-// Scale spec: /library at 100k rows, no thumb files. The e2e-server is
-// booted with FOTOBANK_E2E_SCALE_ROWS=100000 (see playwright-e2e-scale
-// .config.ts), which replaces the curated fixtures with a bulk
-// SeedScaleLibrary call. The /thumb endpoint 404s for every cell — the
-// SPA renders the broken-image placeholder, and the request count this
-// spec measures includes those 404s, which is what we want to track.
+// Scale spec: /library at 100k rows. The e2e-server is booted with
+// FOTOBANK_E2E_SCALE_ROWS=100000 (see playwright-e2e-scale.config.ts),
+// which replaces the curated fixtures with a bulk SeedScaleLibrary
+// call.
+//
+// Thumb files are off by default — /thumb 404s for every cell, the
+// SPA renders the broken-image placeholder, and the request count
+// this spec measures includes those 404s. Set
+// FOTOBANK_E2E_SCALE_REAL_THUMBS=1 to seed a real (tiny) grid-tier
+// JPEG per row; PS-3f's content-visibility re-evaluation depends on
+// this so img.decode work is actually present to defer.
 //
 // PS-3c instrumentation:
 //
@@ -20,11 +25,12 @@ import { test, expect, type Page, type Request } from "@playwright/test";
 //   secondary signal (longtask only fires for >50ms tasks, so its
 //   absence isn't proof of smooth scrolling).
 //
-// - A/B variant: a second test runs with `.month, .cell {
-//   content-visibility: visible !important }` injected via
-//   page.addStyleTag, defeating the chunk-level optimization. Compare
-//   frame intervals across the two variants to confirm the c-v change
-//   actually moves a number.
+// - A/B variant: cell-level content-visibility:auto was REMOVED from
+//   source in PS-3e; PS-3f re-injects it via page.addStyleTag in the
+//   "cv-applied" variants and runs against real thumbs. Compare frame
+//   intervals across the two variants to decide whether to re-add c-v
+//   to MonthChunk. With no real thumbs the inject becomes a no-op as
+//   far as decode-deferral goes — only c-v's bookkeeping cost surfaces.
 //
 // Soft floors only at this stage; PS-6 promotes stable metrics to
 // hard assertions once spread data is collected.
@@ -44,6 +50,8 @@ interface PerScrollSample {
   cdpJSEventListeners: number;
   apiMediaRequests: number;
   thumbRequests: number;
+  thumb200: number;
+  thumb404: number;
 }
 
 interface FrameStats {
@@ -69,6 +77,8 @@ async function captureSample(
   iter: number,
   apiMediaCount: () => number,
   thumbCount: () => number,
+  thumb200Count: () => number,
+  thumb404Count: () => number,
 ): Promise<PerScrollSample> {
   const counts = await page.evaluate(() => ({
     dataMonthCount: document.querySelectorAll("[data-month]").length,
@@ -85,6 +95,8 @@ async function captureSample(
     cdpJSEventListeners: cdpCounters.jsEventListeners,
     apiMediaRequests: apiMediaCount(),
     thumbRequests: thumbCount(),
+    thumb200: thumb200Count(),
+    thumb404: thumb404Count(),
   };
 }
 
@@ -173,11 +185,25 @@ async function runScaleScenario(
 ): Promise<ScaleResult> {
   let apiMediaCount = 0;
   let thumbCount = 0;
+  let thumb200Count = 0;
+  let thumb404Count = 0;
   page.on("request", (req: Request) => {
     const path = new URL(req.url()).pathname;
     if (path === "/api/v1/media") apiMediaCount += 1;
     if (path.endsWith("/thumb") && path.startsWith("/api/v1/media/")) {
       thumbCount += 1;
+    }
+  });
+  // Status counts come from the response event so we can split
+  // between served bytes (200, real-thumbs mode) and placeholders
+  // (404, default mode). The split is the only way to verify
+  // FOTOBANK_E2E_SCALE_REAL_THUMBS=1 actually wrote blobs — request
+  // counts alone don't distinguish the two modes.
+  page.on("response", (resp) => {
+    const path = new URL(resp.url()).pathname;
+    if (path.endsWith("/thumb") && path.startsWith("/api/v1/media/")) {
+      if (resp.status() === 200) thumb200Count += 1;
+      else if (resp.status() === 404) thumb404Count += 1;
     }
   });
 
@@ -207,6 +233,8 @@ async function runScaleScenario(
     0,
     () => apiMediaCount,
     () => thumbCount,
+    () => thumb200Count,
+    () => thumb404Count,
   );
 
   // Start the rAF + longtask instrument right before the scroll loop
@@ -279,6 +307,8 @@ async function runScaleScenario(
         i + 1,
         () => apiMediaCount,
         () => thumbCount,
+        () => thumb200Count,
+        () => thumb404Count,
       ),
     );
   }
@@ -308,11 +338,20 @@ async function persistResult(result: ScaleResult): Promise<void> {
   );
 }
 
-// CV_OVERRIDE strips content-visibility from .month, .cell (the chunk
-// and cell wrappers in MonthChunk.svelte). A second variant injects
-// this via page.addStyleTag after initial paint to A/B the
-// optimization without touching source.
-const CV_OVERRIDE = `.month, .cell { content-visibility: visible !important; contain-intrinsic-size: auto !important; }`;
+// CV_INJECT applies cell-level content-visibility:auto via
+// page.addStyleTag after initial paint. The "cv-applied" variants
+// inject this; the "cv-disabled" variants run with source defaults
+// (no c-v on cells). PS-3e removed cell-c-v from source after the
+// no-real-images A/B showed it costs without measurable benefit;
+// PS-3f re-runs the A/B with real thumb files seeded so img.decode
+// work is actually present to defer.
+//
+// contain-intrinsic-size uses `auto 200px` so the placeholder size
+// is the last-rendered size when known and falls back to 200px on
+// first paint — the .cell wrapper has explicit width/height inline,
+// so this only matters when c-v skips layout entirely for offscreen
+// cells.
+const CV_INJECT = `.cell { content-visibility: auto; contain-intrinsic-size: auto 200px; }`;
 
 async function logResult(result: ScaleResult): Promise<void> {
   console.log(`[scale/library ${result.variant}] INITIAL`, JSON.stringify(result.initial));
@@ -337,38 +376,41 @@ function assertSoftFloors(result: ScaleResult): void {
   }
 }
 
-test.describe("/library scale (100k rows, no thumb files)", () => {
-  test("scroll-to-bottom, c-v applied", async ({ page }) => {
-    const result = await runScaleScenario(page, "cv-applied-bottom", "bottom");
+test.describe("/library scale (100k rows)", () => {
+  test("scroll-to-bottom, c-v disabled", async ({ page }) => {
+    // Source default: no cell-c-v in MonthChunk.svelte (PS-3e). The
+    // baseline these "cv-disabled" variants establish is what ships
+    // today — used as the comparand for the cv-injected variants.
+    const result = await runScaleScenario(page, "cv-disabled-bottom", "bottom");
     await logResult(result);
     assertSoftFloors(result);
   });
 
-  test("scroll-to-bottom, c-v disabled", async ({ page }) => {
+  test("scroll-to-bottom, c-v applied", async ({ page }) => {
     const result = await runScaleScenario(
       page,
-      "cv-disabled-bottom",
+      "cv-applied-bottom",
       "bottom",
-      CV_OVERRIDE,
+      CV_INJECT,
     );
+    await logResult(result);
+    assertSoftFloors(result);
+  });
+
+  test("dwell-scroll, c-v disabled", async ({ page }) => {
+    const result = await runScaleScenario(page, "cv-disabled-dwell", "dwell");
     await logResult(result);
     assertSoftFloors(result);
   });
 
   test("dwell-scroll, c-v applied", async ({ page }) => {
     // PS-3e hypothesis: c-v's per-step layout commit amortizes here,
-    // unlike rapid scroll-to-bottom.
-    const result = await runScaleScenario(page, "cv-applied-dwell", "dwell");
-    await logResult(result);
-    assertSoftFloors(result);
-  });
-
-  test("dwell-scroll, c-v disabled", async ({ page }) => {
+    // unlike rapid scroll-to-bottom. PS-3f re-tests with real thumbs.
     const result = await runScaleScenario(
       page,
-      "cv-disabled-dwell",
+      "cv-applied-dwell",
       "dwell",
-      CV_OVERRIDE,
+      CV_INJECT,
     );
     await logResult(result);
     assertSoftFloors(result);

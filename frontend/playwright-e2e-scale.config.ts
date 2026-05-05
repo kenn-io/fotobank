@@ -38,8 +38,20 @@ function resolveScaleRows(): number {
   return n;
 }
 
+// Real-thumbs mode (PS-3f) writes a tiny grid JPEG for every seeded
+// row so img.decode work is present in the browser. Without this the
+// SPA renders broken-image placeholders for every cell and there's no
+// decode work for content-visibility:auto to defer. Off by default —
+// the daily scale spec cares about DOM/request shape, not pixel
+// decode. Set to "1" or "true" to opt in.
+function resolveRealThumbs(): string {
+  const raw = process.env.FOTOBANK_E2E_SCALE_REAL_THUMBS ?? "";
+  return raw === "1" || raw === "true" ? "1" : "";
+}
+
 const port = resolvePort();
 const scaleRows = resolveScaleRows();
+const realThumbs = resolveRealThumbs();
 
 export default defineConfig({
   testDir: "./tests/e2e/scale",
@@ -64,6 +76,7 @@ export default defineConfig({
       FOTOBANK_E2E_MODE: "1",
       FOTOBANK_E2E_LOCKOUT_WINDOW: "5s",
       FOTOBANK_E2E_SCALE_ROWS: String(scaleRows),
+      FOTOBANK_E2E_SCALE_REAL_THUMBS: realThumbs,
     },
     port,
     reuseExistingServer: false,
