@@ -147,16 +147,25 @@ func BenchmarkRepoList_100k_AllFacetFilters(b *testing.B) {
 	ctx := context.Background()
 
 	// Sanity check pre-loop: with the most-popular camera, lens, and
-	// tag selected the result set should be non-empty. A future seed
-	// shift that produces a zero-row intersection would silently make
-	// the benchmark measure SQLite's "I have no rows" path instead of
-	// the actual filter join, so guard against that explicitly.
+	// tag selected the result set should fill (or nearly fill) the
+	// page. NotEmpty is too weak — a 1-row intersection would let
+	// the bench measure SQLite's degenerate "I have one row" path
+	// instead of the JOIN-heavy filter intersect at meaningful cardinality.
+	//
+	// The floor of 50 is set well below what current seed distributions
+	// produce (probe currently fills the full 200-row page for the
+	// most-common camera+lens+tag combo). If a future seed shift drops
+	// the intersection below 50, the bench is no longer measuring what
+	// it was designed to measure and the probe should be revisited.
 	probe, err := repo.List(ctx, filter)
 	require.NoError(b, err)
-	require.NotEmptyf(b, probe,
-		"AllFacetFilters resolved to 0 rows — seed distribution drifted; "+
-			"camera=%q lens=%q tag=%q", camera, lens, tagKey)
-	b.Logf("AllFacetFilters resolves to %d row(s)", len(probe))
+	const minProbeRows = 50
+	require.GreaterOrEqualf(b, len(probe), minProbeRows,
+		"AllFacetFilters intersection too small (%d < %d) — seed distribution "+
+			"drifted; camera=%q lens=%q tag=%q. Bench should exercise the JOIN "+
+			"at non-trivial cardinality, not the near-empty fast path.",
+		len(probe), minProbeRows, camera, lens, tagKey)
+	b.Logf("AllFacetFilters resolves to %d row(s) (page Limit=200)", len(probe))
 
 	b.ReportAllocs()
 	b.ResetTimer()

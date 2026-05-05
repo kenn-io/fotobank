@@ -118,6 +118,20 @@ func BenchmarkReconcile_10k_Clean(b *testing.B) {
 
 	probe, err := reconcile.Reconcile(ctx, repo, opts)
 	require.NoError(b, err)
+	// Pin the intended fixture shape: every seeded row has
+	// media.Size=1000 in the DB but a 0-byte file on disk, so the
+	// bench measures the worst-case size-mismatch path with all
+	// 10k rows in the SizeMismatch slice. orphans/missing/stale
+	// must all be zero — anything else means the fixture
+	// drifted (e.g. mediaseed stopped writing files for some rows,
+	// or the walk picked up an unrelated file). Asserting before
+	// ResetTimer means a drift fails the bench rather than
+	// silently changing what we're measuring.
+	require.Empty(b, probe.Orphans, "orphans must be empty for the clean fixture")
+	require.Empty(b, probe.Missing, "missing must be empty for the clean fixture")
+	require.Empty(b, probe.StaleTemps, "stale_temps must be empty for the clean fixture")
+	require.Len(b, probe.SizeMismatch, benchScale,
+		"size_mismatch must cover every seeded row (Size=1000 vs 0-byte file)")
 	b.Logf("Reconcile_10k_Clean: orphans=%d missing=%d size_mismatch=%d stale_temps=%d",
 		len(probe.Orphans), len(probe.Missing),
 		len(probe.SizeMismatch), len(probe.StaleTemps))

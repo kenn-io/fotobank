@@ -404,11 +404,15 @@ describe("Map page filter changes", () => {
       });
 
     const { rerender, queryByText } = render(Map, { props: baseProps });
+    // Wait for both the geo fetch AND MapPane's onMount → addLayer to
+    // run before restoring the spy. Just waiting on `calls.length===1`
+    // races: the /geo call resolves before Svelte schedules MapPane's
+    // mount, so a spy restore can land before mapInstance is captured.
     await waitFor(() => expect(calls.length).toBe(1));
+    await waitFor(() => expect(mapInstance).not.toBeNull());
 
     // Restore addLayer so we don't perturb downstream Leaflet ops.
     addLayerSpy.mockRestore();
-    if (mapInstance === null) throw new Error("map instance was not captured");
 
     // Find the MarkerClusterGroup the MapPane added.
     let cluster: L.MarkerClusterGroup | null = null;

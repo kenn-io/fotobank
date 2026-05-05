@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -630,10 +631,15 @@ func TestOpen_ConcurrentWriters(t *testing.T) {
 // chain alone won't catch it.
 //
 // Strategy: kick off a recursive CTE that counts to a high enough
-// number to take longer than the cancel deadline, cancel ctx ~50ms in,
-// and assert the resulting error wraps context.Canceled (or returns
-// a SQLite "interrupted" error that errors.Is(ctx.Err()) also
-// recognises through the driver's mapping).
+// number to take longer than the cancel deadline, cancel ctx 500ms in,
+// and assert the resulting error is specifically a cancellation —
+// either context.Canceled (driver-mapped) or a SQLite "interrupted"
+// error string. Unrelated errors (syntax, busy, etc.) must NOT
+// satisfy the assertion. The Scan runs in a goroutine and we select
+// on a result channel vs a hard timeout: if the regression we're
+// guarding against fires (driver ignores ctx), the test fails fast
+// with a useful message instead of blocking until the package's go
+// test timeout.
 func TestQueryContextCancellationInterruptsRead(t *testing.T) {
 	r := require.New(t)
 	d, err := db.Open(filepath.Join(t.TempDir(), "cancel.sqlite"))
@@ -641,44 +647,66 @@ func TestQueryContextCancellationInterruptsRead(t *testing.T) {
 	defer d.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Kick a 500ms timer that fires cancel(). 500ms is enough for the
-	// recursive CTE to enter SQLite and start counting; a tighter
-	// window would race with QueryContext's setup overhead.
 	const cancelDelay = 500 * time.Millisecond
+	// hardTimeout bounds the test even when the regression fires
+	// (driver ignores ctx → Scan would block until the recursive CTE
+	// completes, ~minutes). 4s is comfortably past cancelDelay and
+	// gives the goroutine a clear window to surface a real cancel.
+	const hardTimeout = 4 * time.Second
+
 	go func() {
 		time.Sleep(cancelDelay)
 		cancel()
 	}()
 
-	// Recursive CTE counting to 5e9 takes well over a second on M-class
-	// hardware — enough that the cancel timer fires while the statement
-	// is still executing. Without ctx-honoring driver, the QueryContext
-	// would block until the count completes.
+	// Recursive CTE counting to 5e9 takes well over a minute on any
+	// realistic hardware — long enough that the cancel timer fires
+	// while the statement is still executing.
 	const slowQ = `
 WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM c WHERE n < 5000000000)
 SELECT COUNT(*) FROM c`
-	start := time.Now()
-	row := d.ReadDB().QueryRowContext(ctx, slowQ)
-	var n int
-	err = row.Scan(&n)
-	elapsed := time.Since(start)
 
-	r.Error(err, "scan must surface the cancellation, not a successful count")
-	// The driver may surface the cancellation as either ctx.Err()
-	// (context.Canceled) or as a SQLite "interrupted" error; both
-	// paths are valid evidence that ctx propagation worked. We only
-	// fail if we got a clean nil — which would mean the driver
-	// ignored the ctx and ran to completion.
-	r.True(
-		errors.Is(err, context.Canceled) ||
-			errors.Is(err, sql.ErrNoRows) /* defensive */ ||
-			elapsed < 5*time.Second,
-		"err=%v elapsed=%v — query must have aborted within seconds of cancel, not run to completion",
-		err, elapsed,
-	)
-	// Hard ceiling: even on a slow runner the cancellation should
-	// take effect within a second of the cancel firing.
-	r.Less(elapsed, 2*time.Second,
-		"cancellation took %v — driver may not be honoring ctx", elapsed)
+	type result struct {
+		err     error
+		elapsed time.Duration
+	}
+	done := make(chan result, 1)
+	start := time.Now()
+	go func() {
+		var n int
+		e := d.ReadDB().QueryRowContext(ctx, slowQ).Scan(&n)
+		done <- result{err: e, elapsed: time.Since(start)}
+	}()
+
+	select {
+	case res := <-done:
+		r.Error(res.err, "scan must surface the cancellation, not a successful count")
+		// Accept ONLY signals that prove cancellation reached SQLite:
+		//   - context.Canceled (driver-mapped from ctx.Err())
+		//   - SQLite's "interrupted" error string (raw from sqlite3_
+		//     interrupt without driver mapping, surfaced on some code
+		//     paths)
+		// Unrelated errors (syntax, busy, lock) would let a regression
+		// pass; reject them.
+		isCancel := errors.Is(res.err, context.Canceled) ||
+			strings.Contains(res.err.Error(), "interrupted")
+		r.True(isCancel,
+			"err=%v — must be context.Canceled or a SQLite interrupt, "+
+				"not an unrelated failure", res.err)
+		// Hard ceiling: even on a slow runner the cancellation should
+		// take effect within ~1s of the cancel firing.
+		r.Less(res.elapsed, 2*time.Second,
+			"cancellation took %v — driver may not be honoring ctx",
+			res.elapsed)
+	case <-time.After(hardTimeout):
+		r.FailNow(
+			"Scan did not return after ctx was cancelled",
+			"the goroutine has been blocked >%v on the slow CTE, "+
+				"which means the driver did not honor ctx.Done() and "+
+				"the regression this test guards against has fired",
+			hardTimeout,
+		)
+	}
 }

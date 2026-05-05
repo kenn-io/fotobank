@@ -8,11 +8,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/wesm/fotobank/internal/owners"
 )
+
+// baseTime is the fixed timestamp anchor for every time-valued column
+// the seed writes (owner.created_at, media.imported_at, ai_results.
+// generated_at, optional hidden_at). Pinning a constant keeps the
+// determinism contract honest: two seeds with the same opts produce
+// byte-identical DBs even when the wall clock has moved between
+// runs. The chosen instant is arbitrary; only its constancy matters.
+var baseTime = time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 
 // SeedScaleLibrary inserts opts.Total media rows for owner under the
 // supplied skewed distributions and writes them in a single
@@ -41,9 +48,20 @@ import (
 //     same index paths).
 //   - hidden   : HiddenFraction of rows have non-null hidden_at.
 //
-// Determinism: opts.Seed seeds the RNG, so the same opts produce the
-// same DB content. Tests that assert on row counts or distributions
-// can rely on this.
+// Determinism: opts.Seed seeds the RNG and the entire byte-level
+// content of every inserted row — IDs, timestamps, ai_results UUIDs,
+// and tag fan-out — is derived from the seed plus the row index.
+// Two SeedScaleLibrary calls with identical opts (and the same
+// principal) produce byte-identical DBs. The fixed-base timestamp
+// (baseTime below) seals the determinism: no time.Now() leaks in.
+//
+// Repeat seeding: SeedScaleLibrary uses fixed `scale-NNNNNNN` IDs so
+// a second call against the same DB will collide on media.id. The
+// `INSERT OR IGNORE` on owners covers the FK parent, but the media
+// inserts themselves are not idempotent. Callers wanting to seed
+// multiple owners should use distinct principals AND avoid re-using
+// the same DB without a fresh schema, or extend ScaleOpts with an
+// ID prefix if the use case actually requires stacked fixtures.
 func SeedScaleLibrary(tb testing.TB, rw *sql.DB, p owners.Principal, opts ScaleOpts) []string {
 	tb.Helper()
 	opts = opts.withDefaults()
@@ -68,10 +86,12 @@ func SeedScaleLibrary(tb testing.TB, rw *sql.DB, p owners.Principal, opts ScaleO
 	// OR IGNORE so callers can call SeedScaleLibrary multiple times
 	// against the same DB (e.g. re-seed for a different bench) or
 	// stack a small fixture on top of an already-seeded owner.
+	// owners.created_at uses the fixed baseTime so the determinism
+	// contract holds across runs.
 	_, err = tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at)
 		 VALUES (?, ?, ?, ?)`,
-		p.Hub, p.UserID, "scale-storage", time.Now().UTC(),
+		p.Hub, p.UserID, "scale-storage", baseTime,
 	)
 	require.NoError(tb, err, "seed: insert owner")
 
@@ -93,7 +113,7 @@ func SeedScaleLibrary(tb testing.TB, rw *sql.DB, p owners.Principal, opts ScaleO
 	require.NoError(tb, err, "seed: prepare media_tags")
 	defer tagStmt.Close()
 
-	base := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	base := baseTime
 	ids := make([]string, opts.Total)
 
 	for i := 0; i < opts.Total; i++ {
@@ -134,7 +154,10 @@ func SeedScaleLibrary(tb testing.TB, rw *sql.DB, p owners.Principal, opts ScaleO
 		if rng.Float64() >= 0.50 {
 			continue
 		}
-		resultID := uuid.NewString()
+		// Deterministic result ID from the row index. uuid.NewString
+		// would be nondeterministic and break the byte-level
+		// determinism contract documented at the top of this function.
+		resultID := fmt.Sprintf("scale-result-%07d", i)
 		_, err = resultsStmt.ExecContext(ctx,
 			resultID, id,
 			"scale-model", "tag-v1", "scale-hash", "scale-profile",

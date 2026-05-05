@@ -148,9 +148,16 @@ func BenchmarkActivator_100k_EligibleCount(b *testing.B) {
 		embedding.ActivatorCfg{Principal: benchOwner, ThresholdPct: 95, Tick: time.Second})
 	ctx := context.Background()
 
+	// Cross-check: probe the activator's count against a hand-rolled
+	// SQL count using the same predicate. Equality between the two
+	// proves we're benching the intended dataset, not a smaller one
+	// that some future fixture or predicate change might silently
+	// produce. Asserting just `> 0` would let a 1-row fixture pass.
+	expected := directEligibleCount(b, d)
 	probe, err := a.EligibleCount(ctx)
 	require.NoError(b, err)
-	require.Positive(b, probe, "EligibleCount should return >0 rows")
+	require.Equal(b, expected, probe,
+		"EligibleCount diverged from the direct SQL count — fixture or predicate drift")
 	b.Logf("EligibleCount = %d", probe)
 
 	b.ReportAllocs()
@@ -165,7 +172,7 @@ func BenchmarkActivator_100k_EligibleCount(b *testing.B) {
 // embedded-count JOIN — re-derived from media_embedding_ids JOIN
 // media on every call (the cached embedding_generations.embedded_count
 // can drift). At 70k mapping rows + 100k media the JOIN is the cost
-// the search-completeness pill pays on every render.
+// the activator's promote-on-threshold decision pays on every tick.
 func BenchmarkActivator_100k_EmbeddedCount(b *testing.B) {
 	d, genID := loadActivatorFixture(b)
 	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
@@ -174,9 +181,11 @@ func BenchmarkActivator_100k_EmbeddedCount(b *testing.B) {
 		embedding.ActivatorCfg{Principal: benchOwner, ThresholdPct: 95, Tick: time.Second})
 	ctx := context.Background()
 
+	expected := directEmbeddedCount(b, d, genID)
 	probe, err := a.EmbeddedCount(ctx, genID)
 	require.NoError(b, err)
-	require.Positive(b, probe, "EmbeddedCount should return >0 rows")
+	require.Equal(b, expected, probe,
+		"EmbeddedCount diverged from the direct SQL count — fixture or predicate drift")
 	b.Logf("EmbeddedCount = %d", probe)
 
 	b.ReportAllocs()
@@ -185,4 +194,50 @@ func BenchmarkActivator_100k_EmbeddedCount(b *testing.B) {
 		_, err := a.EmbeddedCount(ctx, genID)
 		require.NoError(b, err)
 	}
+}
+
+// directEligibleCount mirrors a.EligibleCount's predicate via raw SQL.
+// Used as a cross-check: any predicate or seed drift surfaces as an
+// inequality before the bench's per-iteration loop runs, so the
+// reported numbers are always against the dataset we think we're
+// measuring.
+func directEligibleCount(b *testing.B, d *db.DB) int {
+	b.Helper()
+	var n int
+	err := d.ReadDB().QueryRowContext(context.Background(), `
+		SELECT COUNT(*) FROM media m
+		 WHERE m.owner_hub = ? AND m.owner_user_id = ?
+		   AND m.thumb_status = 'ready'
+		   AND m.hidden_at IS NULL
+		   AND NOT EXISTS (
+		     SELECT 1 FROM ai_skipped sk
+		      WHERE sk.media_id = m.id AND sk.task = 'embed'
+		   )`,
+		benchOwner.Hub, benchOwner.UserID,
+	).Scan(&n)
+	require.NoError(b, err)
+	return n
+}
+
+// directEmbeddedCount mirrors a.EmbeddedCount's predicate via raw SQL
+// for the same reason: cross-check the bench is exercising the
+// intended dataset.
+func directEmbeddedCount(b *testing.B, d *db.DB, genID int64) int {
+	b.Helper()
+	var n int
+	err := d.ReadDB().QueryRowContext(context.Background(), `
+		SELECT COUNT(*) FROM media_embedding_ids x
+		  JOIN media m ON m.id = x.media_id
+		 WHERE x.generation_id = ?
+		   AND m.owner_hub = ? AND m.owner_user_id = ?
+		   AND m.thumb_status = 'ready'
+		   AND m.hidden_at IS NULL
+		   AND NOT EXISTS (
+		     SELECT 1 FROM ai_skipped sk
+		      WHERE sk.media_id = m.id AND sk.task = 'embed'
+		   )`,
+		genID, benchOwner.Hub, benchOwner.UserID,
+	).Scan(&n)
+	require.NoError(b, err)
+	return n
 }

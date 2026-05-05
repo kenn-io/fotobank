@@ -96,14 +96,19 @@ func BenchmarkAggregate_100k_WithFilters(b *testing.B) {
 	}
 	ctx := context.Background()
 
-	// Probe once to confirm the filter resolves to a non-empty result;
-	// silently measuring an empty intersection would lie about the
-	// real cost of the JOIN.
+	// Probe once to confirm the filter resolves to a non-empty result.
+	// MediaTypes is the right facet to assert on: the exclude-self
+	// rule clears each facet's OWN selection before aggregating, so
+	// probe.Cameras runs without the camera filter and would surface
+	// rows even if the camera+tag intersection were empty. MediaTypes
+	// keeps BOTH the camera and tag filters applied, so a non-empty
+	// MediaTypes result proves the JOIN-heavy filter path the bench
+	// is meant to measure actually narrows to >0 rows.
 	probe, err := svc.Aggregate(ctx, benchOwner, filters)
 	require.NoError(b, err)
-	require.NotEmptyf(b, probe.Cameras,
-		"WithFilters resolved to empty cameras facet — seed drifted; "+
-			"camera=%q tag=%q", camera, tagKey)
+	require.NotEmptyf(b, probe.MediaTypes,
+		"WithFilters resolved to empty media-types facet under camera+tag — "+
+			"seed drifted; camera=%q tag=%q", camera, tagKey)
 	b.Logf("WithFilters: cameras=%d lenses=%d tags=%d media_types=%d",
 		len(probe.Cameras), len(probe.Lenses), len(probe.Tags), len(probe.MediaTypes))
 
