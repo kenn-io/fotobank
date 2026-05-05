@@ -236,6 +236,7 @@
       // broken default icons radially or zoom-and-leave; we replace
       // both behaviors below with explicit zoom-or-popup branching.
       spiderfyOnMaxZoom: false,
+      spiderfyOnEveryZoom: false,
       showCoverageOnHover: false,
       zoomToBoundsOnClick: false,
       iconCreateFunction: (c) => clusterIconHtml(c.getChildCount()),

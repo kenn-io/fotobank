@@ -27,6 +27,16 @@ describe("MapPane mount", () => {
 });
 
 describe("MapPane cluster click", () => {
+  it("disables markercluster spiderfy behavior", () => {
+    const { cg } = mountAndCaptureCluster();
+    const options = cg.options as MarkerClusterClickOptions;
+
+    expect(options.spiderfyOnMaxZoom).toBe(false);
+    expect(Object.hasOwn(options, "spiderfyOnEveryZoom")).toBe(true);
+    expect(options.spiderfyOnEveryZoom).toBe(false);
+    expect(options.zoomToBoundsOnClick).toBe(false);
+  });
+
   it("zoom branch: targetZoom > current+0.5 → fitBounds, no popup", () => {
     const { onClusterClick, cg, childMarkers } = mountAndCaptureCluster();
     // getBoundsZoom > getZoom() + 0.5 → zoom branch
@@ -152,6 +162,12 @@ type CallbackOverrides = Partial<{
   onMarkerClick: ReturnType<typeof vi.fn>;
   onClusterClick: ReturnType<typeof vi.fn>;
 }>;
+
+type MarkerClusterClickOptions = L.LayerOptions & {
+  spiderfyOnMaxZoom?: boolean;
+  spiderfyOnEveryZoom?: boolean;
+  zoomToBoundsOnClick?: boolean;
+};
 
 // mountAndCaptureCluster renders MapPane with two same-coord items and
 // captures the L.Map + the L.MarkerClusterGroup added during onMount.
