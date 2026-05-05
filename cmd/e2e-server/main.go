@@ -1352,18 +1352,26 @@ func seedFacetFixtures(
 	gpsIdx := 0
 	for i, fs := range rows {
 		row := media.Media{
-			ID:          fs.id,
-			Owner:       owner,
-			Type:        fs.mediaType,
-			MimeType:    mimeFor(fs.mediaType),
-			Path:        pathFor(fs.id, fs.mediaType),
-			ImportedAt:  base.Add(-time.Duration(i) * time.Minute),
-			Size:        1,
-			Checksum:    "checksum-" + fs.id,
-			Make:        fs.make,
-			Model:       fs.model,
-			LensModel:   fs.lens,
-			ThumbStatus: "ready",
+			ID:         fs.id,
+			Owner:      owner,
+			Type:       fs.mediaType,
+			MimeType:   mimeFor(fs.mediaType),
+			Path:       pathFor(fs.id, fs.mediaType),
+			ImportedAt: base.Add(-time.Duration(i) * time.Minute),
+			Size:       1,
+			Checksum:   "checksum-" + fs.id,
+			Make:       fs.make,
+			Model:      fs.model,
+			LensModel:  fs.lens,
+			// thumb_status='pending' so these rows don't perturb the
+			// search-suite's embedding-completeness assertions, which
+			// pin against an exact (22 / 32) ratio assuming only the W1
+			// search fixtures + 2 AI fixtures count toward the
+			// eligible denominator. Facets resolve off media columns
+			// (make/model/lens) and AI tag/caption rows, neither of
+			// which depends on thumb_status, so the facet e2e tests
+			// don't care.
+			ThumbStatus: "pending",
 		}
 		if fs.gps {
 			g := gpsCoords[gpsIdx]

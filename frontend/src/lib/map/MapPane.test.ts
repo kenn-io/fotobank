@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import L from "leaflet";
 import "leaflet.markercluster";
 import MapPane from "./MapPane.svelte";
+import type { Media } from "../media/mediaStore.svelte";
 
 // Heavier behavior — moveend/zoomend, real cluster splitting at zoom
 // thresholds — is covered by Playwright e2e where Leaflet runs against
@@ -79,6 +80,30 @@ describe("MapPane cluster click", () => {
     cell!.click();
     expect(onMarkerClick).toHaveBeenCalledWith("b");
   });
+
+  // Pins the buildMarkers popup-cleanup contract: when items change
+  // (e.g. a filter mutation or the F7 hidden-include retry lands a new
+  // geo set), the cluster's child markers are detached during
+  // clearLayers(); a popup that referenced those markers becomes
+  // stale. buildMarkers must close it before clearing layers, otherwise
+  // the user is left staring at thumb cells whose data-ids no longer
+  // exist on the map.
+  it("closes an open cluster popup when items change", async () => {
+    const { cg, childMarkers, rerender } = mountAndCaptureCluster();
+    vi.spyOn(L.Map.prototype, "getBoundsZoom").mockReturnValue(12);
+    vi.spyOn(L.Map.prototype, "getZoom").mockReturnValue(12);
+
+    fireClusterClick(cg, childMarkers);
+    expect(document.querySelectorAll(".leaflet-popup").length).toBe(1);
+
+    // Items change to a single different row — buildMarkers reruns,
+    // clearLayers detaches the markers the popup referenced, and the
+    // cleanup contract closes the popup.
+    await rerender({
+      items: [{ ...ITEMS[0]!, id: "z", latitude: 1, longitude: 2 }],
+    });
+    expect(document.querySelectorAll(".leaflet-popup").length).toBe(0);
+  });
 });
 
 // ----------------------------------------------------------------------
@@ -137,6 +162,7 @@ function mountAndCaptureCluster(overrides: CallbackOverrides = {}): {
   onClusterClick: ReturnType<typeof vi.fn>;
   cg: L.MarkerClusterGroup;
   childMarkers: L.Marker[];
+  rerender: (props: { items: Media[] }) => Promise<void>;
 } {
   let mapInstance: L.Map | null = null;
   const origAddLayer = L.Map.prototype.addLayer;
@@ -151,19 +177,18 @@ function mountAndCaptureCluster(overrides: CallbackOverrides = {}): {
   const onMarkerClick = overrides.onMarkerClick ?? vi.fn();
   const onClusterClick = overrides.onClusterClick ?? vi.fn();
 
-  render(MapPane, {
-    props: {
-      items: ITEMS,
-      initialZoom: 12,
-      initialCenter: [48.8566, 2.3522] as [number, number],
-      focusId: undefined,
-      onMarkerClick,
-      onClusterClick,
-      onViewportChange: vi.fn(),
-      onViewState: vi.fn(),
-      onClearClusterFilter: vi.fn(),
-    },
-  });
+  const baseProps = {
+    items: ITEMS,
+    initialZoom: 12,
+    initialCenter: [48.8566, 2.3522] as [number, number],
+    focusId: undefined,
+    onMarkerClick,
+    onClusterClick,
+    onViewportChange: vi.fn(),
+    onViewState: vi.fn(),
+    onClearClusterFilter: vi.fn(),
+  };
+  const { rerender: rerenderRaw } = render(MapPane, { props: baseProps });
 
   if (mapInstance === null) throw new Error("map instance was not captured");
   let cluster: L.MarkerClusterGroup | null = null;
@@ -181,7 +206,10 @@ function mountAndCaptureCluster(overrides: CallbackOverrides = {}): {
   if (cluster === null) throw new Error("MarkerClusterGroup was not found on map");
   const cg = cluster as L.MarkerClusterGroup;
   const childMarkers = cg.getLayers() as L.Marker[];
-  return { onMarkerClick, onClusterClick, cg, childMarkers };
+  const rerender = async (next: { items: Media[] }): Promise<void> => {
+    await rerenderRaw({ ...baseProps, ...next });
+  };
+  return { onMarkerClick, onClusterClick, cg, childMarkers, rerender };
 }
 
 // fireClusterClick mimics what the markercluster plugin emits when a

@@ -1,11 +1,39 @@
 import { render, screen, waitFor } from "@testing-library/svelte";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import L from "leaflet";
+import "leaflet.markercluster";
 import Map from "./Map.svelte";
 import { GeoStore } from "../lib/map/geoStore.svelte";
 import type { Client } from "../lib/api/client";
 import type { MediaStore } from "../lib/media/mediaStore.svelte";
 import type { HiddenStore } from "../lib/hidden/hiddenStore.svelte";
 import type { ToastStore } from "../lib/toasts/toastStore.svelte";
+
+// VirtualGrid (mounted when MapGridPane has activeIds) wires
+// ResizeObserver + IntersectionObserver in $effect blocks; jsdom ships
+// neither. Same noop pattern used in MapGridPane.test.ts.
+beforeAll(() => {
+  class NoopResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  class NoopIntersectionObserver {
+    root = null;
+    rootMargin = "";
+    thresholds: number[] = [];
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords(): IntersectionObserverEntry[] {
+      return [];
+    }
+  }
+  vi.stubGlobal("ResizeObserver", NoopResizeObserver);
+  vi.stubGlobal("IntersectionObserver", NoopIntersectionObserver);
+});
+
+afterEach(() => vi.restoreAllMocks());
 
 function makeGeoStore(items: unknown[]): GeoStore {
   const client = {
@@ -304,13 +332,6 @@ describe("Map page filter changes", () => {
   // (it prefers clusterIds over viewportIds), so the right-grid renders
   // rows from the previous filter set even though the map markers now
   // reflect the new one.
-  //
-  // Triggering a real cluster click in JSDOM isn't viable — Leaflet
-  // doesn't render and MapPane.onClusterClick is wired to the cluster
-  // group's "clusterclick" event. The test below pins the change-effect
-  // path: a filter mutation must re-issue geoStore.load with the new
-  // params. The clusterIds-reset itself is a single line in the same
-  // effect; if the re-fetch fires, the reset fires too.
   const visibleItem = {
     id: "v1",
     timestamp: "2024-06-15T14:30:22Z",
@@ -348,5 +369,92 @@ describe("Map page filter changes", () => {
     expect(calls[1]?.params).toMatchObject({
       query: { camera: ["Sony A7R IV"] },
     });
+  });
+
+  // Pins the clusterIds reset itself, not just the re-fetch. The
+  // observable signal is MapGridPane's "× Clear filter" chip, which
+  // renders iff `clusterIds !== null`. A real cluster click in JSDOM
+  // is impractical (Leaflet doesn't lay out tiles, so clusters never
+  // form), so the test fires the markercluster plugin's
+  // `clusterclick` event manually against the cluster group MapPane
+  // mounts during onMount — that's the same handler path the
+  // production wiring reaches.
+  it("resets clusterIds when activeFilters changes", async () => {
+    // Two GPS rows at the same coords so they reliably land in one
+    // cluster — the clusterclick handler maps each child marker back
+    // to its id via MapPane's idByMarker, so the markers must come
+    // from the rendered geo set.
+    const item2 = { ...visibleItem, id: "v2" };
+    const { store, calls } = makeSequencedGeoStore([
+      { items: [visibleItem, item2] },
+      { items: [visibleItem, item2] },
+    ]);
+    const baseProps = mapProps(store);
+
+    // Capture the L.Map instance MapPane mounts so we can reach its
+    // cluster group and fire `clusterclick` manually. addLayer is
+    // called once with the cluster group during MapPane.onMount.
+    let mapInstance: L.Map | null = null;
+    const origAddLayer = L.Map.prototype.addLayer;
+    const addLayerSpy = vi
+      .spyOn(L.Map.prototype, "addLayer")
+      .mockImplementation(function (this: L.Map, layer: L.Layer) {
+        if (mapInstance === null) mapInstance = this;
+        return origAddLayer.call(this, layer);
+      });
+
+    const { rerender, queryByText } = render(Map, { props: baseProps });
+    await waitFor(() => expect(calls.length).toBe(1));
+
+    // Restore addLayer so we don't perturb downstream Leaflet ops.
+    addLayerSpy.mockRestore();
+    if (mapInstance === null) throw new Error("map instance was not captured");
+
+    // Find the MarkerClusterGroup the MapPane added.
+    let cluster: L.MarkerClusterGroup | null = null;
+    (mapInstance as L.Map).eachLayer((layer) => {
+      const ctor = (L as unknown as { MarkerClusterGroup: new () => unknown })
+        .MarkerClusterGroup;
+      if (layer instanceof ctor) cluster = layer as L.MarkerClusterGroup;
+    });
+    if (cluster === null) throw new Error("cluster group not found on map");
+    const cg = cluster as L.MarkerClusterGroup;
+    const childMarkers = cg.getLayers() as L.Marker[];
+    expect(childMarkers.length).toBe(2);
+
+    // No clear-chip yet — clusterIds starts null.
+    expect(queryByText(/clear filter/i)).toBeNull();
+
+    // Force the popup branch (cluster won't split) so the
+    // clusterclick handler doesn't trigger fitBounds + state changes
+    // we don't care about; we only need clusterIds to flip non-null.
+    vi.spyOn(L.Map.prototype, "getBoundsZoom").mockReturnValue(12);
+    vi.spyOn(L.Map.prototype, "getZoom").mockReturnValue(12);
+
+    (cg as unknown as L.Evented).fire("clusterclick", {
+      layer: {
+        getAllChildMarkers: () => childMarkers,
+        getBounds: () =>
+          L.latLngBounds([
+            [1, 2],
+            [1, 2],
+          ]),
+        getLatLng: () => L.latLng(1, 2),
+      },
+    });
+    await waitFor(() => expect(queryByText(/clear filter/i)).not.toBeNull());
+
+    // Filter mutation must reset clusterIds → clear-chip disappears.
+    await rerender({
+      ...baseProps,
+      activeFilters: {
+        cameras: ["Sony A7R IV"],
+        lenses: [],
+        tagKeys: [],
+        hasGps: null,
+        mediaType: null,
+      },
+    });
+    await waitFor(() => expect(queryByText(/clear filter/i)).toBeNull());
   });
 });

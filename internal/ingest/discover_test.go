@@ -106,6 +106,60 @@ func TestDiscoverSkipsSystemDirectories(t *testing.T) {
 	r.Equal([]string{"top.jpg"}, got)
 }
 
+func TestDiscoverScansSkippableRootDirectly(t *testing.T) {
+	// Pins the "name-only filter, root is exempt" contract from
+	// Discover's docstring. A user may legitimately point the importer
+	// at a directory whose basename matches one of the skip-list
+	// entries (case in point: someone deliberately importing photos
+	// they recovered from a $RECYCLE.BIN folder, or a sibling test
+	// pointing at a dir that happens to be named ".Trashes"). The
+	// filter is a recursion guard; the root itself was explicitly
+	// requested.
+	r := require.New(t)
+	parent := t.TempDir()
+	root := filepath.Join(parent, ".Trashes")
+	r.NoError(os.MkdirAll(root, 0o700))
+	r.NoError(os.WriteFile(filepath.Join(root, "rescued.jpg"), []byte("x"), 0o600))
+
+	var got []string
+	r.NoError(ingest.Discover(root, func(c ingest.Candidate) error {
+		rel, err := filepath.Rel(root, c.Path)
+		require.NoError(t, err)
+		got = append(got, rel)
+		return nil
+	}))
+	r.Equal([]string{"rescued.jpg"}, got)
+}
+
+func TestDiscoverSkipsRecycleBinCaseInsensitively(t *testing.T) {
+	// Pins the case-insensitive Windows-side filter. NTFS preserves the
+	// user's casing for $RECYCLE.BIN but treats the name as
+	// case-insensitive, so a removable drive formatted on a different
+	// machine may surface "$Recycle.Bin" or "$recycle.bin"; the filter
+	// must match all three.
+	r := require.New(t)
+	root := t.TempDir()
+	for _, p := range []string{
+		"top.jpg",
+		"$Recycle.Bin/win-mixed.jpg",
+		"$recycle.bin/win-lower.jpg",
+		"system volume information/win-svi.jpg",
+	} {
+		full := filepath.Join(root, p)
+		r.NoError(os.MkdirAll(filepath.Dir(full), 0o700))
+		r.NoError(os.WriteFile(full, []byte("x"), 0o600))
+	}
+
+	var got []string
+	r.NoError(ingest.Discover(root, func(c ingest.Candidate) error {
+		rel, err := filepath.Rel(root, c.Path)
+		require.NoError(t, err)
+		got = append(got, rel)
+		return nil
+	}))
+	r.Equal([]string{"top.jpg"}, got)
+}
+
 func TestDiscoverReturnsAbsoluteCandidatePaths(t *testing.T) {
 	// Candidate.Path is documented as absolute. Pin that contract by
 	// passing a relative root and asserting the callback sees absolute

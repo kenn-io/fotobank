@@ -85,11 +85,21 @@ func skipFile(name string) bool {
 
 // skipDir reports whether a directory basename identifies it as a
 // macOS or Windows system directory that should not be recursed into.
+// Windows-side names ($RECYCLE.BIN, System Volume Information) match
+// case-insensitively because Windows itself preserves user casing on
+// NTFS but treats the names as case-insensitive — a removable drive
+// formatted on a different machine may have surfaced "$Recycle.Bin" or
+// "$recycle.bin", and skipping them is the user-intent regardless of
+// case. The macOS-side names are case-sensitive (HFS+/APFS preserve
+// and respect case for these dotfiles) and stay as exact matches.
 func skipDir(name string) bool {
 	switch name {
 	case ".Trashes", ".Spotlight-V100", ".fseventsd",
-		".DocumentRevisions-V100", ".TemporaryItems",
-		"$RECYCLE.BIN", "System Volume Information":
+		".DocumentRevisions-V100", ".TemporaryItems":
+		return true
+	}
+	if strings.EqualFold(name, "$RECYCLE.BIN") ||
+		strings.EqualFold(name, "System Volume Information") {
 		return true
 	}
 	return false

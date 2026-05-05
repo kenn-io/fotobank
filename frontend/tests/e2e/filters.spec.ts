@@ -93,18 +93,32 @@ test.describe("SF-20 sidebar facets — toggle/clear/persistence", () => {
   });
 
   test("Two filters compose as AND (camera + tag)", async ({ page }) => {
-    // Direct-entry with both filters; the grid AND-composes them
-    // (Sony A7R IV ∩ tag=dog → 2 rows from facet-fixture-sony-1
-    // and -sony-2).
+    // Direct-entry with both filters; the grid AND-composes them.
+    // Sony A7R IV ∩ tag=dog → exactly 2 rows: facet-fixture-sony-1 and
+    // facet-fixture-sony-2. (sony-3 is Sony A7R IV but tagged 'cat';
+    // canon-1 is dog-tagged but Canon EOS R5; iphone fixtures have no
+    // dog tag.) The exact-set assertion catches an OR regression — an
+    // AND-as-OR bug would surface canon-1 / sony-3 in the grid.
     await page.goto("/library?camera=Sony+A7R+IV&facet_tag=dog");
 
     await expect(page.locator(".chip", { hasText: "Sony A7R IV" })).toBeVisible();
     await expect(page.locator(".chip", { hasText: /tag:\s*dog/i })).toBeVisible();
     // Two chips so the strip's "Clear all" affordance is reachable.
     await expect(page.locator(".clear-all")).toBeVisible();
-    // Grid renders at least one tile — the AND-composition is exercised
-    // by the mediaStore tests; here we just confirm the URL filters
-    // don't wipe the grid.
+
+    // Wait for the grid to render before snapshotting media IDs —
+    // otherwise the .all() can race the initial paint and return an
+    // empty list.
     await expect(page.locator("[data-media-id]").first()).toBeVisible();
+
+    // Snapshot the rendered media IDs and verify the grid contains
+    // exactly the two AND-intersection rows. Order is sort-determined
+    // (newest-first; ImportedAt is descending across the facet
+    // fixtures, so sony-1 is newer than sony-2), but the assertion is
+    // membership-style to stay tolerant of unrelated sort tweaks.
+    const ids = await page
+      .locator("[data-media-id]")
+      .evaluateAll((els) => els.map((el) => el.getAttribute("data-media-id")));
+    expect(ids.sort()).toEqual(["facet-fixture-sony-1", "facet-fixture-sony-2"]);
   });
 });

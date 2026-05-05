@@ -122,6 +122,12 @@
 
   function buildMarkers(): void {
     if (cluster === null) return;
+    // An open cluster popup references markers by id from the
+    // pre-rebuild cluster; once we clearLayers() those markers are
+    // detached and the popup's grid cells no longer reflect any
+    // current cluster. Close it first so a stale popup doesn't linger
+    // through a filter change or hidden-include retry.
+    map?.closePopup();
     cluster.clearLayers();
     markersById.clear();
     idByMarker.clear();
