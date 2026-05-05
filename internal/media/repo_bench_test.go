@@ -178,6 +178,51 @@ func BenchmarkRepoList_100k_AllFacetFilters(b *testing.B) {
 	}
 }
 
+// BenchmarkRepoListGeo_30k measures the cost of fetching every
+// geotagged row for the owner — the path /api/v1/media/geo drives
+// when /map opens. ListGeo has no LIMIT (the SPA renders all GPS
+// markers in one shot via Leaflet), so the bench pulls the entire
+// ~30k-row result set on every iteration; that's the realistic shape.
+//
+// IncludeHidden=false matches the production /map default (and the
+// /api/v1/media/geo handler default). The hidden-row variant is out
+// of scope per the kata; if it becomes a bottleneck we'll add it
+// later.
+//
+// Cross-check probe: seed produces ~30% GPS rows × 100k = ~30k, with
+// ~5% of those also hidden → after the IncludeHidden=false filter,
+// expect ~28.5k. The 25k-35k band absorbs RNG variance without letting
+// the bench silently degrade if the seed distribution shifts.
+func BenchmarkRepoListGeo_30k(b *testing.B) {
+	d, _ := loadScaleFixture(b)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+
+	filter := media.ListGeoFilter{
+		Owner:         benchOwner,
+		IncludeHidden: false,
+	}
+	ctx := context.Background()
+
+	probe, err := repo.ListGeo(ctx, filter)
+	require.NoError(b, err)
+	const minGeoRows = 25_000
+	const maxGeoRows = 35_000
+	require.GreaterOrEqualf(b, len(probe), minGeoRows,
+		"ListGeo probe too small (%d < %d) — GPS fraction in seed dropped?",
+		len(probe), minGeoRows)
+	require.LessOrEqualf(b, len(probe), maxGeoRows,
+		"ListGeo probe too large (%d > %d) — GPS fraction in seed jumped?",
+		len(probe), maxGeoRows)
+	b.Logf("ListGeo resolves to %d row(s)", len(probe))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		_, err := repo.ListGeo(ctx, filter)
+		require.NoError(b, err)
+	}
+}
+
 // mostUsedCamera returns the canonical "<make> <model>" string for
 // the camera with the most rows. Probing the DB instead of hardcoding
 // the well-known seed head ("Sony scale-cam-000") keeps the bench
