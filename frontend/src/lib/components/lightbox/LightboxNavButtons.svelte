@@ -30,6 +30,10 @@
     display: flex; align-items: center; justify-content: center;
     /* 28px chevron keeps the existing tap-target weight; --text-lg (16px) reads too small. */
     font-size: 28px; cursor: pointer; padding: 0;
+    /* Sit above the photo for the same reason as the toolbar — see
+       LightboxToolbar.svelte. A landscape photo filling the stage's
+       full width also pushes its left/right edges over these buttons. */
+    z-index: 2;
   }
   .lb-prev { left: var(--space-6); }
   .lb-next { right: var(--space-6); }

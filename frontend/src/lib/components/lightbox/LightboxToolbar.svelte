@@ -31,6 +31,12 @@
     display: flex; justify-content: space-between; align-items: center;
     padding: var(--space-5) var(--space-6);
     color: var(--ink);
+    /* Sit above the photo. panzoom applies position+transform to the
+       <img>, which makes it a positioned sibling with z-index:auto;
+       among positioned-auto siblings, paint follows DOM order, so an
+       image with aspect wider than the stage (filling the stage's full
+       height) would otherwise paint over the toolbar at the top edge. */
+    z-index: 2;
   }
   .lb-toolbar-left, .lb-toolbar-right {
     display: flex; gap: var(--space-4); align-items: center;
