@@ -128,3 +128,75 @@ func TestSeedScaleLibrary_ZeroTotalNotPanics(t *testing.T) {
 		mediaseed.ScaleOpts{Total: 0, Seed: 1})
 	require.Len(t, ids, 1) // clamped to 1 by withDefaults
 }
+
+// TestSeedFTSCorpus_PopulatesIndex verifies that after the helper
+// runs, media_fts is populated for every seeded row, captions are
+// inserted at roughly the requested fraction, and a known-vocabulary
+// query ("sunset") lands MATCH hits at a non-trivial rate. Without
+// this, a future refactor that silently breaks the bulk INSERT or the
+// caption fan-out would surface only as flat BM25 numbers in the
+// hybrid bench — much harder to diagnose.
+func TestSeedFTSCorpus_PopulatesIndex(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+
+	const total = 1000
+	ids := mediaseed.SeedScaleLibrary(t, d.WriteDB(), owner,
+		mediaseed.DefaultScaleOpts(total))
+	r.Len(ids, total)
+
+	mediaseed.SeedFTSCorpus(t, d.WriteDB(), owner, mediaseed.DefaultFTSOpts())
+
+	ctx := context.Background()
+	ro := d.ReadDB()
+
+	// Every media row should have one media_fts row. The bulk INSERT
+	// drives one row per media, captioned or not.
+	var nFTS int
+	r.NoError(ro.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_fts`).Scan(&nFTS))
+	r.Equal(total, nFTS)
+
+	// CaptionFraction=0.30 ± 5pp under a fixed seed at n=1000.
+	var nCaptions int
+	r.NoError(ro.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ai_results WHERE task='caption' AND status='active'`).
+		Scan(&nCaptions))
+	r.InDelta(300, nCaptions, 50, "caption count %d outside expected band", nCaptions)
+
+	// Every caption ai_results row must have a media_captions text.
+	var nCaptionsLinked int
+	r.NoError(ro.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM ai_results r
+		  JOIN media_captions mc ON mc.result_id = r.id
+		 WHERE r.task='caption' AND r.status='active'`).Scan(&nCaptionsLinked))
+	r.Equal(nCaptions, nCaptionsLinked, "caption ai_results without media_captions row")
+
+	// The canonical bench query "sunset" must match a non-trivial
+	// fraction of caption rows. With 6 words drawn from a 30-word
+	// pool, ~18% of captions contain "sunset"; at 30% caption
+	// coverage and total=1000, expect ~50 hits. Floor of 10 leaves
+	// generous slack for RNG variance at this small n while still
+	// failing if the corpus is empty or if the tokenizer is
+	// misconfigured.
+	var nHits int
+	r.NoError(ro.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM media_fts WHERE media_fts MATCH 'sunset'`).Scan(&nHits))
+	r.GreaterOrEqual(nHits, 10,
+		"BM25 hits for 'sunset' too low (%d) — corpus or tokenizer regression", nHits)
+
+	// Tag labels must populate the corpus. The seed labels are all
+	// "scale-tag-NNNN", which the unicode61 tokenizer splits on the
+	// hyphens — every tagged row gets the "scale" and "tag" tokens.
+	// Probing for "scale" therefore approximates "any tagged row has a
+	// non-empty tag_label". With ~50% tag coverage at total=1000,
+	// expect a few hundred hits; floor of 100 leaves room for RNG
+	// variance while still failing if the bulk INSERT skipped
+	// tag_label entirely.
+	var nTagHits int
+	r.NoError(ro.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM media_fts WHERE media_fts MATCH 'scale'`).Scan(&nTagHits))
+	r.GreaterOrEqual(nTagHits, 100,
+		"tag_label column underpopulated (%d 'scale' hits) — bulk INSERT regression?",
+		nTagHits)
+}

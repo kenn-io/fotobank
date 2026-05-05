@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math/rand"
+	"strings"
 	"testing"
 	"time"
 
@@ -286,4 +287,196 @@ func generateTagKeys(n int) []string {
 		out[i] = fmt.Sprintf("scale-tag-%04d", i)
 	}
 	return out
+}
+
+// FTSOpts controls SeedFTSCorpus's caption fan-out and word picks.
+type FTSOpts struct {
+	// CaptionFraction is the fraction of media rows that get a caption
+	// ai_results row + media_captions row (0..1). Real libraries have
+	// only a slice of media captioned; the bench only needs enough
+	// caption rows for BM25 to have a non-trivial result set against
+	// "sunset"-like queries. 30% is a reasonable mid-point.
+	CaptionFraction float64
+	// Seed seeds the caption-word RNG. Different from
+	// ScaleOpts.Seed by default so caption picks are independent of
+	// tag picks; same Seed → byte-identical caption text.
+	Seed int64
+}
+
+// DefaultFTSOpts returns 30% caption coverage, seed=43.
+func DefaultFTSOpts() FTSOpts {
+	return FTSOpts{CaptionFraction: 0.30, Seed: 43}
+}
+
+func (o FTSOpts) withDefaults() FTSOpts {
+	if o.CaptionFraction < 0 {
+		o.CaptionFraction = 0
+	}
+	if o.CaptionFraction > 1 {
+		o.CaptionFraction = 1
+	}
+	if o.Seed == 0 {
+		o.Seed = 43
+	}
+	return o
+}
+
+// captionWords is the deterministic vocabulary SeedFTSCorpus draws on.
+// Picked uniformly per caption-word slot. "sunset" is intentionally at
+// index 0 (the canonical bench query); the rest are common
+// photography-adjacent words that produce a varied corpus without
+// any one word dominating.
+//
+// Each caption is six words pulled with replacement from this 30-word
+// pool. P("sunset" appears) = 1 - (29/30)^6 ≈ 0.18, so with
+// CaptionFraction=0.30 ~5% of all rows will surface for a "sunset"
+// BM25 query — enough to fill multiple result pages but well short of
+// the trivial "matches everything" shape that would hide the cost
+// difference between BM25Only and the filter-only fast path.
+var captionWords = []string{
+	"sunset", "mountain", "portrait", "beach", "river", "forest",
+	"city", "street", "sky", "cloud", "rain", "snow",
+	"dog", "cat", "child", "family", "friend", "wedding",
+	"morning", "evening", "winter", "spring", "summer", "autumn",
+	"flower", "tree", "rock", "lake", "bridge", "road",
+}
+
+const captionWordsPerRow = 6
+
+// SeedFTSCorpus extends a previously-seeded scale library (created
+// via SeedScaleLibrary) with caption rows and bulk-populates media_fts
+// from the joined corpus columns. Designed for benchmarks that
+// exercise the BM25 path: SeedScaleLibrary alone leaves media_fts
+// empty (no caption seeding, no FTS refresh), so a hybrid bench would
+// otherwise measure an empty corpus.
+//
+// Why a separate helper: callers that don't need FTS5 (the existing
+// repo / facets / embedding benches) shouldn't pay caption + FTS seed
+// cost. Splitting the helper also keeps SeedScaleLibrary's
+// determinism contract from coupling to FTS-internal vocabulary
+// choices.
+//
+// The bulk INSERT projection mirrors the per-row index.RefreshMediaFTS
+// call the importer/reconcile/AI-promotion pipeline drives in
+// production, modulo the GROUP_CONCAT-vs-rank-ordered loop the
+// production path uses. The tokenizer (porter unicode61) sees the
+// same text either way, so BM25 numbers transfer.
+//
+// Determinism: caption word picks come from a seed-driven RNG; same
+// FTSOpts → byte-identical caption text → byte-identical media_fts
+// rows. The owner argument scopes the bulk INSERT so a multi-owner DB
+// only refreshes the seeded slice.
+func SeedFTSCorpus(tb testing.TB, rw *sql.DB, p owners.Principal, opts FTSOpts) {
+	tb.Helper()
+	opts = opts.withDefaults()
+
+	ctx := context.Background()
+	tx, err := rw.BeginTx(ctx, nil)
+	require.NoError(tb, err, "fts seed: begin tx")
+
+	// Pull the IDs of media rows owned by p. Iterating against the
+	// IDs slice instead of running a fan-out INSERT...SELECT keeps
+	// the caption fraction deterministic — the SQL CASE-driven path
+	// would need a deterministic hash of m.id to avoid leaking
+	// SQLite's random() across runs.
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id FROM media WHERE owner_hub = ? AND owner_user_id = ? ORDER BY id`,
+		p.Hub, p.UserID,
+	)
+	require.NoError(tb, err, "fts seed: select media ids")
+	var ids []string
+	for rows.Next() {
+		var id string
+		require.NoError(tb, rows.Scan(&id), "fts seed: scan media id")
+		ids = append(ids, id)
+	}
+	require.NoError(tb, rows.Err(), "fts seed: iterate media ids")
+	require.NoError(tb, rows.Close(), "fts seed: close media-id cursor")
+
+	// Caption fan-out. ai_results carries the same task='caption' /
+	// status='active' shape as production AI promotion, so the FTS
+	// JOIN sees the same predicate path it would in a real library.
+	resultsStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO ai_results
+			(id, media_id, task, model_id, prompt_version, prompt_hash,
+			 input_profile, status, generated_at)
+		VALUES (?, ?, 'caption', ?, ?, ?, ?, 'active', ?)`)
+	require.NoError(tb, err, "fts seed: prepare ai_results")
+	defer resultsStmt.Close()
+
+	captionStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO media_captions (result_id, text) VALUES (?, ?)`)
+	require.NoError(tb, err, "fts seed: prepare media_captions")
+	defer captionStmt.Close()
+
+	rng := rand.New(rand.NewSource(opts.Seed))
+	for i, id := range ids {
+		if rng.Float64() >= opts.CaptionFraction {
+			continue
+		}
+		resultID := fmt.Sprintf("scale-cap-%07d", i)
+		_, err := resultsStmt.ExecContext(ctx,
+			resultID, id,
+			"scale-cap-model", "cap-v1", "scale-cap-hash", "scale-cap-profile",
+			baseTime.Add(-time.Duration(i)*time.Minute),
+		)
+		require.NoErrorf(tb, err, "fts seed: insert caption ai_results row %d", i)
+
+		var sb strings.Builder
+		for w := range captionWordsPerRow {
+			if w > 0 {
+				sb.WriteByte(' ')
+			}
+			sb.WriteString(captionWords[rng.Intn(len(captionWords))])
+		}
+		_, err = captionStmt.ExecContext(ctx, resultID, sb.String())
+		require.NoErrorf(tb, err, "fts seed: insert media_captions row %d", i)
+	}
+
+	// Bulk-populate media_fts. The projection mirrors RefreshMediaFTS:
+	//   - filename, camera, lens, location_label come from the media row.
+	//   - caption_text comes from the active media_captions row (LEFT JOIN
+	//     yields '' when no caption row exists).
+	//   - tag_label is the rank-ordered tag labels GROUP_CONCAT'd. We
+	//     pre-order in a CTE because GROUP_CONCAT(... ORDER BY ...) is
+	//     a SQLite-3.44+ syntax that we can't assume; SQLite's
+	//     implementation honors the inner ORDER BY for the aggregate
+	//     in practice but we sort by (media_id, rank) explicitly to
+	//     keep the determinism contract honest across versions.
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO media_fts (
+			media_id, caption_text, tag_label, filename, camera, lens, location_label)
+		 SELECT
+			m.id,
+			COALESCE(cap.text, ''),
+			COALESCE(tags.labels, ''),
+			COALESCE(m.original_filename, ''),
+			COALESCE(m.make, '')
+				|| CASE WHEN m.make IS NOT NULL AND m.model IS NOT NULL THEN ' ' ELSE '' END
+				|| COALESCE(m.model, ''),
+			COALESCE(m.lens_model, ''),
+			COALESCE(m.location_label, '')
+		 FROM media m
+		 LEFT JOIN (
+			SELECT r.media_id, mc.text
+			  FROM ai_results r
+			  JOIN media_captions mc ON mc.result_id = r.id
+			 WHERE r.task = 'caption' AND r.status = 'active'
+		 ) cap ON cap.media_id = m.id
+		 LEFT JOIN (
+			SELECT media_id, GROUP_CONCAT(tag_label, ' ') AS labels FROM (
+				SELECT r.media_id, mt.tag_label
+				  FROM ai_results r
+				  JOIN media_tags mt ON mt.result_id = r.id
+				 WHERE r.task = 'tag' AND r.status = 'active'
+				 ORDER BY r.media_id, mt.rank
+			) GROUP BY media_id
+		 ) tags ON tags.media_id = m.id
+		 WHERE m.owner_hub = ? AND m.owner_user_id = ?`,
+		p.Hub, p.UserID,
+	); err != nil {
+		require.NoError(tb, err, "fts seed: bulk insert media_fts")
+	}
+
+	require.NoError(tb, tx.Commit(), "fts seed: commit")
 }
