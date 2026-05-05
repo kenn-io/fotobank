@@ -14,12 +14,14 @@
   let computed = $derived(computeMonthLayout(items, options, !!label));
 </script>
 
-<!-- Cell-level content-visibility:auto (below) defers layout/paint
-     for offscreen cells; chunk-level c-v was tried and reverted —
-     A/B in tests/e2e/scale/library.spec.ts showed it made scroll-to-
-     bottom 5x worse (p95 frame 83ms vs 17ms, 7 longtasks vs 0)
-     because rapid scroll forces Chrome to commit deferred layout
-     for every interleaved chunk in one go. See PS-3c (#28) closeout. -->
+<!-- content-visibility:auto on cells was removed in PS-3e (#30). The
+     four-variant A/B in tests/e2e/scale/library.spec.ts showed c-v
+     causes longtasks even under realistic dwell-style scroll
+     (5 longtasks / 116ms max frame in a 15s window, vs 0 / 33ms
+     without). The benefit c-v could provide — deferring img.decode
+     for offscreen thumbs — wasn't measurable because the test seeds
+     no real thumb files. PS-3e2 (kata follow-up) re-tests with real
+     images before considering re-adding c-v. -->
 <section class="month" style="min-height: {computed.intrinsicHeight}px;">
   {#if label}
     <header class="day-header">
@@ -37,9 +39,7 @@
           <div
             class="cell"
             style="position: absolute; left: {cell.x}px; top: {row.y}px;
-                   width: {cell.width}px; height: {row.height}px;
-                   content-visibility: auto;
-                   contain-intrinsic-size: {cell.width}px {row.height}px;"
+                   width: {cell.width}px; height: {row.height}px;"
           >
             {#if renderCell}
               {@render renderCell(m, { x: cell.x, y: row.y, w: cell.width, h: row.height })}

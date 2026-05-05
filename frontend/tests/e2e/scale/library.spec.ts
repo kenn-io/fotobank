@@ -156,9 +156,19 @@ async function readFrameInstrument(page: Page): Promise<FrameStats> {
   });
 }
 
+// scrollMode picks the seek pattern for the scroll loop:
+//  - "bottom": scrollTo(scrollHeight) — rapid-fire, the worst case for
+//    content-visibility:auto's deferred layout (PS-3c finding).
+//  - "dwell":  scroll one viewport at a time with a 100ms inter-step
+//    delay simulating user dwell. PS-3e hypothesis: c-v's deferred
+//    layout amortizes over per-step commits and is benign or
+//    beneficial here, unlike under "bottom".
+type ScrollMode = "bottom" | "dwell";
+
 async function runScaleScenario(
   page: Page,
   variant: string,
+  scrollMode: ScrollMode,
   injectStyle?: string,
 ): Promise<ScaleResult> {
   let apiMediaCount = 0;
@@ -203,25 +213,65 @@ async function runScaleScenario(
   // so the frame-deltas reflect scroll cost, not initial-paint cost.
   await installFrameInstrument(page);
 
-  // Scroll-to-bottom 10 times. Each iteration: scroll to scrollHeight,
-  // wait for the next /api/v1/media response, capture per-scroll
-  // sample. mediaStore exhaustion (next_offset:null) would cause the
-  // wait to time out — 10 iterations stay well under the 100k-row /
-  // 200-per-page = 500-page budget.
+  // Drive PAGES /api/v1/media fetches via the chosen scroll pattern.
+  //
+  // bottom mode: scrollTo(scrollHeight) on each iteration; one fetch
+  //   reliably trips per scroll because the bottom sentinel jumps
+  //   straight into the IO buffer.
+  // dwell mode: scroll one viewport at a time with a 100ms delay,
+  //   simulating user dwell. The IO sentinel needs multiple
+  //   viewport-height steps to come into range, so the loop scrolls
+  //   until /api/v1/media fires (or we hit a step ceiling). The
+  //   scroll-step count is variable, but the fetched-page count is
+  //   pinned at PAGES so the per-scroll sample series is comparable.
   const PAGES = 10;
   const perScroll: PerScrollSample[] = [];
   for (let i = 0; i < PAGES; i++) {
-    await Promise.all([
-      page.waitForResponse(
+    if (scrollMode === "bottom") {
+      await Promise.all([
+        page.waitForResponse(
+          (r) =>
+            new URL(r.url()).pathname === "/api/v1/media" &&
+            r.status() === 200,
+          { timeout: 30_000 },
+        ),
+        page.evaluate(() => {
+          const main = document.querySelector(".main");
+          if (main) main.scrollTo(0, main.scrollHeight);
+        }),
+      ]);
+    } else {
+      // dwell mode: step by one viewport, wait 100ms, repeat. Stop
+      // when /api/v1/media fires for this iteration. A 30-step ceiling
+      // protects against an infinite loop if the sentinel never trips.
+      const responsePromise = page.waitForResponse(
         (r) =>
           new URL(r.url()).pathname === "/api/v1/media" && r.status() === 200,
         { timeout: 30_000 },
-      ),
-      page.evaluate(() => {
-        const main = document.querySelector(".main");
-        if (main) main.scrollTo(0, main.scrollHeight);
-      }),
-    ]);
+      );
+      let stepped = 0;
+      const MAX_STEPS = 30;
+      while (stepped < MAX_STEPS) {
+        const advanced = await page.evaluate(() => {
+          const main = document.querySelector(".main") as HTMLElement | null;
+          if (!main) return false;
+          const before = main.scrollTop;
+          main.scrollBy(0, main.clientHeight);
+          // scrollBy is async on some Chrome versions; force a layout
+          // read so the next .scrollTop check sees the updated value.
+          return main.scrollTop > before;
+        });
+        if (!advanced) break;
+        stepped += 1;
+        // Race: poll for the response or sleep 100ms and continue.
+        const settled = await Promise.race([
+          responsePromise.then(() => true),
+          new Promise<false>((res) => setTimeout(() => res(false), 100)),
+        ]);
+        if (settled) break;
+      }
+      await responsePromise;
+    }
     perScroll.push(
       await captureSample(
         page,
@@ -258,59 +308,69 @@ async function persistResult(result: ScaleResult): Promise<void> {
   );
 }
 
+// CV_OVERRIDE strips content-visibility from .month, .cell (the chunk
+// and cell wrappers in MonthChunk.svelte). A second variant injects
+// this via page.addStyleTag after initial paint to A/B the
+// optimization without touching source.
+const CV_OVERRIDE = `.month, .cell { content-visibility: visible !important; contain-intrinsic-size: auto !important; }`;
+
+async function logResult(result: ScaleResult): Promise<void> {
+  console.log(`[scale/library ${result.variant}] INITIAL`, JSON.stringify(result.initial));
+  for (const s of result.perScroll) {
+    console.log(`[scale/library ${result.variant}] SCROLL`, JSON.stringify(s));
+  }
+  console.log(
+    `[scale/library ${result.variant}] FRAMES`,
+    JSON.stringify(result.scrollFrames),
+  );
+  await persistResult(result);
+}
+
+function assertSoftFloors(result: ScaleResult): void {
+  const last = result.perScroll[result.perScroll.length - 1];
+  expect(last).toBeDefined();
+  if (last) {
+    // Soft floors — sized to fail on 5-10x regression, not tight.
+    expect(last.domNodeCount).toBeLessThan(50_000);
+    expect(last.apiMediaRequests).toBeLessThan(50);
+    expect(last.thumbRequests).toBeLessThan(5_000);
+  }
+}
+
 test.describe("/library scale (100k rows, no thumb files)", () => {
-  test("baseline: per-scroll samples + rAF frame intervals (c-v applied)", async ({
-    page,
-  }) => {
-    const result = await runScaleScenario(page, "cv-applied");
-    console.log("[scale/library cv-applied] INITIAL", JSON.stringify(result.initial));
-    for (const s of result.perScroll) {
-      console.log("[scale/library cv-applied] SCROLL", JSON.stringify(s));
-    }
-    console.log(
-      "[scale/library cv-applied] FRAMES",
-      JSON.stringify(result.scrollFrames),
-    );
-
-    const last = result.perScroll[result.perScroll.length - 1];
-    expect(last).toBeDefined();
-    if (last) {
-      // Soft floors — sized to fail on 5-10x regression, not tight.
-      expect(last.domNodeCount).toBeLessThan(50_000);
-      expect(last.apiMediaRequests).toBeLessThan(50);
-      expect(last.thumbRequests).toBeLessThan(5_000);
-    }
-
-    await persistResult(result);
+  test("scroll-to-bottom, c-v applied", async ({ page }) => {
+    const result = await runScaleScenario(page, "cv-applied-bottom", "bottom");
+    await logResult(result);
+    assertSoftFloors(result);
   });
 
-  test("ablated: same but with content-visibility disabled via injected CSS", async ({
-    page,
-  }) => {
-    // The override targets the two selectors that carry
-    // content-visibility:auto: the chunk wrapper (.month) and the cell
-    // wrapper (.cell). Anything else with c-v is unrelated.
-    const override = `.month, .cell { content-visibility: visible !important; contain-intrinsic-size: auto !important; }`;
-    const result = await runScaleScenario(page, "cv-disabled", override);
-    console.log("[scale/library cv-disabled] INITIAL", JSON.stringify(result.initial));
-    for (const s of result.perScroll) {
-      console.log("[scale/library cv-disabled] SCROLL", JSON.stringify(s));
-    }
-    console.log(
-      "[scale/library cv-disabled] FRAMES",
-      JSON.stringify(result.scrollFrames),
+  test("scroll-to-bottom, c-v disabled", async ({ page }) => {
+    const result = await runScaleScenario(
+      page,
+      "cv-disabled-bottom",
+      "bottom",
+      CV_OVERRIDE,
     );
+    await logResult(result);
+    assertSoftFloors(result);
+  });
 
-    // Same soft floors apply — a regression that breaks the grid
-    // would fail both variants identically.
-    const last = result.perScroll[result.perScroll.length - 1];
-    expect(last).toBeDefined();
-    if (last) {
-      expect(last.domNodeCount).toBeLessThan(50_000);
-      expect(last.apiMediaRequests).toBeLessThan(50);
-      expect(last.thumbRequests).toBeLessThan(5_000);
-    }
+  test("dwell-scroll, c-v applied", async ({ page }) => {
+    // PS-3e hypothesis: c-v's per-step layout commit amortizes here,
+    // unlike rapid scroll-to-bottom.
+    const result = await runScaleScenario(page, "cv-applied-dwell", "dwell");
+    await logResult(result);
+    assertSoftFloors(result);
+  });
 
-    await persistResult(result);
+  test("dwell-scroll, c-v disabled", async ({ page }) => {
+    const result = await runScaleScenario(
+      page,
+      "cv-disabled-dwell",
+      "dwell",
+      CV_OVERRIDE,
+    );
+    await logResult(result);
+    assertSoftFloors(result);
   });
 });
