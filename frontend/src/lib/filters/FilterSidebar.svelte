@@ -152,11 +152,15 @@
     pointer-events: none;
     z-index: 0;
   }
+  /* "INDEX" sits on the same x=var(--space-4) (8px) guideline as the
+     section labels (FacetSection .label) and the row text (FacetList
+     .row), so the whole sidebar reads against a single vertical
+     gutter instead of three different indents. */
   .title {
     position: relative;
     z-index: 1;
     display: inline-block;
-    padding-right: var(--space-3);
+    padding: 0 var(--space-4);
     background: var(--bg);
   }
   .title-display {

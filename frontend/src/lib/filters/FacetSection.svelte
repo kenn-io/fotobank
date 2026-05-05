@@ -98,11 +98,14 @@
     transition: border-top-color 100ms;
   }
   .header:hover .rule { border-top-color: var(--ink-3); }
+  /* Label text starts at x=var(--space-4) (8px) so it aligns with
+     FacetList rows, which use padding-left: var(--space-4). The label
+     gets symmetric inline padding (8px L + R) so the bg interrupting
+     the rule looks balanced around the label text. */
   .label {
     position: relative;
     z-index: 1;
-    margin-left: var(--space-4);
-    padding: 0 var(--space-3);
+    padding: 0 var(--space-4);
     background: var(--bg);
     font-family: var(--font-mono);
     font-weight: 500;
@@ -121,6 +124,10 @@
     align-items: center;
     gap: var(--space-3);
     padding-left: var(--space-3);
+    /* Match rows' padding-right (var(--space-3) on .row) so the
+       header's total count and the per-row counts share a vertical
+       guideline at the right edge. */
+    padding-right: var(--space-3);
     background: var(--bg);
   }
   /* Bracketed mono token "[2]" — brackets are pseudo-element
