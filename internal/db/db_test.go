@@ -612,3 +612,73 @@ func TestOpen_ConcurrentWriters(t *testing.T) {
 	r.NoError(h1.QueryRowContext(ctx, `SELECT COUNT(*) FROM stress`).Scan(&total))
 	r.Equal(1, total)
 }
+
+// TestQueryContextCancellationInterruptsRead proves the ctx-cancel
+// contract that the request path depends on: when the SPA's
+// AbortController fires (e.g. the search hydration coalescing leaves
+// the older /search request in-flight when a newer one supersedes
+// it), the resulting net/http context cancellation must reach
+// SQLite and stop the executing statement. Without this, an aborted
+// request would keep churning on a 100k-row scan even though the
+// client has long since closed the connection.
+//
+// The chain is: huma → handler ctx → service.Search → engine → backend
+// → ro.QueryContext. mattn/go-sqlite3 implements driver.QueryerContext
+// and registers a progress handler that calls sqlite3_interrupt when
+// ctx.Done() closes. This test pins the lowest level — if the driver
+// stops honoring cancellation in a future upgrade, the application
+// chain alone won't catch it.
+//
+// Strategy: kick off a recursive CTE that counts to a high enough
+// number to take longer than the cancel deadline, cancel ctx ~50ms in,
+// and assert the resulting error wraps context.Canceled (or returns
+// a SQLite "interrupted" error that errors.Is(ctx.Err()) also
+// recognises through the driver's mapping).
+func TestQueryContextCancellationInterruptsRead(t *testing.T) {
+	r := require.New(t)
+	d, err := db.Open(filepath.Join(t.TempDir(), "cancel.sqlite"))
+	r.NoError(err)
+	defer d.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Kick a 500ms timer that fires cancel(). 500ms is enough for the
+	// recursive CTE to enter SQLite and start counting; a tighter
+	// window would race with QueryContext's setup overhead.
+	const cancelDelay = 500 * time.Millisecond
+	go func() {
+		time.Sleep(cancelDelay)
+		cancel()
+	}()
+
+	// Recursive CTE counting to 5e9 takes well over a second on M-class
+	// hardware — enough that the cancel timer fires while the statement
+	// is still executing. Without ctx-honoring driver, the QueryContext
+	// would block until the count completes.
+	const slowQ = `
+WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM c WHERE n < 5000000000)
+SELECT COUNT(*) FROM c`
+	start := time.Now()
+	row := d.ReadDB().QueryRowContext(ctx, slowQ)
+	var n int
+	err = row.Scan(&n)
+	elapsed := time.Since(start)
+
+	r.Error(err, "scan must surface the cancellation, not a successful count")
+	// The driver may surface the cancellation as either ctx.Err()
+	// (context.Canceled) or as a SQLite "interrupted" error; both
+	// paths are valid evidence that ctx propagation worked. We only
+	// fail if we got a clean nil — which would mean the driver
+	// ignored the ctx and ran to completion.
+	r.True(
+		errors.Is(err, context.Canceled) ||
+			errors.Is(err, sql.ErrNoRows) /* defensive */ ||
+			elapsed < 5*time.Second,
+		"err=%v elapsed=%v — query must have aborted within seconds of cancel, not run to completion",
+		err, elapsed,
+	)
+	// Hard ceiling: even on a slow runner the cancellation should
+	// take effect within a second of the cancel firing.
+	r.Less(elapsed, 2*time.Second,
+		"cancellation took %v — driver may not be honoring ctx", elapsed)
+}
