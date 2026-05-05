@@ -167,6 +167,75 @@ describe("searchStore", () => {
     expect(callCount).toBe(3);
   });
 
+  it("setRequestShape issues exactly one fetch with combined params", async () => {
+    // The Search.svelte hydration effect used to call setFilters →
+    // setSort → setQuery on every URL change, which fires three
+    // /search requests (the first two are aborted via AbortController,
+    // but they still leave the browser and may cost backend work
+    // depending on ctx propagation). setRequestShape collapses that
+    // cascade into one issue() and one client.search() — this test
+    // pins that contract so a regression that re-introduces the
+    // cascade surfaces here.
+    const { client, calls } = makeClient([canned()]);
+    const store = createSearchStore({ client });
+    await store.setRequestShape({
+      query: "dogs",
+      sort: "relevance",
+      filters: {
+        ...emptyFilters(),
+        cameras: ["Sony A7R IV"],
+        lenses: ["FE 24-70mm F2.8 GM"],
+        facetTagKeys: ["dog"],
+        hasGps: true,
+        mediaType: "photo",
+      },
+    });
+    expect(calls.length).toBe(1);
+    const params = calls[0] as {
+      q?: string;
+      sort?: string;
+      camera?: string[];
+      lens?: string[];
+      facet_tag?: string[];
+      has_gps?: boolean;
+      media_type?: string;
+    };
+    expect(params.q).toBe("dogs");
+    expect(params.sort).toBe("relevance");
+    expect(params.camera).toEqual(["Sony A7R IV"]);
+    expect(params.lens).toEqual(["FE 24-70mm F2.8 GM"]);
+    expect(params.facet_tag).toEqual(["dog"]);
+    expect(params.has_gps).toBe(true);
+    expect(params.media_type).toBe("photo");
+    // Store state reflects all three axes from the single call.
+    expect(store.query).toBe("dogs");
+    expect(store.sort).toBe("relevance");
+    expect(store.filters.cameras).toEqual(["Sony A7R IV"]);
+  });
+
+  it("setRequestShape resets cursor before re-issuing", async () => {
+    // Page 1 returns a cursor; setRequestShape must clear it before
+    // firing the next request so the second call starts from scratch
+    // (the request shape changed, the prior cursor is invalid).
+    const { client, calls } = makeClient([
+      canned({ next_cursor: "stale-cursor", has_more: true }),
+      canned({ results: [], next_cursor: null, has_more: false }),
+    ]);
+    const store = createSearchStore({ client });
+    await store.setQuery("first");
+    expect(store.cursor).toBe("stale-cursor");
+
+    await store.setRequestShape({
+      query: "second",
+      sort: "newest",
+      filters: emptyFilters(),
+    });
+    expect(store.cursor).toBeNull();
+    const params2 = calls[1] as { q?: string; cursor?: string };
+    expect(params2.q).toBe("second");
+    expect(params2.cursor ?? "").toBe("");
+  });
+
   it("setFilters forwards camera/lens/facet_tag/has_gps/media_type to client.search", async () => {
     // SF-18 added cameras/lenses/facetTagKeys/hasGps to SearchFilters
     // and threaded them through buildParams. The existing tests scaffold

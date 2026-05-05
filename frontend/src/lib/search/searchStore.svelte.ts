@@ -28,6 +28,15 @@ export interface SearchStore {
   setQuery(q: string): Promise<void>;
   setFilters(f: SearchFilters): Promise<void>;
   setSort(s: SearchSort): Promise<void>;
+  // setRequestShape mutates query/sort/filters atomically and issues
+  // exactly one fetch. Used by Search.svelte's hydration $effect, where
+  // calling setFilters → setSort → setQuery would fire three requests
+  // (the prior two get aborted, but they still leave the browser and
+  // — depending on backend ctx propagation — may cost server work).
+  // Direct UI interactions (popover writes, sort segment clicks) keep
+  // calling the single-dimensional setters since one-axis changes are
+  // intentional there.
+  setRequestShape(shape: { query: string; sort: SearchSort; filters: SearchFilters }): Promise<void>;
   fetchNextPage(): Promise<void>;
   onGenerationActivated(): void;
 }
@@ -252,6 +261,18 @@ export function createSearchStore(opts: CreateSearchStoreOptions): SearchStore {
     await issue(null);
   }
 
+  async function setRequestShape(shape: {
+    query: string;
+    sort: SearchSort;
+    filters: SearchFilters;
+  }): Promise<void> {
+    query = shape.query;
+    sort = shape.sort;
+    filters = shape.filters;
+    cursor = null;
+    await issue(null);
+  }
+
   async function fetchNextPage(): Promise<void> {
     if (cursor === null) return;
     if (!hasMore) return;
@@ -293,6 +314,7 @@ export function createSearchStore(opts: CreateSearchStoreOptions): SearchStore {
     setQuery,
     setFilters,
     setSort,
+    setRequestShape,
     fetchNextPage,
     onGenerationActivated,
   };

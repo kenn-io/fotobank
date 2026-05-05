@@ -75,6 +75,7 @@ function makeStore(seed: StoreSeed = {}): SearchStore {
     setQuery: vi.fn().mockResolvedValue(undefined),
     setFilters: vi.fn().mockResolvedValue(undefined),
     setSort: vi.fn().mockResolvedValue(undefined),
+    setRequestShape: vi.fn().mockResolvedValue(undefined),
     fetchNextPage: vi.fn().mockResolvedValue(undefined),
     onGenerationActivated: vi.fn(),
   } as unknown as SearchStore;
@@ -194,9 +195,9 @@ describe("Search.svelte", () => {
     // Mount on /search?q=foo so the initial hydration captures q=foo.
     // Then update the URL to /search?q=bar and call router.syncFromLocation,
     // which mutates router.current. The hydration $effect must re-run
-    // and route the new query through store.setQuery, otherwise external
-    // URL changes (e.g. AppHeader typing while already on /search) leave
-    // the store stale.
+    // and route the new query through store.setRequestShape, otherwise
+    // external URL changes (e.g. AppHeader typing while already on
+    // /search) leave the store stale.
     window.history.replaceState({}, "", "/search?q=foo");
     router.syncFromLocation();
     const store = makeStore();
@@ -205,14 +206,19 @@ describe("Search.svelte", () => {
     await inspectionStore.load();
     flushSync();
     await tick();
-    expect(store.setQuery).toHaveBeenCalledWith("foo");
+    const setRequestShapeMock = store.setRequestShape as ReturnType<typeof vi.fn>;
+    expect(setRequestShapeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "foo" }),
+    );
 
     // Simulate AppHeader navigating /search?q=foo → /search?q=bar.
     window.history.replaceState({}, "", "/search?q=bar");
     router.syncFromLocation();
     flushSync();
     await tick();
-    expect(store.setQuery).toHaveBeenCalledWith("bar");
+    expect(setRequestShapeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "bar" }),
+    );
   });
 
   it("triggers fetchNextPage when VirtualGrid's load-more sentinel intersects", async () => {
@@ -283,16 +289,16 @@ describe("Search.svelte", () => {
     // The URL-sync $effect writes /search?q=trees via router.navigate,
     // which calls syncFromLocation() and mutates router.current. The
     // hydration $effect then observes the new router.current and would
-    // run setFilters/setSort/setQuery again unless lastSyncedKey
-    // recognises it as the writeback's own echo. This test mounts with
-    // a pre-seeded store, lets the URL-sync run real navigate() so
-    // router.current changes, and asserts the post-writeback hydration
-    // does not call setQuery again.
+    // run setRequestShape again unless lastSyncedKey recognises it as
+    // the writeback's own echo. This test mounts with a pre-seeded
+    // store, lets the URL-sync run real navigate() so router.current
+    // changes, and asserts the post-writeback hydration does not call
+    // setRequestShape again.
     //
     // Use the real router.navigate (no spy) so the URL writeback
-    // actually mutates router.current. The setFilters/setSort/setQuery
-    // counts seen by the test reflect (a) the initial hydration cycle
-    // for the seeded URL, and (b) any echo-induced re-run.
+    // actually mutates router.current. The setRequestShape count seen
+    // by the test reflects (a) the initial hydration cycle for the
+    // seeded URL, and (b) any echo-induced re-run.
     const store = makeStore({
       query: "trees",
       sort: "newest",
@@ -304,22 +310,21 @@ describe("Search.svelte", () => {
     flushSync();
     await tick();
 
-    // Assert the setters were called EXACTLY once each, with the
-    // seeded URL's values (the URL was /search with no params, so the
+    // Assert setRequestShape was called EXACTLY once, with the seeded
+    // URL's values (the URL was /search with no params, so the
     // hydration ran with q="", sort="relevance", and the canonical
     // empty-filters shape that filtersFromMatch produces). The URL-sync
     // then wrote /search?q=trees&sort=newest from the seeded store
     // state, which mutated router.current. If echo suppression failed,
-    // we'd see a second hydration call here with setQuery("trees") and
-    // setSort("newest") — the assertions below would fail with a
-    // 2-count or with "trees"/"newest" arguments.
-    const setQueryMock = store.setQuery as ReturnType<typeof vi.fn>;
-    const setSortMock = store.setSort as ReturnType<typeof vi.fn>;
-    const setFiltersMock = store.setFilters as ReturnType<typeof vi.fn>;
-    expect(setQueryMock.mock.calls).toEqual([[""]]);
-    expect(setSortMock.mock.calls).toEqual([["relevance"]]);
-    expect(setFiltersMock.mock.calls).toEqual([[
-      { tags: [], cameras: [], lenses: [], facetTagKeys: [] },
+    // we'd see a second hydration call here with q="trees" / sort=
+    // "newest" — the assertion below would fail with a 2-count.
+    const setRequestShapeMock = store.setRequestShape as ReturnType<typeof vi.fn>;
+    expect(setRequestShapeMock.mock.calls).toEqual([[
+      {
+        query: "",
+        sort: "relevance",
+        filters: { tags: [], cameras: [], lenses: [], facetTagKeys: [] },
+      },
     ]]);
 
     // Bump the URL via syncFromLocation again. The URL still matches
@@ -328,10 +333,12 @@ describe("Search.svelte", () => {
     router.syncFromLocation();
     flushSync();
     await tick();
-    expect(setQueryMock.mock.calls).toEqual([[""]]);
-    expect(setSortMock.mock.calls).toEqual([["relevance"]]);
-    expect(setFiltersMock.mock.calls).toEqual([[
-      { tags: [], cameras: [], lenses: [], facetTagKeys: [] },
+    expect(setRequestShapeMock.mock.calls).toEqual([[
+      {
+        query: "",
+        sort: "relevance",
+        filters: { tags: [], cameras: [], lenses: [], facetTagKeys: [] },
+      },
     ]]);
   });
 
@@ -395,10 +402,9 @@ describe("Search.svelte", () => {
     flushSync();
     await tick();
     // The default-constructed search store inside Search.svelte ran
-    // setFilters → setSort → setQuery, each of which issues. Only
-    // the last issue's params survive on the wire (each call aborts
-    // the prior in-flight); explain=true must be set since the
-    // toggle's persisted value loaded as true.
+    // setRequestShape, which calls issue() once with the combined
+    // shape; explain=true must be set on that call since the toggle's
+    // persisted value loaded as true.
     expect(client.search).toHaveBeenCalled();
     const lastCall = (client.search as ReturnType<typeof vi.fn>).mock.calls.at(-1);
     expect(lastCall).toBeDefined();

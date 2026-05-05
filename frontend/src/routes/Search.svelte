@@ -206,12 +206,14 @@
   // initial mount, a popstate from back/forward, or AppHeader writing a
   // new ?q=). Skips when the route is not "search", and dedupes by
   // serialised key so the URL-sync effect's writeback doesn't trigger
-  // a second hydration. The setFilters → setSort → setQuery order
-  // matches the original onMount; each call supersedes the prior
-  // in-flight request via the store's inflight token, so only the last
-  // one's response lands in the UI. The async fetch promises are
-  // intentionally left unawaited — URL state and the request are
-  // independent concerns and the URL must not block on the request.
+  // a second hydration. setRequestShape mutates query/sort/filters
+  // atomically and issues one /search request — the earlier
+  // setFilters → setSort → setQuery cascade left the browser issuing
+  // three requests per URL change (the prior two were aborted in
+  // flight, but they still cost backend work depending on ctx
+  // propagation). The async fetch promise is intentionally left
+  // unawaited — URL state and the request are independent concerns and
+  // the URL must not block on the request.
   // We gate on inspectionStore.loaded so the first hydration sees the
   // persisted ai.inspection setting. Otherwise the explainGetter
   // reads its default (false) on the very first request and a user
@@ -246,11 +248,11 @@
       return;
     }
     lastHydratedKey = key;
-    const initialQuery = m.q ?? "";
-    const initialSort: SearchSort = m.sort ?? "relevance";
-    void s.setFilters(filtersFromMatch(m));
-    void s.setSort(initialSort);
-    void s.setQuery(initialQuery);
+    void s.setRequestShape({
+      query: m.q ?? "",
+      sort: m.sort ?? "relevance",
+      filters: filtersFromMatch(m),
+    });
     hydrated = true;
   });
 
