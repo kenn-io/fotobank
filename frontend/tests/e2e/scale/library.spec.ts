@@ -300,6 +300,13 @@ async function runScaleScenario(
       }
       await responsePromise;
     }
+    // waitForResponse resolves when bytes arrive, not when Svelte has
+    // committed the new state to the DOM. Wait one rAF tick so the
+    // captureSample below reads counts that match the freshly-rendered
+    // page rather than the previous frame's state.
+    await page.evaluate(
+      () => new Promise<void>((res) => requestAnimationFrame(() => res())),
+    );
     perScroll.push(
       await captureSample(
         page,
@@ -365,6 +372,20 @@ async function logResult(result: ScaleResult): Promise<void> {
   await persistResult(result);
 }
 
+// realThumbsMode mirrors playwright-e2e-scale.config.ts's resolution:
+// FOTOBANK_E2E_SCALE_REAL_THUMBS=1|true means the e2e-server seeded
+// real grid JPEGs, so /thumb returns 200. Anything else means default
+// mode where /thumb 404s for every cell. The spec uses this to assert
+// that thumb status codes match the server's seeding mode — without
+// that assertion, a future regression that silently drops the
+// real-thumbs seed (or a future regression in the /thumb handler that
+// 404s every request) would leave PS-3f's content-visibility A/B
+// running against a degenerate fixture without any test failure.
+const realThumbsMode = ((): boolean => {
+  const v = process.env["FOTOBANK_E2E_SCALE_REAL_THUMBS"] ?? "";
+  return v === "1" || v === "true";
+})();
+
 function assertSoftFloors(result: ScaleResult): void {
   const last = result.perScroll[result.perScroll.length - 1];
   expect(last).toBeDefined();
@@ -373,6 +394,20 @@ function assertSoftFloors(result: ScaleResult): void {
     expect(last.domNodeCount).toBeLessThan(50_000);
     expect(last.apiMediaRequests).toBeLessThan(50);
     expect(last.thumbRequests).toBeLessThan(5_000);
+
+    // Mode-aware thumb status assertions: every test must see the
+    // expected status mix. Real-thumbs mode requires at least one 200
+    // and zero 404s; default mode requires the inverse. Both modes
+    // demand SOME thumb traffic — a regression that suppresses thumb
+    // requests entirely (e.g. broken thumbUrl construction) would
+    // otherwise satisfy "thumb404 == 0" trivially in real-thumbs mode.
+    if (realThumbsMode) {
+      expect(last.thumb200).toBeGreaterThan(0);
+      expect(last.thumb404).toBe(0);
+    } else {
+      expect(last.thumb404).toBeGreaterThan(0);
+      expect(last.thumb200).toBe(0);
+    }
   }
 }
 

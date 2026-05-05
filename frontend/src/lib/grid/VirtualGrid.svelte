@@ -106,7 +106,14 @@
         }
       }
     }, { root, rootMargin: "-1px 0px -100% 0px" });
-    containerEl.querySelectorAll<HTMLElement>("[data-month]").forEach((el) => io.observe(el));
+    // Direct-child scope: a slotted headerAction or cellOverlay
+    // snippet could legitimately carry data-month for its own
+    // purposes; observing a descendant would corrupt the active-month
+    // signal as the descendant scrolls in/out independently of its
+    // wrapper.
+    containerEl
+      .querySelectorAll<HTMLElement>(":scope > [data-month]")
+      .forEach((el) => io.observe(el));
     return () => io.disconnect();
   });
 
@@ -138,7 +145,11 @@
         }
       }
     }, { root, rootMargin: "200% 0px" });
-    containerEl.querySelectorAll<HTMLElement>("[data-month]").forEach((el) => io.observe(el));
+    // Direct-child scope: see the active-month observer above for why
+    // the descendant-matching selector would be wrong here.
+    containerEl
+      .querySelectorAll<HTMLElement>(":scope > [data-month]")
+      .forEach((el) => io.observe(el));
     return () => io.disconnect();
   });
 
@@ -171,7 +182,9 @@
 
   function jumpTo(key: string) {
     if (!containerEl) return;
-    const target = containerEl.querySelector(`[data-month="${CSS.escape(key)}"]`);
+    // :scope > matches a direct-child wrapper only — see the IO
+    // observers above for why a descendant match would be wrong.
+    const target = containerEl.querySelector(`:scope > [data-month="${CSS.escape(key)}"]`);
     target?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
