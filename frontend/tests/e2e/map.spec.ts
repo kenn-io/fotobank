@@ -35,8 +35,13 @@ test.describe("/map page", () => {
   });
 
   test("lightbox map pin navigates to /map?focus=<id>", async ({ page }) => {
-    // Seed gps-fixture-1 has GPS — its lightbox shows the map pin.
+    // Seed gps-fixture-1 has GPS — its lightbox shows the map pin in
+    // the info drawer/sheet. The drawer starts closed (Lightbox.svelte
+    // `infoOpen = $state(false)`), so the test needs to toggle it open
+    // before the map pin is mounted.
     await page.goto("/media/gps-fixture-1?from=library");
+    await expect(page.getByTestId("lightbox")).toBeVisible();
+    await page.getByRole("button", { name: /toggle info/i }).click();
     await expect(page.getByTestId("lightbox-map-pin")).toBeVisible();
     await page.getByTestId("lightbox-map-pin-link").click();
     await expect(page).toHaveURL(/\/map\?z=14&c=[^&]+&focus=gps-fixture-1/);

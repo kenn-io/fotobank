@@ -43,6 +43,7 @@
   class="lb-backdrop"
   class:fallback={mode === "fallback"}
   class:with-drawer={drawer !== undefined}
+  data-testid="lightbox"
   role="presentation"
   onclick={onClick}
 >

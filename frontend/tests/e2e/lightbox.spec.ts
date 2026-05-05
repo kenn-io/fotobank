@@ -175,8 +175,15 @@ test.describe("F2.5 lightbox", () => {
     // either the active loader.load() or a prefetched neighbour, both
     // of which prove the loader is doing its job.
     requested.length = 0;
-    await page.locator("[data-media-id]").first().click();
-    await expect(page).toHaveURL(/\/media\/.+\?from=library/);
+    // Click a thumb-ready fixture. The Lightbox loader bails on rows
+    // whose thumbStatus !== "ready" (avoids the broken-image flash for
+    // pending/working/no_preview rows), so clicking the very first
+    // [data-media-id] would land on a thumb-pending fixture like
+    // gps-fixture-1 and the loader would never fire preview/large
+    // requests. ai-fixture-tagged-1 is seeded thumb_status=ready with a
+    // real preview blob, so the loader walks the full sequence.
+    await page.getByLabel("Photo ai-fixture-tagged-1").click();
+    await expect(page).toHaveURL(/\/media\/ai-fixture-tagged-1\?from=library/);
 
     // Allow the loader to run preview → large. A short wait is enough
     // because Image() preload settles synchronously when the response is

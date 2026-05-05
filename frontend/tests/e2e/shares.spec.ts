@@ -65,32 +65,55 @@ test.describe("F2.3 owner-side sharing", () => {
     ).toBeVisible();
   });
 
-  test("delete-album-with-active-share toast deep links to /shares?album_id", async ({
+  test("delete-album-with-active-share surfaces CLI-aware conflict toast", async ({
     page,
   }) => {
-    // Use the seeded "E2E Italy 2025" album. Share it via album_live,
-    // then attempt to delete — the API returns 409 share.ErrAlbumHasLiveScopes
-    // and AlbumDetail surfaces a toast with a /shares?album_id deep link.
-    // Unique-per-run grantee so a retry after a partial failure doesn't
-    // see two conflict shares against the same album. CI has retries.
-    const grantee = `noop:conflict-${Date.now()}`;
+    // Use the seeded "E2E Italy 2025" album. The seed already creates an
+    // album_live share against it (cmd/e2e-server/main.go:621), so a
+    // delete attempt returns 409 share.ErrAlbumHasLiveScopes and
+    // AlbumDetail surfaces the CLI-aware conflict toast. The earlier
+    // SPA-aware variant (with a "View shares" link) was deliberately
+    // dropped in commit 0882470 because the CLI works regardless of the
+    // [ui].sharing_enabled flag — see the AlbumDetail unit test
+    // ("references the CLI command, not the in-app /shares page").
     await page.goto("/albums");
     await expect(page.getByText("E2E Italy 2025")).toBeVisible();
     await page.getByText("E2E Italy 2025").click();
-    await page.getByRole("button", { name: "Share album" }).click();
-    await page.getByPlaceholder("myhub:bob").fill(grantee);
-    await page.getByRole("button", { name: "Create share" }).click();
-    await expect(page.getByRole("dialog")).toHaveCount(0);
 
-    // Delete attempt → 409 → conflict toast with deep link.
+    // Delete attempt → 409 → CLI-aware conflict toast.
     await page.getByRole("button", { name: "Delete" }).first().click();
     await page
       .getByRole("dialog")
       .getByRole("button", { name: "Delete" })
       .click();
-    await expect(page.getByText(/active shares/i)).toBeVisible();
-    await page.getByRole("link", { name: /view shares/i }).click();
-    await expect(page).toHaveURL(/\/shares\?album_id=/);
+    const toast = page.getByRole("alert");
+    await expect(toast).toBeVisible();
+    await expect(toast).toContainText(/active CLI shares/i);
+    await expect(toast).toContainText("fotobank shares list --album");
+    // No SPA deep-link — that surface is intentionally CLI-only.
+    await expect(toast.getByRole("link", { name: /view shares/i })).toHaveCount(
+      0,
+    );
+  });
+
+  test("shares page filters to a single album via ?album_id", async ({
+    page,
+  }) => {
+    // The seeded album_live share against "E2E Italy 2025" lives under a
+    // known album_id; navigating to /shares?album_id=<id> filters the
+    // table to just that album's shares and surfaces the
+    // "Showing shares for album <id>" header banner.
+    await page.goto("/albums");
+    await page.getByText("E2E Italy 2025").click();
+    // AlbumDetail's URL is /albums/<id> — pull the id from window.location
+    // rather than scraping it out of the toast (which no longer renders
+    // the id) or the seed (which is non-deterministic).
+    const albumId = await page.evaluate(() =>
+      window.location.pathname.replace(/^\/albums\//, ""),
+    );
+    expect(albumId).toMatch(/^[0-9a-f-]{36}$/);
+    await page.goto(`/shares?album_id=${albumId}`);
     await expect(page.getByText(/Showing shares for album/)).toBeVisible();
+    await expect(page.getByText("Active album e2e share")).toBeVisible();
   });
 });
