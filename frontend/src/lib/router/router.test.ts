@@ -32,6 +32,12 @@ describe("RouterStore.match", () => {
     expect(r.current).toEqual({ route: "settings.ai" });
   });
 
+  it("resolves /admin/settings/ai", () => {
+    setLocation("/admin/settings/ai");
+    const r = new RouterStore();
+    expect(r.current).toEqual({ route: "admin.settings.ai" });
+  });
+
   it("matches /media/:id and exposes the id", () => {
     setLocation("/media/abc");
     const r = new RouterStore();

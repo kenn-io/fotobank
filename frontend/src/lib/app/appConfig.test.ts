@@ -17,17 +17,18 @@ describe("AppConfigStore", () => {
     const client = makeClient({});
     const s = new AppConfigStore(client as never);
     expect(s.sharingEnabled).toBe(false);
+    expect(s.adminSettingsEnabled).toBe(false);
     expect(s.principal).toBeNull();
     expect(s.ready).toBe(false);
   });
 
-  it("captures principal and flips sharingEnabled when /me reports true", async () => {
+  it("captures principal and feature flags when /me reports true", async () => {
     const client = makeClient({
       "/api/v1/me": {
         data: {
           principal: { hub: "dev-local", user_id: "owner", handle: "owner" },
           scopes: [],
-          features: { sharing_enabled: true },
+          features: { sharing_enabled: true, admin_settings_enabled: true },
         },
       },
     });
@@ -35,6 +36,7 @@ describe("AppConfigStore", () => {
     await s.load();
     expect(s.ready).toBe(true);
     expect(s.sharingEnabled).toBe(true);
+    expect(s.adminSettingsEnabled).toBe(true);
     expect(s.principal).toEqual({
       hub: "dev-local",
       userId: "owner",
@@ -53,6 +55,7 @@ describe("AppConfigStore", () => {
     // identity from a previous load.
     expect(s.ready).toBe(true);
     expect(s.sharingEnabled).toBe(false);
+    expect(s.adminSettingsEnabled).toBe(false);
     expect(s.principal).toBeNull();
   });
 
@@ -66,6 +69,7 @@ describe("AppConfigStore", () => {
     await s.load();
     expect(s.ready).toBe(true);
     expect(s.sharingEnabled).toBe(false);
+    expect(s.adminSettingsEnabled).toBe(false);
     expect(s.principal).toBeNull();
   });
 
@@ -79,7 +83,7 @@ describe("AppConfigStore", () => {
         data: {
           principal: { hub: "dev-local", user_id: "owner", handle: "" },
           scopes: [],
-          features: { sharing_enabled: false },
+          features: { sharing_enabled: false, admin_settings_enabled: false },
         },
       },
     });
@@ -102,7 +106,7 @@ describe("AppConfigStore", () => {
         data: {
           principal: { hub: "h", user_id: "u", handle: "owner" },
           scopes: [],
-          features: { sharing_enabled: "yes" }, // not literal true
+          features: { sharing_enabled: "yes", admin_settings_enabled: "yes" }, // not literal true
         },
       },
     });
@@ -110,6 +114,7 @@ describe("AppConfigStore", () => {
     await s.load();
     expect(s.ready).toBe(true);
     expect(s.sharingEnabled).toBe(false);
+    expect(s.adminSettingsEnabled).toBe(false);
     expect(s.principal).toEqual({ hub: "h", userId: "u", handle: "owner" });
   });
 });

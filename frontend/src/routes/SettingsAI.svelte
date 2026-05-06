@@ -10,12 +10,14 @@
     retryFailedAI,
   } from "../lib/ai/client";
   import type { AIFailureRow, AITask } from "../lib/ai/types";
+  import type { AppConfigStore } from "../lib/app/appConfig.svelte";
 
   // Tests inject a stubbed inspectionStore so the toggle can be driven
   // without an HTTP roundtrip; production callers omit the prop and
   // get a fresh store backed by the same-origin API client.
-  let { inspectionStore = new AIInspectionStore(api) }: {
+  let { inspectionStore = new AIInspectionStore(api), appConfig }: {
     inspectionStore?: AIInspectionStore;
+    appConfig?: AppConfigStore;
   } = $props();
 
   let tagFailures = $state<AIFailureRow[]>([]);
@@ -84,13 +86,22 @@
 <section class="ai-panel">
   <header class="panel-header">
     <h2>AI</h2>
-    <span class="config-locked" title="Toggle in config.toml">Enabled via config.toml</span>
+    {#if appConfig?.adminSettingsEnabled}
+      <a class="admin-link" href="/admin/settings/ai">Configure AI…</a>
+    {:else}
+      <span class="config-locked" title="Toggle in config.toml">Enabled via config.toml</span>
+    {/if}
   </header>
 
   {#if !aiHealthStore.health}
     <p class="muted">Loading…</p>
   {:else if aiHealthStore.health.paused_reason === "config_disabled"}
-    <p class="muted">AI is disabled in config.toml.</p>
+    <p class="muted">
+      AI is disabled in config.toml.
+      {#if appConfig?.adminSettingsEnabled}
+        <a href="/admin/settings/ai">Configure AI…</a>
+      {/if}
+    </p>
   {:else if aiHealthStore.health.paused_reason === "acknowledgement_required"}
     <div class="ack-modal" role="dialog" aria-labelledby="ack-title">
       <h3 id="ack-title">Before AI starts processing your library</h3>
@@ -210,6 +221,7 @@
 <style>
   .ai-panel { padding: 16px; max-width: 720px; }
   .panel-header { display: flex; justify-content: space-between; align-items: baseline; }
+  .admin-link { font-size: 12px; color: var(--accent); text-decoration: none; }
   .config-locked { font-size: 11px; color: var(--ink-3); }
   .banner { padding: 10px; border-radius: 6px; background: rgba(250, 204, 21, 0.1); border: 1px solid rgba(250, 204, 21, 0.4); margin: 12px 0; font-size: 11px; }
   .ack-modal { padding: 14px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); margin: 12px 0; }

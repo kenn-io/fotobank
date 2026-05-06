@@ -12,6 +12,7 @@
   import SharesPage from "./routes/SharesPage.svelte";
   import HiddenLibrary from "./routes/HiddenLibrary.svelte";
   import SettingsAI from "./routes/SettingsAI.svelte";
+  import AdminSettingsAI from "./routes/AdminSettingsAI.svelte";
   import Search from "./routes/Search.svelte";
   import Map from "./routes/Map.svelte";
   import NotFound from "./routes/NotFound.svelte";
@@ -84,6 +85,16 @@
   $effect(() => {
     if (shouldRedirectSharesToHome(router.current, appConfig)) {
       router.navigate("/", { replace: true });
+    }
+  });
+
+  $effect(() => {
+    if (
+      appConfig.ready &&
+      router.current.route === "admin.settings.ai" &&
+      !appConfig.adminSettingsEnabled
+    ) {
+      router.navigate("/settings/ai", { replace: true });
     }
   });
 
@@ -236,7 +247,7 @@
 
   function activeId(route: RouteMatch): string {
     if (route.route === "sessions") return "sessions";
-    if (route.route === "settings" || route.route === "settings.ai") return "settings";
+    if (route.route === "settings" || route.route === "settings.ai" || route.route === "admin.settings.ai") return "settings";
     if (route.route === "albums" || route.route === "albums.detail") return "albums";
     if (route.route === "shares") return "shares";
     if (route.route === "hidden") return "hidden";
@@ -310,7 +321,9 @@
     {:else if router.current.route === "settings"}
       <div style="padding:20px">Settings (placeholder)</div>
     {:else if router.current.route === "settings.ai"}
-      <SettingsAI />
+      <SettingsAI {appConfig} />
+    {:else if router.current.route === "admin.settings.ai"}
+      <AdminSettingsAI />
     {:else if router.current.route === "search"}
       <Search {events} {activeFilters} {tagLabels} {onFiltersChange} />
     {:else if router.current.route === "map"}

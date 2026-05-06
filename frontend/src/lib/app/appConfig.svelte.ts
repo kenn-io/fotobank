@@ -23,6 +23,7 @@ export type Principal = {
 
 export class AppConfigStore {
   sharingEnabled = $state(false);
+  adminSettingsEnabled = $state(false);
   principal = $state<Principal | null>(null);
   ready = $state(false);
 
@@ -35,11 +36,13 @@ export class AppConfigStore {
       // both HTTP error and "no body" are treated as resolved-disabled.
       if (!data) {
         this.sharingEnabled = false;
+        this.adminSettingsEnabled = false;
         this.principal = null;
         this.ready = true;
         return;
       }
       this.sharingEnabled = data.features.sharing_enabled === true;
+      this.adminSettingsEnabled = data.features.admin_settings_enabled === true;
       // Handle is optional in the API schema (PrincipalStruct.handle?: string).
       // For UI display, fall back to user_id so AppHeader always has a
       // non-empty string — a blank "dev-local: " in the header would
@@ -57,6 +60,7 @@ export class AppConfigStore {
     } catch {
       // Network failure (fetch threw): same treatment as HTTP failure.
       this.sharingEnabled = false;
+      this.adminSettingsEnabled = false;
       this.principal = null;
       this.ready = true;
     }
