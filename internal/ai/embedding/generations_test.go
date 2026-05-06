@@ -2,6 +2,7 @@ package embedding_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sync"
 	"testing"
@@ -42,6 +43,41 @@ func TestGenerations_FindOrCreateBuilding_CreatesOnce(t *testing.T) {
 	row2, err := g.FindOrCreateBuilding(ctx, fpEmbed1(), 768)
 	r.NoError(err)
 	r.Equal(row1.ID, row2.ID, "second call must return the same row")
+}
+
+func TestGenerations_FindOrCreateBuildingTx_RollbackRemovesRowAndVecTable(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	tx, err := d.WriteDB().BeginTx(ctx, nil)
+	r.NoError(err)
+
+	row, err := g.FindOrCreateBuildingTx(ctx, tx, fpEmbed1(), 768)
+	r.NoError(err)
+	r.Equal("building", row.State)
+	r.Equal(fmt.Sprintf("media_embeddings_g%d", row.ID), row.VecTableName)
+
+	var name string
+	err = tx.QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+		row.VecTableName,
+	).Scan(&name)
+	r.NoError(err)
+	r.Equal(row.VecTableName, name)
+
+	r.NoError(tx.Rollback())
+
+	got, err := g.GetByID(ctx, row.ID)
+	r.ErrorIs(err, errs.ErrNotFound)
+	r.Nil(got)
+
+	err = d.ReadDB().QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+		row.VecTableName,
+	).Scan(&name)
+	r.ErrorIs(err, sql.ErrNoRows)
 }
 
 func TestGenerations_FindActive_ReturnsNoneInitially(t *testing.T) {

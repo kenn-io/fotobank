@@ -160,16 +160,48 @@ func (g *Generations) FindOrCreateBuilding(ctx context.Context, fp ai.Fingerprin
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	row, created, err := g.findOrCreateBuildingTx(ctx, tx, fp, dim)
+	if err != nil {
+		return Row{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Row{}, fmt.Errorf("commit: %w", err)
+	}
+
+	// Emit the lifecycle event only on the actual INSERT path. The
+	// fast-path lookup and the in-tx re-find both return an existing row;
+	// every created=true return corresponds to one new
+	// embedding_generations row hitting disk.
+	if created {
+		g.events.EmitAIEmbedGenerationCreated(row.ID, row.Fingerprint)
+	}
+	return row, nil
+}
+
+// FindOrCreateBuildingTx returns the generation row matching fp using
+// the caller's transaction. If a row with the same fingerprint already
+// exists in that transaction, it is returned unchanged. Otherwise a new
+// building row and its per-generation vec0 table are created inside tx.
+//
+// The caller owns commit/rollback and any post-commit lifecycle event
+// emission. This is used by admin Apply so app_settings updates and the
+// generation registry change are atomic.
+func (g *Generations) FindOrCreateBuildingTx(ctx context.Context, tx *sql.Tx, fp ai.Fingerprint, dim int) (Row, error) {
+	row, _, err := g.findOrCreateBuildingTx(ctx, tx, fp, dim)
+	return row, err
+}
+
+func (g *Generations) findOrCreateBuildingTx(ctx context.Context, tx *sql.Tx, fp ai.Fingerprint, dim int) (Row, bool, error) {
+	hash := fingerprintHash(fp)
+
 	// Re-check inside the tx in case a concurrent caller inserted while
-	// we were on the fast path. Returning the existing row here matches
-	// the contract: idempotent under concurrent calls.
+	// the public wrapper was on the fast path. Returning the existing row
+	// here matches the contract: idempotent under concurrent calls.
 	if row, err := findByHash(ctx, tx, hash); err == nil {
-		if cerr := tx.Commit(); cerr != nil {
-			return Row{}, fmt.Errorf("commit re-find: %w", cerr)
-		}
-		return row, nil
+		return row, false, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		return Row{}, fmt.Errorf("re-find by hash: %w", err)
+		return Row{}, false, fmt.Errorf("re-find by hash: %w", err)
 	}
 
 	// Insert with an empty vec_table_name placeholder; the column is
@@ -183,11 +215,11 @@ func (g *Generations) FindOrCreateBuilding(ctx context.Context, fp ai.Fingerprin
 		fp.String(), hash, fp.ModelID, fp.InputProfile, dim, time.Now().UTC(),
 	)
 	if err != nil {
-		return Row{}, fmt.Errorf("insert generation: %w", err)
+		return Row{}, false, fmt.Errorf("insert generation: %w", err)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
-		return Row{}, fmt.Errorf("last insert id: %w", err)
+		return Row{}, false, fmt.Errorf("last insert id: %w", err)
 	}
 
 	// Vec table name is application-derived from the auto-incremented id.
@@ -197,7 +229,7 @@ func (g *Generations) FindOrCreateBuilding(ctx context.Context, fp ai.Fingerprin
 		`UPDATE embedding_generations SET vec_table_name = ? WHERE id = ?`,
 		tableName, id,
 	); err != nil {
-		return Row{}, fmt.Errorf("set vec_table_name: %w", err)
+		return Row{}, false, fmt.Errorf("set vec_table_name: %w", err)
 	}
 
 	// Create the vec0 virtual table inside the same tx so a rollback
@@ -209,28 +241,14 @@ func (g *Generations) FindOrCreateBuilding(ctx context.Context, fp ai.Fingerprin
 		tableName, dim,
 	)
 	if _, err := tx.ExecContext(ctx, createSQL); err != nil {
-		return Row{}, fmt.Errorf("create vec table %s: %w", tableName, err)
+		return Row{}, false, fmt.Errorf("create vec table %s: %w", tableName, err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return Row{}, fmt.Errorf("commit: %w", err)
-	}
-
-	// Re-read through the ro pool. WAL mode ensures the reader sees
-	// the writer's commit; this returns the populated row including
-	// the patched-in vec_table_name.
-	row, err := findByHash(ctx, g.ro, hash)
+	row, err := findByHash(ctx, tx, hash)
 	if err != nil {
-		return Row{}, fmt.Errorf("read back: %w", err)
+		return Row{}, false, fmt.Errorf("read back: %w", err)
 	}
-
-	// Emit the lifecycle event only on the actual INSERT path. The
-	// fast-path lookup and the in-tx re-find both return early above
-	// so this point is unreachable when we returned an existing row;
-	// every reach here corresponds to one new embedding_generations
-	// row hitting disk.
-	g.events.EmitAIEmbedGenerationCreated(row.ID, row.Fingerprint)
-	return row, nil
+	return row, true, nil
 }
 
 // retirePriorActiveTx captures any currently-active row, retires it
