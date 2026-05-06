@@ -22,9 +22,10 @@ import (
 	"github.com/wesm/fotobank/internal/ai/failures"
 	"github.com/wesm/fotobank/internal/ai/gapscanner"
 	"github.com/wesm/fotobank/internal/ai/jobs"
-	"github.com/wesm/fotobank/internal/ai/prompts"
 	"github.com/wesm/fotobank/internal/ai/results"
+	airuntime "github.com/wesm/fotobank/internal/ai/runtime"
 	"github.com/wesm/fotobank/internal/ai/skipped"
+	appsettingsstore "github.com/wesm/fotobank/internal/appsettings"
 	"github.com/wesm/fotobank/internal/config"
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/errs"
@@ -54,6 +55,7 @@ type aiCtx struct {
 	failures *failures.Repo
 	ack      *ack.Store
 	gens     *embedding.Generations
+	provider *airuntime.Provider
 }
 
 // loadAICtx loads the CLI's configuration, opens the DB (respecting
@@ -82,6 +84,17 @@ func loadAICtx(cfgPath string) (*aiCtx, error) {
 	if err != nil {
 		return nil, err
 	}
+	appSettingsRepo := appsettingsstore.NewRepo(d.WriteDB(), d.ReadDB())
+	provider, err := airuntime.NewProvider(context.Background(), airuntime.Source{
+		FilePath: path,
+		Repo:     appSettingsRepo,
+	})
+	if err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("load effective ai config: %w", err)
+	}
+	snap := provider.Effective()
+	cfg.AI = snap.Config
 	rw, ro := d.WriteDB(), d.ReadDB()
 	q := jobs.NewQueue(rw, ro)
 	resR := results.NewRepo(rw, ro)
@@ -99,18 +112,11 @@ func loadAICtx(cfgPath string) (*aiCtx, error) {
 			Ack:      ackS,
 			Gap:      gs,
 			ConfigFingerprints: aiservice.ConfigFingerprints{
-				Tag: ai.Fingerprint{
-					ModelID:       cfg.AI.Tag.Model,
-					PromptVersion: prompts.Tag().Version,
-					InputProfile:  "jpeg-1024-q85-metadata-stripped-v1",
-				},
-				Caption: ai.Fingerprint{
-					ModelID:       cfg.AI.Caption.Model,
-					PromptVersion: prompts.Caption().Version,
-					InputProfile:  "jpeg-1024-q85-metadata-stripped-v1",
-				},
-				Embed: embedding.Fingerprint(cfg.AI.Embed),
+				Tag:     snap.Result.Tag,
+				Caption: snap.Result.Caption,
+				Embed:   snap.Result.Embed,
 			},
+			Runtime: provider,
 		}),
 		caller:   owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID},
 		cfg:      cfg,
@@ -121,6 +127,7 @@ func loadAICtx(cfgPath string) (*aiCtx, error) {
 		failures: failR,
 		ack:      ackS,
 		gens:     gens,
+		provider: provider,
 	}, nil
 }
 
@@ -265,18 +272,20 @@ func backfillEmbed(ctx context.Context, c *aiCtx, _ bool) (int, error) {
 	if !acked {
 		return 0, errs.ErrAcknowledgementRequired
 	}
-	fp := embedding.Fingerprint(c.cfg.AI.Embed)
+	snap := c.provider.Effective()
+	fp := snap.Result.Embed
 	gen, err := c.gens.FindOrCreateBuilding(ctx, fp, c.cfg.AI.Embed.Dimension)
 	if err != nil {
 		return 0, fmt.Errorf("resolve building generation: %w", err)
 	}
 	return c.gap.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
-		Owner:           c.caller,
-		Generation:      gen,
-		Fingerprint:     fp,
-		AckAllowsHidden: acked,
-		RetryBudget:     c.cfg.AI.Embed.MaxRetries,
-		Limit:           0,
+		Owner:             c.caller,
+		Generation:        gen,
+		ClaimFingerprint:  snap.Claim.Embed,
+		ResultFingerprint: fp,
+		AckAllowsHidden:   acked,
+		RetryBudget:       c.cfg.AI.Embed.MaxRetries,
+		Limit:             0,
 	})
 }
 
@@ -343,7 +352,8 @@ func retryFailedEmbed(ctx context.Context, c *aiCtx) (int, error) {
 	if !acked {
 		return 0, errs.ErrAcknowledgementRequired
 	}
-	fp := embedding.Fingerprint(c.cfg.AI.Embed)
+	snap := c.provider.Effective()
+	fp := snap.Result.Embed
 	gen, err := c.gens.FindOrCreateBuilding(ctx, fp, c.cfg.AI.Embed.Dimension)
 	if err != nil {
 		return 0, fmt.Errorf("resolve building generation: %w", err)
@@ -369,12 +379,13 @@ func retryFailedEmbed(ctx context.Context, c *aiCtx) (int, error) {
 			return total, fmt.Errorf("delete failures: %w", err)
 		}
 		n, err := c.gap.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
-			Owner:           c.caller,
-			Generation:      gen,
-			Fingerprint:     fp,
-			AckAllowsHidden: acked,
-			RetryBudget:     c.cfg.AI.Embed.MaxRetries,
-			MediaIDs:        mediaIDs,
+			Owner:             c.caller,
+			Generation:        gen,
+			ClaimFingerprint:  snap.Claim.Embed,
+			ResultFingerprint: fp,
+			AckAllowsHidden:   acked,
+			RetryBudget:       c.cfg.AI.Embed.MaxRetries,
+			MediaIDs:          mediaIDs,
 		})
 		total += n
 		if err != nil {

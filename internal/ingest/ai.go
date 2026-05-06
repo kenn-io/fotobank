@@ -38,9 +38,11 @@ func (NoopAIEnqueuer) RecordVideoSkip(_ context.Context, _ string) error { retur
 // ModelID rather than a separate bool keeps the zero value of
 // realAIEnqueuer correctly representing "no embed configured."
 type realAIEnqueuer struct {
-	tagFP, captionFP, embedFP ai.Fingerprint
-	enqueue                   func(ctx context.Context, mid string, t ai.Task, fp ai.Fingerprint) error
-	skip                      func(ctx context.Context, mid string, t ai.Task, reason string) error
+	tagFP, captionFP, embedFP          ai.Fingerprint
+	tagClaim, captionClaim, embedClaim string
+	enqueue                            func(ctx context.Context, mid string, t ai.Task, fp ai.Fingerprint) error
+	enqueueClaim                       func(ctx context.Context, mid string, t ai.Task, claimFP string) error
+	skip                               func(ctx context.Context, mid string, t ai.Task, reason string) error
 }
 
 // RealAIEnqueuer is the concrete production AIEnqueuer. Returned by
@@ -74,17 +76,46 @@ func (r *realAIEnqueuer) WithEmbed(fp ai.Fingerprint) *RealAIEnqueuer {
 	return r
 }
 
+// WithClaimFingerprints switches photo enqueueing to the runtime queue
+// fingerprint form. Result fingerprints stay on the enqueuer for legacy
+// callers and for embed generation provenance; claim fingerprints are
+// what runtime workers filter ai_jobs rows by.
+func (r *realAIEnqueuer) WithClaimFingerprints(
+	tagClaim, captionClaim string,
+	enqueue func(context.Context, string, ai.Task, string) error,
+) *RealAIEnqueuer {
+	r.tagClaim = tagClaim
+	r.captionClaim = captionClaim
+	r.enqueueClaim = enqueue
+	return r
+}
+
+// WithEmbedClaim wires the embed result fingerprint and its runtime
+// queue claim fingerprint in one call.
+func (r *realAIEnqueuer) WithEmbedClaim(fp ai.Fingerprint, claim string) *RealAIEnqueuer {
+	r.embedFP = fp
+	r.embedClaim = claim
+	return r
+}
+
 func (r *realAIEnqueuer) EnqueueForPhoto(ctx context.Context, mid string) error {
-	if err := r.enqueue(ctx, mid, ai.TaskTag, r.tagFP); err != nil {
+	if err := r.enqueueTask(ctx, mid, ai.TaskTag, r.tagFP, r.tagClaim); err != nil {
 		return err
 	}
-	if err := r.enqueue(ctx, mid, ai.TaskCaption, r.captionFP); err != nil {
+	if err := r.enqueueTask(ctx, mid, ai.TaskCaption, r.captionFP, r.captionClaim); err != nil {
 		return err
 	}
 	if r.embedFP.ModelID == "" {
 		return nil
 	}
-	return r.enqueue(ctx, mid, ai.TaskEmbed, r.embedFP)
+	return r.enqueueTask(ctx, mid, ai.TaskEmbed, r.embedFP, r.embedClaim)
+}
+
+func (r *realAIEnqueuer) enqueueTask(ctx context.Context, mid string, task ai.Task, fp ai.Fingerprint, claim string) error {
+	if r.enqueueClaim != nil && claim != "" {
+		return r.enqueueClaim(ctx, mid, task, claim)
+	}
+	return r.enqueue(ctx, mid, task, fp)
 }
 
 func (r *realAIEnqueuer) RecordVideoSkip(ctx context.Context, mid string) error {

@@ -42,6 +42,30 @@ func TestEnqueueForPhotoCreatesBothTaskJobs(t *testing.T) {
 	r.Equal(1, c.Pending)
 }
 
+func TestEnqueueForPhotoUsesClaimFingerprintsWhenConfigured(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "p1")
+
+	q := jobs.NewQueue(rw, ro)
+	skipR := skipped.NewRepo(rw, ro)
+	tagFP := ai.Fingerprint{ModelID: "tag-result", PromptVersion: "tags-v1", InputProfile: "ip"}
+	capFP := ai.Fingerprint{ModelID: "caption-result", PromptVersion: "caption-v1", InputProfile: "ip"}
+
+	enq := ingest.NewRealAIEnqueuer(tagFP, capFP, q.Enqueue, skipR.Record).
+		WithClaimFingerprints("claim-tag", "claim-caption", q.EnqueueClaim)
+	r.NoError(enq.EnqueueForPhoto(ctx, mid))
+
+	tagClaims, err := q.ClaimBatchForFingerprint(ctx, ai.TaskTag, "claim-tag", 10)
+	r.NoError(err)
+	r.Len(tagClaims, 1)
+	captionClaims, err := q.ClaimBatchForFingerprint(ctx, ai.TaskCaption, "claim-caption", 10)
+	r.NoError(err)
+	r.Len(captionClaims, 1)
+}
+
 func TestRecordVideoSkipSkipsBoth(t *testing.T) {
 	r := require.New(t)
 	rw, ro := testutil.OpenTestDBPair(t)

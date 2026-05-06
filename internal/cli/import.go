@@ -12,12 +12,10 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	"github.com/wesm/fotobank/internal/ai/imginput"
 	"github.com/wesm/fotobank/internal/ai/jobs"
-	aiprompts "github.com/wesm/fotobank/internal/ai/prompts"
+	airuntime "github.com/wesm/fotobank/internal/ai/runtime"
 	"github.com/wesm/fotobank/internal/ai/skipped"
+	appsettingsstore "github.com/wesm/fotobank/internal/appsettings"
 	"github.com/wesm/fotobank/internal/config"
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/errs"
@@ -102,6 +100,16 @@ func runImport(ctx context.Context, opts importOpts) error {
 		return err
 	}
 	defer d.Close()
+	appSettingsRepo := appsettingsstore.NewRepo(d.WriteDB(), d.ReadDB())
+	aiProvider, err := airuntime.NewProvider(ctx, airuntime.Source{
+		FilePath: path,
+		Repo:     appSettingsRepo,
+	})
+	if err != nil {
+		return fmt.Errorf("load effective ai config: %w", err)
+	}
+	aiSnap := aiProvider.Effective()
+	cfg.AI = aiSnap.Config
 
 	owner := owners.Principal{
 		Hub:    cfg.Identity.Stub.Hub,
@@ -148,35 +156,18 @@ func runImport(ctx context.Context, opts importOpts) error {
 	imp := ingest.NewImporter(storeLayer, repo, places)
 
 	// Wire the production AIEnqueuer so an offline import auto-enqueues
-	// for AI processing. The fingerprints capture the active (model,
-	// prompt, profile) triple at boot; if [ai].enabled is false the
-	// worker pool is dormant but enqueued rows will be processed once
-	// the operator flips the flag.
+	// for AI processing. Queue rows use runtime claim fingerprints so
+	// server workers claim the same settings identity that admin Apply
+	// publishes.
 	aiQueue := jobs.NewQueue(d.WriteDB(), d.ReadDB())
 	aiSkippedRepo := skipped.NewRepo(d.WriteDB(), d.ReadDB())
-	tagPrompt := aiprompts.Tag()
-	captionPrompt := aiprompts.Caption()
-	tagFP := ai.Fingerprint{
-		ModelID:       cfg.AI.Tag.Model,
-		PromptVersion: tagPrompt.Version,
-		InputProfile:  imginput.ProfileV1,
-	}
-	captionFP := ai.Fingerprint{
-		ModelID:       cfg.AI.Caption.Model,
-		PromptVersion: captionPrompt.Version,
-		InputProfile:  imginput.ProfileV1,
-	}
 	enq := ingest.NewRealAIEnqueuer(
-		tagFP, captionFP,
+		aiSnap.Result.Tag, aiSnap.Result.Caption,
 		aiQueue.Enqueue,
 		aiSkippedRepo.Record,
-	)
-	// Wire embed-task enqueueing only when the operator has explicitly
-	// flipped cfg.AI.Embed.Enabled. Defer config defaults via
-	// embedding.Fingerprint so an InputEdge omitted in config still
-	// produces the canonical 384-edge fingerprint after Validate.
+	).WithClaimFingerprints(aiSnap.Claim.Tag, aiSnap.Claim.Caption, aiQueue.EnqueueClaim)
 	if cfg.AI.Embed.Enabled {
-		enq.WithEmbed(embedding.Fingerprint(cfg.AI.Embed))
+		enq.WithEmbedClaim(aiSnap.Result.Embed, aiSnap.Claim.Embed)
 	}
 	imp.SetAIEnqueuer(enq)
 
