@@ -1,6 +1,26 @@
 {
   "components": {
     "schemas": {
+      "APIKeyEnvStatusValue": {
+        "additionalProperties": false,
+        "properties": {
+          "is_set": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "is_set",
+          "required"
+        ],
+        "type": "object"
+      },
       "AddAlbumMediaInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -55,6 +75,28 @@
         ],
         "type": "object"
       },
+      "AdminSettingsApplyInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AdminSettingsApplyInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "values"
+        ],
+        "type": "object"
+      },
       "AlbumDTO": {
         "additionalProperties": false,
         "properties": {
@@ -100,6 +142,32 @@
           "hidden_count",
           "created_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "ApplyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ApplyResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "effective": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "generation_id": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "effective"
         ],
         "type": "object"
       },
@@ -188,6 +256,115 @@
         ],
         "type": "object"
       },
+      "EffectiveResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/EffectiveResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "api_key_env_status": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/APIKeyEnvStatusValue"
+            },
+            "type": "object"
+          },
+          "current_embed_generation": {
+            "$ref": "#/components/schemas/EmbedGeneration"
+          },
+          "effective": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "file_default": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "overrides": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/OverrideMetadata"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "effective",
+          "file_default",
+          "overrides",
+          "api_key_env_status",
+          "current_embed_generation"
+        ],
+        "type": "object"
+      },
+      "EmbedConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/EmbedConfig.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "api_key_env": {
+            "type": "string"
+          },
+          "dimension": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint",
+          "model",
+          "api_key_env",
+          "dimension"
+        ],
+        "type": "object"
+      },
+      "EmbedGeneration": {
+        "additionalProperties": false,
+        "properties": {
+          "dimension": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "input_profile": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "model",
+          "dimension",
+          "input_profile"
+        ],
+        "type": "object"
+      },
       "ErrorDetail": {
         "additionalProperties": false,
         "properties": {
@@ -272,12 +449,16 @@
       "FeaturesStruct": {
         "additionalProperties": false,
         "properties": {
+          "admin_settings_enabled": {
+            "type": "boolean"
+          },
           "sharing_enabled": {
             "type": "boolean"
           }
         },
         "required": [
-          "sharing_enabled"
+          "sharing_enabled",
+          "admin_settings_enabled"
         ],
         "type": "object"
       },
@@ -815,6 +996,25 @@
         ],
         "type": "object"
       },
+      "OverrideMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "$ref": "#/components/schemas/PrincipalRef"
+          },
+          "value": {}
+        },
+        "required": [
+          "value",
+          "updated_at",
+          "updated_by"
+        ],
+        "type": "object"
+      },
       "PairSummaryDTO": {
         "additionalProperties": false,
         "properties": {
@@ -971,6 +1171,22 @@
         ],
         "type": "object"
       },
+      "PrincipalRef": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id"
+        ],
+        "type": "object"
+      },
       "PrincipalStruct": {
         "additionalProperties": false,
         "properties": {
@@ -987,6 +1203,53 @@
         "required": [
           "hub",
           "user_id"
+        ],
+        "type": "object"
+      },
+      "Result": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/Result.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "classification": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "latency_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "model_echoed": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "latency_ms",
+          "classification",
+          "detail",
+          "warnings"
         ],
         "type": "object"
       },
@@ -1450,6 +1713,35 @@
           "value"
         ],
         "type": "object"
+      },
+      "VisionConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/VisionConfig.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "api_key_env": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint",
+          "model",
+          "api_key_env"
+        ],
+        "type": "object"
       }
     }
   },
@@ -1460,6 +1752,232 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/admin/settings": {
+      "get": {
+        "operationId": "admin-settings-get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Return effective admin settings"
+      }
+    },
+    "/api/v1/admin/settings/keys/{key}": {
+      "delete": {
+        "operationId": "admin-settings-reset-key",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Reset one admin settings key"
+      }
+    },
+    "/api/v1/admin/settings/sections/{section}": {
+      "delete": {
+        "operationId": "admin-settings-reset-section",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Reset one admin settings section"
+      },
+      "put": {
+        "operationId": "admin-settings-apply-section",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminSettingsApplyInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Apply one admin settings section"
+      }
+    },
+    "/api/v1/admin/settings/test/embed": {
+      "post": {
+        "operationId": "admin-settings-test-embed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Probe pending embedding endpoint settings"
+      }
+    },
+    "/api/v1/admin/settings/test/vision": {
+      "post": {
+        "operationId": "admin-settings-test-vision",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VisionConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Probe pending vision endpoint settings"
+      }
+    },
     "/api/v1/albums": {
       "get": {
         "operationId": "list-albums",

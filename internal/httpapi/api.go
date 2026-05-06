@@ -15,8 +15,10 @@ import (
 	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/identity"
 	"github.com/wesm/fotobank/internal/obs"
+	"github.com/wesm/fotobank/internal/owners"
 	"github.com/wesm/fotobank/internal/service"
 	aiservice "github.com/wesm/fotobank/internal/service/ai"
+	appsettingssvc "github.com/wesm/fotobank/internal/service/appsettings"
 	facetssvc "github.com/wesm/fotobank/internal/service/facets"
 	searchsvc "github.com/wesm/fotobank/internal/service/search"
 	"github.com/wesm/fotobank/internal/service/usersettings"
@@ -115,6 +117,13 @@ type Deps struct {
 	// Facets backs GET /api/v1/facets. Nil leaves the route
 	// unregistered so the OpenAPI dumper can pass an empty Deps.
 	Facets *facetssvc.Service
+	// AdminSettings backs /api/v1/admin/settings. Nil leaves admin
+	// settings routes unregistered.
+	AdminSettings *appsettingssvc.Service
+	// AdminPrincipals is the TOML-configured allowlist for admin routes.
+	AdminPrincipals []owners.Principal
+	// AdminProbeLogger receives one structured line per endpoint probe.
+	AdminProbeLogger *slog.Logger
 }
 
 // New constructs the Fotobank HTTP handler. The full middleware chain is:
@@ -175,7 +184,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	api := humago.New(mux, cfg)
 	api.OpenAPI().Info.Description = "Fotobank HTTP API"
 	registerHealthz(api)
-	registerMe(api, deps.SharingEnabled)
+	registerMe(api, deps.SharingEnabled, deps.AdminPrincipals)
 	registerMediaGeo(api, deps.MediaService, deps.HiddenAuth)
 	registerMedia(api, deps.MediaService)
 	registerMediaOriginal(mux, deps.MediaService)
@@ -192,6 +201,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerAIRoutes(api, deps.AIService, deps.AIVisionProbe, deps.AIEnabled)
 	registerSearchRoutes(api, deps.Search, deps.Metrics)
 	registerFacetsRoutes(api, deps.Facets)
+	registerAdminSettings(api, deps.AdminSettings, deps.AdminPrincipals, deps.AdminProbeLogger)
 	return mux, api
 }
 

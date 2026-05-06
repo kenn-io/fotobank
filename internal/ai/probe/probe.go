@@ -49,17 +49,17 @@ type Result struct {
 
 // VisionConfig is the pending form state needed for a vision probe.
 type VisionConfig struct {
-	Endpoint  string
-	Model     string
-	APIKeyEnv string
+	Endpoint  string `json:"endpoint"`
+	Model     string `json:"model"`
+	APIKeyEnv string `json:"api_key_env"`
 }
 
 // EmbedConfig is the pending form state needed for an embeddings probe.
 type EmbedConfig struct {
-	Endpoint  string
-	Model     string
-	APIKeyEnv string
-	Dimension int
+	Endpoint  string `json:"endpoint"`
+	Model     string `json:"model"`
+	APIKeyEnv string `json:"api_key_env"`
+	Dimension int    `json:"dimension"`
 }
 
 var tinyJPEG = mustBuildTinyJPEG()

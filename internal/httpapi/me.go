@@ -7,6 +7,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/wesm/fotobank/internal/errs"
+	"github.com/wesm/fotobank/internal/owners"
 )
 
 type meOutput struct {
@@ -18,7 +19,8 @@ type meOutput struct {
 		} `json:"principal"`
 		Scopes   []string `json:"scopes"`
 		Features struct {
-			SharingEnabled bool `json:"sharing_enabled"`
+			SharingEnabled       bool `json:"sharing_enabled"`
+			AdminSettingsEnabled bool `json:"admin_settings_enabled"`
 		} `json:"features"`
 	}
 }
@@ -26,7 +28,7 @@ type meOutput struct {
 // registerMe wires GET /api/v1/me. sharingEnabled is the [ui].sharing_enabled
 // config flag at boot; it surfaces under features.sharing_enabled so the SPA
 // can hide share UI without the share data-plane changing shape.
-func registerMe(api huma.API, sharingEnabled bool) {
+func registerMe(api huma.API, sharingEnabled bool, admins []owners.Principal) {
 	huma.Register(api, huma.Operation{
 		OperationID: "me",
 		Method:      http.MethodGet,
@@ -43,6 +45,7 @@ func registerMe(api huma.API, sharingEnabled bool) {
 		out.Body.Principal.Handle = id.Principal.Handle
 		out.Body.Scopes = id.Scopes
 		out.Body.Features.SharingEnabled = sharingEnabled
+		out.Body.Features.AdminSettingsEnabled = isAdmin(id.Principal.OwnersPrincipal(), admins)
 		return out, nil
 	})
 }

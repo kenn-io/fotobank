@@ -4,6 +4,92 @@
  */
 
 export interface paths {
+    "/api/v1/admin/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return effective admin settings */
+        get: operations["admin-settings-get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/settings/keys/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Reset one admin settings key */
+        delete: operations["admin-settings-reset-key"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/settings/sections/{section}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Apply one admin settings section */
+        put: operations["admin-settings-apply-section"];
+        post?: never;
+        /** Reset one admin settings section */
+        delete: operations["admin-settings-reset-section"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/settings/test/embed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Probe pending embedding endpoint settings */
+        post: operations["admin-settings-test-embed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/settings/test/vision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Probe pending vision endpoint settings */
+        post: operations["admin-settings-test-vision"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/albums": {
         parameters: {
             query?: never;
@@ -530,6 +616,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        APIKeyEnvStatusValue: {
+            is_set: boolean;
+            name: string;
+            required: boolean;
+        };
         AddAlbumMediaInputBody: {
             /**
              * Format: uri
@@ -551,6 +642,17 @@ export interface components {
             /** Format: int64 */
             already_present: number;
         };
+        AdminSettingsApplyInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AdminSettingsApplyInputBody.json
+             */
+            readonly $schema?: string;
+            values: {
+                [key: string]: unknown;
+            };
+        };
         AlbumDTO: {
             /**
              * Format: uri
@@ -569,6 +671,19 @@ export interface components {
             name: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        ApplyResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ApplyResponse.json
+             */
+            readonly $schema?: string;
+            effective: {
+                [key: string]: unknown;
+            };
+            /** Format: int64 */
+            generation_id?: number;
         };
         CoverDTO: {
             media_id: string;
@@ -599,6 +714,49 @@ export interface components {
             label?: string;
             media_ids?: string[] | null;
             target_type: string;
+        };
+        EffectiveResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/EffectiveResponse.json
+             */
+            readonly $schema?: string;
+            api_key_env_status: {
+                [key: string]: components["schemas"]["APIKeyEnvStatusValue"];
+            };
+            current_embed_generation: components["schemas"]["EmbedGeneration"];
+            effective: {
+                [key: string]: unknown;
+            };
+            file_default: {
+                [key: string]: unknown;
+            };
+            overrides: {
+                [key: string]: components["schemas"]["OverrideMetadata"];
+            };
+        };
+        EmbedConfig: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/EmbedConfig.json
+             */
+            readonly $schema?: string;
+            api_key_env: string;
+            /** Format: int64 */
+            dimension: number;
+            endpoint: string;
+            model: string;
+        };
+        EmbedGeneration: {
+            /** Format: int64 */
+            dimension: number;
+            /** Format: int64 */
+            id: number;
+            input_profile: string;
+            model: string;
+            state: string;
         };
         ErrorDetail: {
             /** @description Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
@@ -648,6 +806,7 @@ export interface components {
             type: string;
         };
         FeaturesStruct: {
+            admin_settings_enabled: boolean;
             sharing_enabled: boolean;
         };
         HealthzOutputBody: {
@@ -841,6 +1000,12 @@ export interface components {
             /** Format: int64 */
             width?: number;
         };
+        OverrideMetadata: {
+            /** Format: date-time */
+            updated_at: string;
+            updated_by: components["schemas"]["PrincipalRef"];
+            value: unknown;
+        };
         PairSummaryDTO: {
             id: string;
             original_filename: string;
@@ -888,10 +1053,29 @@ export interface components {
             hub: string;
             user_id: string;
         };
+        PrincipalRef: {
+            hub: string;
+            user_id: string;
+        };
         PrincipalStruct: {
             handle?: string;
             hub: string;
             user_id: string;
+        };
+        Result: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/Result.json
+             */
+            readonly $schema?: string;
+            classification: string;
+            detail: string;
+            /** Format: int64 */
+            latency_ms: number;
+            model_echoed?: string;
+            ok: boolean;
+            warnings: string[] | null;
         };
         ScopeDTO: {
             /**
@@ -1057,6 +1241,17 @@ export interface components {
             readonly $schema?: string;
             value: string;
         };
+        VisionConfig: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/VisionConfig.json
+             */
+            readonly $schema?: string;
+            api_key_env: string;
+            endpoint: string;
+            model: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -1066,6 +1261,198 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "admin-settings-get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EffectiveResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "admin-settings-reset-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "admin-settings-apply-section": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminSettingsApplyInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "admin-settings-reset-section": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "admin-settings-test-embed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbedConfig"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Result"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "admin-settings-test-vision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisionConfig"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Result"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "list-albums": {
         parameters: {
             query?: {
