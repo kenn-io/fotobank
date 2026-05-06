@@ -25,6 +25,13 @@ user_id = "owner"
 handle = "owner"
 # auto-registers the owner with storage_key = "owner" on first start
 
+[admin]
+# In stub mode this defaults to the configured stub principal when omitted.
+# In header mode, set this explicitly or admin routes deny everyone.
+principals = [
+  { hub = "dev-local", user_id = "owner" },
+]
+
 [identity.header]
 # Names can be overridden per deployment; defaults shown.
 user_id_header = "X-Auth-User-Id"

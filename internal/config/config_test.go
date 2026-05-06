@@ -164,6 +164,79 @@ listen_address = "127.0.0.1:8090"
 	require.NoError(t, err)
 }
 
+func TestAdminPrincipalsParseFromTOML(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[admin]
+principals = [
+  { hub = "dev-local", user_id = "owner" },
+  { hub = "remote", user_id = "admin" },
+]
+`), 0o600))
+
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	require.Equal(t, []config.AdminPrincipal{
+		{Hub: "dev-local", UserID: "owner"},
+		{Hub: "remote", UserID: "admin"},
+	}, cfg.Admin.Principals)
+}
+
+func TestAdminPrincipalsDefaultToStubPrincipal(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[identity.stub]
+hub = "dev-local"
+user_id = "owner"
+`), 0o600))
+
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	require.Equal(t, []config.AdminPrincipal{
+		{Hub: "dev-local", UserID: "owner"},
+	}, cfg.Admin.Principals)
+}
+
+func TestAdminPrincipalsAbsentInHeaderModeLeavesEmptyAllowlist(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[identity]
+mode = "header"
+[http]
+listen_address = "127.0.0.1:8090"
+`), 0o600))
+
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	require.Empty(t, cfg.Admin.Principals)
+}
+
+func TestValidateRejectsIncompleteAdminPrincipal(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[admin]
+principals = [
+  { hub = "dev-local", user_id = "" },
+]
+`), 0o600))
+
+	_, err := config.Load(p)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+	require.Contains(t, err.Error(), "admin.principals")
+}
+
 func TestValidateRejectsUnknownIdentityMode(t *testing.T) {
 	tmp := t.TempDir()
 	p := filepath.Join(tmp, "c.toml")

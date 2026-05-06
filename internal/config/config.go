@@ -67,9 +67,19 @@ type Config struct {
 	Broker        Broker        `toml:"broker"`
 	Backup        Backup        `toml:"backup"`
 	Observability Observability `toml:"observability"`
+	Admin         Admin         `toml:"admin"`
 	AI            ai.Config     `toml:"ai"`
 	Search        search.Config `toml:"search"`
 	UI            UI            `toml:"ui"`
+}
+
+type Admin struct {
+	Principals []AdminPrincipal `toml:"principals"`
+}
+
+type AdminPrincipal struct {
+	Hub    string `toml:"hub"`
+	UserID string `toml:"user_id"`
 }
 
 type UI struct {
@@ -290,6 +300,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%w: [storage].mode=%q (must be nas_only|flash_cache)",
 			errs.ErrBadConfiguration, c.Storage.Mode)
 	}
+	for i, p := range c.Admin.Principals {
+		if strings.TrimSpace(p.Hub) == "" || strings.TrimSpace(p.UserID) == "" {
+			return fmt.Errorf("%w: admin.principals[%d] hub and user_id are required",
+				errs.ErrBadConfiguration, i)
+		}
+	}
 	switch c.Broker.Mode {
 	case "stub":
 		// nothing extra
@@ -440,6 +456,12 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	}
 	if c.Identity.Stub.Handle == "" {
 		c.Identity.Stub.Handle = "owner"
+	}
+	if c.Identity.Mode == "stub" && !meta.IsDefined("admin", "principals") {
+		c.Admin.Principals = []AdminPrincipal{{
+			Hub:    c.Identity.Stub.Hub,
+			UserID: c.Identity.Stub.UserID,
+		}}
 	}
 	if c.Identity.Header.UserIDHeader == "" {
 		c.Identity.Header.UserIDHeader = "X-Auth-User-Id"

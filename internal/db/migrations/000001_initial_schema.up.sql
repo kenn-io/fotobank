@@ -203,6 +203,15 @@ CREATE TABLE user_settings (
     PRIMARY KEY (principal_hub, principal_user_id, key)
 );
 
+-- Server-global, non-secret runtime settings. Values are JSON-encoded.
+CREATE TABLE app_settings (
+    key                 TEXT PRIMARY KEY,
+    value               TEXT NOT NULL,
+    updated_at          TIMESTAMP NOT NULL,
+    updated_by_hub      TEXT,
+    updated_by_user_id  TEXT
+);
+
 -- Owner-consistency trigger on album_media inserts / updates.
 CREATE TRIGGER album_media_owner_consistency_insert
 BEFORE INSERT ON album_media

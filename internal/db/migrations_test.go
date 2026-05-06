@@ -28,6 +28,20 @@ func TestInitialSchemaCreatesAllTables(t *testing.T) {
 	}
 }
 
+func TestSchemaAppSettingsExists(t *testing.T) {
+	r := require.New(t)
+	d, err := db.Open(filepath.Join(t.TempDir(), "app-settings.sqlite"))
+	r.NoError(err)
+	defer d.Close()
+
+	var name string
+	err = d.ReadDB().QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='table' AND name='app_settings'`,
+	).Scan(&name)
+	r.NoError(err)
+	r.Equal("app_settings", name)
+}
+
 func TestAlbumMediaOwnerConsistencyTrigger(t *testing.T) {
 	r := require.New(t)
 	d, err := db.Open(filepath.Join(t.TempDir(), "t.sqlite"))
