@@ -270,25 +270,13 @@ Vision model echo rule:
 
 The admin page is `/admin/settings/ai`, linked from the existing `/settings/ai` page only when the caller is admin. There is no admin sidebar entry in v1.
 
-The page starts with a master AI toggle for `ai.enabled`, then uses four stacked configuration sections:
-
-- Vision
-- Tag
-- Caption
-- Embed
+The page starts with a master AI toggle for `ai.enabled`. Below it, the page renders four stacked sections — Vision, Tag, Caption, and Embed — sharing an `AdminSettingsSection` component.
 
 ### Master Toggle
 
 `ai.enabled` renders as a top-of-page switch with its own Apply and reset controls. It is not buried inside Vision because it gates both vision tasks and the broader AI runtime surface. Turning it off shows the task sections in a disabled/paused visual state but leaves their fields readable so an admin can inspect or edit pending configuration before re-enabling AI.
 
 Changing only `ai.enabled` does not trigger the embed generation confirmation modal and does not create a new embedding generation. Applying `ai.enabled = false` stops new claims at the next worker snapshot read while in-flight jobs complete.
-
-### Sections
-
-- Vision
-- Tag
-- Caption
-- Embed
 
 All sections share an `AdminSettingsSection` component with a section header, status badge, dirty-state handling, field slot, Test, Apply, per-key reset, section reset, and per-section Discard.
 
