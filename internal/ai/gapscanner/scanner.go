@@ -27,7 +27,11 @@ import (
 // Owner is reported as errs.ErrNotFound, and an unbounded scan only
 // considers Owner's library.
 type ScanRequest struct {
-	Task        ai.Task
+	Task              ai.Task
+	ClaimFingerprint  string
+	ResultFingerprint ai.Fingerprint
+	// Fingerprint is the legacy combined claim/result fingerprint. New
+	// callers should set ClaimFingerprint and ResultFingerprint.
 	Fingerprint ai.Fingerprint
 	Owner       owners.Principal
 	Force       bool     // include media that already have an active result for fp
@@ -53,6 +57,8 @@ func (s *Scanner) Scan(ctx context.Context, req ScanRequest) (int, error) {
 	if !req.Task.Valid() {
 		return 0, fmt.Errorf("invalid task %q", req.Task)
 	}
+	resultFP := req.resultFingerprint()
+	claimFP := req.claimFingerprint()
 	mediaRows, err := s.candidates(ctx, req)
 	if err != nil {
 		return 0, fmt.Errorf("candidates: %w", err)
@@ -66,7 +72,7 @@ func (s *Scanner) Scan(ctx context.Context, req ScanRequest) (int, error) {
 			continue
 		}
 		if !req.Force {
-			skip, err := s.shouldSkip(ctx, m.ID, req.Task, req.Fingerprint)
+			skip, err := s.shouldSkip(ctx, m.ID, req.Task, resultFP)
 			if err != nil {
 				return enqueued, err
 			}
@@ -74,12 +80,26 @@ func (s *Scanner) Scan(ctx context.Context, req ScanRequest) (int, error) {
 				continue
 			}
 		}
-		if err := s.q.Enqueue(ctx, m.ID, req.Task, req.Fingerprint); err != nil {
+		if err := s.q.EnqueueClaim(ctx, m.ID, req.Task, claimFP); err != nil {
 			return enqueued, fmt.Errorf("enqueue %s: %w", m.ID, err)
 		}
 		enqueued++
 	}
 	return enqueued, nil
+}
+
+func (req ScanRequest) resultFingerprint() ai.Fingerprint {
+	if req.ResultFingerprint != (ai.Fingerprint{}) {
+		return req.ResultFingerprint
+	}
+	return req.Fingerprint
+}
+
+func (req ScanRequest) claimFingerprint() string {
+	if req.ClaimFingerprint != "" {
+		return req.ClaimFingerprint
+	}
+	return req.resultFingerprint().String()
 }
 
 // shouldSkip returns true if the (media, task) pair has a terminal
@@ -146,6 +166,7 @@ type candidate struct {
 // interval rather than re-scanning the same 200 finished rows. Results
 // are ordered by id for deterministic batching.
 func (s *Scanner) candidates(ctx context.Context, req ScanRequest) ([]candidate, error) {
+	resultFP := req.resultFingerprint()
 	scoped := !req.Owner.IsZero()
 	if len(req.MediaIDs) > 0 {
 		out := make([]candidate, 0, len(req.MediaIDs))
@@ -187,7 +208,7 @@ func (s *Scanner) candidates(ctx context.Context, req ScanRequest) ([]candidate,
 			   AND r.model_id=? AND r.prompt_version=? AND r.input_profile=?)`)
 		args = append(args,
 			string(req.Task),
-			req.Fingerprint.ModelID, req.Fingerprint.PromptVersion, req.Fingerprint.InputProfile)
+			resultFP.ModelID, resultFP.PromptVersion, resultFP.InputProfile)
 		// Exclude terminal failures for the current fingerprint —
 		// otherwise the periodic tick would re-enqueue dead jobs every
 		// interval. Force scans intentionally bypass this so an
@@ -198,7 +219,7 @@ func (s *Scanner) candidates(ctx context.Context, req ScanRequest) ([]candidate,
 			   AND f.model_id=? AND f.prompt_version=? AND f.input_profile=?)`)
 		args = append(args,
 			string(req.Task),
-			req.Fingerprint.ModelID, req.Fingerprint.PromptVersion, req.Fingerprint.InputProfile)
+			resultFP.ModelID, resultFP.PromptVersion, resultFP.InputProfile)
 		// Exclude skipped media (videos, no_preview thumbs). Skipped is
 		// fingerprint-independent: once skipped for a task, stays
 		// skipped until an explicit force/clear.
@@ -243,8 +264,12 @@ func (s *Scanner) candidates(ctx context.Context, req ScanRequest) ([]candidate,
 // PromptVersion is empty by construction). Limit=0 means unbounded;
 // MediaIDs=nil means scan the whole owner's library.
 type EmbedScanRequest struct {
-	Owner           owners.Principal
-	Generation      embedding.Row
+	Owner             owners.Principal
+	Generation        embedding.Row
+	ClaimFingerprint  string
+	ResultFingerprint ai.Fingerprint
+	// Fingerprint is the legacy combined claim/result fingerprint. New
+	// callers should set ClaimFingerprint and ResultFingerprint.
 	Fingerprint     ai.Fingerprint
 	AckAllowsHidden bool
 	RetryBudget     int
@@ -280,13 +305,28 @@ func (s *Scanner) ScanEmbed(ctx context.Context, req EmbedScanRequest) (int, err
 		return 0, fmt.Errorf("embed candidates: %w", err)
 	}
 	enqueued := 0
+	claimFP := req.claimFingerprint()
 	for _, id := range ids {
-		if err := s.q.Enqueue(ctx, id, ai.TaskEmbed, req.Fingerprint); err != nil {
+		if err := s.q.EnqueueClaim(ctx, id, ai.TaskEmbed, claimFP); err != nil {
 			return enqueued, fmt.Errorf("enqueue %s: %w", id, err)
 		}
 		enqueued++
 	}
 	return enqueued, nil
+}
+
+func (req EmbedScanRequest) resultFingerprint() ai.Fingerprint {
+	if req.ResultFingerprint != (ai.Fingerprint{}) {
+		return req.ResultFingerprint
+	}
+	return req.Fingerprint
+}
+
+func (req EmbedScanRequest) claimFingerprint() string {
+	if req.ClaimFingerprint != "" {
+		return req.ClaimFingerprint
+	}
+	return req.resultFingerprint().String()
 }
 
 // embedCandidates returns media IDs eligible for embed gap-fill against
@@ -298,6 +338,8 @@ func (s *Scanner) ScanEmbed(ctx context.Context, req EmbedScanRequest) (int, err
 // extra IN (...) clause so an operator-driven targeted retry only
 // considers the supplied subset.
 func (s *Scanner) embedCandidates(ctx context.Context, req EmbedScanRequest) ([]string, error) {
+	resultFP := req.resultFingerprint()
+	claimFP := req.claimFingerprint()
 	q := `SELECT m.id FROM media m
 	 WHERE m.owner_hub = ? AND m.owner_user_id = ?
 	   AND m.thumb_status = 'ready'
@@ -313,12 +355,14 @@ func (s *Scanner) embedCandidates(ctx context.Context, req EmbedScanRequest) ([]
 	                      AND f.attempt_count >= ?)
 	   AND NOT EXISTS (SELECT 1 FROM ai_jobs j
 	                    WHERE j.media_id = m.id AND j.task = 'embed'
+	                      AND j.fingerprint = ?
 	                      AND j.status IN ('pending','working','blocked'))`
 	args := []any{
 		req.Owner.Hub, req.Owner.UserID,
 		req.AckAllowsHidden,
 		req.Generation.ID,
-		req.Fingerprint.ModelID, req.Fingerprint.InputProfile, req.RetryBudget,
+		resultFP.ModelID, resultFP.InputProfile, req.RetryBudget,
+		claimFP,
 	}
 	if len(req.MediaIDs) > 0 {
 		placeholders := strings.Repeat("?,", len(req.MediaIDs))

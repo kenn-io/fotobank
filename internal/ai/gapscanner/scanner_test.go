@@ -48,6 +48,41 @@ func TestGapScannerEnqueuesMissingMedia(t *testing.T) {
 	_ = mids[1]
 }
 
+func TestGapScannerUsesClaimFingerprintForQueueAndResultFingerprintForSkips(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	done := testutil.SeedPhoto(t, rw, owner, "p-done")
+	fresh := testutil.SeedPhoto(t, rw, owner, "p-fresh")
+	q := jobs.NewQueue(rw, ro)
+	resR := results.NewRepo(rw, ro)
+	skipR := skipped.NewRepo(rw, ro)
+	resultFP := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
+
+	r.NoError(resR.WriteTagResult(ctx, done, resultFP, "h",
+		[]parse.Tag{{Key: "x", Label: "x", Rank: 1}}))
+
+	s := gapscanner.New(ro, q, resR, skipR)
+	n, err := s.Scan(ctx, gapscanner.ScanRequest{
+		Task:              ai.TaskTag,
+		ClaimFingerprint:  "claim-current",
+		ResultFingerprint: resultFP,
+		Force:             false,
+		Limit:             100,
+	})
+	r.NoError(err)
+	r.Equal(1, n)
+
+	claims, err := q.ClaimBatchForFingerprint(ctx, ai.TaskTag, "claim-current", 10)
+	r.NoError(err)
+	r.Len(claims, 1)
+	r.Equal(fresh, claims[0].MediaID)
+	claims, err = q.ClaimBatchForFingerprint(ctx, ai.TaskTag, resultFP.String(), 10)
+	r.NoError(err)
+	r.Empty(claims)
+}
+
 func TestGapScannerForceIncludesActiveMedia(t *testing.T) {
 	r := require.New(t)
 	rw, ro := testutil.OpenTestDBPair(t)
@@ -254,16 +289,20 @@ func TestScanEmbed_EnqueuesNewMedia(t *testing.T) {
 
 	s := gapscanner.New(ro, q, resR, skipR)
 	n, err := s.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
-		Owner:       owner,
-		Generation:  gen,
-		Fingerprint: fp,
-		RetryBudget: 3,
+		Owner:             owner,
+		Generation:        gen,
+		ClaimFingerprint:  "embed-claim",
+		ResultFingerprint: fp,
+		RetryBudget:       3,
 	})
 	r.NoError(err)
 	r.Equal(1, n, "thumb-ready media with no mapping/skip/failure/job is enqueued")
 
 	c, _ := q.Counters(ctx, ai.TaskEmbed)
 	r.Equal(1, c.Pending)
+	claims, err := q.ClaimBatchForFingerprint(ctx, ai.TaskEmbed, "embed-claim", 10)
+	r.NoError(err)
+	r.Len(claims, 1)
 	_ = mid
 }
 
