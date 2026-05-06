@@ -45,6 +45,60 @@ func TestEnqueueAndClaim(t *testing.T) {
 	r.Equal(fp.String(), claims[0].Fingerprint)
 }
 
+func TestClaimBatchForFingerprintOnlyClaimsMatchingRows(t *testing.T) {
+	r := require.New(t)
+	q, _, mids := newQueue(t)
+	ctx := context.Background()
+
+	r.NoError(q.EnqueueClaim(ctx, mids[0], ai.TaskTag, "claim-new"))
+	r.NoError(q.EnqueueClaim(ctx, mids[1], ai.TaskTag, "claim-old"))
+
+	claims, err := q.ClaimBatchForFingerprint(ctx, ai.TaskTag, "claim-new", 10)
+	r.NoError(err)
+	r.Len(claims, 1)
+	r.Equal(mids[0], claims[0].MediaID)
+	r.Equal("claim-new", claims[0].Fingerprint)
+
+	claims, err = q.ClaimBatchForFingerprint(ctx, ai.TaskTag, "claim-new", 10)
+	r.NoError(err)
+	r.Empty(claims)
+
+	claims, err = q.ClaimBatchForFingerprint(ctx, ai.TaskTag, "claim-old", 10)
+	r.NoError(err)
+	r.Len(claims, 1)
+	r.Equal(mids[1], claims[0].MediaID)
+}
+
+func TestSupersedeForFingerprintChange(t *testing.T) {
+	r := require.New(t)
+	q, rw, _, mids := newQueueWithDB(t)
+	ctx := context.Background()
+
+	r.NoError(q.EnqueueClaim(ctx, mids[0], ai.TaskTag, "claim-old"))
+	r.NoError(q.EnqueueClaim(ctx, mids[1], ai.TaskTag, "claim-old"))
+	claimed, err := q.ClaimBatchForFingerprint(ctx, ai.TaskTag, "claim-old", 1)
+	r.NoError(err)
+	r.Len(claimed, 1)
+
+	r.NoError(q.SupersedeForFingerprintChange(ctx, ai.TaskTag, mids, "claim-new"))
+	r.NoError(q.EnqueueClaim(ctx, mids[0], ai.TaskTag, "claim-new"))
+	r.NoError(q.EnqueueClaim(ctx, mids[1], ai.TaskTag, "claim-new"))
+
+	claims, err := q.ClaimBatchForFingerprint(ctx, ai.TaskTag, "claim-old", 10)
+	r.NoError(err)
+	r.Empty(claims)
+
+	claims, err = q.ClaimBatchForFingerprint(ctx, ai.TaskTag, "claim-new", 10)
+	r.NoError(err)
+	r.Len(claims, 2)
+
+	var superseded int
+	r.NoError(rw.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ai_jobs WHERE task='tag' AND fingerprint='claim-old' AND status='superseded'`,
+	).Scan(&superseded))
+	r.Equal(2, superseded)
+}
+
 func TestEnqueueIdempotent(t *testing.T) {
 	r := require.New(t)
 	q, _, mids := newQueue(t)

@@ -52,6 +52,12 @@ func NewQueue(rw, ro *sql.DB) *Queue { return &Queue{rw: rw, ro: ro} }
 // under a different fingerprint, transitions it to 'superseded' and
 // inserts the new pending row in one transaction.
 func (q *Queue) Enqueue(ctx context.Context, mediaID string, task ai.Task, fp ai.Fingerprint) error {
+	return q.EnqueueClaim(ctx, mediaID, task, fp.String())
+}
+
+// EnqueueClaim inserts a pending job for (mediaID, task) under the
+// claim fingerprint stored in ai_jobs.fingerprint.
+func (q *Queue) EnqueueClaim(ctx context.Context, mediaID string, task ai.Task, claimFP string) error {
 	tx, err := q.rw.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
@@ -69,7 +75,7 @@ func (q *Queue) Enqueue(ctx context.Context, mediaID string, task ai.Task, fp ai
 	case err != nil:
 		return fmt.Errorf("lookup existing: %w", err)
 	default:
-		if existingFP == fp.String() {
+		if existingFP == claimFP {
 			return nil // idempotent no-op
 		}
 		now := time.Now().UTC()
@@ -86,7 +92,7 @@ func (q *Queue) Enqueue(ctx context.Context, mediaID string, task ai.Task, fp ai
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO ai_jobs(id, media_id, task, fingerprint, status, attempts, enqueued_at)
 		 VALUES (?, ?, ?, ?, 'pending', 0, ?)`,
-		id, mediaID, string(task), fp.String(), now); err != nil {
+		id, mediaID, string(task), claimFP, now); err != nil {
 		return fmt.Errorf("insert: %w", err)
 	}
 	return tx.Commit()
@@ -106,22 +112,62 @@ func (q *Queue) SupersedeAll(ctx context.Context, mediaID string, task ai.Task) 
 	return nil
 }
 
+// SupersedeForFingerprintChange terminally aborts stale in-flight jobs
+// for mediaIDs/task whose claim fingerprint differs from newClaimFP.
+func (q *Queue) SupersedeForFingerprintChange(ctx context.Context, task ai.Task, mediaIDs []string, newClaimFP string) error {
+	if len(mediaIDs) == 0 {
+		return nil
+	}
+	tx, err := q.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UTC()
+	for _, mediaID := range mediaIDs {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE ai_jobs SET status='superseded', completed_at=?,
+			 last_error_kind=?, last_error='fingerprint changed'
+			 WHERE media_id=? AND task=? AND fingerprint<>?
+			   AND status IN ('pending','working','blocked')`,
+			now, string(ai.ErrKindSuperseded), mediaID, string(task), newClaimFP); err != nil {
+			return fmt.Errorf("supersede %s: %w", mediaID, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // ClaimBatch atomically transitions up to n pending rows to 'working'.
 func (q *Queue) ClaimBatch(ctx context.Context, task ai.Task, n int) ([]Claim, error) {
+	return q.ClaimBatchForFingerprint(ctx, task, "", n)
+}
+
+// ClaimBatchForFingerprint atomically transitions up to n pending rows
+// for task and claimFP to 'working'. Empty claimFP preserves the legacy
+// unfiltered claim behavior.
+func (q *Queue) ClaimBatchForFingerprint(ctx context.Context, task ai.Task, claimFP string, n int) ([]Claim, error) {
 	if n <= 0 {
 		return nil, nil
 	}
 	now := time.Now().UTC()
+	filter := ""
+	args := []any{now, string(task)}
+	if claimFP != "" {
+		filter = " AND fingerprint = ?"
+		args = append(args, claimFP)
+	}
+	args = append(args, n)
 	rows, err := q.rw.QueryContext(ctx, `
 		UPDATE ai_jobs
 		   SET status='working', claimed_at = ?
 		 WHERE id IN (
 		   SELECT id FROM ai_jobs
 		    WHERE task = ? AND status='pending'
+		      `+filter+`
 		    ORDER BY enqueued_at ASC, id ASC
 		    LIMIT ?
 		 )
-		RETURNING id, media_id, fingerprint, attempts, claimed_at`, now, string(task), n)
+		RETURNING id, media_id, fingerprint, attempts, claimed_at`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("claim: %w", err)
 	}
