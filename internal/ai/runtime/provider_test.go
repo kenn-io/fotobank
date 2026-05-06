@@ -124,6 +124,11 @@ func TestProviderFingerprintsChangeForRuntimeInputs(t *testing.T) {
 	require.NotEqual(before.Claim.Tag, visionChanged.Claim.Tag)
 	require.NotEqual(before.Claim.Caption, visionChanged.Claim.Caption)
 	require.Equal(before.Result.Tag.String(), visionChanged.Result.Tag.String())
+
+	repo.rows = []appsettings.Row{{Key: "ai.enabled", Value: `true`}}
+	require.NoError(provider.Reload(context.Background()))
+	masterEnabled := provider.Effective()
+	require.NotEqual(before.Claim.Embed, masterEnabled.Claim.Embed)
 }
 
 func newConfigFile(t *testing.T) string {

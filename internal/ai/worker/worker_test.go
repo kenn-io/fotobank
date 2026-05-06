@@ -199,6 +199,98 @@ func TestWorkerClaimsOnlyCurrentClaimFingerprint(t *testing.T) {
 	}
 }
 
+func TestWorkerUsesRuntimeSnapshotForClaimAndResultFingerprint(t *testing.T) {
+	r := require.New(t)
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "runtime")
+	q := jobs.NewQueue(rw, ro)
+	resR := results.NewRepo(rw, ro)
+	gw := &stubGateway{respond: func() (gateway.Response, error) {
+		return gateway.Response{Text: `{"tags":["runtime"]}`}, nil
+	}}
+	resultFP := ai.Fingerprint{ModelID: "runtime-model", PromptVersion: "tags-v1", InputProfile: "ip"}
+	w := worker.New(worker.Config{
+		Task:        ai.TaskTag,
+		Fingerprint: ai.Fingerprint{ModelID: "boot-model", PromptVersion: "tags-v1", InputProfile: "ip"},
+		PromptHash:  "h",
+		PromptText:  "describe",
+		Gateway:     &stubGateway{},
+		Image:       &stubImage{jpeg: tinyJPEG, status: "ready"},
+		Queue:       q,
+		Results:     resR,
+		Failures:    failures.NewRepo(rw, ro),
+		Skipped:     skipped.NewRepo(rw, ro),
+		Acknowledged: func(context.Context, owners.Principal) (bool, error) {
+			return true, nil
+		},
+		OwnerOf: func(context.Context, string) (owners.Principal, error) {
+			return owner, nil
+		},
+		MaxJobAttempts: 2,
+		Process:        worker.TagProcess,
+		Sem:            worker.NewVisionSemaphore(1),
+		Runtime: func(context.Context) worker.RuntimeConfig {
+			return worker.RuntimeConfig{
+				ClaimFingerprint: "claim-runtime",
+				Fingerprint:      resultFP,
+				Gateway:          gw,
+			}
+		},
+	})
+
+	r.NoError(q.EnqueueClaim(context.Background(), mid, ai.TaskTag, "claim-runtime"))
+	n, err := w.RunOnce(context.Background())
+	r.NoError(err)
+	r.Equal(1, n)
+	r.EqualValues(1, gw.calls.Load())
+
+	done, err := resR.DoneCount(context.Background(), ai.TaskTag, resultFP)
+	r.NoError(err)
+	r.Equal(1, done)
+}
+
+func TestWorkerRuntimeSnapshotCanPauseClaims(t *testing.T) {
+	r := require.New(t)
+	rw, ro := testutil.OpenTestDBPair(t)
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "paused")
+	q := jobs.NewQueue(rw, ro)
+	gw := &stubGateway{respond: func() (gateway.Response, error) {
+		return gateway.Response{Text: `{"tags":["paused"]}`}, nil
+	}}
+	w := worker.New(worker.Config{
+		Task:        ai.TaskTag,
+		Fingerprint: ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"},
+		PromptHash:  "h",
+		PromptText:  "describe",
+		Gateway:     gw,
+		Image:       &stubImage{jpeg: tinyJPEG, status: "ready"},
+		Queue:       q,
+		Results:     results.NewRepo(rw, ro),
+		Failures:    failures.NewRepo(rw, ro),
+		Skipped:     skipped.NewRepo(rw, ro),
+		Acknowledged: func(context.Context, owners.Principal) (bool, error) {
+			return true, nil
+		},
+		OwnerOf: func(context.Context, string) (owners.Principal, error) {
+			return owner, nil
+		},
+		MaxJobAttempts: 2,
+		Process:        worker.TagProcess,
+		Sem:            worker.NewVisionSemaphore(1),
+		Runtime: func(context.Context) worker.RuntimeConfig {
+			return worker.RuntimeConfig{Disabled: true}
+		},
+	})
+
+	r.NoError(q.Enqueue(context.Background(), mid, ai.TaskTag, ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}))
+	n, err := w.RunOnce(context.Background())
+	r.NoError(err)
+	r.Equal(0, n)
+	r.EqualValues(0, gw.calls.Load())
+}
+
 func TestWorkerMalformedRetriesThenFails(t *testing.T) {
 	r := require.New(t)
 	w, q, _, failR, _, _, mid, gw, _ := setup(t)

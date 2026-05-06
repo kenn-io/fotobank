@@ -67,6 +67,17 @@ func CaptionProcess(rawText string) (ProcessOutcome, error) {
 	return ProcessOutcome{Caption: text}, nil
 }
 
+// RuntimeConfig is the per-claim-loop AI snapshot the server supplies
+// when settings are hot-applied at runtime. One snapshot is read before
+// claiming and carried through every in-flight job from that claim
+// batch, preserving provenance if settings change mid-request.
+type RuntimeConfig struct {
+	Disabled         bool
+	ClaimFingerprint string
+	Fingerprint      ai.Fingerprint
+	Gateway          gateway.VisionGateway
+}
+
 // Config bundles worker dependencies.
 type Config struct {
 	Task             ai.Task
@@ -88,6 +99,7 @@ type Config struct {
 	BatchSize        int
 	PollInterval     time.Duration
 	Logger           *slog.Logger
+	Runtime          func(context.Context) RuntimeConfig
 }
 
 // Worker runs claim/lease iterations against ai_jobs.
@@ -137,16 +149,20 @@ func (w *Worker) Run(ctx context.Context) error {
 // promotes any blocked jobs whose blocker has cleared (acknowledgement
 // recorded, source thumb now ready) so they re-enter the claim path.
 func (w *Worker) RunOnce(ctx context.Context) (int, error) {
+	rt := w.runtimeConfig(ctx)
+	if rt.Disabled {
+		return 0, nil
+	}
 	if err := w.PromoteBlocked(ctx); err != nil {
 		w.cfg.Logger.Warn("ai promote blocked failed", "task", w.cfg.Task, "err", err)
 	}
-	claims, err := w.cfg.Queue.ClaimBatchForFingerprint(ctx, w.cfg.Task, w.claimFingerprint(), w.cfg.BatchSize)
+	claims, err := w.cfg.Queue.ClaimBatchForFingerprint(ctx, w.cfg.Task, rt.ClaimFingerprint, w.cfg.BatchSize)
 	if err != nil {
 		return 0, fmt.Errorf("claim: %w", err)
 	}
 	processed := 0
 	for _, c := range claims {
-		if err := w.handleOne(ctx, c); err != nil {
+		if err := w.handleOne(ctx, c, rt); err != nil {
 			w.cfg.Logger.Warn("ai job error", "job", c.JobID, "err", err)
 		}
 		processed++
@@ -154,11 +170,27 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	return processed, nil
 }
 
-func (w *Worker) claimFingerprint() string {
-	if w.cfg.ClaimFingerprint != "" {
-		return w.cfg.ClaimFingerprint
+func (w *Worker) runtimeConfig(ctx context.Context) RuntimeConfig {
+	if w.cfg.Runtime != nil {
+		rt := w.cfg.Runtime(ctx)
+		if rt.Disabled {
+			return rt
+		}
+		if rt.ClaimFingerprint == "" {
+			rt.ClaimFingerprint = rt.Fingerprint.String()
+		}
+		return rt
 	}
-	return w.cfg.Fingerprint.String()
+	rt := RuntimeConfig{
+		ClaimFingerprint: w.cfg.ClaimFingerprint,
+		Fingerprint:      w.cfg.Fingerprint,
+		Gateway:          w.cfg.Gateway,
+	}
+	if w.cfg.ClaimFingerprint != "" {
+		return rt
+	}
+	rt.ClaimFingerprint = w.cfg.Fingerprint.String()
+	return rt
 }
 
 // PromoteBlocked walks blocked rows for the worker's task and elevates
@@ -174,17 +206,17 @@ func (w *Worker) PromoteBlocked(ctx context.Context) error {
 	return nil
 }
 
-func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
+func (w *Worker) handleOne(ctx context.Context, c jobs.Claim, rt RuntimeConfig) error {
 	owner, err := w.cfg.OwnerOf(ctx, c.MediaID)
 	if err != nil {
 		// Transient DB error — retry on next tick. Burning an attempt is
 		// the contract: persistent owner-lookup failure eventually moves
 		// the job to ai_failures so it doesn't sit in pending forever.
-		return w.maybeRetryOrFail(ctx, c, ai.ErrKindTransient, "owner lookup: "+err.Error())
+		return w.maybeRetryOrFail(ctx, c, rt.Fingerprint, ai.ErrKindTransient, "owner lookup: "+err.Error())
 	}
 	acked, err := w.cfg.Acknowledged(ctx, owner)
 	if err != nil {
-		return w.maybeRetryOrFail(ctx, c, ai.ErrKindTransient, "ack lookup: "+err.Error())
+		return w.maybeRetryOrFail(ctx, c, rt.Fingerprint, ai.ErrKindTransient, "ack lookup: "+err.Error())
 	}
 	if !acked {
 		// Block until the principal acknowledges; PromoteAckedBlocked
@@ -194,7 +226,7 @@ func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
 
 	previewJPEG, thumbStatus, err := w.cfg.Image.ResolvePreviewJPEG(ctx, c.MediaID)
 	if err != nil {
-		return w.maybeRetryOrFail(ctx, c, ai.ErrKindMissingAIInput, err.Error())
+		return w.maybeRetryOrFail(ctx, c, rt.Fingerprint, ai.ErrKindMissingAIInput, err.Error())
 	}
 	switch thumbStatus {
 	case "pending":
@@ -210,11 +242,11 @@ func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
 		return w.cfg.Queue.MarkBlocked(ctx, c.JobID, c.ClaimedAt, jobs.ThumbBlockedFailed)
 	case "ready":
 	default:
-		return w.markFailed(ctx, c, ai.ErrKindMissingAIInput, "unknown thumb_status: "+thumbStatus)
+		return w.markFailed(ctx, c, rt.Fingerprint, ai.ErrKindMissingAIInput, "unknown thumb_status: "+thumbStatus)
 	}
 	jpegBytes, err := encode.EncodeChat(previewJPEG)
 	if err != nil {
-		return w.maybeRetryOrFail(ctx, c, ai.ErrKindMissingAIInput, "encode chat input: "+err.Error())
+		return w.maybeRetryOrFail(ctx, c, rt.Fingerprint, ai.ErrKindMissingAIInput, "encode chat input: "+err.Error())
 	}
 
 	if err := w.cfg.Sem.Acquire(ctx); err != nil {
@@ -225,44 +257,47 @@ func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
 	}
 	defer w.cfg.Sem.Release()
 
-	resp, err := w.cfg.Gateway.Generate(ctx, gateway.Request{
-		Model:  w.cfg.Fingerprint.ModelID,
+	if rt.Gateway == nil {
+		return w.maybeRetryOrFail(ctx, c, rt.Fingerprint, ai.ErrKindTransient, "vision gateway not configured")
+	}
+	resp, err := rt.Gateway.Generate(ctx, gateway.Request{
+		Model:  rt.Fingerprint.ModelID,
 		Prompt: w.cfg.PromptText,
 		JPEG:   jpegBytes,
 	})
 	if err != nil {
 		if errors.Is(err, gateway.ErrPermanent4xx) {
-			return w.markFailed(ctx, c, ai.ErrKindProvider4xx, err.Error())
+			return w.markFailed(ctx, c, rt.Fingerprint, ai.ErrKindProvider4xx, err.Error())
 		}
-		return w.maybeRetryOrFail(ctx, c, ai.ErrKindTransient, err.Error())
+		return w.maybeRetryOrFail(ctx, c, rt.Fingerprint, ai.ErrKindTransient, err.Error())
 	}
 
 	out, err := w.cfg.Process(resp.Text)
 	if err != nil {
 		if errors.Is(err, parse.ErrMalformed) {
-			return w.maybeRetryOrFail(ctx, c, ai.ErrKindMalformed, err.Error())
+			return w.maybeRetryOrFail(ctx, c, rt.Fingerprint, ai.ErrKindMalformed, err.Error())
 		}
-		return w.maybeRetryOrFail(ctx, c, ai.ErrKindTransient, err.Error())
+		return w.maybeRetryOrFail(ctx, c, rt.Fingerprint, ai.ErrKindTransient, err.Error())
 	}
 
 	var writeFn func(context.Context, *sql.Tx) error
 	switch w.cfg.Task {
 	case ai.TaskTag:
 		writeFn = func(ctx context.Context, tx *sql.Tx) error {
-			if err := w.cfg.Results.WriteTagResultTx(ctx, tx, c.MediaID, w.cfg.Fingerprint, w.cfg.PromptHash, out.Tags); err != nil {
+			if err := w.cfg.Results.WriteTagResultTx(ctx, tx, c.MediaID, rt.Fingerprint, w.cfg.PromptHash, out.Tags); err != nil {
 				return err
 			}
-			return w.cfg.Failures.DeleteTx(ctx, tx, c.MediaID, w.cfg.Task, w.cfg.Fingerprint)
+			return w.cfg.Failures.DeleteTx(ctx, tx, c.MediaID, w.cfg.Task, rt.Fingerprint)
 		}
 	case ai.TaskCaption:
 		writeFn = func(ctx context.Context, tx *sql.Tx) error {
-			if err := w.cfg.Results.WriteCaptionResultTx(ctx, tx, c.MediaID, w.cfg.Fingerprint, w.cfg.PromptHash, out.Caption); err != nil {
+			if err := w.cfg.Results.WriteCaptionResultTx(ctx, tx, c.MediaID, rt.Fingerprint, w.cfg.PromptHash, out.Caption); err != nil {
 				return err
 			}
-			return w.cfg.Failures.DeleteTx(ctx, tx, c.MediaID, w.cfg.Task, w.cfg.Fingerprint)
+			return w.cfg.Failures.DeleteTx(ctx, tx, c.MediaID, w.cfg.Task, rt.Fingerprint)
 		}
 	default:
-		return w.markFailed(ctx, c, ai.ErrKindTransient, "unknown task: "+string(w.cfg.Task))
+		return w.markFailed(ctx, c, rt.Fingerprint, ai.ErrKindTransient, "unknown task: "+string(w.cfg.Task))
 	}
 	if err := w.cfg.Queue.WriteAndMarkDone(ctx, c, writeFn); err != nil {
 		if errors.Is(err, jobs.ErrClaimLost) {
@@ -272,23 +307,23 @@ func (w *Worker) handleOne(ctx context.Context, c jobs.Claim) error {
 			w.cfg.Logger.Debug("ai claim lost on finalize", "job", c.JobID)
 			return nil
 		}
-		return w.maybeRetryOrFail(ctx, c, ai.ErrKindTransient, "write result: "+err.Error())
+		return w.maybeRetryOrFail(ctx, c, rt.Fingerprint, ai.ErrKindTransient, "write result: "+err.Error())
 	}
 	return nil
 }
 
-func (w *Worker) maybeRetryOrFail(ctx context.Context, c jobs.Claim, kind ai.LastErrorKind, msg string) error {
+func (w *Worker) maybeRetryOrFail(ctx context.Context, c jobs.Claim, fp ai.Fingerprint, kind ai.LastErrorKind, msg string) error {
 	if c.Attempts+1 >= w.cfg.MaxJobAttempts {
-		return w.markFailed(ctx, c, kind, msg)
+		return w.markFailed(ctx, c, fp, kind, msg)
 	}
 	return w.cfg.Queue.MarkRetryable(ctx, c.JobID, c.ClaimedAt, kind, msg)
 }
 
-func (w *Worker) markFailed(ctx context.Context, c jobs.Claim, kind ai.LastErrorKind, msg string) error {
+func (w *Worker) markFailed(ctx context.Context, c jobs.Claim, fp ai.Fingerprint, kind ai.LastErrorKind, msg string) error {
 	if err := w.cfg.Queue.MarkFailed(ctx, c.JobID, c.ClaimedAt, kind, msg); err != nil {
 		return err
 	}
-	if err := w.cfg.Failures.Record(ctx, c.MediaID, w.cfg.Task, w.cfg.Fingerprint, kind, msg, c.Attempts+1); err != nil {
+	if err := w.cfg.Failures.Record(ctx, c.MediaID, w.cfg.Task, fp, kind, msg, c.Attempts+1); err != nil {
 		w.cfg.Logger.Warn("record failure row", "err", err)
 	}
 	return nil

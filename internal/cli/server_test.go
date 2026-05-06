@@ -20,8 +20,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/embedding"
 	"github.com/wesm/fotobank/internal/ai/jobs"
+	airuntime "github.com/wesm/fotobank/internal/ai/runtime"
+	appsettingsstore "github.com/wesm/fotobank/internal/appsettings"
 	"github.com/wesm/fotobank/internal/cli"
 	"github.com/wesm/fotobank/internal/db"
 	"github.com/wesm/fotobank/internal/media"
@@ -715,7 +716,7 @@ storage_key = "h/u"
 [http]
 listen_address = "127.0.0.1:0"
 [ai]
-enabled = false
+enabled = true
 [ai.embed]
 enabled = true
 model = "test-embed"
@@ -758,8 +759,13 @@ admin_listen = "127.0.0.1:0"
 		Size: 1, Checksum: mid, ThumbStatus: "ready",
 	}))
 	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
-	fp := embedding.Fingerprint(ai.EmbedConfig{Model: "test-embed", InputEdge: 384})
-	r.NoError(q.Enqueue(context.Background(), mid, ai.TaskEmbed, fp))
+	settingsRepo := appsettingsstore.NewRepo(d.WriteDB(), d.ReadDB())
+	provider, err := airuntime.NewProvider(context.Background(), airuntime.Source{
+		FilePath: cfgPath,
+		Repo:     settingsRepo,
+	})
+	r.NoError(err)
+	r.NoError(q.EnqueueClaim(context.Background(), mid, ai.TaskEmbed, provider.Effective().Claim.Embed))
 	// Capture the job id so we can poll its row directly without
 	// guessing the queue's id-generation strategy.
 	var jobID string
@@ -887,8 +893,13 @@ admin_listen = "127.0.0.1:0"
 		Size: 1, Checksum: mid, ThumbStatus: "ready",
 	}))
 	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
-	fp := embedding.Fingerprint(ai.EmbedConfig{Model: "any", InputEdge: 384})
-	r.NoError(q.Enqueue(context.Background(), mid, ai.TaskEmbed, fp))
+	settingsRepo := appsettingsstore.NewRepo(d.WriteDB(), d.ReadDB())
+	provider, err := airuntime.NewProvider(context.Background(), airuntime.Source{
+		FilePath: cfgPath,
+		Repo:     settingsRepo,
+	})
+	r.NoError(err)
+	r.NoError(q.EnqueueClaim(context.Background(), mid, ai.TaskEmbed, provider.Effective().Claim.Embed))
 	var jobID string
 	r.NoError(d.ReadDB().QueryRowContext(context.Background(),
 		`SELECT id FROM ai_jobs WHERE media_id=? AND task='embed'`, mid).Scan(&jobID))

@@ -304,6 +304,86 @@ func TestWorker_ClaimsOnlyCurrentClaimFingerprint(t *testing.T) {
 	r.Equal(oldID, oldClaims[0].MediaID)
 }
 
+func TestWorker_RuntimeSnapshotControlsClaimAndResultFingerprint(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	oldID := testutil.SeedPhoto(t, d.WriteDB(), owner, "old")
+	newID := testutil.SeedPhoto(t, d.WriteDB(), owner, "new")
+	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
+	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	cfg := embedCfg()
+	cfg.Model = "runtime-model"
+	cfg.InputEdge = 512
+	resultFP := embedding.Fingerprint(cfg)
+	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
+	w := embedding.NewWorker(embedding.WorkerDeps{
+		Q:        q,
+		Gens:     gens,
+		Mapping:  embedding.NewMapping(d.WriteDB()),
+		Client:   &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1},
+		Resolver: &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"},
+		Cfg:      embedCfg(),
+		Events:   &recordingEmitter{},
+		DB:       d.WriteDB(),
+		Skipped:  skipped.NewRepo(d.WriteDB(), d.ReadDB()),
+		Failures: failures.NewRepo(d.WriteDB(), d.ReadDB()),
+		Runtime: func(context.Context) embedding.RuntimeConfig {
+			return embedding.RuntimeConfig{
+				Cfg:               cfg,
+				ClaimFingerprint:  "claim-runtime",
+				ResultFingerprint: resultFP,
+				Client:            client,
+			}
+		},
+	})
+
+	r.NoError(q.EnqueueClaim(ctx, oldID, ai.TaskEmbed, "claim-old"))
+	r.NoError(q.EnqueueClaim(ctx, newID, ai.TaskEmbed, "claim-runtime"))
+
+	r.NoError(w.RunOnce(ctx))
+	r.EqualValues(1, client.calls.Load())
+	client.mu.Lock()
+	r.Equal("runtime-model", client.lastModel)
+	client.mu.Unlock()
+
+	gen, err := gens.FindOrCreateBuilding(ctx, resultFP, cfg.Dimension)
+	r.NoError(err)
+	r.True(mappingExists(t, d, gen.ID, newID))
+	r.False(mappingExists(t, d, gen.ID, oldID))
+}
+
+func TestWorker_RuntimeSnapshotCanPauseClaims(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "paused")
+	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
+	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
+	w := embedding.NewWorker(embedding.WorkerDeps{
+		Q:        q,
+		Gens:     embedding.NewGenerations(d.WriteDB(), d.ReadDB()),
+		Mapping:  embedding.NewMapping(d.WriteDB()),
+		Client:   client,
+		Resolver: &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"},
+		Cfg:      embedCfg(),
+		Events:   &recordingEmitter{},
+		DB:       d.WriteDB(),
+		Skipped:  skipped.NewRepo(d.WriteDB(), d.ReadDB()),
+		Failures: failures.NewRepo(d.WriteDB(), d.ReadDB()),
+		Runtime: func(context.Context) embedding.RuntimeConfig {
+			return embedding.RuntimeConfig{Disabled: true}
+		},
+	})
+
+	r.NoError(q.Enqueue(ctx, mid, ai.TaskEmbed, embedFP()))
+	r.NoError(w.RunOnce(ctx))
+	r.EqualValues(0, client.calls.Load())
+	r.Equal("pending", jobStatus(t, d, mid, ai.TaskEmbed))
+}
+
 func TestWorker_ReplacementIsZeroDelta(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()

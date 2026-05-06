@@ -63,6 +63,17 @@ type QueueIface interface {
 // Compile-time check: *jobs.Queue satisfies QueueIface.
 var _ QueueIface = (*jobs.Queue)(nil)
 
+// RuntimeConfig is the per-claim-loop embed snapshot the server supplies
+// for hot-applied AI settings. The worker reads one snapshot before a
+// claim batch and carries it through all processing for that batch.
+type RuntimeConfig struct {
+	Disabled          bool
+	Cfg               ai.EmbedConfig
+	ClaimFingerprint  string
+	ResultFingerprint ai.Fingerprint
+	Client            ClientIface
+}
+
 // EventEmitter is the post-commit notification hook for the embed
 // pipeline. The two worker hooks fire from the worker's commit /
 // failure paths; the three lifecycle hooks fire from the generations
@@ -145,6 +156,7 @@ type WorkerDeps struct {
 	// Nil-safe — every metric emit is guarded so tests and embedding-
 	// only deployments without an observability registry stay terse.
 	Metrics *obs.Metrics
+	Runtime func(context.Context) RuntimeConfig
 }
 
 // Worker batches pending TaskEmbed jobs into one /v1/embeddings call
@@ -175,24 +187,60 @@ func NewWorker(d WorkerDeps) *Worker {
 // failures (claim SQL, transaction begin/commit) bubble up.
 func (w *Worker) RunOnce(ctx context.Context) error {
 	for {
-		batch, err := w.claimBatch(ctx)
+		rt := w.runtimeConfig(ctx)
+		if rt.Disabled {
+			return nil
+		}
+		batch, err := w.claimBatch(ctx, rt)
 		if err != nil {
 			return fmt.Errorf("claim batch: %w", err)
 		}
 		if len(batch) == 0 {
 			return nil
 		}
-		if err := w.process(ctx, batch); err != nil {
+		if err := w.process(ctx, batch, rt); err != nil {
 			return err
 		}
 	}
 }
 
-func (w *Worker) claimBatch(ctx context.Context) ([]jobs.Claim, error) {
-	if w.d.ClaimFingerprint != "" {
-		return w.d.Q.ClaimBatchForFingerprint(ctx, ai.TaskEmbed, w.d.ClaimFingerprint, w.d.Cfg.BatchSize)
+func (w *Worker) runtimeConfig(ctx context.Context) RuntimeConfig {
+	if w.d.Runtime != nil {
+		rt := w.d.Runtime(ctx)
+		if rt.Disabled {
+			return rt
+		}
+		if rt.Cfg.BatchSize <= 0 {
+			rt.Cfg.BatchSize = w.d.Cfg.BatchSize
+		}
+		if rt.Cfg.IdlePoll <= 0 {
+			rt.Cfg.IdlePoll = w.d.Cfg.IdlePoll
+		}
+		if rt.ResultFingerprint == (ai.Fingerprint{}) {
+			rt.ResultFingerprint = Fingerprint(rt.Cfg)
+		}
+		if rt.ClaimFingerprint == "" {
+			rt.ClaimFingerprint = rt.ResultFingerprint.String()
+		}
+		if rt.Client == nil {
+			rt.Client = w.d.Client
+		}
+		return rt
 	}
-	return w.d.Q.ClaimBatch(ctx, ai.TaskEmbed, w.d.Cfg.BatchSize)
+	rt := RuntimeConfig{
+		Cfg:               w.d.Cfg,
+		ClaimFingerprint:  w.d.ClaimFingerprint,
+		ResultFingerprint: Fingerprint(w.d.Cfg),
+		Client:            w.d.Client,
+	}
+	return rt
+}
+
+func (w *Worker) claimBatch(ctx context.Context, rt RuntimeConfig) ([]jobs.Claim, error) {
+	if rt.ClaimFingerprint != "" {
+		return w.d.Q.ClaimBatchForFingerprint(ctx, ai.TaskEmbed, rt.ClaimFingerprint, rt.Cfg.BatchSize)
+	}
+	return w.d.Q.ClaimBatch(ctx, ai.TaskEmbed, rt.Cfg.BatchSize)
 }
 
 // Run is the long-running loop driver: each tick it promotes any
@@ -241,7 +289,11 @@ func (w *Worker) Run(ctx context.Context) error {
 				slog.Default().Warn("embedding worker promote thumb-ready blocked", "err", err)
 			}
 
-			batch, claimErr := w.claimBatch(ctx)
+			rt := w.runtimeConfig(ctx)
+			if rt.Disabled {
+				break
+			}
+			batch, claimErr := w.claimBatch(ctx, rt)
 			if claimErr != nil {
 				if errors.Is(claimErr, context.Canceled) {
 					return nil
@@ -252,7 +304,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			if len(batch) == 0 {
 				break
 			}
-			if perr := w.process(ctx, batch); perr != nil {
+			if perr := w.process(ctx, batch, rt); perr != nil {
 				if errors.Is(perr, context.Canceled) {
 					return nil
 				}
@@ -302,7 +354,7 @@ type encoded struct {
 // Errors raised here are limited to infrastructure failures — per-claim
 // outcomes (skipped, blocked, failed) are surfaced via ai_jobs / ai_skipped
 // rows, not return values.
-func (w *Worker) process(ctx context.Context, batch []jobs.Claim) error {
+func (w *Worker) process(ctx context.Context, batch []jobs.Claim, rt RuntimeConfig) error {
 	out := w.resolveAll(ctx, batch)
 
 	// Step 2: classify each prepared entry. Successful ready claims are
@@ -325,11 +377,11 @@ func (w *Worker) process(ctx context.Context, batch []jobs.Claim) error {
 	// and each becomes its own /v1/embeddings call so vectors are
 	// validated against the right input set.
 	groups := partitionByFingerprint(ready)
-	if w.d.ClaimFingerprint != "" {
-		groups = map[string][]encoded{Fingerprint(w.d.Cfg).String(): ready}
+	if rt.ClaimFingerprint != "" {
+		groups = map[string][]encoded{rt.ResultFingerprint.String(): ready}
 	}
 	for fpStr, group := range groups {
-		if perr := w.processGroup(ctx, fpStr, group); perr != nil {
+		if perr := w.processGroup(ctx, fpStr, group, rt); perr != nil {
 			return perr
 		}
 	}
@@ -360,7 +412,7 @@ func partitionByFingerprint(ready []encoded) map[string][]encoded {
 // ClaimBatch, and each must hit the right endpoint with the right
 // pixel input — using cfg.Model / cfg.InputEdge for both would land
 // the fpV1 vector in fpV2's coordinate system, breaking search.
-func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded) error {
+func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded, rt RuntimeConfig) error {
 	fp, err := parseFingerprint(fpStr)
 	if err != nil {
 		// Defensive: a malformed fp on a working row is an invariant
@@ -387,7 +439,7 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 		return nil
 	}
 
-	gen, err := w.d.Gens.FindOrCreateBuilding(ctx, fp, w.d.Cfg.Dimension)
+	gen, err := w.d.Gens.FindOrCreateBuilding(ctx, fp, rt.Cfg.Dimension)
 	if err != nil {
 		// Generation lookup is infrastructure: any failure here means
 		// the next attempt should retry the same batch. Leave the rows
@@ -429,7 +481,13 @@ func (w *Worker) processGroup(ctx context.Context, fpStr string, group []encoded
 		// operator how big the batch was when it failed.
 		w.d.Metrics.AIEmbedBatchSize().Update(float64(len(jpegs)))
 	}
-	vectors, callErr := w.d.Client.EmbedImages(ctx, fp.ModelID, gen.Dimension, jpegs)
+	if rt.Client == nil {
+		for _, e := range survivors {
+			w.recordTerminalFailure(ctx, e.claim, fp, ai.ErrKindTransient, "embedding client not configured")
+		}
+		return nil
+	}
+	vectors, callErr := rt.Client.EmbedImages(ctx, fp.ModelID, gen.Dimension, jpegs)
 	if callErr != nil {
 		// Full-batch failure: classify once, mark every survivor
 		// failed with the same kind. Per-claim attribution is not

@@ -413,25 +413,68 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	// supported by the embed pipeline in v1 (see the embed activator's
 	// Principal field comment).
 	var (
-		embedClient   *embedding.Client
 		embedGens     *embedding.Generations
 		embedMapping  *embedding.Mapping
 		embedEvents   *httpapi.AIEmbedEvents
 		embedWorker   *embedding.Worker
 		embedActivat  *embedding.Activator
 		embedCompactr *embedding.Compactor
-		embedFP       ai.Fingerprint
 		embedPrincp   owners.Principal
 		searchService *searchsvc.Service
 	)
 	embedGens = embedding.NewGenerations(d.WriteDB(), d.ReadDB())
-	if cfg.AI.Embed.Enabled {
-		embedPrincp = owners.Principal{
-			Hub:    cfg.Identity.Stub.Hub,
-			UserID: cfg.Identity.Stub.UserID,
+	embedPrincp = owners.Principal{
+		Hub:    cfg.Identity.Stub.Hub,
+		UserID: cfg.Identity.Stub.UserID,
+	}
+	embedMapping = embedding.NewMapping(d.WriteDB())
+	embedEvents = httpapi.NewAIEmbedEvents(eventBus, embedPrincp)
+	embedGens.SetEmitter(embedEvents)
+
+	// Worker. The resolver is constructed fresh here even when the
+	// AI tag/caption pipeline already built one — the chat-pipeline
+	// resolver is scoped inside its own block below and not visible at
+	// this scope.
+	embedResolver := imginput.NewResolver(d.ReadDB(), storeLayer)
+	embedWorker = embedding.NewWorker(embedding.WorkerDeps{
+		Q:        aiQueue,
+		Gens:     embedGens,
+		Mapping:  embedMapping,
+		Resolver: embedResolver,
+		Cfg:      cfg.AI.Embed,
+		Events:   embedEvents,
+		DB:       d.WriteDB(),
+		Skipped:  aiSkipped,
+		Failures: aiFailures,
+		Metrics:  metricsObj,
+		Runtime:  runtimeEmbedWorkerConfig(aiProvider),
+	})
+
+	// Activator. Tick is overridable for tests; the H2 Run loop
+	// awaits each Tick before scheduling the next, so a short
+	// override doesn't compound work.
+	activatorTick := embedActivatorTickDefault
+	if raw := os.Getenv("FOTOBANK_TEST_EMBED_ACTIVATOR_TICK"); raw != "" {
+		if dur, err := time.ParseDuration(raw); err == nil && dur > 0 {
+			activatorTick = dur
+		} else if err != nil {
+			fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_EMBED_ACTIVATOR_TICK parse error: %v\n", err)
 		}
-		embedFP = embedding.Fingerprint(cfg.AI.Embed)
-		embedClient = embedding.NewClient(embedding.Config{
+	}
+	embedActivat = embedding.NewActivator(d.ReadDB(), embedGens, aiAck, embedEvents, metricsObj, embedding.ActivatorCfg{
+		Principal:    embedPrincp,
+		ThresholdPct: cfg.Search.ActivationThresholdPct,
+		Tick:         activatorTick,
+	})
+
+	// Compactor. retainRetired is the configured "keep retired
+	// generations for N days" preference; the per-tick interval
+	// (how often we sweep) is independent and defaults to daily.
+	retainRetired := time.Duration(cfg.Search.RetainRetiredDays) * 24 * time.Hour
+	embedCompactr = embedding.NewCompactor(d.WriteDB(), retainRetired)
+
+	if cfg.AI.Embed.Enabled {
+		embedClient := embedding.NewClient(embedding.Config{
 			Endpoint:   cfg.AI.Embed.Endpoint,
 			APIKey:     cfg.AI.Embed.APIKey(),
 			Model:      cfg.AI.Embed.Model,
@@ -439,51 +482,6 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			Timeout:    cfg.AI.Embed.Timeout,
 			MaxRetries: cfg.AI.Embed.MaxRetries,
 		})
-		embedMapping = embedding.NewMapping(d.WriteDB())
-		embedEvents = httpapi.NewAIEmbedEvents(eventBus, embedPrincp)
-		embedGens.SetEmitter(embedEvents)
-
-		// Worker. The resolver is constructed fresh here even when the
-		// AI tag/caption pipeline already built one — the chat-pipeline
-		// resolver is scoped inside its own `if cfg.AI.Enabled` block
-		// and not visible at this scope.
-		embedResolver := imginput.NewResolver(d.ReadDB(), storeLayer)
-		embedWorker = embedding.NewWorker(embedding.WorkerDeps{
-			Q:        aiQueue,
-			Gens:     embedGens,
-			Mapping:  embedMapping,
-			Client:   embedClient,
-			Resolver: embedResolver,
-			Cfg:      cfg.AI.Embed,
-			Events:   embedEvents,
-			DB:       d.WriteDB(),
-			Skipped:  aiSkipped,
-			Failures: aiFailures,
-			Metrics:  metricsObj,
-		})
-
-		// Activator. Tick is overridable for tests; the H2 Run loop
-		// awaits each Tick before scheduling the next, so a short
-		// override doesn't compound work.
-		activatorTick := embedActivatorTickDefault
-		if raw := os.Getenv("FOTOBANK_TEST_EMBED_ACTIVATOR_TICK"); raw != "" {
-			if dur, err := time.ParseDuration(raw); err == nil && dur > 0 {
-				activatorTick = dur
-			} else if err != nil {
-				fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_EMBED_ACTIVATOR_TICK parse error: %v\n", err)
-			}
-		}
-		embedActivat = embedding.NewActivator(d.ReadDB(), embedGens, aiAck, embedEvents, metricsObj, embedding.ActivatorCfg{
-			Principal:    embedPrincp,
-			ThresholdPct: cfg.Search.ActivationThresholdPct,
-			Tick:         activatorTick,
-		})
-
-		// Compactor. retainRetired is the configured "keep retired
-		// generations for N days" preference; the per-tick interval
-		// (how often we sweep) is independent and defaults to daily.
-		retainRetired := time.Duration(cfg.Search.RetainRetiredDays) * 24 * time.Hour
-		embedCompactr = embedding.NewCompactor(d.WriteDB(), retainRetired)
 
 		// Search service: backend + engine + auth-scoped wrapper.
 		// Backend is constructed with embedding.Row{} (zero value); the
@@ -752,121 +750,115 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	// task workers; per-task BatchSize is the claim size. ownerLookup
 	// resolves a media row's owning principal so the worker can gate on
 	// per-owner acknowledgement.
-	if cfg.AI.Enabled {
-		aiSem := aiworker.NewVisionSemaphore(cfg.AI.Vision.MaxInflight)
-		aiImg := imginput.NewResolver(d.ReadDB(), storeLayer)
-		aiMediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
-		aiOwnerOf := func(ctx context.Context, mediaID string) (owners.Principal, error) {
-			m, err := aiMediaRepo.GetByID(ctx, mediaID)
-			if err != nil {
-				return owners.Principal{}, err
-			}
-			return m.Owner, nil
+	aiSem := aiworker.NewVisionSemaphore(cfg.AI.Vision.MaxInflight)
+	aiImg := imginput.NewResolver(d.ReadDB(), storeLayer)
+	aiMediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	aiOwnerOf := func(ctx context.Context, mediaID string) (owners.Principal, error) {
+		m, err := aiMediaRepo.GetByID(ctx, mediaID)
+		if err != nil {
+			return owners.Principal{}, err
 		}
-		if cfg.AI.Tag.Enabled {
-			tagWorker := aiworker.New(aiworker.Config{
-				Task:           ai.TaskTag,
-				Fingerprint:    tagFingerprint,
-				PromptHash:     tagPrompt.Hash,
-				PromptText:     tagPrompt.Text,
-				Gateway:        aiGateway,
-				Image:          aiImg,
-				Queue:          aiQueue,
-				Results:        aiResults,
-				Failures:       aiFailures,
-				Skipped:        aiSkipped,
-				Acknowledged:   aiAck.IsAcknowledged,
-				OwnerOf:        aiOwnerOf,
-				MaxJobAttempts: 2,
-				BatchSize:      cfg.AI.Tag.WorkerConcurrency,
-				Process:        aiworker.TagProcess,
-				Sem:            aiSem,
-				Logger:         logger.With("component", "ai-tag"),
-			})
-			bgWG.Go(func() {
-				if err := tagWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
-					fmt.Fprintln(opts.stderr, "ai tag worker exited:", err)
-				}
-			})
-		}
-		if cfg.AI.Caption.Enabled {
-			capWorker := aiworker.New(aiworker.Config{
-				Task:           ai.TaskCaption,
-				Fingerprint:    captionFingerprint,
-				PromptHash:     captionPrompt.Hash,
-				PromptText:     captionPrompt.Text,
-				Gateway:        aiGateway,
-				Image:          aiImg,
-				Queue:          aiQueue,
-				Results:        aiResults,
-				Failures:       aiFailures,
-				Skipped:        aiSkipped,
-				Acknowledged:   aiAck.IsAcknowledged,
-				OwnerOf:        aiOwnerOf,
-				MaxJobAttempts: 2,
-				BatchSize:      cfg.AI.Caption.WorkerConcurrency,
-				Process:        aiworker.CaptionProcess,
-				Sem:            aiSem,
-				Logger:         logger.With("component", "ai-caption"),
-			})
-			bgWG.Go(func() {
-				if err := capWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
-					fmt.Fprintln(opts.stderr, "ai caption worker exited:", err)
-				}
-			})
-		}
-		bgWG.Go(func() {
-			runAIBackground(sigCtx, aiQueue, aiGap, tagFingerprint, captionFingerprint, cfg, opts.stderr)
-		})
+		return m.Owner, nil
 	}
+	tagWorker := aiworker.New(aiworker.Config{
+		Task:           ai.TaskTag,
+		Fingerprint:    tagFingerprint,
+		PromptHash:     tagPrompt.Hash,
+		PromptText:     tagPrompt.Text,
+		Gateway:        aiGateway,
+		Image:          aiImg,
+		Queue:          aiQueue,
+		Results:        aiResults,
+		Failures:       aiFailures,
+		Skipped:        aiSkipped,
+		Acknowledged:   aiAck.IsAcknowledged,
+		OwnerOf:        aiOwnerOf,
+		MaxJobAttempts: 2,
+		BatchSize:      cfg.AI.Tag.WorkerConcurrency,
+		Process:        aiworker.TagProcess,
+		Sem:            aiSem,
+		Logger:         logger.With("component", "ai-tag"),
+		Runtime:        runtimeVisionWorkerConfig(aiProvider, ai.TaskTag),
+	})
+	bgWG.Go(func() {
+		if err := tagWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(opts.stderr, "ai tag worker exited:", err)
+		}
+	})
+	capWorker := aiworker.New(aiworker.Config{
+		Task:           ai.TaskCaption,
+		Fingerprint:    captionFingerprint,
+		PromptHash:     captionPrompt.Hash,
+		PromptText:     captionPrompt.Text,
+		Gateway:        aiGateway,
+		Image:          aiImg,
+		Queue:          aiQueue,
+		Results:        aiResults,
+		Failures:       aiFailures,
+		Skipped:        aiSkipped,
+		Acknowledged:   aiAck.IsAcknowledged,
+		OwnerOf:        aiOwnerOf,
+		MaxJobAttempts: 2,
+		BatchSize:      cfg.AI.Caption.WorkerConcurrency,
+		Process:        aiworker.CaptionProcess,
+		Sem:            aiSem,
+		Logger:         logger.With("component", "ai-caption"),
+		Runtime:        runtimeVisionWorkerConfig(aiProvider, ai.TaskCaption),
+	})
+	bgWG.Go(func() {
+		if err := capWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(opts.stderr, "ai caption worker exited:", err)
+		}
+	})
+	bgWG.Go(func() {
+		runAIBackground(sigCtx, aiQueue, aiGap, aiProvider, opts.stderr)
+	})
 
 	// Embed pipeline workers. The probe at line ~426 already validated
 	// the endpoint, so a short-lived endpoint outage at boot has been
 	// surfaced. Each goroutine is bgWG-tracked so a crash during
 	// shutdown can't race the deferred d.Close.
-	if cfg.AI.Embed.Enabled {
-		bgWG.Go(func() {
-			if err := embedWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
-				fmt.Fprintln(opts.stderr, "embed worker exited:", err)
-			}
-		})
-		bgWG.Go(func() {
-			if err := embedActivat.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
-				fmt.Fprintln(opts.stderr, "embed activator exited:", err)
-			}
-		})
-		// Compactor sweeps daily by default. The interval is overridable
-		// via FOTOBANK_TEST_EMBED_COMPACTOR_INTERVAL so e2e tests can
-		// observe a sweep without waiting 24h. Per-tick failures are
-		// logged but do not crash the server — the next tick re-evaluates
-		// from scratch.
-		compactorInterval := embedCompactorIntervalDefault
-		if raw := os.Getenv("FOTOBANK_TEST_EMBED_COMPACTOR_INTERVAL"); raw != "" {
-			if dur, err := time.ParseDuration(raw); err == nil && dur > 0 {
-				compactorInterval = dur
-			} else if err != nil {
-				fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_EMBED_COMPACTOR_INTERVAL parse error: %v\n", err)
-			}
+	bgWG.Go(func() {
+		if err := embedWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(opts.stderr, "embed worker exited:", err)
 		}
-		bgWG.Go(func() {
-			runEmbedCompactor(sigCtx, embedCompactr, compactorInterval, opts.stderr)
-		})
-		// Gap-scan tick: walks the catalog every minute looking for
-		// media that should be embedded against the active or building
-		// generation. The 1-minute default keeps the activation budget
-		// moving on a fresh deploy without hammering the catalog.
-		gapInterval := embedGapScanIntervalDefault
-		if raw := os.Getenv("FOTOBANK_TEST_EMBED_GAPSCAN_INTERVAL"); raw != "" {
-			if dur, err := time.ParseDuration(raw); err == nil && dur > 0 {
-				gapInterval = dur
-			} else if err != nil {
-				fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_EMBED_GAPSCAN_INTERVAL parse error: %v\n", err)
-			}
+	})
+	bgWG.Go(func() {
+		if err := embedActivat.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(opts.stderr, "embed activator exited:", err)
 		}
-		bgWG.Go(func() {
-			runEmbedGapScan(sigCtx, aiGap, embedGens, embedPrincp, embedFP, gapInterval, opts.stderr)
-		})
+	})
+	// Compactor sweeps daily by default. The interval is overridable
+	// via FOTOBANK_TEST_EMBED_COMPACTOR_INTERVAL so e2e tests can
+	// observe a sweep without waiting 24h. Per-tick failures are
+	// logged but do not crash the server — the next tick re-evaluates
+	// from scratch.
+	compactorInterval := embedCompactorIntervalDefault
+	if raw := os.Getenv("FOTOBANK_TEST_EMBED_COMPACTOR_INTERVAL"); raw != "" {
+		if dur, err := time.ParseDuration(raw); err == nil && dur > 0 {
+			compactorInterval = dur
+		} else if err != nil {
+			fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_EMBED_COMPACTOR_INTERVAL parse error: %v\n", err)
+		}
 	}
+	bgWG.Go(func() {
+		runEmbedCompactor(sigCtx, embedCompactr, compactorInterval, opts.stderr)
+	})
+	// Gap-scan tick: walks the catalog every minute looking for
+	// media that should be embedded against the active or building
+	// generation. The 1-minute default keeps the activation budget
+	// moving on a fresh deploy without hammering the catalog.
+	gapInterval := embedGapScanIntervalDefault
+	if raw := os.Getenv("FOTOBANK_TEST_EMBED_GAPSCAN_INTERVAL"); raw != "" {
+		if dur, err := time.ParseDuration(raw); err == nil && dur > 0 {
+			gapInterval = dur
+		} else if err != nil {
+			fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_EMBED_GAPSCAN_INTERVAL parse error: %v\n", err)
+		}
+	}
+	bgWG.Go(func() {
+		runEmbedGapScan(sigCtx, aiGap, embedGens, embedPrincp, aiProvider, gapInterval, opts.stderr)
+	})
 
 	// backupDir is captured outside the cfg.Backup.Enabled block so the
 	// admin listener's snapshot_dir readyz check can refer to it. The
@@ -1295,6 +1287,73 @@ func (a mediaCheckAdapter) Check(ctx context.Context, mediaID string, caller own
 	return err
 }
 
+type aiRuntimeProvider interface {
+	Effective() airuntime.Snapshot
+}
+
+func runtimeVisionWorkerConfig(p aiRuntimeProvider, task ai.Task) func(context.Context) aiworker.RuntimeConfig {
+	return func(context.Context) aiworker.RuntimeConfig {
+		snap := p.Effective()
+		if !snap.Config.Enabled {
+			return aiworker.RuntimeConfig{Disabled: true}
+		}
+		switch task {
+		case ai.TaskTag:
+			if !snap.Config.Tag.Enabled {
+				return aiworker.RuntimeConfig{Disabled: true}
+			}
+			return aiworker.RuntimeConfig{
+				ClaimFingerprint: snap.Claim.Tag,
+				Fingerprint:      snap.Result.Tag,
+				Gateway:          runtimeVisionGateway(snap.Config.Vision),
+			}
+		case ai.TaskCaption:
+			if !snap.Config.Caption.Enabled {
+				return aiworker.RuntimeConfig{Disabled: true}
+			}
+			return aiworker.RuntimeConfig{
+				ClaimFingerprint: snap.Claim.Caption,
+				Fingerprint:      snap.Result.Caption,
+				Gateway:          runtimeVisionGateway(snap.Config.Vision),
+			}
+		default:
+			return aiworker.RuntimeConfig{Disabled: true}
+		}
+	}
+}
+
+func runtimeVisionGateway(cfg ai.VisionConfig) gateway.VisionGateway {
+	return gateway.NewOpenAICompatible(gateway.OpenAIConfig{
+		Endpoint:   cfg.Endpoint,
+		APIKey:     cfg.APIKey(),
+		Timeout:    cfg.Timeout,
+		MaxRetries: cfg.MaxRetries,
+	})
+}
+
+func runtimeEmbedWorkerConfig(p aiRuntimeProvider) func(context.Context) embedding.RuntimeConfig {
+	return func(context.Context) embedding.RuntimeConfig {
+		snap := p.Effective()
+		if !snap.Config.Enabled || !snap.Config.Embed.Enabled {
+			return embedding.RuntimeConfig{Disabled: true}
+		}
+		cfg := snap.Config.Embed
+		return embedding.RuntimeConfig{
+			Cfg:               cfg,
+			ClaimFingerprint:  snap.Claim.Embed,
+			ResultFingerprint: snap.Result.Embed,
+			Client: embedding.NewClient(embedding.Config{
+				Endpoint:   cfg.Endpoint,
+				APIKey:     cfg.APIKey(),
+				Model:      cfg.Model,
+				Dimension:  cfg.Dimension,
+				Timeout:    cfg.Timeout,
+				MaxRetries: cfg.MaxRetries,
+			}),
+		}
+	}
+}
+
 // runAIBackground runs the AI workers' lease sweep and the gap-scan
 // repair tick. SweepLeases reclaims rows whose claim lease has expired
 // (worker crash mid-process). The gap scan walks the catalog and
@@ -1305,8 +1364,7 @@ func runAIBackground(
 	ctx context.Context,
 	q *jobs.Queue,
 	gs *gapscanner.Scanner,
-	tagFP, capFP ai.Fingerprint,
-	cfg *config.Config,
+	provider aiRuntimeProvider,
 	stderr io.Writer,
 ) {
 	sweepT := time.NewTicker(time.Minute)
@@ -1323,16 +1381,23 @@ func runAIBackground(
 				fmt.Fprintln(stderr, "ai lease sweep:", err)
 			}
 		case <-gapT.C:
-			if cfg.AI.Tag.Enabled {
+			snap := provider.Effective()
+			if snap.Config.Enabled && snap.Config.Tag.Enabled {
 				if _, err := gs.Scan(ctx, gapscanner.ScanRequest{
-					Task: ai.TaskTag, Fingerprint: tagFP, Limit: 200,
+					Task:              ai.TaskTag,
+					ClaimFingerprint:  snap.Claim.Tag,
+					ResultFingerprint: snap.Result.Tag,
+					Limit:             200,
 				}); err != nil && !errors.Is(err, context.Canceled) {
 					fmt.Fprintln(stderr, "ai tag gap scan:", err)
 				}
 			}
-			if cfg.AI.Caption.Enabled {
+			if snap.Config.Enabled && snap.Config.Caption.Enabled {
 				if _, err := gs.Scan(ctx, gapscanner.ScanRequest{
-					Task: ai.TaskCaption, Fingerprint: capFP, Limit: 200,
+					Task:              ai.TaskCaption,
+					ClaimFingerprint:  snap.Claim.Caption,
+					ResultFingerprint: snap.Result.Caption,
+					Limit:             200,
 				}); err != nil && !errors.Is(err, context.Canceled) {
 					fmt.Fprintln(stderr, "ai caption gap scan:", err)
 				}
@@ -1388,7 +1453,7 @@ func runEmbedGapScan(
 	gs *gapscanner.Scanner,
 	gens *embedding.Generations,
 	principal owners.Principal,
-	fp ai.Fingerprint,
+	provider aiRuntimeProvider,
 	interval time.Duration,
 	stderr io.Writer,
 ) {
@@ -1399,6 +1464,10 @@ func runEmbedGapScan(
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			snap := provider.Effective()
+			if !snap.Config.Enabled || !snap.Config.Embed.Enabled {
+				continue
+			}
 			gen, err := resolveGapScanGeneration(ctx, gens)
 			if err != nil {
 				if !errors.Is(err, context.Canceled) {
@@ -1414,12 +1483,13 @@ func runEmbedGapScan(
 				continue
 			}
 			if _, err := gs.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
-				Owner:           principal,
-				Generation:      *gen,
-				Fingerprint:     fp,
-				AckAllowsHidden: false,
-				RetryBudget:     5,
-				Limit:           200,
+				Owner:             principal,
+				Generation:        *gen,
+				ClaimFingerprint:  snap.Claim.Embed,
+				ResultFingerprint: snap.Result.Embed,
+				AckAllowsHidden:   false,
+				RetryBudget:       5,
+				Limit:             200,
 			}); err != nil && !errors.Is(err, context.Canceled) {
 				fmt.Fprintln(stderr, "embed gap scan:", err)
 			}

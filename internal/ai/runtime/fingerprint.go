@@ -70,6 +70,7 @@ func deriveFingerprints(cfg ai.Config) (ClaimFingerprints, ResultFingerprints) {
 		}),
 		Embed: claimFingerprint(map[string]any{
 			"task":            string(ai.TaskEmbed),
+			"ai_enabled":      cfg.Enabled,
 			"task_enabled":    cfg.Embed.Enabled,
 			"endpoint":        cfg.Embed.Endpoint,
 			"api_key_env":     cfg.Embed.APIKeyEnv,
