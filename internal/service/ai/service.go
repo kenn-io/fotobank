@@ -15,6 +15,7 @@ import (
 	"github.com/wesm/fotobank/internal/ai/gapscanner"
 	"github.com/wesm/fotobank/internal/ai/jobs"
 	"github.com/wesm/fotobank/internal/ai/results"
+	airuntime "github.com/wesm/fotobank/internal/ai/runtime"
 	"github.com/wesm/fotobank/internal/ai/skipped"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/owners"
@@ -33,6 +34,13 @@ type ConfigFingerprints struct {
 	Tag     ai.Fingerprint
 	Caption ai.Fingerprint
 	Embed   ai.Fingerprint
+}
+
+// RuntimeProvider publishes the live effective AI config. When present,
+// service methods use its claim fingerprints for queue writes and its
+// result fingerprints for provenance/failure lookups.
+type RuntimeProvider interface {
+	Effective() airuntime.Snapshot
 }
 
 // Lookup returns the active fingerprint for a task.
@@ -77,6 +85,7 @@ type Deps struct {
 	ConfigFingerprints   ConfigFingerprints
 	EmbeddingActivator   EmbeddingActivatorIface
 	EmbeddingGenerations EmbeddingGenerationsLister
+	Runtime              RuntimeProvider
 }
 
 // Service is the auth-scoped AI service.
@@ -102,6 +111,30 @@ func requireScopedCaller(p owners.Principal) error {
 		return fmt.Errorf("%w: caller principal required", errs.ErrPermissionDenied)
 	}
 	return nil
+}
+
+type taskFingerprints struct {
+	claim  string
+	result ai.Fingerprint
+}
+
+func (s *Service) taskFingerprints(task ai.Task) (taskFingerprints, bool) {
+	if s.deps.Runtime != nil {
+		snap := s.deps.Runtime.Effective()
+		switch task {
+		case ai.TaskTag:
+			return taskFingerprints{claim: snap.Claim.Tag, result: snap.Result.Tag}, true
+		case ai.TaskCaption:
+			return taskFingerprints{claim: snap.Claim.Caption, result: snap.Result.Caption}, true
+		case ai.TaskEmbed:
+			return taskFingerprints{claim: snap.Claim.Embed, result: snap.Result.Embed}, true
+		}
+	}
+	fp, ok := s.deps.ConfigFingerprints.Lookup(task)
+	if !ok {
+		return taskFingerprints{}, false
+	}
+	return taskFingerprints{claim: fp.String(), result: fp}, true
 }
 
 // IsAcknowledged returns whether p has acknowledged hidden-photo processing.
@@ -136,13 +169,14 @@ func (s *Service) Backfill(ctx context.Context, caller owners.Principal, task ai
 	if !ok {
 		return 0, errs.ErrAcknowledgementRequired
 	}
-	fp, _ := s.deps.ConfigFingerprints.Lookup(task)
+	fp, _ := s.taskFingerprints(task)
 	return s.deps.Gap.Scan(ctx, gapscanner.ScanRequest{
-		Task:        task,
-		Fingerprint: fp,
-		Owner:       caller,
-		Force:       force,
-		Limit:       0,
+		Task:              task,
+		ClaimFingerprint:  fp.claim,
+		ResultFingerprint: fp.result,
+		Owner:             caller,
+		Force:             force,
+		Limit:             0,
 	})
 }
 
@@ -167,12 +201,12 @@ func (s *Service) RetryFailed(ctx context.Context, caller owners.Principal, task
 	if !ok {
 		return 0, errs.ErrAcknowledgementRequired
 	}
-	fp, _ := s.deps.ConfigFingerprints.Lookup(task)
+	fp, _ := s.taskFingerprints(task)
 	cutoff := time.Now().UTC()
 	total := 0
 	for {
 		rows, err := s.deps.Failures.ListForFingerprintByOwner(
-			ctx, task, fp, caller.Hub, caller.UserID, cutoff, retryBatchSize)
+			ctx, task, fp.result, caller.Hub, caller.UserID, cutoff, retryBatchSize)
 		if err != nil {
 			return total, fmt.Errorf("list failures: %w", err)
 		}
@@ -183,11 +217,16 @@ func (s *Service) RetryFailed(ctx context.Context, caller owners.Principal, task
 		for _, r := range rows {
 			mediaIDs = append(mediaIDs, r.MediaID)
 		}
-		if _, err := s.deps.Failures.DeleteByMediaIDs(ctx, task, fp, mediaIDs); err != nil {
+		if _, err := s.deps.Failures.DeleteByMediaIDs(ctx, task, fp.result, mediaIDs); err != nil {
 			return total, fmt.Errorf("delete failures: %w", err)
 		}
 		n, err := s.deps.Gap.Scan(ctx, gapscanner.ScanRequest{
-			Task: task, Fingerprint: fp, Owner: caller, Force: true, MediaIDs: mediaIDs,
+			Task:              task,
+			ClaimFingerprint:  fp.claim,
+			ResultFingerprint: fp.result,
+			Owner:             caller,
+			Force:             true,
+			MediaIDs:          mediaIDs,
 		})
 		total += n
 		if err != nil {
@@ -216,15 +255,20 @@ func (s *Service) RetryPhoto(ctx context.Context, caller owners.Principal, media
 	if !ok {
 		return errs.ErrAcknowledgementRequired
 	}
-	fp, _ := s.deps.ConfigFingerprints.Lookup(task)
+	fp, _ := s.taskFingerprints(task)
 	// Owner-scoped scan verifies that mediaID belongs to caller. If not,
 	// it returns errs.ErrNotFound and we never touch the failure row.
 	if _, err := s.deps.Gap.Scan(ctx, gapscanner.ScanRequest{
-		Task: task, Fingerprint: fp, Owner: caller, Force: true, MediaIDs: []string{mediaID},
+		Task:              task,
+		ClaimFingerprint:  fp.claim,
+		ResultFingerprint: fp.result,
+		Owner:             caller,
+		Force:             true,
+		MediaIDs:          []string{mediaID},
 	}); err != nil {
 		return fmt.Errorf("scan: %w", err)
 	}
-	if err := s.deps.Failures.Delete(ctx, mediaID, task, fp); err != nil {
+	if err := s.deps.Failures.Delete(ctx, mediaID, task, fp.result); err != nil {
 		return fmt.Errorf("delete failure: %w", err)
 	}
 	return nil
@@ -309,14 +353,16 @@ func (s *Service) MediaView(ctx context.Context, caller owners.Principal, mediaI
 	} else if found {
 		out.Skipped = &SkippedItem{Reason: reason}
 	}
+	tagFP, _ := s.taskFingerprints(ai.TaskTag)
 	if r, found, err := s.deps.Failures.GetForFingerprint(
-		ctx, mediaID, ai.TaskTag, s.deps.ConfigFingerprints.Tag); err != nil {
+		ctx, mediaID, ai.TaskTag, tagFP.result); err != nil {
 		return MediaView{}, fmt.Errorf("tag failure: %w", err)
 	} else if found {
 		out.TagFailure = &MediaFailure{Kind: string(r.LastErrorKind), Message: r.LastError}
 	}
+	captionFP, _ := s.taskFingerprints(ai.TaskCaption)
 	if r, found, err := s.deps.Failures.GetForFingerprint(
-		ctx, mediaID, ai.TaskCaption, s.deps.ConfigFingerprints.Caption); err != nil {
+		ctx, mediaID, ai.TaskCaption, captionFP.result); err != nil {
 		return MediaView{}, fmt.Errorf("caption failure: %w", err)
 	} else if found {
 		out.CaptionFailure = &MediaFailure{Kind: string(r.LastErrorKind), Message: r.LastError}
@@ -334,9 +380,9 @@ func (s *Service) ListFailures(ctx context.Context, caller owners.Principal, tas
 	if !task.Valid() {
 		return nil, fmt.Errorf("%w: invalid task", errs.ErrInvalidArgument)
 	}
-	fp, _ := s.deps.ConfigFingerprints.Lookup(task)
+	fp, _ := s.taskFingerprints(task)
 	// Panel reads pass a zero cutoff so the latest failures (including
 	// any that landed after the request started) are visible.
 	return s.deps.Failures.ListForFingerprintByOwner(
-		ctx, task, fp, caller.Hub, caller.UserID, time.Time{}, limit)
+		ctx, task, fp.result, caller.Hub, caller.UserID, time.Time{}, limit)
 }

@@ -305,6 +305,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			Tag:     tagFingerprint,
 			Caption: captionFingerprint,
 		},
+		Runtime: aiProvider,
 	})
 
 	// metricsObj owns the private VictoriaMetrics set. Pull-source

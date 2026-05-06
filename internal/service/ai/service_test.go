@@ -15,12 +15,19 @@ import (
 	"github.com/wesm/fotobank/internal/ai/jobs"
 	"github.com/wesm/fotobank/internal/ai/parse"
 	"github.com/wesm/fotobank/internal/ai/results"
+	airuntime "github.com/wesm/fotobank/internal/ai/runtime"
 	"github.com/wesm/fotobank/internal/ai/skipped"
 	"github.com/wesm/fotobank/internal/errs"
 	"github.com/wesm/fotobank/internal/owners"
 	aiservice "github.com/wesm/fotobank/internal/service/ai"
 	"github.com/wesm/fotobank/internal/testutil"
 )
+
+type fakeRuntimeProvider struct {
+	snap airuntime.Snapshot
+}
+
+func (f fakeRuntimeProvider) Effective() airuntime.Snapshot { return f.snap }
 
 // fakeMediaCheck mirrors MediaService.Get's contract: returns
 // errs.ErrNotFound when caller is not the owner of mediaID, or when
@@ -121,6 +128,43 @@ func TestBackfillScopedToCallerOwnedMedia(t *testing.T) {
 	n, err := svc.Backfill(ctx, alice, ai.TaskTag, false)
 	r.NoError(err)
 	r.Equal(2, n, "Alice's backfill must enqueue only her photos, not Bob's")
+}
+
+func TestBackfillUsesRuntimeClaimAndResultFingerprint(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	rw, ro := testutil.OpenTestDBPair(t)
+	q := jobs.NewQueue(rw, ro)
+	resR := results.NewRepo(rw, ro)
+	failR := failures.NewRepo(rw, ro)
+	skipR := skipped.NewRepo(rw, ro)
+	ackS := ack.New(rw, ro)
+	gs := gapscanner.New(ro, q, resR, skipR)
+	resultFP := ai.Fingerprint{ModelID: "runtime-model", PromptVersion: "tags-v1", InputProfile: "ip"}
+	svc := aiservice.New(aiservice.Deps{
+		Queue: q, Results: resR, Failures: failR, Skipped: skipR,
+		Ack: ackS, Gap: gs,
+		ConfigFingerprints: aiservice.ConfigFingerprints{
+			Tag: ai.Fingerprint{ModelID: "boot-model", PromptVersion: "tags-v1", InputProfile: "ip"},
+		},
+		Runtime: fakeRuntimeProvider{snap: airuntime.Snapshot{
+			Config: ai.Config{Enabled: true, Tag: ai.TaskConfig{Enabled: true}},
+			Claim:  airuntime.ClaimFingerprints{Tag: "claim-runtime"},
+			Result: airuntime.ResultFingerprints{Tag: resultFP},
+		}},
+	})
+	owner := testutil.SeedOwner(t, rw, "local", "alice")
+	mid := testutil.SeedPhoto(t, rw, owner, "runtime")
+	r.NoError(svc.Acknowledge(ctx, owner))
+
+	n, err := svc.Backfill(ctx, owner, ai.TaskTag, false)
+	r.NoError(err)
+	r.Equal(1, n)
+
+	claims, err := q.ClaimBatchForFingerprint(ctx, ai.TaskTag, "claim-runtime", 10)
+	r.NoError(err)
+	r.Len(claims, 1)
+	r.Equal(mid, claims[0].MediaID)
 }
 
 func TestRetryFailedScopedToCallerOwnership(t *testing.T) {

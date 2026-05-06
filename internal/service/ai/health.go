@@ -125,8 +125,12 @@ type EmbeddingGenerationRow struct {
 // Probe) come from the caller; persistent state comes from the service's
 // repos.
 func (s *Service) Health(ctx context.Context, caller owners.Principal, in HealthInput) Health {
-	h := Health{Enabled: in.Enabled}
-	if !in.Enabled {
+	enabled := in.Enabled
+	if s.deps.Runtime != nil {
+		enabled = s.deps.Runtime.Effective().Config.Enabled
+	}
+	h := Health{Enabled: enabled}
+	if !enabled {
 		h.PausedReason = "config_disabled"
 		return h
 	}
@@ -143,8 +147,10 @@ func (s *Service) Health(ctx context.Context, caller owners.Principal, in Health
 	} else {
 		h.Vision.LastError = err.Error()
 	}
-	h.Tag = s.taskHealth(ctx, caller, ai.TaskTag, s.deps.ConfigFingerprints.Tag)
-	h.Caption = s.taskHealth(ctx, caller, ai.TaskCaption, s.deps.ConfigFingerprints.Caption)
+	tagFP, _ := s.taskFingerprints(ai.TaskTag)
+	captionFP, _ := s.taskFingerprints(ai.TaskCaption)
+	h.Tag = s.taskHealth(ctx, caller, ai.TaskTag, tagFP.result)
+	h.Caption = s.taskHealth(ctx, caller, ai.TaskCaption, captionFP.result)
 	h.Embed = s.embedHealth(ctx, caller, !acked)
 	h.EmbeddingGenerations = s.embeddingGenerations(ctx)
 	return h
@@ -179,8 +185,8 @@ func (s *Service) taskHealth(ctx context.Context, caller owners.Principal, t ai.
 // (which short-circuits Tick on the same condition) without a second
 // round-trip to the ack store.
 func (s *Service) embedHealth(ctx context.Context, caller owners.Principal, ackMissing bool) EmbedTaskPart {
-	fp := s.deps.ConfigFingerprints.Embed
-	tp := EmbedTaskPart{TaskPart: TaskPart{ActiveFingerprint: fp.String()}}
+	fp, _ := s.taskFingerprints(ai.TaskEmbed)
+	tp := EmbedTaskPart{TaskPart: TaskPart{ActiveFingerprint: fp.result.String()}}
 	if ackMissing {
 		tp.PausedReason = "acknowledgement_required"
 	}
@@ -189,7 +195,7 @@ func (s *Service) embedHealth(ctx context.Context, caller owners.Principal, ackM
 		tp.Working = c.Working
 		tp.Blocked = c.Blocked
 	}
-	if n, err := s.deps.Failures.CountForFingerprintByOwner(ctx, ai.TaskEmbed, fp, caller.Hub, caller.UserID); err == nil {
+	if n, err := s.deps.Failures.CountForFingerprintByOwner(ctx, ai.TaskEmbed, fp.result, caller.Hub, caller.UserID); err == nil {
 		tp.FailedActive = n
 	}
 	if n, err := s.deps.Skipped.CountByOwner(ctx, ai.TaskEmbed, caller.Hub, caller.UserID); err == nil {

@@ -17,6 +17,7 @@ import (
 	"github.com/wesm/fotobank/internal/ai/gapscanner"
 	"github.com/wesm/fotobank/internal/ai/jobs"
 	"github.com/wesm/fotobank/internal/ai/results"
+	airuntime "github.com/wesm/fotobank/internal/ai/runtime"
 	"github.com/wesm/fotobank/internal/ai/skipped"
 	"github.com/wesm/fotobank/internal/owners"
 	aiservice "github.com/wesm/fotobank/internal/service/ai"
@@ -35,6 +36,28 @@ func TestHealthDisabled(t *testing.T) {
 		aiservice.HealthInput{Enabled: false, Probe: stubProbe{}})
 	require.False(t, h.Enabled)
 	require.Equal(t, "config_disabled", h.PausedReason)
+}
+
+func TestHealthUsesRuntimeEnabledAndFingerprints(t *testing.T) {
+	rw, ro := testutil.OpenTestDBPair(t)
+	resultFP := ai.Fingerprint{ModelID: "runtime-model", PromptVersion: "tags-v1", InputProfile: "ip"}
+	svc := aiservice.New(aiservice.Deps{
+		Queue:    jobs.NewQueue(rw, ro),
+		Results:  results.NewRepo(rw, ro),
+		Failures: failures.NewRepo(rw, ro),
+		Skipped:  skipped.NewRepo(rw, ro),
+		Ack:      ack.New(rw, ro),
+		Runtime: fakeRuntimeProvider{snap: airuntime.Snapshot{
+			Config: ai.Config{Enabled: true, Tag: ai.TaskConfig{Enabled: true}},
+			Claim:  airuntime.ClaimFingerprints{Tag: "claim-runtime"},
+			Result: airuntime.ResultFingerprints{Tag: resultFP},
+		}},
+	})
+
+	h := svc.Health(context.Background(), owners.Principal{Hub: "local", UserID: "alice"},
+		aiservice.HealthInput{Enabled: false, Probe: stubProbe{}})
+	require.True(t, h.Enabled)
+	require.Equal(t, resultFP.String(), h.Tag.ActiveFingerprint)
 }
 
 func TestHealthAcknowledgementRequired(t *testing.T) {
