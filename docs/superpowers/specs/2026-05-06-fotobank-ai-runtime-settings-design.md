@@ -51,9 +51,9 @@ The v1 allowlist is:
 - `ai.embed.dimension`
 - `ai.embed.input_edge`
 
-Tuning knobs stay file-only in v1: worker concurrency, `max_inflight`, timeouts, retries, `batch_size`, and `idle_poll`. Admin API attempts to write or reset a non-allowlisted key return 400.
+Tuning knobs stay file-only in v1: worker concurrency, `max_inflight`, timeouts, retries, `batch_size`, and `idle_poll`. Admin API attempts to write or reset a non-allowlisted key return 409.
 
-`app_settings` rows are included in backups because they are recovery state. Tests must prove only env var names are stored for `api_key_env` keys, not raw key-shaped values.
+`app_settings` rows are included in backups because they are recovery state. Tests must prove only env var names are stored for `api_key_env` keys, not raw key-shaped values. Restore from a snapshot replays overrides as-is; the next post-restore reload validates them against the file defaults loaded by the restored binary.
 
 ## 4. Effective Config Provider
 
@@ -67,7 +67,24 @@ The provider exposes config, not generation handles. `FindOrCreateBuilding` runs
 
 ## 5. Fingerprint Contract
 
-Workers take an effective config snapshot before each claim and only claim jobs matching the current settings fingerprint. Old in-flight work may finish under the old fingerprint; provenance remains correct and later backfill replaces it. Old pending or blocked jobs are not re-claimed after a fingerprint change.
+Workers take an effective config snapshot before each claim and only claim jobs matching the current claim fingerprint. The mechanism is the existing `ai_jobs.fingerprint TEXT NOT NULL` column: enqueue writes the snapshot-derived claim fingerprint, and claim queries filter by task, status, and fingerprint. Implement this as a new fingerprint-aware claim path such as `ClaimBatchForFingerprint(ctx, task, fingerprint, n)` rather than claiming all pending rows for a task.
+
+Old in-flight work may finish under the old fingerprint; provenance remains correct and later backfill replaces it where the result fingerprint changed. Old pending or blocked jobs are not re-claimed after a fingerprint change. The next gap-scan or Apply-triggered backfill enqueues the current fingerprint; `Queue.Enqueue` supersedes any in-flight old-fingerprint job for the same `(media_id, task)`.
+
+`ai.enabled = false` at runtime stops new claims at the next snapshot read. In-flight work is not canceled. Re-enabling AI resumes new claims under the then-current snapshot.
+
+There are two fingerprint concepts:
+
+- **Claim fingerprint:** queue-safety identity stored in `ai_jobs.fingerprint`; it includes provider routing inputs so pending work cannot silently move to a new endpoint.
+- **Result/generation fingerprint:** provenance identity used by `ai_results`, `ai_failures`, and `embedding_generations`; it remains the existing model/prompt/input or model/input generation identity.
+
+V1 claim fingerprint inputs:
+
+- Tag: task name, `ai.enabled`, `ai.vision.endpoint`, `ai.vision.api_key_env`, `ai.tag.enabled`, `ai.tag.model`, tag prompt version/hash, and chat input profile.
+- Caption: task name, `ai.enabled`, `ai.vision.endpoint`, `ai.vision.api_key_env`, `ai.caption.enabled`, `ai.caption.model`, caption prompt version/hash, and chat input profile.
+- Embed: task name, `ai.embed.enabled`, `ai.embed.endpoint`, `ai.embed.api_key_env`, `ai.embed.model`, `ai.embed.dimension`, and `ai.embed.input_edge`.
+
+Cross-section dependencies are explicit: changing `ai.vision.endpoint` or `ai.vision.api_key_env` changes both tag and caption claim fingerprints. A vision-section Apply must therefore trigger tag and caption queue invalidation/backfill, not only reload the vision fields.
 
 Generation-defining embed keys are:
 
@@ -75,11 +92,20 @@ Generation-defining embed keys are:
 - `ai.embed.dimension`
 - `ai.embed.input_edge`
 
-Changing or resetting any of these creates or finds a new `embedding_generations` building row. The old active generation remains active until the existing activator promotes the new one.
+Changing or resetting any of these creates or finds a new `embedding_generations` building row. The old active generation remains active until the existing activator promotes the new one. Changing `ai.embed.endpoint` or `ai.embed.api_key_env` does not create a new generation, but it does change the embed claim fingerprint so pending work is re-enqueued for the new route.
 
 ## 6. Admin Authorization
 
-Add a TOML-backed admin allowlist. In stub mode, if `[admin]` is absent, default admin to the configured stub principal. In header mode, require explicit `[admin].principals`; otherwise admin routes deny everyone and log a boot warning.
+Add a TOML-backed admin allowlist:
+
+```toml
+[admin]
+principals = [
+  { hub = "dev-local", user_id = "owner" },
+]
+```
+
+If `[admin]` is absent and `identity.mode = "stub"`, the admin allowlist defaults to the configured stub principal. If `[admin]` is absent and `identity.mode = "header"`, the allowlist is empty, all admin routes return 403 for authenticated callers, and boot logs a warning.
 
 Admin routes use a single `requireAdmin` middleware:
 
@@ -99,7 +125,7 @@ Routes live under `/api/v1/admin/settings`.
 
 ### GET Response
 
-`effective` and `file_default` always include all 13 allowlisted keys. `overrides` includes only keys with DB overrides.
+`effective` and `file_default` always include all 13 allowlisted keys. `overrides` includes only keys with DB overrides. `current_embed_generation` reports the building generation when one exists, otherwise the active generation, and is `null` when no active or building generation exists.
 
 ```json
 {
@@ -117,8 +143,8 @@ Routes live under `/api/v1/admin/settings`.
     }
   },
   "api_key_env_status": {
-    "ai.vision.api_key_env": { "name": "FOTOBANK_VLM_KEY", "is_set": true },
-    "ai.embed.api_key_env": { "name": "FOTOBANK_EMBED_KEY", "is_set": false }
+    "ai.vision.api_key_env": { "name": "FOTOBANK_VLM_KEY", "is_set": true, "required": true },
+    "ai.embed.api_key_env": { "name": "", "is_set": false, "required": false }
   },
   "current_embed_generation": {
     "id": 42,
@@ -129,7 +155,9 @@ Routes live under `/api/v1/admin/settings`.
 }
 ```
 
-The server resolves `api_key_env_status` from the process environment without returning secret values.
+The server resolves `api_key_env_status` from the process environment without returning secret values. Empty `api_key_env` means the endpoint requires no auth; Apply allows it, status reports `{ "name": "", "is_set": false, "required": false }`, and probes skip the Authorization header. When `api_key_env` is non-empty, status reports `required: true`.
+
+If `updated_by_hub` or `updated_by_user_id` is NULL, `updated_by` is `null`.
 
 ### Apply And Reset
 
@@ -154,13 +182,39 @@ Concurrent Applies serialize through SQLite's write pool and the provider mutex.
 
 PUT and DELETE responses return the affected section's new effective values. Embed responses also include `generation_id` when apply/reset creates or finds a generation.
 
+```json
+{
+  "effective": {
+    "ai.embed.model": "qwen2-vl-7b",
+    "ai.embed.dimension": 768
+  },
+  "generation_id": 42
+}
+```
+
+`generation_id` is a JSON integer matching `embedding_generations.id`.
+
+Validation errors return 400:
+
+```json
+{
+  "error": "validation_failed",
+  "field": "ai.embed.dimension",
+  "detail": "must be > 0"
+}
+```
+
+Non-allowlisted keys return 409 with `error: "key_not_editable"`. Post-commit reload failure returns 500 with `error: "reload_failed"`; the response does not expose secret values or raw merged config.
+
 ## 8. Probe Diagnostics
 
 Endpoint tests live in a new `internal/ai/probe` package. The probe path is deliberately disjoint from the production provider: it builds ephemeral configs from request bodies and performs one synthetic request. It does not update the provider, acquire the production semaphore, emit metrics or events, write jobs, or write failures.
 
-Probe routes are POST because they test pending unsaved form values. Request bodies carry `api_key_env`, never the raw API key. The server resolves `os.Getenv(api_key_env)`. If a non-empty env var name is unset, the result is `auth_failed` with detail like `env var $NAME is not set in the server process`; the probe does not send an empty bearer token and accidentally test anonymous access.
+Probe routes are POST because they test pending unsaved form values. Request bodies carry `api_key_env`, never the raw API key. The server resolves `os.Getenv(api_key_env)`. Empty `api_key_env` means no auth is required and the probe sends no Authorization header. If a non-empty env var name is unset, the result is `auth_failed` with detail like `env var $NAME is not set in the server process`; the probe does not send an empty bearer token and accidentally test anonymous access.
 
 The probe uses a fixed 15s timeout so a UI button cannot hang for a production timeout such as 2 minutes.
+
+V1 emits one structured `slog` line per probe attempt with admin principal, section, endpoint host, classification, and latency. The log line must not include raw bearer tokens or request payload bytes.
 
 ### Vision Probe
 
@@ -216,7 +270,20 @@ Vision model echo rule:
 
 The admin page is `/admin/settings/ai`, linked from the existing `/settings/ai` page only when the caller is admin. There is no admin sidebar entry in v1.
 
-The page uses four stacked sections:
+The page starts with a master AI toggle for `ai.enabled`, then uses four stacked configuration sections:
+
+- Vision
+- Tag
+- Caption
+- Embed
+
+### Master Toggle
+
+`ai.enabled` renders as a top-of-page switch with its own Apply and reset controls. It is not buried inside Vision because it gates both vision tasks and the broader AI runtime surface. Turning it off shows the task sections in a disabled/paused visual state but leaves their fields readable so an admin can inspect or edit pending configuration before re-enabling AI.
+
+Changing only `ai.enabled` does not trigger the embed generation confirmation modal and does not create a new embedding generation. Applying `ai.enabled = false` stops new claims at the next worker snapshot read while in-flight jobs complete.
+
+### Sections
 
 - Vision
 - Tag
@@ -256,8 +323,11 @@ Backend unit and integration tests:
 - Provider: reload validation, invalid merge keeps previous snapshot, mutex-serialized reload behavior, no invalid snapshot publication.
 - Provider fingerprint: changing a generation-defining key such as `ai.embed.model` produces a snapshot fingerprint different from the prior snapshot.
 - Workers: one claim-boundary test each for tag, caption, and embed proving workers only claim jobs matching the current snapshot fingerprint and skip previous-fingerprint jobs.
-- App settings service: allowlist enforcement, section apply/reset, per-key reset, audit metadata, JSON type validation, env-var status, and embed `FindOrCreateBuildingTx`.
-- Admin HTTP: 401 unauthenticated, 403 non-admin with no role hints, GET, PUT, DELETE key, DELETE section, and POST probe routes.
+- Fingerprint dependency: a vision endpoint or `api_key_env` change changes both tag and caption claim fingerprints and causes old pending/blocked jobs to be superseded on backfill.
+- App settings service: allowlist enforcement, section apply/reset, per-key reset, audit metadata, JSON type validation, env-var status including empty-string no-auth semantics, and embed `FindOrCreateBuildingTx`.
+- Admin config: stub-mode absent `[admin]` defaults to stub principal; header-mode absent `[admin]` denies authenticated callers and logs a warning.
+- Admin HTTP: 401 unauthenticated, 403 non-admin with no role hints, GET edge cases, PUT, DELETE key, DELETE section, POST probe routes, validation error body, non-editable-key 409, and post-commit reload 500.
+- Probe audit logging: one structured log line per probe attempt, without secrets.
 - Backup: write an `app_settings` override, run `Snapshot`, open the snapshot read-only, confirm the row is present, and confirm `api_key_env` rows contain env var names only, not raw key-shaped secret strings.
 
 E2E:
