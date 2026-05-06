@@ -189,6 +189,21 @@ type ObservabilityLogging struct {
 // and returns the config. Returns an error if the file is missing or
 // malformed; callers decide whether to exit.
 func Load(path string) (*Config, error) {
+	cfg, err := LoadUnchecked(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// LoadUnchecked reads the config file, applies defaults/env/path
+// expansion, and skips final validation. Runtime override providers use
+// this to merge DB-backed overrides before validating the effective
+// configuration. Normal callers should use Load.
+func LoadUnchecked(path string) (*Config, error) {
 	var cfg Config
 	meta, err := toml.DecodeFile(path, &cfg)
 	if err != nil {
@@ -197,9 +212,6 @@ func Load(path string) (*Config, error) {
 	applyDefaults(&cfg, meta)
 	applyEnvOverrides(&cfg)
 	if err := expandHomePaths(&cfg); err != nil {
-		return nil, err
-	}
-	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
