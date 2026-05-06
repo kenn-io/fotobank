@@ -30,9 +30,11 @@ import (
 	"github.com/wesm/fotobank/internal/ai/jobs"
 	aiprompts "github.com/wesm/fotobank/internal/ai/prompts"
 	"github.com/wesm/fotobank/internal/ai/results"
+	airuntime "github.com/wesm/fotobank/internal/ai/runtime"
 	"github.com/wesm/fotobank/internal/ai/skipped"
 	aiworker "github.com/wesm/fotobank/internal/ai/worker"
 	"github.com/wesm/fotobank/internal/album"
+	appsettingsstore "github.com/wesm/fotobank/internal/appsettings"
 	"github.com/wesm/fotobank/internal/auth/hidden"
 	"github.com/wesm/fotobank/internal/backup"
 	"github.com/wesm/fotobank/internal/config"
@@ -46,6 +48,7 @@ import (
 	"github.com/wesm/fotobank/internal/search/index"
 	"github.com/wesm/fotobank/internal/service"
 	aiservice "github.com/wesm/fotobank/internal/service/ai"
+	appsettingssvc "github.com/wesm/fotobank/internal/service/appsettings"
 	facetssvc "github.com/wesm/fotobank/internal/service/facets"
 	searchsvc "github.com/wesm/fotobank/internal/service/search"
 	"github.com/wesm/fotobank/internal/service/usersettings"
@@ -190,6 +193,19 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		return err
 	}
 	defer d.Close()
+
+	appSettingsRepo := appsettingsstore.NewRepo(d.WriteDB(), d.ReadDB())
+	aiProvider, err := airuntime.NewProvider(ctx, airuntime.Source{
+		FilePath: path,
+		Repo:     appSettingsRepo,
+	})
+	if err != nil {
+		return fmt.Errorf("load effective ai config: %w", err)
+	}
+	// From here down, boot wiring uses the effective AI config (TOML
+	// defaults overlaid with app_settings). Admin Apply/Reset reloads
+	// aiProvider for subsequent dynamic paths.
+	cfg.AI = aiProvider.Effective().Config
 
 	ownerSvc := service.NewOwnerService(owners.NewRepo(d.WriteDB(), d.ReadDB()))
 
@@ -408,6 +424,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		embedPrincp   owners.Principal
 		searchService *searchsvc.Service
 	)
+	embedGens = embedding.NewGenerations(d.WriteDB(), d.ReadDB())
 	if cfg.AI.Embed.Enabled {
 		embedPrincp = owners.Principal{
 			Hub:    cfg.Identity.Stub.Hub,
@@ -422,7 +439,6 @@ func runServer(ctx context.Context, opts serverOpts) error {
 			Timeout:    cfg.AI.Embed.Timeout,
 			MaxRetries: cfg.AI.Embed.MaxRetries,
 		})
-		embedGens = embedding.NewGenerations(d.WriteDB(), d.ReadDB())
 		embedMapping = embedding.NewMapping(d.WriteDB())
 		embedEvents = httpapi.NewAIEmbedEvents(eventBus, embedPrincp)
 		embedGens.SetEmitter(embedEvents)
@@ -498,6 +514,8 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	// satisfies facets.HiddenChecker (same Valid signature as
 	// searchsvc.HiddenChecker).
 	facetsService := facetssvc.New(d.ReadDB(), hiddenCheckAdapter{})
+	adminSettingsSvc := appsettingssvc.NewService(d.WriteDB(), aiProvider, embedGens)
+	adminPrincipals := configuredAdminPrincipals(cfg)
 
 	apiHandler, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: idp,
@@ -523,13 +541,16 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		// identity does not enroll a trusted upstream proxy, so a
 		// caller-supplied value would let any client control the
 		// server-issued X-Request-ID and request-scoped log lines.
-		RequestIDHeader: requestIDHeaderFor(cfg),
-		AIService:       aiSvc,
-		AIVisionProbe:   aiProbe,
-		AIEnabled:       cfg.AI.Enabled,
-		SharingEnabled:  cfg.UI.SharingEnabled,
-		Search:          searchService,
-		Facets:          facetsService,
+		RequestIDHeader:  requestIDHeaderFor(cfg),
+		AIService:        aiSvc,
+		AIVisionProbe:    aiProbe,
+		AIEnabled:        cfg.AI.Enabled,
+		SharingEnabled:   cfg.UI.SharingEnabled,
+		Search:           searchService,
+		Facets:           facetsService,
+		AdminSettings:    adminSettingsSvc,
+		AdminPrincipals:  adminPrincipals,
+		AdminProbeLogger: logger.With("component", "admin-settings"),
 	})
 	if err != nil {
 		return err
@@ -1076,6 +1097,14 @@ func requestIDHeaderFor(cfg *config.Config) string {
 		return cfg.Identity.Header.RequestIDHeader
 	}
 	return ""
+}
+
+func configuredAdminPrincipals(cfg *config.Config) []owners.Principal {
+	out := make([]owners.Principal, 0, len(cfg.Admin.Principals))
+	for _, p := range cfg.Admin.Principals {
+		out = append(out, owners.Principal{Hub: p.Hub, UserID: p.UserID})
+	}
+	return out
 }
 
 func bindListener(addr string) (net.Listener, error) {
