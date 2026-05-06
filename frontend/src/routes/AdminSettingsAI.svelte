@@ -158,7 +158,7 @@
     busy = `apply-${section}`;
     error = null;
     try {
-      const apiSection = section === "master" ? "ai" : section;
+      const apiSection = section;
       const { data: body, error: apiError } = await api.PUT("/api/v1/admin/settings/sections/{section}", {
         params: { path: { section: apiSection } },
         body: { values: forms[section] },
@@ -187,7 +187,7 @@
     busy = `reset-${section}`;
     error = null;
     try {
-      const apiSection = section === "master" ? "ai" : section;
+      const apiSection = section;
       const { data: body, error: apiError } = await api.DELETE("/api/v1/admin/settings/sections/{section}", {
         params: { path: { section: apiSection } },
       });
