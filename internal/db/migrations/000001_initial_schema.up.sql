@@ -492,7 +492,7 @@ CREATE TABLE ai_skipped (
 
 CREATE TABLE embedding_generations (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    fingerprint      TEXT    NOT NULL UNIQUE,
+    fingerprint      TEXT    NOT NULL,
     fingerprint_hash TEXT    NOT NULL UNIQUE,
     model_id         TEXT    NOT NULL,
     input_profile    TEXT    NOT NULL,
@@ -508,8 +508,6 @@ CREATE TABLE embedding_generations (
 
 CREATE UNIQUE INDEX embedding_generations_one_active
     ON embedding_generations(state) WHERE state = 'active';
-CREATE UNIQUE INDEX embedding_generations_one_building
-    ON embedding_generations(state) WHERE state = 'building';
 
 CREATE TABLE media_embedding_ids (
     generation_id INTEGER NOT NULL REFERENCES embedding_generations(id) ON DELETE CASCADE,

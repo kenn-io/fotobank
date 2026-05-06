@@ -135,6 +135,16 @@ func findByHash(ctx context.Context, db queryRower, hash string) (Row, error) {
 	))
 }
 
+func findByFingerprint(ctx context.Context, db queryRower, fp ai.Fingerprint) (Row, error) {
+	return scanGeneration(db.QueryRowContext(ctx,
+		`SELECT `+generationColumns+` FROM embedding_generations
+		  WHERE fingerprint = ?
+		  ORDER BY CASE state WHEN 'active' THEN 0 WHEN 'building' THEN 1 ELSE 2 END, id ASC
+		  LIMIT 1`,
+		fp.String(),
+	))
+}
+
 // FindOrCreateBuilding returns the generation row matching fp. If a
 // row with the same fingerprint already exists (in any state), it is
 // returned unchanged. Otherwise a new building row is inserted and a
@@ -145,13 +155,24 @@ func findByHash(ctx context.Context, db queryRower, hash string) (Row, error) {
 // connection; the loser re-finds the winner's row inside the tx
 // re-check via the fingerprint_hash UNIQUE constraint.
 func (g *Generations) FindOrCreateBuilding(ctx context.Context, fp ai.Fingerprint, dim int) (Row, error) {
-	hash := fingerprintHash(fp)
+	hash := fingerprintHash(fp, dim)
 
 	// Fast path: an existing row for this fingerprint.
 	if row, err := findByHash(ctx, g.ro, hash); err == nil {
 		return row, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return Row{}, fmt.Errorf("find by hash: %w", err)
+	}
+	// Compatibility path for existing queue workers: ai_jobs rows carry
+	// only ai.Fingerprint, not the configured vector dimension yet. If a
+	// prior generation exists for that raw fingerprint, return it so old
+	// in-flight work keeps using the generation it was enqueued for. The
+	// admin Apply path uses FindOrCreateBuildingTx directly and remains
+	// dimension-defining.
+	if row, err := findByFingerprint(ctx, g.ro, fp); err == nil {
+		return row, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return Row{}, fmt.Errorf("find by fingerprint: %w", err)
 	}
 
 	tx, err := g.rw.BeginTx(ctx, nil)
@@ -193,7 +214,7 @@ func (g *Generations) FindOrCreateBuildingTx(ctx context.Context, tx *sql.Tx, fp
 }
 
 func (g *Generations) findOrCreateBuildingTx(ctx context.Context, tx *sql.Tx, fp ai.Fingerprint, dim int) (Row, bool, error) {
-	hash := fingerprintHash(fp)
+	hash := fingerprintHash(fp, dim)
 
 	// Re-check inside the tx in case a concurrent caller inserted while
 	// the public wrapper was on the fast path. Returning the existing row
@@ -556,12 +577,14 @@ func (g *Generations) IncEmbeddedCount(ctx context.Context, id int64, delta int)
 	return nil
 }
 
-// fingerprintHash returns the hex-encoded sha256 of fp.String(). The
-// hash is stored alongside the raw fingerprint so the lookup index is
-// fixed-width independent of model/profile string length, and so a
-// future migration to a different fingerprint encoding can re-key by
-// updating both columns atomically.
-func fingerprintHash(fp ai.Fingerprint) string {
-	sum := sha256.Sum256([]byte(fp.String()))
+// fingerprintHash returns the hex-encoded sha256 of fp.String() plus
+// dimension. Dimension is generation-defining even though it does not
+// live inside ai.Fingerprint: the vec0 table schema embeds the vector
+// length, so a dimension change must allocate a distinct generation.
+// The hash keeps the lookup index fixed-width independent of
+// model/profile string length, and lets a future migration to a
+// different encoding re-key by updating both columns atomically.
+func fingerprintHash(fp ai.Fingerprint, dim int) string {
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s\x00dim=%d", fp.String(), dim))
 	return hex.EncodeToString(sum[:])
 }

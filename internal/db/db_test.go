@@ -148,12 +148,12 @@ func TestSchema_AIJobsAcceptsEmbedTask(t *testing.T) {
 	r.Error(err)
 }
 
-// TestSchema_EmbeddingGenerationsOneActiveOneBuilding asserts the
-// partial unique indexes on embedding_generations.state enforce the
-// at-most-one-active and at-most-one-building invariants from the
-// search v1 design (§5.3). Inserts are inlined to match A1's style;
-// no shared seed helpers in db_test.go yet.
-func TestSchema_EmbeddingGenerationsOneActiveOneBuilding(t *testing.T) {
+// TestSchema_EmbeddingGenerationsOneActiveAllowsManyBuilding asserts
+// the partial unique index on embedding_generations.state enforces
+// at-most-one-active while allowing multiple building generations
+// during model/dimension rollouts. Inserts are inlined to match A1's
+// style; no shared seed helpers in db_test.go yet.
+func TestSchema_EmbeddingGenerationsOneActiveAllowsManyBuilding(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	rw := d.WriteDB()
@@ -180,14 +180,15 @@ func TestSchema_EmbeddingGenerationsOneActiveOneBuilding(t *testing.T) {
 	r.Error(err, "must reject two active generations")
 
 	mustInsertGen("building")
-	// Second building must fail.
+	// Multiple building generations are allowed; the activator picks the
+	// oldest candidate.
 	_, err = rw.Exec(
 		`INSERT INTO embedding_generations
 		 (fingerprint, fingerprint_hash, model_id, input_profile, vec_table_name,
 		  dimension, state, created_at)
 		 VALUES ('fp3','h3','m','p','t3',768,'building', datetime('now'))`,
 	)
-	r.Error(err, "must reject two building generations")
+	r.NoError(err)
 }
 
 // TestSchema_MediaEmbeddingIDsUniqueVecID asserts the

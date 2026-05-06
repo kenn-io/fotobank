@@ -45,6 +45,27 @@ func TestGenerations_FindOrCreateBuilding_CreatesOnce(t *testing.T) {
 	r.Equal(row1.ID, row2.ID, "second call must return the same row")
 }
 
+func TestGenerations_FindOrCreateBuildingTx_DimensionDefinesGeneration(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	row1, err := g.FindOrCreateBuilding(ctx, fpEmbed1(), 512)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, row1.ID))
+
+	tx, err := d.WriteDB().BeginTx(ctx, nil)
+	r.NoError(err)
+	row2, err := g.FindOrCreateBuildingTx(ctx, tx, fpEmbed1(), 768)
+	r.NoError(err)
+	r.NoError(tx.Commit())
+
+	r.NotEqual(row1.ID, row2.ID)
+	r.Equal(fpEmbed1().String(), row2.Fingerprint)
+	r.Equal(768, row2.Dimension)
+}
+
 func TestGenerations_FindOrCreateBuildingTx_RollbackRemovesRowAndVecTable(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
@@ -92,13 +113,10 @@ func TestGenerations_FindActive_ReturnsNoneInitially(t *testing.T) {
 }
 
 // TestGenerations_FindBuilding covers the activator's lookup path.
-// The schema's embedding_generations_one_building partial unique
-// index enforces at most one building row at a time, so the test
-// rotates through the lifecycle: nil → one building → promote →
-// FindBuilding nil again until the next FindOrCreate, → retire,
-// nil. The ORDER BY id ASC LIMIT 1 in the implementation is
-// defensive — should the schema constraint ever be lifted, the
-// activator still picks the oldest candidate.
+// Multiple building rows can coexist during model/dimension rollouts.
+// The activator's ORDER BY id ASC LIMIT 1 picks the oldest candidate,
+// so this test rotates through the lifecycle and confirms the lookup
+// returns nil when no building rows remain.
 func TestGenerations_FindBuilding(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
@@ -120,9 +138,8 @@ func TestGenerations_FindBuilding(t *testing.T) {
 	r.NotNil(got)
 	r.Equal(a.ID, got.ID)
 
-	// Promote the building row → state moves to 'active'. The
-	// one-building partial unique index now permits a fresh
-	// building row for a different fingerprint.
+	// Promote the building row → state moves to 'active', leaving no
+	// current building candidate.
 	r.NoError(g.Promote(ctx, a.ID))
 	got, err = g.FindBuilding(ctx)
 	r.NoError(err)
@@ -354,11 +371,7 @@ func TestGenerations_PromoteRetiredRowClearsRetiredAt(t *testing.T) {
 // (no event). Wired in Task P1 — gating on insert-only is what keeps
 // the SSE channel from announcing fingerprints that already exist.
 //
-// The partial unique index embedding_generations_one_building forbids
-// two simultaneous building rows, so the second-fingerprint INSERT
-// requires promoting the first row to active first. That mirrors the
-// production lifecycle: a fresh fingerprint always means the prior
-// generation has been promoted already.
+// A distinct fingerprint creates a new generation and emits one event.
 func TestGenerations_FindOrCreateBuilding_EmitsCreatedOnInsert(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
@@ -378,10 +391,6 @@ func TestGenerations_FindOrCreateBuilding_EmitsCreatedOnInsert(t *testing.T) {
 	r.EqualValues(1, emitter.created.Load(),
 		"fast-path lookup must not re-emit created for an existing row")
 
-	// Promote the existing building row out of the way; the partial
-	// unique index forbids two simultaneous building rows.
-	r.NoError(g.Promote(ctx, row.ID))
-
 	// Distinct fingerprint → new INSERT → second emit.
 	_, err = g.FindOrCreateBuilding(ctx,
 		ai.Fingerprint{ModelID: "v2", InputProfile: "p"}, 768)
@@ -389,8 +398,7 @@ func TestGenerations_FindOrCreateBuilding_EmitsCreatedOnInsert(t *testing.T) {
 	r.EqualValues(2, emitter.created.Load(),
 		"a distinct fingerprint must emit a new created event")
 
-	// retired stayed at zero — Promote on the only-ever-active row had
-	// no prior active to retire.
+	// Creating building rows does not emit retirement events.
 	r.EqualValues(0, emitter.retired.Load())
 }
 
@@ -398,11 +406,6 @@ func TestGenerations_FindOrCreateBuilding_EmitsCreatedOnInsert(t *testing.T) {
 // retired emit gates on the retire-prior-active UPDATE actually
 // changing a row. The first Promote (no prior active) must NOT emit;
 // the second Promote (with v1 active) must emit exactly once for v1.
-//
-// Sequencing the second FindOrCreateBuilding AFTER the first Promote
-// is mandatory — the partial unique index
-// embedding_generations_one_building forbids two simultaneous building
-// rows.
 func TestGenerations_Promote_EmitsRetiredOnlyWhenPriorActive(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
