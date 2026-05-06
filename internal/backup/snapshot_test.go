@@ -57,6 +57,33 @@ func TestSnapshotWritesIntegralCopy(t *testing.T) {
 	r.True(os.IsNotExist(err))
 }
 
+func TestSnapshotIncludesAppSettingsWithoutRawAPIKeys(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "fotobank.sqlite")
+	d := testutil.OpenTestDBAt(t, dbPath)
+	t.Cleanup(func() { _ = d.Close() })
+	t.Setenv("FOTOBANK_VLM_KEY", "sk-live-should-not-enter-db")
+
+	_, err := d.WriteDB().ExecContext(ctx,
+		`INSERT INTO app_settings(key, value, updated_at)
+		 VALUES ('ai.vision.api_key_env', '"FOTOBANK_VLM_KEY"', datetime('now'))`)
+	r.NoError(err)
+
+	dst := filepath.Join(t.TempDir(), "snap.sqlite")
+	r.NoError(Snapshot(ctx, d.WriteDB(), dst))
+
+	snapDB, err := sql.Open("sqlite3", "file:"+dst+"?mode=ro&_busy_timeout=5000&_fk=1")
+	r.NoError(err)
+	defer snapDB.Close()
+	var value string
+	r.NoError(snapDB.QueryRowContext(ctx,
+		`SELECT value FROM app_settings WHERE key='ai.vision.api_key_env'`,
+	).Scan(&value))
+	r.Equal(`"FOTOBANK_VLM_KEY"`, value)
+	r.NotContains(value, "sk-live")
+}
+
 func TestSnapshotRefusesExistingDestination(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
