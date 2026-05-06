@@ -269,6 +269,41 @@ func TestWorker_ProcessesBatchEndToEnd(t *testing.T) {
 	r.EqualValues(0, emitter.failed.Load())
 }
 
+func TestWorker_ClaimsOnlyCurrentClaimFingerprint(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	oldID := testutil.SeedPhoto(t, d.WriteDB(), owner, "old")
+	newID := testutil.SeedPhoto(t, d.WriteDB(), owner, "new")
+	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
+	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
+	w := embedding.NewWorker(embedding.WorkerDeps{
+		Q:                q,
+		Gens:             embedding.NewGenerations(d.WriteDB(), d.ReadDB()),
+		Mapping:          embedding.NewMapping(d.WriteDB()),
+		Client:           client,
+		Resolver:         &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"},
+		Cfg:              embedCfg(),
+		ClaimFingerprint: "claim-current",
+		Events:           &recordingEmitter{},
+		DB:               d.WriteDB(),
+		Skipped:          skipped.NewRepo(d.WriteDB(), d.ReadDB()),
+		Failures:         failures.NewRepo(d.WriteDB(), d.ReadDB()),
+	})
+
+	r.NoError(q.EnqueueClaim(ctx, oldID, ai.TaskEmbed, "claim-old"))
+	r.NoError(q.EnqueueClaim(ctx, newID, ai.TaskEmbed, "claim-current"))
+
+	r.NoError(w.RunOnce(ctx))
+	r.EqualValues(1, client.calls.Load())
+
+	oldClaims, err := q.ClaimBatchForFingerprint(ctx, ai.TaskEmbed, "claim-old", 10)
+	r.NoError(err)
+	r.Len(oldClaims, 1)
+	r.Equal(oldID, oldClaims[0].MediaID)
+}
+
 func TestWorker_ReplacementIsZeroDelta(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
@@ -1011,6 +1046,14 @@ func (f *flakyQueue) ClaimBatch(ctx context.Context, task ai.Task, n int) ([]job
 	return f.inner.ClaimBatch(ctx, task, n)
 }
 
+func (f *flakyQueue) ClaimBatchForFingerprint(ctx context.Context, task ai.Task, fp string, n int) ([]jobs.Claim, error) {
+	if f.failClaimsLeft.Load() > 0 {
+		f.failClaimsLeft.Add(-1)
+		return nil, errors.New("flaky: simulated transient claim failure")
+	}
+	return f.inner.ClaimBatchForFingerprint(ctx, task, fp, n)
+}
+
 func (f *flakyQueue) PromoteThumbReadyBlocked(ctx context.Context, task ai.Task) (int, error) {
 	return f.inner.PromoteThumbReadyBlocked(ctx, task)
 }
@@ -1035,6 +1078,10 @@ type claimLostQueue struct{ inner *jobs.Queue }
 
 func (c *claimLostQueue) ClaimBatch(ctx context.Context, task ai.Task, n int) ([]jobs.Claim, error) {
 	return c.inner.ClaimBatch(ctx, task, n)
+}
+
+func (c *claimLostQueue) ClaimBatchForFingerprint(ctx context.Context, task ai.Task, fp string, n int) ([]jobs.Claim, error) {
+	return c.inner.ClaimBatchForFingerprint(ctx, task, fp, n)
 }
 
 func (c *claimLostQueue) PromoteThumbReadyBlocked(ctx context.Context, task ai.Task) (int, error) {
@@ -1155,6 +1202,10 @@ type blockingMarkQueue struct {
 
 func (b *blockingMarkQueue) ClaimBatch(ctx context.Context, task ai.Task, n int) ([]jobs.Claim, error) {
 	return b.inner.ClaimBatch(ctx, task, n)
+}
+
+func (b *blockingMarkQueue) ClaimBatchForFingerprint(ctx context.Context, task ai.Task, fp string, n int) ([]jobs.Claim, error) {
+	return b.inner.ClaimBatchForFingerprint(ctx, task, fp, n)
 }
 
 func (b *blockingMarkQueue) PromoteThumbReadyBlocked(ctx context.Context, task ai.Task) (int, error) {

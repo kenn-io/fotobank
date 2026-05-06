@@ -69,24 +69,25 @@ func CaptionProcess(rawText string) (ProcessOutcome, error) {
 
 // Config bundles worker dependencies.
 type Config struct {
-	Task           ai.Task
-	Fingerprint    ai.Fingerprint
-	PromptHash     string
-	PromptText     string
-	Gateway        gateway.VisionGateway
-	Image          ImageResolver
-	Queue          *jobs.Queue
-	Results        *results.Repo
-	Failures       *failures.Repo
-	Skipped        *skipped.Repo
-	Acknowledged   AcknowledgedFn
-	OwnerOf        OwnerOf
-	MaxJobAttempts int
-	Process        ProcessFn
-	Sem            *VisionSemaphore
-	BatchSize      int
-	PollInterval   time.Duration
-	Logger         *slog.Logger
+	Task             ai.Task
+	ClaimFingerprint string
+	Fingerprint      ai.Fingerprint
+	PromptHash       string
+	PromptText       string
+	Gateway          gateway.VisionGateway
+	Image            ImageResolver
+	Queue            *jobs.Queue
+	Results          *results.Repo
+	Failures         *failures.Repo
+	Skipped          *skipped.Repo
+	Acknowledged     AcknowledgedFn
+	OwnerOf          OwnerOf
+	MaxJobAttempts   int
+	Process          ProcessFn
+	Sem              *VisionSemaphore
+	BatchSize        int
+	PollInterval     time.Duration
+	Logger           *slog.Logger
 }
 
 // Worker runs claim/lease iterations against ai_jobs.
@@ -139,7 +140,7 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	if err := w.PromoteBlocked(ctx); err != nil {
 		w.cfg.Logger.Warn("ai promote blocked failed", "task", w.cfg.Task, "err", err)
 	}
-	claims, err := w.cfg.Queue.ClaimBatch(ctx, w.cfg.Task, w.cfg.BatchSize)
+	claims, err := w.cfg.Queue.ClaimBatchForFingerprint(ctx, w.cfg.Task, w.claimFingerprint(), w.cfg.BatchSize)
 	if err != nil {
 		return 0, fmt.Errorf("claim: %w", err)
 	}
@@ -151,6 +152,13 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 		processed++
 	}
 	return processed, nil
+}
+
+func (w *Worker) claimFingerprint() string {
+	if w.cfg.ClaimFingerprint != "" {
+		return w.cfg.ClaimFingerprint
+	}
+	return w.cfg.Fingerprint.String()
 }
 
 // PromoteBlocked walks blocked rows for the worker's task and elevates

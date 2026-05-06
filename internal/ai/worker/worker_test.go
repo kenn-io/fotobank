@@ -139,6 +139,66 @@ func TestWorkerProcessesSuccessfulTagJob(t *testing.T) {
 	r.Len(tags, 2)
 }
 
+func TestWorkerClaimsOnlyCurrentClaimFingerprint(t *testing.T) {
+	tests := []struct {
+		name     string
+		task     ai.Task
+		process  worker.ProcessFn
+		response string
+	}{
+		{name: "tag", task: ai.TaskTag, process: worker.TagProcess, response: `{"tags":["dog"]}`},
+		{name: "caption", task: ai.TaskCaption, process: worker.CaptionProcess, response: `a small dog on a beach`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := require.New(t)
+			rw, ro := testutil.OpenTestDBPair(t)
+			owner := testutil.SeedOwner(t, rw, "local", "alice")
+			oldID := testutil.SeedPhoto(t, rw, owner, "old")
+			newID := testutil.SeedPhoto(t, rw, owner, "new")
+			q := jobs.NewQueue(rw, ro)
+			gw := &stubGateway{respond: func() (gateway.Response, error) {
+				return gateway.Response{Text: tt.response}, nil
+			}}
+			w := worker.New(worker.Config{
+				Task:             tt.task,
+				ClaimFingerprint: "claim-current",
+				Fingerprint:      ai.Fingerprint{ModelID: "m", PromptVersion: "prompt-v1", InputProfile: "ip"},
+				PromptHash:       "h",
+				PromptText:       "describe",
+				Gateway:          gw,
+				Image:            &stubImage{jpeg: tinyJPEG, status: "ready"},
+				Queue:            q,
+				Results:          results.NewRepo(rw, ro),
+				Failures:         failures.NewRepo(rw, ro),
+				Skipped:          skipped.NewRepo(rw, ro),
+				Acknowledged: func(context.Context, owners.Principal) (bool, error) {
+					return true, nil
+				},
+				OwnerOf: func(context.Context, string) (owners.Principal, error) {
+					return owner, nil
+				},
+				MaxJobAttempts: 2,
+				Process:        tt.process,
+				Sem:            worker.NewVisionSemaphore(1),
+			})
+
+			r.NoError(q.EnqueueClaim(context.Background(), oldID, tt.task, "claim-old"))
+			r.NoError(q.EnqueueClaim(context.Background(), newID, tt.task, "claim-current"))
+
+			n, err := w.RunOnce(context.Background())
+			r.NoError(err)
+			r.Equal(1, n)
+			r.EqualValues(1, gw.calls.Load())
+
+			oldClaims, err := q.ClaimBatchForFingerprint(context.Background(), tt.task, "claim-old", 10)
+			r.NoError(err)
+			r.Len(oldClaims, 1)
+			r.Equal(oldID, oldClaims[0].MediaID)
+		})
+	}
+}
+
 func TestWorkerMalformedRetriesThenFails(t *testing.T) {
 	r := require.New(t)
 	w, q, _, failR, _, _, mid, gw, _ := setup(t)

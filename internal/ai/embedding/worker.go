@@ -53,6 +53,7 @@ var _ ClientIface = (*Client)(nil)
 // *jobs.Queue, which already satisfies the interface.
 type QueueIface interface {
 	ClaimBatch(ctx context.Context, task ai.Task, n int) ([]jobs.Claim, error)
+	ClaimBatchForFingerprint(ctx context.Context, task ai.Task, fp string, n int) ([]jobs.Claim, error)
 	PromoteThumbReadyBlocked(ctx context.Context, task ai.Task) (int, error)
 	MarkFailed(ctx context.Context, jobID string, claimedAt time.Time, kind ai.LastErrorKind, errMsg string) error
 	MarkDone(ctx context.Context, jobID string, claimedAt time.Time) error
@@ -123,15 +124,16 @@ func (NoopEmitter) EmitAIEmbedGenerationRetired(_ int64, _ string) {}
 // WorkerDeps is the fully-wired dependency set the worker requires.
 // Construct via NewWorker — there is no zero-value worker.
 type WorkerDeps struct {
-	Q        QueueIface
-	Gens     *Generations
-	Mapping  *Mapping
-	Client   ClientIface
-	Resolver PreviewResolver
-	Cfg      ai.EmbedConfig
-	Events   EventEmitter
-	DB       *sql.DB // writer pool — used to bundle per-batch writes in one tx.
-	Skipped  *skipped.Repo
+	Q                QueueIface
+	Gens             *Generations
+	Mapping          *Mapping
+	Client           ClientIface
+	Resolver         PreviewResolver
+	Cfg              ai.EmbedConfig
+	ClaimFingerprint string
+	Events           EventEmitter
+	DB               *sql.DB // writer pool — used to bundle per-batch writes in one tx.
+	Skipped          *skipped.Repo
 	// Failures records terminal failure rows alongside MarkFailed so the
 	// AI panel and gap-scan repair queries can see persistent embed
 	// failures keyed by (media, task, fingerprint). On a successful
@@ -173,7 +175,7 @@ func NewWorker(d WorkerDeps) *Worker {
 // failures (claim SQL, transaction begin/commit) bubble up.
 func (w *Worker) RunOnce(ctx context.Context) error {
 	for {
-		batch, err := w.d.Q.ClaimBatch(ctx, ai.TaskEmbed, w.d.Cfg.BatchSize)
+		batch, err := w.claimBatch(ctx)
 		if err != nil {
 			return fmt.Errorf("claim batch: %w", err)
 		}
@@ -184,6 +186,13 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 			return err
 		}
 	}
+}
+
+func (w *Worker) claimBatch(ctx context.Context) ([]jobs.Claim, error) {
+	if w.d.ClaimFingerprint != "" {
+		return w.d.Q.ClaimBatchForFingerprint(ctx, ai.TaskEmbed, w.d.ClaimFingerprint, w.d.Cfg.BatchSize)
+	}
+	return w.d.Q.ClaimBatch(ctx, ai.TaskEmbed, w.d.Cfg.BatchSize)
 }
 
 // Run is the long-running loop driver: each tick it promotes any
@@ -232,7 +241,7 @@ func (w *Worker) Run(ctx context.Context) error {
 				slog.Default().Warn("embedding worker promote thumb-ready blocked", "err", err)
 			}
 
-			batch, claimErr := w.d.Q.ClaimBatch(ctx, ai.TaskEmbed, w.d.Cfg.BatchSize)
+			batch, claimErr := w.claimBatch(ctx)
 			if claimErr != nil {
 				if errors.Is(claimErr, context.Canceled) {
 					return nil
@@ -316,6 +325,9 @@ func (w *Worker) process(ctx context.Context, batch []jobs.Claim) error {
 	// and each becomes its own /v1/embeddings call so vectors are
 	// validated against the right input set.
 	groups := partitionByFingerprint(ready)
+	if w.d.ClaimFingerprint != "" {
+		groups = map[string][]encoded{Fingerprint(w.d.Cfg).String(): ready}
+	}
 	for fpStr, group := range groups {
 		if perr := w.processGroup(ctx, fpStr, group); perr != nil {
 			return perr
