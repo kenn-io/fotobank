@@ -1,0 +1,8 @@
+[nas]
+root = "/tmp/nas"
+
+[identity]
+mode = "header"
+
+[http]
+listen_address = "0.0.0.0:8090"   # not loopback/UDS → guard must be configured elsewhere

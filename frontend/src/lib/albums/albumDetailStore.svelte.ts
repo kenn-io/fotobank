@@ -1,0 +1,282 @@
+import type { Client } from "../api/client";
+import type { MediaStore } from "../media/mediaStore.svelte";
+
+export type Album = {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  item_count: number;
+  hidden_count: number;
+  cover?: { media_id: string; thumb_version: number };
+};
+
+export type AlbumSort = "taken" | "added";
+
+export class AlbumDetailStore {
+  album = $state<Album | null>(null);
+  itemIds = $state<string[]>([]);
+  loading = $state(false);
+  exhausted = $state(false);
+  sort = $state<AlbumSort>("taken");
+  // metaLoading is true while the metadata fetch in load() is in flight.
+  // metaError is true when that fetch failed and no album was returned.
+  // The route renders a loading or "not found" state from these so the
+  // user never sees a blank page after a failed metadata fetch.
+  metaLoading = $state(false);
+  metaError = $state(false);
+
+  private nextOffset: number | null = 0;
+  private albumId: string | null = null;
+  private membership = new Set<string>();
+  // Monotonic token bumped on every load() / setSort(). Async fetches
+  // capture the token at entry and check it before mutating state, so a
+  // late response from a stale album/sort can't clobber a fresher load.
+  private loadToken = 0;
+
+  constructor(
+    private client: Pick<Client, "GET" | "DELETE" | "PATCH">,
+    private media: MediaStore,
+  ) {}
+
+  async load(id: string): Promise<void> {
+    const token = ++this.loadToken;
+    this.albumId = id;
+    this.album = null;
+    this.itemIds = [];
+    this.membership = new Set();
+    this.nextOffset = 0;
+    this.exhausted = false;
+    // Reset loading so a new loadMore can fetch even if a stale one is
+    // still resolving — its response will be dropped by the token check.
+    this.loading = false;
+    this.metaError = false;
+    this.metaLoading = true;
+
+    let meta;
+    try {
+      meta = await this.client.GET("/api/v1/albums/{id}", {
+        params: { path: { id } } as never,
+      });
+    } finally {
+      // Only clear metaLoading if we're still the active token.
+      if (token === this.loadToken) this.metaLoading = false;
+    }
+    if (token !== this.loadToken) return;
+    if (meta.error || !meta.data) {
+      this.metaError = true;
+      return;
+    }
+    const a = meta.data as Album;
+    this.album = {
+      id: a.id,
+      name: a.name,
+      created_at: a.created_at,
+      updated_at: a.updated_at,
+      item_count: a.item_count,
+      hidden_count: a.hidden_count ?? 0,
+      ...(a.cover ? { cover: a.cover } : {}),
+    };
+
+    await this.loadMore();
+  }
+
+  async loadMore(): Promise<void> {
+    if (!this.albumId || this.loading || this.exhausted) return;
+    const token = this.loadToken;
+    this.loading = true;
+    try {
+      const res = await this.client.GET("/api/v1/albums/{id}/media", {
+        params: {
+          path: { id: this.albumId },
+          query: {
+            limit: 200,
+            offset: this.nextOffset ?? 0,
+            sort_by: this.sort,
+            sort_asc: false,
+          },
+        } as never,
+      });
+      if (token !== this.loadToken) return;
+      if (res.error || !res.data) return;
+      const data = res.data as { items?: Array<Record<string, unknown>>; next_offset?: number | null };
+      const items = data.items ?? [];
+      this.media.mergeRaw(items);
+      const newIds = items
+        .map((it) => it["id"])
+        .filter((v): v is string => typeof v === "string");
+      this.itemIds = [...this.itemIds, ...newIds];
+      for (const id of newIds) this.membership.add(id);
+      const next = data.next_offset ?? null;
+      this.nextOffset = next;
+      if (next === null) this.exhausted = true;
+    } finally {
+      // Only clear loading if we're still the active token; otherwise a
+      // newer load/setSort owns the flag and we shouldn't reset it.
+      if (token === this.loadToken) this.loading = false;
+    }
+  }
+
+  async setSort(next: AlbumSort): Promise<void> {
+    if (this.sort === next || !this.albumId) return;
+    this.sort = next;
+    this.itemIds = [];
+    this.membership = new Set();
+    this.nextOffset = 0;
+    this.exhausted = false;
+    this.loading = false;
+    // Bump the token so any in-flight loadMore for the prior sort drops
+    // its response instead of polluting the new sort's pages.
+    ++this.loadToken;
+    await this.loadMore();
+  }
+
+  // refreshMeta refetches the album header (name, item_count, hidden_count,
+  // cover) without resetting the in-memory itemIds / membership map. Use
+  // after a hide/unhide to update header counts without a full reload.
+  async refreshMeta(): Promise<void> {
+    if (!this.albumId) return;
+    // Capture both albumId and loadToken at entry. If the user navigates
+    // to a different album before the response lands, loadToken is bumped
+    // by load() — bail before assignment to avoid clobbering the new
+    // album's metadata (finding #11).
+    const albumId = this.albumId;
+    const token = this.loadToken;
+    const res = await this.client.GET("/api/v1/albums/{id}", {
+      params: { path: { id: albumId } } as never,
+    });
+    if (token !== this.loadToken || this.albumId !== albumId) return;
+    if (res.error || !res.data) return;
+    const a = res.data as Album;
+    if (this.album) {
+      // Strip the existing cover before applying the response so a
+      // server-reported cover removal (cover: null / absent) actually
+      // clears the stale cover instead of leaving it visible. The
+      // optional `cover` is then added back only if the API returned
+      // one (exactOptionalPropertyTypes rejects `cover: undefined`).
+      const { cover: _stale, ...rest } = this.album;
+      void _stale;
+      const updated: Album = {
+        ...rest,
+        name: a.name,
+        updated_at: a.updated_at,
+        item_count: a.item_count,
+        hidden_count: a.hidden_count ?? 0,
+      };
+      if (a.cover) updated.cover = a.cover;
+      this.album = updated;
+    }
+  }
+
+  async removeMany(ids: string[]): Promise<{ succeeded: string[]; failed: string[] }> {
+    if (!this.albumId) return { succeeded: [], failed: [] };
+    // Capture albumId at entry. The DELETE calls are correctly scoped
+    // to the original album by the captured albumId, and the local
+    // state mutation below (itemIds / membership / album.item_count)
+    // is keyed off the same albumId. We DON'T capture loadToken here:
+    // setSort() also bumps the token but stays on the same album, and
+    // a sort change must not cancel pending removes — itemIds remains
+    // sort-orderable after filtering removed ids out, so the local
+    // mutation is still correct after a sort flip.
+    const albumId = this.albumId;
+    const concurrency = 4;
+    const succeeded: string[] = [];
+    const failed: string[] = [];
+    let i = 0;
+    const client = this.client;
+    async function worker() {
+      while (i < ids.length) {
+        const myIdx = i++;
+        const mediaId = ids[myIdx]!;
+        const res = await client.DELETE("/api/v1/albums/{id}/media/{media_id}", {
+          params: { path: { id: albumId, media_id: mediaId } } as never,
+        });
+        if (res.error) failed.push(mediaId);
+        else succeeded.push(mediaId);
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, ids.length) }, () => worker()),
+    );
+    // Skip the local mutation only if the user navigated to a
+    // different album — those ids no longer belong to this view. The
+    // caller still gets {succeeded, failed} so it can update the
+    // global selection (those ids are global and no longer belong to
+    // ANY album view).
+    if (this.albumId !== albumId) return { succeeded, failed };
+    if (succeeded.length > 0) {
+      const succSet = new Set(succeeded);
+      this.itemIds = this.itemIds.filter((id) => !succSet.has(id));
+      for (const id of succeeded) this.membership.delete(id);
+      // Keep album.item_count in sync with the local view. The header
+      // count reads from this, and the Share-album button is gated on
+      // item_count === 0 — leaving it stale would mis-disable the share
+      // affordance after a removal that empties the album.
+      if (this.album) {
+        this.album = { ...this.album, item_count: this.album.item_count - succeeded.length };
+      }
+    }
+    return { succeeded, failed };
+  }
+
+  /**
+   * Remove ids from the in-memory item list and membership set after a
+   * Hide operation. The album_member row stays in the DB (the media is
+   * hidden, not removed from the album), so this does NOT call the
+   * DELETE /albums/{id}/media endpoint. Item count is adjusted by the
+   * number of ids that are actually present (intersection), so callers
+   * that pass ids from a wider scope don't drift the count (finding #14).
+   */
+  pruneHidden(ids: string[]): void {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    // Count only the ids that were actually present in this album.
+    const actualCount = ids.filter((id) => this.membership.has(id)).length;
+    this.itemIds = this.itemIds.filter((id) => !idSet.has(id));
+    for (const id of ids) this.membership.delete(id);
+    if (this.album && actualCount > 0) {
+      this.album = {
+        ...this.album,
+        item_count: this.album.item_count - actualCount,
+        hidden_count: (this.album.hidden_count ?? 0) + actualCount,
+      };
+    }
+  }
+
+  hasInAlbum(id: string): boolean {
+    return this.membership.has(id);
+  }
+
+  async rename(name: string): Promise<{ id: string; name: string; updated_at: string } | null> {
+    if (!this.albumId) return null;
+    // Capture the target album id before the await. The component reuses
+    // this store across /albums/:id navigations, so by the time the PATCH
+    // resolves `this.albumId` may already point at a different album. The
+    // caller uses the returned id to update the cache for the *target*
+    // album, not whatever the store happens to be showing now.
+    const targetId = this.albumId;
+    const trimmed = name.trim();
+    if (trimmed.length === 0) throw new Error("Name is required");
+    if (trimmed.length > 200) throw new Error("Name exceeds 200 characters");
+    const res = await this.client.PATCH("/api/v1/albums/{id}", {
+      params: { path: { id: targetId } } as never,
+      body: { name: trimmed } as never,
+    });
+    if (res.error) throw res.error;
+    const a = res.data as Album;
+    // Only mutate the in-place album state if the route is still pointed
+    // at the same target — otherwise we'd overwrite an unrelated album.
+    if (this.album && this.albumId === targetId) {
+      this.album = { ...this.album, name: a.name, updated_at: a.updated_at };
+    }
+    return { id: targetId, name: a.name, updated_at: a.updated_at };
+  }
+
+  async delete(): Promise<void> {
+    if (!this.albumId) return;
+    const res = await this.client.DELETE("/api/v1/albums/{id}", {
+      params: { path: { id: this.albumId } } as never,
+    });
+    if (res.error) throw res.error;
+  }
+}

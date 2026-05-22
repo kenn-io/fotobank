@@ -1,0 +1,64 @@
+version: "2"
+run:
+  tests: true
+  build-tags:
+    - sqlite_fts5
+linters:
+  default: none
+  enable:
+    - errcheck
+    - forbidigo
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - modernize
+    - testifylint
+  settings:
+    govet:
+      disable:
+        - shadow
+        - fieldalignment
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+    forbidigo:
+      forbid:
+        - pattern: '^t\.(Fatal|Fatalf|Error|Errorf|Fail|FailNow)$'
+          msg: Use testify assert/require helpers in tests.
+        - pattern: '^testing\..+\.(Fatal|Fatalf|Error|Errorf|Fail|FailNow)$'
+          msg: Use testify assert/require helpers in tests.
+        - pattern: '^time\.Local$'
+          msg: Backend timezone conversion is not allowed. Keep storage and API datetimes in UTC.
+        - pattern: '^time\.LoadLocation$'
+          msg: Do not add backend timezone loading for storage or API paths. Local timezone conversion belongs in the Svelte UI.
+        - pattern: '^time\.FixedZone$'
+          msg: Do not create backend timezone conversions outside tests.
+      analyze-types: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+        path: _test\.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - frontend/node_modules
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - frontend/node_modules

@@ -1,0 +1,3 @@
+# testdata/config/minimal.toml
+[nas]
+root = "/tmp/test-nas"

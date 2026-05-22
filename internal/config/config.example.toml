@@ -1,0 +1,101 @@
+# Where fotobank stores its SQLite DB and (optionally) flash-cached
+# originals and thumbnails.
+[flash]
+root = "~/.fotobank"                 # default; ~ expanded
+
+# Where durable bytes live. Imports write originals here before the
+# media row is committed; thumbnails are written here asynchronously
+# by the background worker after the row commits (see §10, §11).
+[nas]
+root = "/mnt/nas/fotobank"           # required
+
+# "nas_only" (no flash tier), "flash_cache" (default)
+[storage]
+mode = "flash_cache"
+originals_cache_days = 30            # recency window for original cache
+originals_cache_max_media = 100000   # hard ceiling; whichever hits first
+thumbs_cache_enabled = true          # thumbs cached on flash
+
+[identity]
+mode = "stub"                        # "stub" | "header"
+
+[identity.stub]
+hub = "dev-local"
+user_id = "owner"
+handle = "owner"
+# auto-registers the owner with storage_key = "owner" on first start
+
+[admin]
+# In stub mode this defaults to the configured stub principal when omitted.
+# In header mode, set this explicitly or admin routes deny everyone.
+principals = [
+  { hub = "dev-local", user_id = "owner" },
+]
+
+[identity.header]
+# Names can be overridden per deployment; defaults shown.
+user_id_header = "X-Auth-User-Id"
+hub_header = "X-Auth-Hub"
+handle_header = "X-Auth-Handle"
+scopes_header = "X-Auth-Scopes"
+request_id_header = "X-Auth-Request-Id"
+# Direct-access guard inputs (at least one must be set in header mode).
+# The bind address itself lives under [http].listen_address — the
+# guard inspects that field when deciding if loopback satisfies it.
+trusted_proxy_cidrs = []             # e.g. ["10.0.0.0/24"]
+proxy_secret_header = ""             # when set, require X-Auth-Proxy-Secret match
+proxy_secret = ""                    # loaded from env FOTOBANK_PROXY_SECRET if unset here
+proxy_mtls_ca_file = ""              # PEM file of CA certs for client auth
+
+[http]
+listen_address = "127.0.0.1:8090"    # TCP host:port or "unix:/path/to/socket"
+                                     # in header mode, loopback/UDS satisfies the direct-access guard
+base_url = ""                        # used to build absolute URLs in API responses; empty = omit
+request_timeout = "30s"
+write_timeout = "60s"                # accommodates range streams and large originals
+cors_origins = []                    # typically set to the frontend origin in Phase 3
+dev_insecure_cookies = false         # dev/e2e only: allow non-Secure Hidden unlock cookie over HTTP loopback
+
+[imports]
+concurrent_workers = 2               # goroutines doing EXIF + hash inside a single 'fotobank import' invocation
+file_lock_path = ""                  # default: {nas.root}/.fotobank/import.lock
+
+[thumbs]
+worker_concurrency = 4               # goroutines generating thumbnails per server process
+poll_interval = "5s"                 # how often to scan for pending rows
+lease_timeout = "10m"                # working rows reclaimed after this
+
+[broker]
+# v1 ships stub only. When Phase 2 lands, mode = "exec" with commands.
+mode = "stub"
+
+[broker.exec]
+# Required when mode = "exec". Path to the broker CLI executable.
+# command = "/usr/local/bin/fb-broker"
+#
+# Optional. Static argv passed to the broker CLI; the per-call JSON
+# payload (with operation = "publish" | "revoke") flows on stdin.
+# publish_scope_args = ["scope", "publish"]
+# revoke_scope_args  = ["scope", "revoke"]
+#
+# Optional. Per-call timeout, default 30s. Per-call timeouts surface
+# as broker.ErrBrokerTransient, not context.DeadlineExceeded, so the
+# share worker counts attempts and eventually flips to failed.
+# call_timeout = "30s"
+#
+# Optional. Non-secret env entries merged onto os.Environ() by key
+# (configured values win over inherited). Secrets should come from
+# the service manager via inherited environment, not from TOML.
+# env = ["FB_BROKER_ENV=prod"]
+
+[backup]
+# enabled = true                     # default; set to false to disable scheduled snapshots
+# dir = ""                           # absolute path; default: {nas.root}/.fotobank/snapshots/
+# keep_15min = 4                     # last hour of 15-min slots
+# keep_hourly = 24                   # last day of hourly slots
+# keep_daily = 7                     # last week of daily slots
+
+[ui]
+# Enable the in-app sharing UI. Backend share APIs and the
+# `fotobank shares ...` CLI work either way. Default: false.
+sharing_enabled = false

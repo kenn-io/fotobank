@@ -1,0 +1,559 @@
+package embedding_test
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"sync"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/testutil"
+)
+
+// fpEmbed1 is the canonical example fingerprint from the design — used
+// across multiple tests so a typo in one ModelID/InputProfile doesn't
+// silently change what's being asserted.
+func fpEmbed1() ai.Fingerprint {
+	return ai.Fingerprint{
+		ModelID:       "siglip2",
+		PromptVersion: "",
+		InputProfile:  "jpeg-384-q85-metadata-stripped-embed-v1",
+	}
+}
+
+func TestGenerations_FindOrCreateBuilding_CreatesOnce(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	row1, err := g.FindOrCreateBuilding(ctx, fpEmbed1(), 768)
+	r.NoError(err)
+	r.Equal("building", row1.State)
+	r.Equal(fmt.Sprintf("media_embeddings_g%d", row1.ID), row1.VecTableName)
+	r.Equal(768, row1.Dimension)
+	r.Equal("siglip2", row1.ModelID)
+	r.Equal("jpeg-384-q85-metadata-stripped-embed-v1", row1.InputProfile)
+
+	row2, err := g.FindOrCreateBuilding(ctx, fpEmbed1(), 768)
+	r.NoError(err)
+	r.Equal(row1.ID, row2.ID, "second call must return the same row")
+}
+
+func TestGenerations_FindOrCreateBuildingTx_DimensionDefinesGeneration(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	row1, err := g.FindOrCreateBuilding(ctx, fpEmbed1(), 512)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, row1.ID))
+
+	tx, err := d.WriteDB().BeginTx(ctx, nil)
+	r.NoError(err)
+	row2, err := g.FindOrCreateBuildingTx(ctx, tx, fpEmbed1(), 768)
+	r.NoError(err)
+	r.NoError(tx.Commit())
+
+	r.NotEqual(row1.ID, row2.ID)
+	r.Equal(fpEmbed1().String(), row2.Fingerprint)
+	r.Equal(768, row2.Dimension)
+}
+
+func TestGenerations_FindOrCreateBuildingTx_RollbackRemovesRowAndVecTable(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	tx, err := d.WriteDB().BeginTx(ctx, nil)
+	r.NoError(err)
+
+	row, err := g.FindOrCreateBuildingTx(ctx, tx, fpEmbed1(), 768)
+	r.NoError(err)
+	r.Equal("building", row.State)
+	r.Equal(fmt.Sprintf("media_embeddings_g%d", row.ID), row.VecTableName)
+
+	var name string
+	err = tx.QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+		row.VecTableName,
+	).Scan(&name)
+	r.NoError(err)
+	r.Equal(row.VecTableName, name)
+
+	r.NoError(tx.Rollback())
+
+	got, err := g.GetByID(ctx, row.ID)
+	r.ErrorIs(err, errs.ErrNotFound)
+	r.Nil(got)
+
+	err = d.ReadDB().QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+		row.VecTableName,
+	).Scan(&name)
+	r.ErrorIs(err, sql.ErrNoRows)
+}
+
+func TestGenerations_FindActive_ReturnsNoneInitially(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	got, err := g.FindActive(ctx)
+	r.NoError(err)
+	r.Nil(got, "no active generation initially")
+}
+
+// TestGenerations_FindBuilding covers the activator's lookup path.
+// Multiple building rows can coexist during model/dimension rollouts.
+// The activator's ORDER BY id ASC LIMIT 1 picks the oldest candidate,
+// so this test rotates through the lifecycle and confirms the lookup
+// returns nil when no building rows remain.
+func TestGenerations_FindBuilding(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	// Empty registry: nil, no error.
+	got, err := g.FindBuilding(ctx)
+	r.NoError(err)
+	r.Nil(got)
+
+	// One building row: returns it.
+	a, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+
+	got, err = g.FindBuilding(ctx)
+	r.NoError(err)
+	r.NotNil(got)
+	r.Equal(a.ID, got.ID)
+
+	// Promote the building row → state moves to 'active', leaving no
+	// current building candidate.
+	r.NoError(g.Promote(ctx, a.ID))
+	got, err = g.FindBuilding(ctx)
+	r.NoError(err)
+	r.Nil(got, "no building rows after the only candidate was promoted")
+
+	b, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v2", InputProfile: "p2"}, 768)
+	r.NoError(err)
+	r.NotEqual(a.ID, b.ID)
+
+	got, err = g.FindBuilding(ctx)
+	r.NoError(err)
+	r.NotNil(got)
+	r.Equal(b.ID, got.ID)
+
+	// Retire the last building; FindBuilding goes back to nil.
+	r.NoError(g.Retire(ctx, b.ID))
+	got, err = g.FindBuilding(ctx)
+	r.NoError(err)
+	r.Nil(got, "no building rows after retire")
+}
+
+func TestGenerations_PromoteRetiresPriorActive(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	a, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, a.ID))
+
+	b, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v2", InputProfile: "p2"}, 768)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, b.ID))
+
+	active, err := g.FindActive(ctx)
+	r.NoError(err)
+	r.NotNil(active)
+	r.Equal(b.ID, active.ID)
+
+	rows, err := g.List(ctx, "retired")
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.Equal(a.ID, rows[0].ID)
+	r.NotNil(rows[0].RetiredAt, "retired row must carry retired_at timestamp")
+}
+
+func TestGenerations_VecTableIsCreated(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	row, err := g.FindOrCreateBuilding(ctx, fpEmbed1(), 768)
+	r.NoError(err)
+
+	// Both 'table' and 'virtual' types resolve under sqlite_master; the
+	// vec0 module surfaces the shadow table as a regular table entry
+	// alongside the parent virtual-table row. Querying by name is enough
+	// to confirm CREATE VIRTUAL TABLE ran inside the FindOrCreate tx.
+	var name string
+	err = d.ReadDB().QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+		row.VecTableName,
+	).Scan(&name)
+	r.NoError(err)
+	r.Equal(row.VecTableName, name)
+}
+
+func TestGenerations_RetireTransitionsToRetired(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	row, err := g.FindOrCreateBuilding(ctx, fpEmbed1(), 768)
+	r.NoError(err)
+
+	r.NoError(g.Retire(ctx, row.ID))
+
+	retired, err := g.List(ctx, "retired")
+	r.NoError(err)
+	r.Len(retired, 1)
+	r.Equal(row.ID, retired[0].ID)
+	r.NotNil(retired[0].RetiredAt, "retired row must carry retired_at timestamp")
+
+	// FindActive must remain nil — Retire does not promote anything.
+	active, err := g.FindActive(ctx)
+	r.NoError(err)
+	r.Nil(active)
+}
+
+// TestGenerations_PromoteUnknownIDFails covers the rows-affected guard
+// on the activation UPDATE: passing an id that doesn't exist must
+// return errs.ErrNotFound and roll back the transaction so a prior
+// active row stays active.
+func TestGenerations_PromoteUnknownIDFails(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	// Empty registry: Promote on a missing id is ErrNotFound.
+	err := g.Promote(ctx, 99999)
+	r.ErrorIs(err, errs.ErrNotFound)
+	active, err := g.FindActive(ctx)
+	r.NoError(err)
+	r.Nil(active, "no row should have transitioned to active")
+
+	// With a prior active row: Promote on a missing id must NOT retire
+	// the prior active. The two UPDATEs run in one tx; the activation's
+	// zero rows-affected rolls back the retire-prior-active UPDATE too.
+	prior, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, prior.ID))
+
+	err = g.Promote(ctx, 99999)
+	r.ErrorIs(err, errs.ErrNotFound)
+
+	active, err = g.FindActive(ctx)
+	r.NoError(err)
+	r.NotNil(active, "prior active must remain active after a failed Promote")
+	r.Equal(prior.ID, active.ID)
+	r.Nil(active.RetiredAt, "prior active must not carry a retired_at after rollback")
+}
+
+// TestGenerations_PromoteFromBuilding_RetiredRowFails covers the
+// state-aware promotion path the activator relies on. If an admin
+// retires a building generation between the activator's FindBuilding
+// and Promote calls, PromoteFromBuilding must NOT undo that retirement
+// — it must instead return ErrNotFound and leave the row retired.
+func TestGenerations_PromoteFromBuilding_RetiredRowFails(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	row, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+
+	// Simulate a concurrent admin retire between FindBuilding and
+	// PromoteFromBuilding. The state filter must catch this.
+	r.NoError(g.Retire(ctx, row.ID))
+
+	err = g.PromoteFromBuilding(ctx, row.ID)
+	r.ErrorIs(err, errs.ErrNotFound, "retired row must not be re-activated by PromoteFromBuilding")
+
+	// Row must still be retired (the state-filter rolled back the UPDATE).
+	got, err := g.GetByID(ctx, row.ID)
+	r.NoError(err)
+	r.NotNil(got)
+	r.Equal("retired", got.State)
+	r.NotNil(got.RetiredAt)
+}
+
+// TestGenerations_PromoteFromBuilding_HappyPath confirms a building
+// row promotes normally and any prior active is retired in one tx —
+// matching the contract Promote already provides.
+func TestGenerations_PromoteFromBuilding_HappyPath(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	a, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, a.ID))
+
+	b, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v2", InputProfile: "p2"}, 768)
+	r.NoError(err)
+
+	r.NoError(g.PromoteFromBuilding(ctx, b.ID))
+
+	active, err := g.FindActive(ctx)
+	r.NoError(err)
+	r.NotNil(active)
+	r.Equal(b.ID, active.ID, "PromoteFromBuilding must activate the building row")
+
+	rows, err := g.List(ctx, "retired")
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.Equal(a.ID, rows[0].ID, "prior active must be retired in the same tx")
+}
+
+// TestGenerations_PromoteRetiredRowClearsRetiredAt covers the second
+// half of Promote's contract: when re-promoting a row that was
+// previously retired, the activation UPDATE must clear retired_at so
+// the row lands back in the canonical active shape.
+func TestGenerations_PromoteRetiredRowClearsRetiredAt(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+
+	row, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, row.ID))
+	r.NoError(g.Retire(ctx, row.ID))
+
+	// Sanity: the row carries a retired_at after Retire.
+	retired, err := g.List(ctx, "retired")
+	r.NoError(err)
+	r.Len(retired, 1)
+	r.NotNil(retired[0].RetiredAt)
+
+	// Re-promote the same row. The activation UPDATE clears retired_at.
+	r.NoError(g.Promote(ctx, row.ID))
+
+	active, err := g.FindActive(ctx)
+	r.NoError(err)
+	r.NotNil(active)
+	r.Equal(row.ID, active.ID)
+	r.Nil(active.RetiredAt, "re-promoted row must have retired_at cleared")
+	r.NotNil(active.ActivatedAt)
+}
+
+// TestGenerations_FindOrCreateBuilding_EmitsCreatedOnInsert confirms
+// the lifecycle event fires only on the actual INSERT path. The first
+// FindOrCreateBuilding inserts a row (one event); subsequent calls
+// with the same fingerprint return the existing row via the fast path
+// (no event). Wired in Task P1 — gating on insert-only is what keeps
+// the SSE channel from announcing fingerprints that already exist.
+//
+// A distinct fingerprint creates a new generation and emits one event.
+func TestGenerations_FindOrCreateBuilding_EmitsCreatedOnInsert(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	emitter := &recordingEmitter{}
+	g.SetEmitter(emitter)
+
+	row, err := g.FindOrCreateBuilding(ctx, fpEmbed1(), 768)
+	r.NoError(err)
+	r.EqualValues(1, emitter.created.Load(), "first insert must emit one created event")
+
+	// Second call hits the fast-path lookup → no insert, no emit.
+	row2, err := g.FindOrCreateBuilding(ctx, fpEmbed1(), 768)
+	r.NoError(err)
+	r.Equal(row.ID, row2.ID)
+	r.EqualValues(1, emitter.created.Load(),
+		"fast-path lookup must not re-emit created for an existing row")
+
+	// Distinct fingerprint → new INSERT → second emit.
+	_, err = g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v2", InputProfile: "p"}, 768)
+	r.NoError(err)
+	r.EqualValues(2, emitter.created.Load(),
+		"a distinct fingerprint must emit a new created event")
+
+	// Creating building rows does not emit retirement events.
+	r.EqualValues(0, emitter.retired.Load())
+}
+
+// TestGenerations_Promote_EmitsRetiredOnlyWhenPriorActive confirms the
+// retired emit gates on the retire-prior-active UPDATE actually
+// changing a row. The first Promote (no prior active) must NOT emit;
+// the second Promote (with v1 active) must emit exactly once for v1.
+func TestGenerations_Promote_EmitsRetiredOnlyWhenPriorActive(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	emitter := &recordingEmitter{}
+	g.SetEmitter(emitter)
+
+	a, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+
+	// First Promote: no prior active → no retired event.
+	r.NoError(g.Promote(ctx, a.ID))
+	r.EqualValues(0, emitter.retired.Load(),
+		"first promote with no prior active must not emit retired")
+
+	b, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v2", InputProfile: "p2"}, 768)
+	r.NoError(err)
+
+	// Second Promote: v1 is active → it gets retired in the same tx,
+	// and the post-commit emit fires exactly once.
+	r.NoError(g.Promote(ctx, b.ID))
+	r.EqualValues(1, emitter.retired.Load(),
+		"second promote must retire v1 and emit exactly one retired event")
+}
+
+// TestGenerations_PromoteAlreadyActiveDoesNotEmitRetiredForSelf covers
+// the idempotent re-promote path: when Promote is called on the row
+// that is already active, the retire-prior-active UPDATE flips the row
+// to 'retired' and the activation UPDATE flips it back to 'active' in
+// the same tx. The post-commit retired event would announce a row that
+// is once again active — misleading. retirePriorActiveTx must suppress
+// the retired flag when priorID == promotingID.
+func TestGenerations_PromoteAlreadyActiveDoesNotEmitRetiredForSelf(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	emitter := &recordingEmitter{}
+	g.SetEmitter(emitter)
+
+	row, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, row.ID))
+	r.EqualValues(0, emitter.retired.Load(),
+		"first promote had no prior active so no retired event")
+
+	// Re-promote the same row — it's already active. The retire-prior
+	// UPDATE matches it (it's the active row), but the subsequent
+	// activation UPDATE puts it back to active before commit. No
+	// retired event must fire for this id.
+	r.NoError(g.Promote(ctx, row.ID))
+	r.EqualValues(0, emitter.retired.Load(),
+		"re-promoting the already-active row must not emit retired for itself")
+
+	// The row remains active.
+	active, err := g.FindActive(ctx)
+	r.NoError(err)
+	r.NotNil(active)
+	r.Equal(row.ID, active.ID)
+}
+
+// TestGenerations_PromoteFromBuilding_EmitsRetired covers the same
+// retired-emit gating on the activator-side path (PromoteFromBuilding).
+// The retired emit fires only when a prior active exists.
+func TestGenerations_PromoteFromBuilding_EmitsRetired(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	emitter := &recordingEmitter{}
+	g.SetEmitter(emitter)
+
+	a, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v1", InputProfile: "p1"}, 768)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, a.ID))
+	r.EqualValues(0, emitter.retired.Load(),
+		"first promote had no prior active so no retired event")
+
+	b, err := g.FindOrCreateBuilding(ctx,
+		ai.Fingerprint{ModelID: "v2", InputProfile: "p2"}, 768)
+	r.NoError(err)
+	r.NoError(g.PromoteFromBuilding(ctx, b.ID))
+	r.EqualValues(1, emitter.retired.Load(),
+		"PromoteFromBuilding with v1 active must emit exactly one retired event")
+}
+
+// TestGenerations_FindOrCreateBuilding_ConcurrentSafety confirms the
+// idempotency contract under a fan-out of N goroutines all racing to
+// create the same fingerprint. The contention model relies on the rw
+// pool's MaxOpenConns=1: BeginTx physically queues on one connection,
+// so the loser's tx cannot start until the winner's Commit returns the
+// connection — at which point the loser's re-check inside the tx sees
+// the just-committed row and short-circuits without retrying the
+// INSERT (which would fail the fingerprint_hash UNIQUE constraint).
+//
+// Two-phase barrier: each goroutine signals on `ready` when it has
+// physically reached the start gate, then blocks on `start`. The main
+// goroutine drains N ready signals — proving every goroutine is at the
+// barrier — before closing `start` to release them simultaneously.
+// Without the ready handshake, a fast spawn-then-run goroutine could
+// naturally serialise (g0 finishes before g1 even reaches the gate),
+// hiding any correctness regression in the rw-contention path.
+func TestGenerations_FindOrCreateBuilding_ConcurrentSafety(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	fp := ai.Fingerprint{ModelID: "siglip2", InputProfile: "p"}
+
+	const N = 8
+	ids := make([]int64, N)
+	errs := make([]error, N)
+	ready := make(chan struct{}, N) // each goroutine signals on arrival
+	start := make(chan struct{})    // main closes once all N have signaled
+	var wg sync.WaitGroup
+	wg.Add(N)
+	for i := range N {
+		go func() {
+			defer wg.Done()
+			ready <- struct{}{} // signal arrived at barrier
+			<-start             // block until main releases all goroutines
+			row, err := g.FindOrCreateBuilding(ctx, fp, 768)
+			ids[i], errs[i] = row.ID, err
+		}()
+	}
+	// Drain N ready signals, THEN release. This guarantees every
+	// goroutine is physically at <-start before any can proceed.
+	for range N {
+		<-ready
+	}
+	close(start) // release barrier
+	wg.Wait()
+
+	for i, e := range errs {
+		r.NoError(e, "goroutine %d", i)
+	}
+	for i := 1; i < N; i++ {
+		r.Equal(ids[0], ids[i], "goroutine %d returned a different id", i)
+	}
+
+	// Sanity-check the registry: exactly one row exists for this fingerprint.
+	rows, err := g.List(ctx, "building")
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.Equal(ids[0], rows[0].ID)
+}

@@ -1,0 +1,3663 @@
+{
+  "components": {
+    "schemas": {
+      "APIKeyEnvStatusValue": {
+        "additionalProperties": false,
+        "properties": {
+          "is_set": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "is_set",
+          "required"
+        ],
+        "type": "object"
+      },
+      "AddAlbumMediaInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AddAlbumMediaInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "media_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "media_ids"
+        ],
+        "type": "object"
+      },
+      "AddAlbumMediaOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AddAlbumMediaOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "added": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "already_present": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "added",
+          "already_present"
+        ],
+        "type": "object"
+      },
+      "AdminSettingsApplyInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AdminSettingsApplyInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "values"
+        ],
+        "type": "object"
+      },
+      "AlbumDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AlbumDTO.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "cover": {
+            "$ref": "#/components/schemas/CoverDTO"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "hidden_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "item_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "item_count",
+          "hidden_count",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ApplyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ApplyResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "effective": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "generation_id": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "effective"
+        ],
+        "type": "object"
+      },
+      "CoverDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "media_id": {
+            "type": "string"
+          },
+          "thumb_version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "media_id",
+          "thumb_version"
+        ],
+        "type": "object"
+      },
+      "CreateAlbumInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/CreateAlbumInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "CreateShareInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/CreateShareInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "album_id": {
+            "type": "string"
+          },
+          "allow_download": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "grantee": {
+            "$ref": "#/components/schemas/PrincipalDTO"
+          },
+          "label": {
+            "type": "string"
+          },
+          "media_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "target_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "grantee",
+          "target_type"
+        ],
+        "type": "object"
+      },
+      "EffectiveResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/EffectiveResponse.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "api_key_env_status": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/APIKeyEnvStatusValue"
+            },
+            "type": "object"
+          },
+          "current_embed_generation": {
+            "$ref": "#/components/schemas/EmbedGeneration"
+          },
+          "effective": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "file_default": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "overrides": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/OverrideMetadata"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "effective",
+          "file_default",
+          "overrides",
+          "api_key_env_status",
+          "current_embed_generation"
+        ],
+        "type": "object"
+      },
+      "EmbedConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/EmbedConfig.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "api_key_env": {
+            "type": "string"
+          },
+          "dimension": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint",
+          "model",
+          "api_key_env",
+          "dimension"
+        ],
+        "type": "object"
+      },
+      "EmbedGeneration": {
+        "additionalProperties": false,
+        "properties": {
+          "dimension": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "input_profile": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "model",
+          "dimension",
+          "input_profile"
+        ],
+        "type": "object"
+      },
+      "ErrorDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "location": {
+            "description": "Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'",
+            "type": "string"
+          },
+          "message": {
+            "description": "Error message text",
+            "type": "string"
+          },
+          "value": {
+            "description": "The value at the given location"
+          }
+        },
+        "type": "object"
+      },
+      "ErrorModel": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ErrorModel.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "detail": {
+            "description": "A human-readable explanation specific to this occurrence of the problem.",
+            "examples": [
+              "Property foo is required but is missing."
+            ],
+            "type": "string"
+          },
+          "errors": {
+            "description": "Optional list of individual error details",
+            "items": {
+              "$ref": "#/components/schemas/ErrorDetail"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "instance": {
+            "description": "A URI reference that identifies the specific occurrence of the problem.",
+            "examples": [
+              "https://example.com/error-log/abc123"
+            ],
+            "format": "uri",
+            "type": "string"
+          },
+          "status": {
+            "description": "HTTP status code",
+            "examples": [
+              400
+            ],
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "description": "A short, human-readable summary of the problem type. This value should not change between occurrences of the error.",
+            "examples": [
+              "Bad Request"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "default": "about:blank",
+            "description": "A URI reference to human-readable documentation for the error.",
+            "examples": [
+              "https://example.com/errors/example"
+            ],
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "FeaturesStruct": {
+        "additionalProperties": false,
+        "properties": {
+          "admin_settings_enabled": {
+            "type": "boolean"
+          },
+          "sharing_enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sharing_enabled",
+          "admin_settings_enabled"
+        ],
+        "type": "object"
+      },
+      "HealthzOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/HealthzOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "HiddenChangeInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/HiddenChangeInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "new_passcode": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "old_passcode": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "old_passcode",
+          "new_passcode"
+        ],
+        "type": "object"
+      },
+      "HiddenMediaBulkFailureDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code"
+        ],
+        "type": "object"
+      },
+      "HiddenMediaBulkInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/HiddenMediaBulkInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "media_ids": {
+            "description": "IDs of primary or standalone rows to hide/unhide.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "media_ids"
+        ],
+        "type": "object"
+      },
+      "HiddenMediaBulkOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/HiddenMediaBulkOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "failed": {
+            "items": {
+              "$ref": "#/components/schemas/HiddenMediaBulkFailureDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "succeeded": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "succeeded",
+          "failed"
+        ],
+        "type": "object"
+      },
+      "HiddenPasscodeInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/HiddenPasscodeInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "passcode": {
+            "description": "Passcode (1–1024 bytes UTF-8).",
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "passcode"
+        ],
+        "type": "object"
+      },
+      "HiddenStateOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/HiddenStateOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "unlocked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "configured",
+          "unlocked"
+        ],
+        "type": "object"
+      },
+      "ListAlbumMediaOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ListAlbumMediaOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MediaDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_offset": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ListAlbumsOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ListAlbumsOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AlbumDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_offset": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ListHiddenMediaOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ListHiddenMediaOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MediaDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_offset": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ListMediaGeoOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ListMediaGeoOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MediaDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ListMediaOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ListMediaOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MediaDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_offset": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ListSharesOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ListSharesOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ScopeDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_offset": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "MeOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/MeOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "features": {
+            "$ref": "#/components/schemas/FeaturesStruct"
+          },
+          "principal": {
+            "$ref": "#/components/schemas/PrincipalStruct"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "principal",
+          "scopes",
+          "features"
+        ],
+        "type": "object"
+      },
+      "MediaDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/MediaDTO.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "aperture": {
+            "format": "double",
+            "type": "number"
+          },
+          "checksum": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "focal_length": {
+            "type": "string"
+          },
+          "gps_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "height": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "hidden_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "imported_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "iso": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "latitude": {
+            "format": "double",
+            "type": "number"
+          },
+          "location_label": {
+            "type": "string"
+          },
+          "longitude": {
+            "format": "double",
+            "type": "number"
+          },
+          "make": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "original_filename": {
+            "type": "string"
+          },
+          "paired_with": {
+            "$ref": "#/components/schemas/PairSummaryDTO"
+          },
+          "paired_with_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "shutter": {
+            "type": "string"
+          },
+          "sidecars": {
+            "items": {
+              "$ref": "#/components/schemas/MediaDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "thumb_status": {
+            "type": "string"
+          },
+          "thumb_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "width": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "mime_type",
+          "path",
+          "imported_at",
+          "size",
+          "checksum",
+          "thumb_status",
+          "thumb_version"
+        ],
+        "type": "object"
+      },
+      "OverrideMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "$ref": "#/components/schemas/PrincipalRef"
+          },
+          "value": {}
+        },
+        "required": [
+          "value",
+          "updated_at",
+          "updated_by"
+        ],
+        "type": "object"
+      },
+      "PairSummaryDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "original_filename": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "original_filename"
+        ],
+        "type": "object"
+      },
+      "PatchAlbumInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/PatchAlbumInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "PreviewAlbumDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "item_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "item_count",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "PreviewMediaDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "display_time": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "thumb_status": {
+            "type": "string"
+          },
+          "thumb_version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "media_type",
+          "mime_type",
+          "display_time",
+          "thumb_status",
+          "thumb_version"
+        ],
+        "type": "object"
+      },
+      "PreviewShareDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/PreviewShareDTO.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "album": {
+            "$ref": "#/components/schemas/PreviewAlbumDTO"
+          },
+          "media": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewMediaDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeDTO"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "scope",
+          "media"
+        ],
+        "type": "object"
+      },
+      "PrincipalDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id"
+        ],
+        "type": "object"
+      },
+      "PrincipalRef": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id"
+        ],
+        "type": "object"
+      },
+      "PrincipalStruct": {
+        "additionalProperties": false,
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "hub": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id"
+        ],
+        "type": "object"
+      },
+      "Result": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/Result.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "classification": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "latency_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "model_echoed": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "latency_ms",
+          "classification",
+          "detail",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "ScopeDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ScopeDTO.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "allow_download": {
+            "type": "boolean"
+          },
+          "broker_attempts": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "broker_granted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "broker_last_error": {
+            "type": "string"
+          },
+          "broker_next_attempt_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "broker_registered_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "broker_revoked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "broker_status": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expired": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "grantee": {
+            "$ref": "#/components/schemas/PrincipalDTO"
+          },
+          "grantee_handle": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "media_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "owner": {
+            "$ref": "#/components/schemas/PrincipalDTO"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "target_album_id": {
+            "type": "string"
+          },
+          "target_summary": {
+            "$ref": "#/components/schemas/TargetSummaryDTO"
+          },
+          "target_type": {
+            "type": "string"
+          },
+          "uuid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "uuid",
+          "owner",
+          "grantee",
+          "target_type",
+          "allow_download",
+          "created_at",
+          "expired",
+          "broker_status",
+          "broker_attempts"
+        ],
+        "type": "object"
+      },
+      "SharedAlbumCoverDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "media_id": {
+            "type": "string"
+          },
+          "thumb_version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "media_id",
+          "thumb_version"
+        ],
+        "type": "object"
+      },
+      "SharedAlbumDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/SharedAlbumDTO.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "can_download": {
+            "type": "boolean"
+          },
+          "cover": {
+            "$ref": "#/components/schemas/SharedAlbumCoverDTO"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "item_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/SharedPrincipalDTO"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "owner",
+          "item_count",
+          "created_at",
+          "updated_at",
+          "can_download"
+        ],
+        "type": "object"
+      },
+      "SharedListAlbumsOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/SharedListAlbumsOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SharedAlbumDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "SharedListScopesOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/SharedListScopesOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SharedScopeDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "SharedMediaDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/SharedMediaDTO.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "can_download": {
+            "type": "boolean"
+          },
+          "display_time": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "duration_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "height": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/SharedPrincipalDTO"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "thumb_status": {
+            "type": "string"
+          },
+          "thumb_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "width": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "owner",
+          "media_type",
+          "mime_type",
+          "display_time",
+          "thumb_status",
+          "thumb_version",
+          "can_download"
+        ],
+        "type": "object"
+      },
+      "SharedMediaListOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/SharedMediaListOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SharedMediaDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_cursor_id": {
+            "type": "string"
+          },
+          "next_cursor_time": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "has_more"
+        ],
+        "type": "object"
+      },
+      "SharedPrincipalDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id"
+        ],
+        "type": "object"
+      },
+      "SharedScopeDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/SharedScopeDTO.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "allow_download": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "item_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          },
+          "media_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "owner": {
+            "$ref": "#/components/schemas/SharedPrincipalDTO"
+          },
+          "target_album_id": {
+            "type": "string"
+          },
+          "target_type": {
+            "type": "string"
+          },
+          "uuid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "uuid",
+          "target_type",
+          "owner",
+          "allow_download"
+        ],
+        "type": "object"
+      },
+      "TargetSummaryDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "item_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "UserSettingPutInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/UserSettingPutInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 4096,
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "type": "object"
+      },
+      "UserSettingValueBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/UserSettingValueBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "type": "object"
+      },
+      "VisionConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/VisionConfig.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "api_key_env": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint",
+          "model",
+          "api_key_env"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Fotobank HTTP API",
+    "title": "Fotobank",
+    "version": "dev"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/admin/settings": {
+      "get": {
+        "operationId": "admin-settings-get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Return effective admin settings"
+      }
+    },
+    "/api/v1/admin/settings/keys/{key}": {
+      "delete": {
+        "operationId": "admin-settings-reset-key",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Reset one admin settings key"
+      }
+    },
+    "/api/v1/admin/settings/sections/{section}": {
+      "delete": {
+        "operationId": "admin-settings-reset-section",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Reset one admin settings section"
+      },
+      "put": {
+        "operationId": "admin-settings-apply-section",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminSettingsApplyInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Apply one admin settings section"
+      }
+    },
+    "/api/v1/admin/settings/test/embed": {
+      "post": {
+        "operationId": "admin-settings-test-embed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Probe pending embedding endpoint settings"
+      }
+    },
+    "/api/v1/admin/settings/test/vision": {
+      "post": {
+        "operationId": "admin-settings-test-vision",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VisionConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Probe pending vision endpoint settings"
+      }
+    },
+    "/api/v1/albums": {
+      "get": {
+        "operationId": "list-albums",
+        "parameters": [
+          {
+            "description": "max rows to return (default 100, cap 1000)",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "max rows to return (default 100, cap 1000)",
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "pagination offset",
+            "explode": false,
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "description": "pagination offset",
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListAlbumsOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List albums belonging to the caller"
+      },
+      "post": {
+        "operationId": "create-album",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAlbumInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumDTO"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create an album owned by the caller"
+      }
+    },
+    "/api/v1/albums/{id}": {
+      "delete": {
+        "operationId": "delete-album",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete an album (cascades album_media)"
+      },
+      "get": {
+        "operationId": "get-album",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Return detail for a single album"
+      },
+      "patch": {
+        "operationId": "rename-album",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchAlbumInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Rename an album (returns the updated detail)"
+      }
+    },
+    "/api/v1/albums/{id}/media": {
+      "get": {
+        "operationId": "list-album-media",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "max rows to return (default 100, cap 1000)",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "max rows to return (default 100, cap 1000)",
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "pagination offset",
+            "explode": false,
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "description": "pagination offset",
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "added (default), imported, or taken",
+            "explode": false,
+            "in": "query",
+            "name": "sort_by",
+            "schema": {
+              "description": "added (default), imported, or taken",
+              "type": "string"
+            }
+          },
+          {
+            "description": "invert the default DESC sort when true",
+            "explode": false,
+            "in": "query",
+            "name": "sort_asc",
+            "schema": {
+              "description": "invert the default DESC sort when true",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListAlbumMediaOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List media in an album"
+      },
+      "post": {
+        "operationId": "add-album-media",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddAlbumMediaInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddAlbumMediaOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Add media to an album (idempotent, deduped)"
+      }
+    },
+    "/api/v1/albums/{id}/media/{media_id}": {
+      "delete": {
+        "operationId": "remove-album-media",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "media_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Remove a media row from an album"
+      }
+    },
+    "/api/v1/auth/hidden/change": {
+      "post": {
+        "operationId": "hidden-change",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HiddenChangeInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Change the hidden-privacy passcode"
+      }
+    },
+    "/api/v1/auth/hidden/disable": {
+      "post": {
+        "operationId": "hidden-disable",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HiddenPasscodeInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Disable hidden privacy (clears passcode and all hidden flags)"
+      }
+    },
+    "/api/v1/auth/hidden/lock": {
+      "post": {
+        "operationId": "hidden-lock",
+        "responses": {
+          "204": {
+            "description": "No Content",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Revoke the active hidden-unlock session (idempotent, always 204)"
+      }
+    },
+    "/api/v1/auth/hidden/setup": {
+      "post": {
+        "operationId": "hidden-setup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HiddenPasscodeInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Configure hidden privacy with an initial passcode"
+      }
+    },
+    "/api/v1/auth/hidden/state": {
+      "get": {
+        "operationId": "hidden-state",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HiddenStateOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Return current hidden-privacy configuration and unlock state"
+      }
+    },
+    "/api/v1/auth/hidden/unlock": {
+      "post": {
+        "operationId": "hidden-unlock",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HiddenPasscodeInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Verify passcode and issue a hidden-unlock session cookie"
+      }
+    },
+    "/api/v1/healthz": {
+      "get": {
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthzOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Health check"
+      }
+    },
+    "/api/v1/hidden/media": {
+      "get": {
+        "operationId": "list-hidden-media",
+        "parameters": [
+          {
+            "description": "max rows to return (default 100, cap 1000)",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "max rows to return (default 100, cap 1000)",
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "pagination offset",
+            "explode": false,
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "description": "pagination offset",
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListHiddenMediaOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List hidden media for the caller (requires unlock cookie)"
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Return identity of the caller"
+      }
+    },
+    "/api/v1/media": {
+      "get": {
+        "operationId": "list-media",
+        "parameters": [
+          {
+            "description": "photo or video; anything else returns zero rows",
+            "explode": false,
+            "in": "query",
+            "name": "media_type",
+            "schema": {
+              "description": "photo or video; anything else returns zero rows",
+              "type": "string"
+            }
+          },
+          {
+            "description": "max rows to return (default 100, cap 1000)",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "max rows to return (default 100, cap 1000)",
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "pagination offset",
+            "explode": false,
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "description": "pagination offset",
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "sort by timestamp DESC when true",
+            "explode": false,
+            "in": "query",
+            "name": "sort_desc",
+            "schema": {
+              "description": "sort by timestamp DESC when true",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "narrow to rows whose '\u003cmake\u003e \u003cmodel\u003e' matches any value (OR-composed; repeatable)",
+            "explode": true,
+            "in": "query",
+            "name": "camera",
+            "schema": {
+              "description": "narrow to rows whose '\u003cmake\u003e \u003cmodel\u003e' matches any value (OR-composed; repeatable)",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "narrow to rows whose lens_model matches any value (OR-composed; repeatable)",
+            "explode": true,
+            "in": "query",
+            "name": "lens",
+            "schema": {
+              "description": "narrow to rows whose lens_model matches any value (OR-composed; repeatable)",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "narrow to rows that carry at least one tag matching any key (repeatable)",
+            "explode": true,
+            "in": "query",
+            "name": "facet_tag",
+            "schema": {
+              "description": "narrow to rows that carry at least one tag matching any key (repeatable)",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "true: only geotagged rows; false: only non-geotagged; omit for no filter",
+            "explode": false,
+            "in": "query",
+            "name": "has_gps",
+            "schema": {
+              "description": "true: only geotagged rows; false: only non-geotagged; omit for no filter",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMediaOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List media visible to the caller"
+      }
+    },
+    "/api/v1/media/geo": {
+      "get": {
+        "operationId": "list-media-geo",
+        "parameters": [
+          {
+            "description": "Return hidden geotagged media; requires a valid hidden-unlock cookie.",
+            "explode": false,
+            "in": "query",
+            "name": "include_hidden",
+            "schema": {
+              "description": "Return hidden geotagged media; requires a valid hidden-unlock cookie.",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Narrow to media whose canonical camera (\"\u003cmake\u003e \u003cmodel\u003e\") matches any of these. OR-composed.",
+            "explode": true,
+            "in": "query",
+            "name": "camera",
+            "schema": {
+              "description": "Narrow to media whose canonical camera (\"\u003cmake\u003e \u003cmodel\u003e\") matches any of these. OR-composed.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Narrow to media whose lens_model matches any of these. OR-composed.",
+            "explode": true,
+            "in": "query",
+            "name": "lens",
+            "schema": {
+              "description": "Narrow to media whose lens_model matches any of these. OR-composed.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Narrow to media that carry at least one of the supplied tag keys. OR-composed.",
+            "explode": true,
+            "in": "query",
+            "name": "facet_tag",
+            "schema": {
+              "description": "Narrow to media that carry at least one of the supplied tag keys. OR-composed.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Narrow to photo or video. Omit for both.",
+            "explode": false,
+            "in": "query",
+            "name": "media_type",
+            "schema": {
+              "description": "Narrow to photo or video. Omit for both.",
+              "enum": [
+                "photo",
+                "video"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMediaGeoOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List the caller's geotagged media (primaries only)."
+      }
+    },
+    "/api/v1/media/hidden:bulk": {
+      "post": {
+        "operationId": "hide-media-bulk",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HiddenMediaBulkInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HiddenMediaBulkOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Bulk-hide media (requires hidden privacy to be configured; no unlock cookie needed)"
+      }
+    },
+    "/api/v1/media/unhide:bulk": {
+      "post": {
+        "operationId": "unhide-media-bulk",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HiddenMediaBulkInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HiddenMediaBulkOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Bulk-unhide media (requires unlock cookie)"
+      }
+    },
+    "/api/v1/media/{id}": {
+      "get": {
+        "operationId": "get-media",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Return the detail for a single media item"
+      }
+    },
+    "/api/v1/settings/user/{key}": {
+      "delete": {
+        "operationId": "delete-user-setting",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a per-user UI preference"
+      },
+      "get": {
+        "operationId": "get-user-setting",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSettingValueBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get a per-user UI preference"
+      },
+      "put": {
+        "operationId": "put-user-setting",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserSettingPutInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set a per-user UI preference"
+      }
+    },
+    "/api/v1/shared/albums": {
+      "get": {
+        "operationId": "shared-list-albums",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedListAlbumsOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/v1/shared/albums/{id}": {
+      "get": {
+        "operationId": "shared-get-album",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedAlbumDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/v1/shared/albums/{id}/media": {
+      "get": {
+        "operationId": "shared-list-album-media",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "cursor_time",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "cursor_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedMediaListOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/v1/shared/media": {
+      "get": {
+        "operationId": "shared-list-media",
+        "parameters": [
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "cursor_time",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "cursor_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedMediaListOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/v1/shared/media/{id}": {
+      "get": {
+        "operationId": "shared-get-media",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedMediaDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/v1/shared/scopes": {
+      "get": {
+        "operationId": "shared-list-scopes",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedListScopesOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/v1/shared/scopes/{uuid}": {
+      "get": {
+        "operationId": "shared-get-scope",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedScopeDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/v1/shares": {
+      "get": {
+        "operationId": "shares-list",
+        "parameters": [
+          {
+            "explode": false,
+            "in": "query",
+            "name": "album_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "grantee_hub",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "grantee_user_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "comma-separated broker_status filter",
+            "explode": false,
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "description": "comma-separated broker_status filter",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "include_settled",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "max rows (default 100, cap 500)",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "max rows (default 100, cap 500)",
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSharesOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "shares-create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateShareInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScopeDTO"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create a scope (share) over an album or media set"
+      }
+    },
+    "/api/v1/shares/{uuid}": {
+      "get": {
+        "operationId": "shares-get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScopeDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/v1/shares/{uuid}/preview": {
+      "get": {
+        "operationId": "shares-preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewShareDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/v1/shares/{uuid}/retry": {
+      "post": {
+        "operationId": "shares-retry",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScopeDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/api/v1/shares/{uuid}/revoke": {
+      "post": {
+        "operationId": "shares-revoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScopeDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    }
+  }
+}

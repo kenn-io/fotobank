@@ -1,0 +1,448 @@
+package httpapi
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/share"
+)
+
+// translateShareError maps service-layer errors to the share HTTP
+// surface's expected status codes. Delegates unknown errors to the
+// cross-cutting Translate.
+func translateShareError(err error) huma.StatusError {
+	switch {
+	case errors.Is(err, errs.ErrOwnerMismatch):
+		return huma.Error500InternalServerError(http.StatusText(http.StatusInternalServerError))
+	case errors.Is(err, share.ErrAlbumHasLiveScopes):
+		return huma.Error409Conflict("album has outstanding shares; revoke them first")
+	case errors.Is(err, share.ErrScopeAlreadyRevoked):
+		return huma.Error409Conflict("scope is already revoked")
+	case errors.Is(err, share.ErrRetryNotApplicable):
+		return huma.Error409Conflict("retry only applies to failed scopes")
+	case errors.Is(err, share.ErrInvalidGrantee):
+		return huma.Error400BadRequest("grantee hub/user_id must be non-empty, bounded, and not equal to caller")
+	case errors.Is(err, share.ErrInvalidLabel):
+		return huma.Error400BadRequest("label exceeds 200 chars")
+	case errors.Is(err, share.ErrInvalidMediaSet):
+		return huma.Error400BadRequest("media_ids must be 1..1000 unique ids")
+	case errors.Is(err, share.ErrInvalidTargetCombo):
+		return huma.Error400BadRequest("target_type does not match payload")
+	case errors.Is(err, share.ErrAlbumEmpty):
+		return huma.Error400BadRequest("cannot share an empty album")
+	default:
+		return Translate(err)
+	}
+}
+
+const (
+	sharesListDefaultLimit = 100
+	sharesListMaxLimit     = 500
+)
+
+// principalDTO / scopeDTO are the wire shapes.
+type principalDTO struct {
+	Hub    string `json:"hub"`
+	UserID string `json:"user_id"`
+}
+
+type targetSummaryDTO struct {
+	Label     string `json:"label"`
+	ItemCount *int   `json:"item_count,omitempty"`
+}
+
+type scopeDTO struct {
+	UUID                string            `json:"uuid"`
+	Owner               principalDTO      `json:"owner"`
+	Grantee             principalDTO      `json:"grantee"`
+	GranteeHandle       string            `json:"grantee_handle,omitempty"`
+	TargetType          string            `json:"target_type"`
+	TargetAlbumID       string            `json:"target_album_id,omitempty"`
+	TargetSummary       *targetSummaryDTO `json:"target_summary,omitempty"`
+	AllowDownload       bool              `json:"allow_download"`
+	Label               string            `json:"label,omitempty"`
+	CreatedAt           time.Time         `json:"created_at"`
+	ExpiresAt           *time.Time        `json:"expires_at,omitempty"`
+	Expired             bool              `json:"expired"`
+	RevokedAt           *time.Time        `json:"revoked_at,omitempty"`
+	BrokerStatus        string            `json:"broker_status"`
+	BrokerRegisteredAt  *time.Time        `json:"broker_registered_at,omitempty"`
+	BrokerGrantedAt     *time.Time        `json:"broker_granted_at,omitempty"`
+	BrokerRevokedAt     *time.Time        `json:"broker_revoked_at,omitempty"`
+	BrokerLastError     string            `json:"broker_last_error,omitempty"`
+	BrokerAttempts      int               `json:"broker_attempts"`
+	BrokerNextAttemptAt *time.Time        `json:"broker_next_attempt_at,omitempty"`
+	MediaIDs            []string          `json:"media_ids,omitempty"`
+}
+
+func toTargetSummaryDTO(s share.TargetSummary) *targetSummaryDTO {
+	return &targetSummaryDTO{Label: s.Label, ItemCount: s.ItemCount}
+}
+
+func toScopeDTO(s share.Scope) scopeDTO {
+	out := scopeDTO{
+		UUID:                s.UUID,
+		Owner:               principalDTO{Hub: s.Owner.Hub, UserID: s.Owner.UserID},
+		Grantee:             principalDTO{Hub: s.Grantee.Hub, UserID: s.Grantee.UserID},
+		TargetType:          string(s.TargetType),
+		AllowDownload:       s.AllowDownload,
+		Label:               s.Label,
+		CreatedAt:           s.CreatedAt,
+		ExpiresAt:           s.ExpiresAt,
+		RevokedAt:           s.RevokedAt,
+		BrokerStatus:        string(s.BrokerStatus),
+		BrokerRegisteredAt:  s.BrokerRegisteredAt,
+		BrokerGrantedAt:     s.BrokerGrantedAt,
+		BrokerRevokedAt:     s.BrokerRevokedAt,
+		BrokerLastError:     s.BrokerLastError,
+		BrokerAttempts:      s.BrokerAttempts,
+		BrokerNextAttemptAt: s.BrokerNextAttemptAt,
+	}
+	if s.TargetAlbumID != nil {
+		out.TargetAlbumID = *s.TargetAlbumID
+	}
+	if s.ExpiresAt != nil && time.Now().UTC().After(*s.ExpiresAt) {
+		out.Expired = true
+	}
+	return out
+}
+
+func toScopeDetailDTO(d share.ScopeDetail) scopeDTO {
+	s := toScopeDTO(d.Scope)
+	s.MediaIDs = d.MediaIDs
+	return s
+}
+
+func callerFromCtx(ctx context.Context) (owners.Principal, error) {
+	id, ok := IdentityFromContext(ctx)
+	if !ok {
+		return owners.Principal{}, errs.ErrIdentityMissing
+	}
+	return id.Principal.OwnersPrincipal(), nil
+}
+
+// registerShares wires /api/v1/shares. svc == nil answers 503 so the
+// OpenAPI dumper can build the spec without real deps. displayRepo may
+// be nil — the list/get handlers just skip grantee_handle hydration,
+// keeping the response shape valid for stub-mode deployments and the
+// spec dumper.
+func registerShares(api huma.API, svc *service.ShareService, displayRepo *share.PrincipalDisplayRepo) {
+	registerSharesCreate(api, svc)
+	registerSharesList(api, svc, displayRepo)
+	registerSharesGet(api, svc, displayRepo)
+	registerSharesRevoke(api, svc)
+	registerSharesRetry(api, svc)
+	registerSharesPreview(api, svc)
+}
+
+// --- inputs/outputs ---
+
+type createShareInput struct {
+	Body struct {
+		Label         string       `json:"label,omitempty"`
+		Grantee       principalDTO `json:"grantee"`
+		AllowDownload bool         `json:"allow_download,omitempty"`
+		ExpiresAt     *time.Time   `json:"expires_at,omitempty"`
+		TargetType    string       `json:"target_type"`
+		AlbumID       string       `json:"album_id,omitempty"`
+		MediaIDs      []string     `json:"media_ids,omitempty"`
+	}
+}
+
+type scopeOutput struct {
+	Status int
+	Body   scopeDTO
+}
+
+type scopeDetailOutput struct {
+	Status int
+	Body   scopeDTO
+}
+
+type listSharesInput struct {
+	AlbumID        string `query:"album_id"`
+	GranteeHub     string `query:"grantee_hub"`
+	GranteeUserID  string `query:"grantee_user_id"`
+	Status         string `query:"status" doc:"comma-separated broker_status filter"`
+	IncludeSettled bool   `query:"include_settled"`
+	Limit          int    `query:"limit" doc:"max rows (default 100, cap 500)"`
+	Offset         int    `query:"offset"`
+}
+
+type listSharesOutput struct {
+	Body struct {
+		Items      []scopeDTO `json:"items"`
+		NextOffset *int       `json:"next_offset,omitempty"`
+	}
+}
+
+// --- handlers ---
+
+func registerSharesCreate(api huma.API, svc *service.ShareService) {
+	huma.Register(api, huma.Operation{
+		OperationID:   "shares-create",
+		Method:        http.MethodPost,
+		Path:          "/api/v1/shares",
+		Summary:       "Create a scope (share) over an album or media set",
+		DefaultStatus: http.StatusCreated,
+	}, func(ctx context.Context, in *createShareInput) (*scopeOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("share service unavailable")
+		}
+		caller, err := callerFromCtx(ctx)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		req := service.CreateShareRequest{
+			Label:         in.Body.Label,
+			Grantee:       owners.Principal{Hub: in.Body.Grantee.Hub, UserID: in.Body.Grantee.UserID},
+			AllowDownload: in.Body.AllowDownload,
+			ExpiresAt:     in.Body.ExpiresAt,
+			TargetType:    share.TargetType(in.Body.TargetType),
+			AlbumID:       in.Body.AlbumID,
+			MediaIDs:      in.Body.MediaIDs,
+		}
+		s, err := svc.Create(ctx, req, caller)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		return &scopeOutput{Status: http.StatusCreated, Body: toScopeDTO(s)}, nil
+	})
+}
+
+func registerSharesList(api huma.API, svc *service.ShareService, displayRepo *share.PrincipalDisplayRepo) {
+	huma.Register(api, huma.Operation{
+		OperationID: "shares-list",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/shares",
+	}, func(ctx context.Context, in *listSharesInput) (*listSharesOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("share service unavailable")
+		}
+		caller, err := callerFromCtx(ctx)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		statuses, err := share.ParseStatusFilter(in.Status)
+		if err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		limit := clampLimit(in.Limit, sharesListDefaultLimit, sharesListMaxLimit)
+		offset := max(in.Offset, 0)
+		// Fetch one extra row so we can emit next_offset only when a
+		// real continuation row exists, not merely because the page was
+		// full by coincidence.
+		filter := share.ScopeFilter{
+			AlbumID:        in.AlbumID,
+			Grantee:        owners.Principal{Hub: in.GranteeHub, UserID: in.GranteeUserID},
+			Status:         statuses,
+			IncludeSettled: in.IncludeSettled,
+			Limit:          limit + 1,
+			Offset:         offset,
+		}
+		rows, err := svc.List(ctx, filter, caller)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		out := &listSharesOutput{}
+		hasMore := len(rows) > limit
+		if hasMore {
+			rows = rows[:limit]
+			next := offset + limit
+			out.Body.NextOffset = &next
+		}
+		handles, err := batchGranteeHandles(ctx, displayRepo, rows)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		summaries, err := svc.PopulateTargetSummary(ctx, rows)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		out.Body.Items = make([]scopeDTO, 0, len(rows))
+		for _, s := range rows {
+			dto := toScopeDTO(s)
+			dto.GranteeHandle = handles[s.Grantee]
+			if sum, ok := summaries[s.UUID]; ok {
+				dto.TargetSummary = toTargetSummaryDTO(sum)
+			}
+			out.Body.Items = append(out.Body.Items, dto)
+		}
+		return out, nil
+	})
+}
+
+// batchGranteeHandles looks up display handles for every grantee
+// appearing in rows. Returns an empty map (never nil) when displayRepo
+// is nil so callers can index unconditionally.
+func batchGranteeHandles(ctx context.Context, displayRepo *share.PrincipalDisplayRepo, rows []share.Scope) (map[owners.Principal]string, error) {
+	if displayRepo == nil || len(rows) == 0 {
+		return map[owners.Principal]string{}, nil
+	}
+	principals := make([]owners.Principal, 0, len(rows))
+	for _, s := range rows {
+		principals = append(principals, s.Grantee)
+	}
+	return displayRepo.GetBatch(ctx, principals)
+}
+
+type scopeUUIDParam struct {
+	UUID string `path:"uuid"`
+}
+
+func registerSharesGet(api huma.API, svc *service.ShareService, displayRepo *share.PrincipalDisplayRepo) {
+	huma.Register(api, huma.Operation{
+		OperationID: "shares-get",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/shares/{uuid}",
+	}, func(ctx context.Context, in *scopeUUIDParam) (*scopeDetailOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("share service unavailable")
+		}
+		caller, err := callerFromCtx(ctx)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		det, err := svc.Get(ctx, in.UUID, caller)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		dto := toScopeDetailDTO(det)
+		if displayRepo != nil {
+			handle, _, err := displayRepo.Get(ctx, det.Grantee)
+			if err != nil {
+				return nil, translateShareError(err)
+			}
+			dto.GranteeHandle = handle
+		}
+		summaries, err := svc.PopulateTargetSummary(ctx, []share.Scope{det.Scope})
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		if sum, ok := summaries[det.UUID]; ok {
+			dto.TargetSummary = toTargetSummaryDTO(sum)
+		}
+		return &scopeDetailOutput{Status: http.StatusOK, Body: dto}, nil
+	})
+}
+
+func registerSharesRevoke(api huma.API, svc *service.ShareService) {
+	huma.Register(api, huma.Operation{
+		OperationID: "shares-revoke",
+		Method:      http.MethodPost,
+		Path:        "/api/v1/shares/{uuid}/revoke",
+	}, func(ctx context.Context, in *scopeUUIDParam) (*scopeOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("share service unavailable")
+		}
+		caller, err := callerFromCtx(ctx)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		s, err := svc.Revoke(ctx, in.UUID, caller)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		return &scopeOutput{Status: http.StatusOK, Body: toScopeDTO(s)}, nil
+	})
+}
+
+func registerSharesRetry(api huma.API, svc *service.ShareService) {
+	huma.Register(api, huma.Operation{
+		OperationID: "shares-retry",
+		Method:      http.MethodPost,
+		Path:        "/api/v1/shares/{uuid}/retry",
+	}, func(ctx context.Context, in *scopeUUIDParam) (*scopeOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("share service unavailable")
+		}
+		caller, err := callerFromCtx(ctx)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		s, err := svc.Retry(ctx, in.UUID, caller)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		return &scopeOutput{Status: http.StatusOK, Body: toScopeDTO(s)}, nil
+	})
+}
+
+type previewShareOutput struct {
+	Body previewShareDTO
+}
+
+type previewShareDTO struct {
+	Scope    scopeDTO          `json:"scope"`
+	Media    []previewMediaDTO `json:"media"`
+	Album    *previewAlbumDTO  `json:"album,omitempty"`
+	Warnings []string          `json:"warnings,omitempty"`
+}
+
+type previewMediaDTO struct {
+	ID           string    `json:"id"`
+	MediaType    string    `json:"media_type"`
+	MimeType     string    `json:"mime_type"`
+	DisplayTime  time.Time `json:"display_time"`
+	ThumbStatus  string    `json:"thumb_status"`
+	ThumbVersion int       `json:"thumb_version"`
+}
+
+type previewAlbumDTO struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	ItemCount int       `json:"item_count"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func registerSharesPreview(api huma.API, svc *service.ShareService) {
+	huma.Register(api, huma.Operation{
+		OperationID: "shares-preview",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/shares/{uuid}/preview",
+	}, func(ctx context.Context, in *scopeUUIDParam) (*previewShareOutput, error) {
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("share service unavailable")
+		}
+		caller, err := callerFromCtx(ctx)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		prev, err := svc.PreviewScope(ctx, in.UUID, caller)
+		if err != nil {
+			return nil, translateShareError(err)
+		}
+		return &previewShareOutput{Body: toPreviewShareDTO(prev)}, nil
+	})
+}
+
+func toPreviewShareDTO(p service.ScopePreview) previewShareDTO {
+	scopeDTO := toScopeDTO(p.Scope)
+	scopeDTO.MediaIDs = p.MediaIDs
+	out := previewShareDTO{
+		Scope:    scopeDTO,
+		Warnings: p.Warnings,
+	}
+	out.Media = make([]previewMediaDTO, 0, len(p.Media))
+	for _, m := range p.Media {
+		out.Media = append(out.Media, previewMediaDTO{
+			ID: m.ID, MediaType: string(m.MediaType), MimeType: m.MimeType,
+			DisplayTime: m.DisplayTime,
+			ThumbStatus: m.ThumbStatus, ThumbVersion: m.ThumbVersion,
+		})
+	}
+	if p.Album != nil {
+		out.Album = &previewAlbumDTO{
+			ID: p.Album.ID, Name: p.Album.Name,
+			ItemCount: p.Album.ItemCount, UpdatedAt: p.Album.UpdatedAt,
+		}
+	}
+	return out
+}

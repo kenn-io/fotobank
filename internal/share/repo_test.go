@@ -1,0 +1,2245 @@
+package share_test
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/testutil"
+)
+
+// seedOwner inserts a minimal owners row so scopes FK-checks pass.
+func seedOwner(t *testing.T, rw *sql.DB, p owners.Principal, storageKey string) {
+	t.Helper()
+	_, err := rw.ExecContext(context.Background(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		p.Hub, p.UserID, storageKey, time.Now().UTC(),
+	)
+	require.NoError(t, err)
+}
+
+// seedAlbum inserts a minimal album row owned by p.
+func seedAlbum(t *testing.T, rw *sql.DB, p owners.Principal) string {
+	t.Helper()
+	id := uuid.NewString()
+	now := time.Now().UTC()
+	_, err := rw.ExecContext(context.Background(),
+		`INSERT INTO albums(id, owner_hub, owner_user_id, name, created_at, updated_at)
+         VALUES(?,?,?,?,?,?)`,
+		id, p.Hub, p.UserID, "t", now, now)
+	require.NoError(t, err)
+	return id
+}
+
+// seedMedia inserts a minimal media row owned by p and returns its ID.
+func seedMedia(t *testing.T, rw *sql.DB, p owners.Principal, checksum string) string {
+	t.Helper()
+	repo := media.NewRepo(rw, rw)
+	m := media.Media{
+		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/" + checksum + ".jpg",
+		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
+		Size: 100, Checksum: checksum, ThumbStatus: "pending",
+	}
+	require.NoError(t, repo.Insert(context.Background(), m))
+	return m.ID
+}
+
+// seedMediaWithTimestamp inserts a media row with an explicit Timestamp
+// (the EXIF capture time; display_time = COALESCE(timestamp, imported_at)).
+// Used by ListSharedMediaIDs tests that need deterministic ordering.
+func seedMediaWithTimestamp(t *testing.T, d dbDB, p owners.Principal, ts time.Time) string {
+	t.Helper()
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	checksum := uuid.NewString()
+	m := media.Media{
+		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
+		MimeType: "image/jpeg", Path: "2024/" + checksum + ".jpg",
+		OriginalFilename: "x.jpg",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Timestamp:        &ts,
+		Size:             100, Checksum: checksum, ThumbStatus: "pending",
+	}
+	require.NoError(t, repo.Insert(context.Background(), m))
+	return m.ID
+}
+
+func TestRepoInsertAlbumLiveAndGet(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumID,
+		Label:         "Summer", CreatedAt: time.Now().UTC().Truncate(time.Second),
+		BrokerStatus: share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s, nil))
+
+	got, err := repo.GetByUUID(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(s.UUID, got.UUID)
+	r.Equal(owner, got.Owner)
+	r.Equal(share.TargetAlbumLive, got.TargetType)
+	r.NotNil(got.TargetAlbumID)
+	r.Equal(albumID, *got.TargetAlbumID)
+	r.Equal(share.StatusPending, got.BrokerStatus)
+	r.Empty(got.MediaIDs)
+}
+
+func TestRepoInsertMediaSetAndGet(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	m1 := seedMedia(t, d.WriteDB(), owner, "c1")
+	m2 := seedMedia(t, d.WriteDB(), owner, "c2")
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:      owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:   share.TargetMediaSet,
+		CreatedAt:    time.Now().UTC().Truncate(time.Second),
+		BrokerStatus: share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s, []string{m1, m2}))
+
+	got, err := repo.GetByUUID(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(share.TargetMediaSet, got.TargetType)
+	r.Nil(got.TargetAlbumID)
+	r.ElementsMatch([]string{m1, m2}, got.MediaIDs)
+}
+
+func TestRepoGetByUUIDNotFound(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	_, err := repo.GetByUUID(context.Background(), uuid.NewString())
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestRepoInsertRoundtripsAllColumns(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+
+	expires := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumID,
+		AllowDownload: true,
+		Label:         "Trip",
+		ExpiresAt:     &expires,
+		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		BrokerStatus:  share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s, nil))
+
+	got, err := repo.GetByUUID(context.Background(), s.UUID)
+	r.NoError(err)
+	r.True(got.AllowDownload)
+	r.Equal("Trip", got.Label)
+	r.NotNil(got.ExpiresAt)
+	r.True(got.ExpiresAt.Equal(expires))
+}
+
+func TestRepoListByOwnerDefaultHidesRevokedRemote(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	insertScope := func(status share.BrokerStatus, revokedAt *time.Time) string {
+		s := share.Scope{
+			UUID: uuid.NewString(), Owner: owner,
+			Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+			TargetType:    share.TargetAlbumLive,
+			TargetAlbumID: &albumID,
+			CreatedAt:     time.Now().UTC().Truncate(time.Second),
+			BrokerStatus:  status,
+			RevokedAt:     revokedAt,
+		}
+		r.NoError(repo.Insert(context.Background(), s, nil))
+		if status != share.StatusPending || revokedAt != nil {
+			_, err := d.WriteDB().ExecContext(context.Background(),
+				`UPDATE scopes SET broker_status = ?, revoked_at = ? WHERE uuid = ?`,
+				string(status), nullableTime(revokedAt), s.UUID)
+			r.NoError(err)
+		}
+		return s.UUID
+	}
+	now := time.Now().UTC()
+	pendingID := insertScope(share.StatusPending, nil)
+	activeID := insertScope(share.StatusActive, nil)
+	failedID := insertScope(share.StatusFailed, nil)
+	revokingID := insertScope(share.StatusRevoking, &now)
+	remoteID := insertScope(share.StatusRevokedRemote, &now)
+
+	// Default filter hides revoked_remote; everything else visible.
+	got, err := repo.ListByOwner(context.Background(), owner, share.ScopeFilter{})
+	r.NoError(err)
+	gotIDs := ids(got)
+	r.ElementsMatch([]string{pendingID, activeID, failedID, revokingID}, gotIDs)
+	r.NotContains(gotIDs, remoteID)
+
+	// IncludeSettled=true returns everything.
+	got, err = repo.ListByOwner(context.Background(), owner, share.ScopeFilter{IncludeSettled: true})
+	r.NoError(err)
+	gotIDs = ids(got)
+	r.Contains(gotIDs, remoteID)
+
+	// Explicit status filter returns exactly those statuses.
+	got, err = repo.ListByOwner(context.Background(), owner, share.ScopeFilter{
+		Status: []share.BrokerStatus{share.StatusFailed, share.StatusRevokedRemote},
+	})
+	r.NoError(err)
+	gotIDs = ids(got)
+	r.ElementsMatch([]string{failedID, remoteID}, gotIDs)
+}
+
+func TestRepoListByOwnerScopedToCaller(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	a := owners.Principal{Hub: "h", UserID: "a"}
+	b := owners.Principal{Hub: "h", UserID: "b"}
+	seedOwner(t, d.WriteDB(), a, "ska")
+	seedOwner(t, d.WriteDB(), b, "skb")
+	alA := seedAlbum(t, d.WriteDB(), a)
+	alB := seedAlbum(t, d.WriteDB(), b)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	insert := func(owner owners.Principal, albumID string) string {
+		s := share.Scope{
+			UUID: uuid.NewString(), Owner: owner,
+			Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+			TargetType:    share.TargetAlbumLive,
+			TargetAlbumID: &albumID,
+			CreatedAt:     time.Now().UTC().Truncate(time.Second),
+			BrokerStatus:  share.StatusPending,
+		}
+		r.NoError(repo.Insert(context.Background(), s, nil))
+		return s.UUID
+	}
+	sA := insert(a, alA)
+	sB := insert(b, alB)
+
+	got, err := repo.ListByOwner(context.Background(), a, share.ScopeFilter{})
+	r.NoError(err)
+	gotIDs := ids(got)
+	r.ElementsMatch([]string{sA}, gotIDs)
+	r.NotContains(gotIDs, sB)
+}
+
+func TestRepoListReadyReturnsDueRowsOnly(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	future := time.Now().UTC().Add(1 * time.Hour)
+	past := time.Now().UTC().Add(-1 * time.Hour)
+
+	insert := func(status share.BrokerStatus, nextAt *time.Time) string {
+		s := share.Scope{
+			UUID: uuid.NewString(), Owner: owner,
+			Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+			TargetType:    share.TargetAlbumLive,
+			TargetAlbumID: &albumID,
+			CreatedAt:     time.Now().UTC().Truncate(time.Second),
+			BrokerStatus:  share.StatusPending,
+		}
+		r.NoError(repo.Insert(context.Background(), s, nil))
+		_, err := d.WriteDB().ExecContext(context.Background(),
+			`UPDATE scopes SET broker_status = ?, broker_next_attempt_at = ? WHERE uuid = ?`,
+			string(status), nullableTime(nextAt), s.UUID)
+		r.NoError(err)
+		return s.UUID
+	}
+	pendingNow := insert(share.StatusPending, nil)
+	pendingPast := insert(share.StatusPending, &past)
+	pendingFuture := insert(share.StatusPending, &future)
+	revokingNow := insert(share.StatusRevoking, nil)
+	active := insert(share.StatusActive, nil)
+
+	rows, err := repo.ListReady(context.Background(), time.Now().UTC(), 100)
+	r.NoError(err)
+	got := ids(rows)
+	r.ElementsMatch([]string{pendingNow, pendingPast, revokingNow}, got)
+	r.NotContains(got, pendingFuture)
+	r.NotContains(got, active)
+
+	// Ordering contract: NULL next_attempt_at first, then earliest
+	// next_attempt_at, then created_at. pendingNow and revokingNow both
+	// have NULL next_attempt_at, followed by pendingPast (next_attempt_at
+	// in the past).
+	r.Len(rows, 3)
+	// The two NULL-next_attempt rows come first (order between them is by
+	// created_at; we don't assert which is first since seeding timestamps
+	// are close together). But pendingPast MUST be last.
+	r.Equal(pendingPast, rows[2].UUID, "pendingPast should sort after the two NULL rows")
+}
+
+func TestRepoListReadyRespectsMaxBrokerAttempts(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumID,
+		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		BrokerStatus:  share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s, nil))
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_attempts = ? WHERE uuid = ?`,
+		share.MaxBrokerAttempts, s.UUID)
+	r.NoError(err)
+
+	rows, err := repo.ListReady(context.Background(), time.Now().UTC(), 100)
+	r.NoError(err)
+	r.NotContains(ids(rows), s.UUID)
+}
+
+// ids extracts UUIDs so callers can use ElementsMatch cleanly.
+func ids(rows []share.Scope) []string {
+	out := make([]string, len(rows))
+	for i, s := range rows {
+		out[i] = s.UUID
+	}
+	return out
+}
+
+// nullableTime returns t for UPDATE binding; nil maps to SQL NULL.
+func nullableTime(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return *t
+}
+
+func TestRepoMarkPublishedPendingToActive(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	n, err := repo.MarkPublished(context.Background(), uuidStr, now)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusActive, got.BrokerStatus)
+	r.NotNil(got.BrokerRegisteredAt)
+	r.NotNil(got.BrokerGrantedAt)
+	r.True(got.BrokerRegisteredAt.Equal(now))
+	r.True(got.BrokerGrantedAt.Equal(now))
+	r.Empty(got.BrokerLastError)
+	r.Nil(got.BrokerNextAttemptAt)
+}
+
+func TestRepoMarkPublishedRevokingRecordsTimestampsButKeepsStatus(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	// Owner-Revoke raced the worker: flip to revoking directly.
+	revokedAt := time.Now().UTC().Truncate(time.Second)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoking', revoked_at=? WHERE uuid=?`,
+		revokedAt, uuidStr)
+	r.NoError(err)
+
+	now := revokedAt.Add(1 * time.Second)
+	n, err := repo.MarkPublished(context.Background(), uuidStr, now)
+	r.NoError(err)
+	r.Equal(int64(1), n) // update still lands; status is unchanged.
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.NotNil(got.BrokerRegisteredAt)
+	r.NotNil(got.BrokerGrantedAt)
+	r.NotNil(got.RevokedAt)
+}
+
+func TestRepoMarkPublishedNoopOnTerminalStatus(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	// Move to revoked_remote directly.
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoked_remote' WHERE uuid=?`,
+		uuidStr)
+	r.NoError(err)
+
+	n, err := repo.MarkPublished(context.Background(), uuidStr, time.Now().UTC())
+	r.NoError(err)
+	r.Equal(int64(0), n) // fence rejected — row was terminal.
+}
+
+func TestRepoMarkPublishedSecondCallIsNoop(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	first := time.Now().UTC().Truncate(time.Second)
+	n, err := repo.MarkPublished(context.Background(), uuidStr, first)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	// Row is now 'active'; the fence 'pending' | 'revoking' rejects
+	// the second call. Timestamps remain the originals.
+	second := first.Add(1 * time.Hour)
+	n, err = repo.MarkPublished(context.Background(), uuidStr, second)
+	r.NoError(err)
+	r.Equal(int64(0), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.True(got.BrokerRegisteredAt.Equal(first))
+	r.True(got.BrokerGrantedAt.Equal(first))
+}
+
+func TestRepoMarkAttemptFailedIncrementsAttempts(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	nextAt := time.Now().UTC().Add(30 * time.Second).Truncate(time.Second)
+	n, err := repo.MarkAttemptFailed(context.Background(), uuidStr, share.StatusPending, "boom", nextAt)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusPending, got.BrokerStatus)
+	r.Equal(1, got.BrokerAttempts)
+	r.Equal("boom", got.BrokerLastError)
+	r.NotNil(got.BrokerNextAttemptAt)
+	r.True(got.BrokerNextAttemptAt.Equal(nextAt))
+}
+
+func TestRepoMarkAttemptFailedFencedToPhase(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	// Row is pending; calling with phase=revoking must be a no-op.
+	nextAt := time.Now().UTC().Add(30 * time.Second).Truncate(time.Second)
+	n, err := repo.MarkAttemptFailed(context.Background(), uuidStr, share.StatusRevoking, "wrong", nextAt)
+	r.NoError(err)
+	r.Equal(int64(0), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(0, got.BrokerAttempts)
+	r.Empty(got.BrokerLastError)
+	r.Nil(got.BrokerNextAttemptAt)
+}
+
+func TestRepoMarkAttemptFailedRevokingPhase(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	// Flip to revoking directly (owner called Revoke).
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoking', revoked_at=? WHERE uuid=?`,
+		time.Now().UTC(), uuidStr)
+	r.NoError(err)
+
+	nextAt := time.Now().UTC().Add(30 * time.Second).Truncate(time.Second)
+	n, err := repo.MarkAttemptFailed(context.Background(), uuidStr, share.StatusRevoking, "broker down", nextAt)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.Equal(1, got.BrokerAttempts)
+	r.Equal("broker down", got.BrokerLastError)
+	r.True(got.BrokerNextAttemptAt.Equal(nextAt))
+}
+
+func TestRepoMarkFailedFlipsToFailed(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	n, err := repo.MarkFailed(context.Background(), uuidStr, share.StatusPending, "fatal")
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusFailed, got.BrokerStatus)
+	r.Equal(1, got.BrokerAttempts)
+	r.Equal("fatal", got.BrokerLastError)
+	r.Nil(got.BrokerNextAttemptAt)
+	r.Nil(got.RevokedAt)
+}
+
+// seedPendingAlbumScope returns the UUID of a freshly-inserted album_live
+// scope in status pending. Reused across state-transition tests.
+func seedPendingAlbumScope(t *testing.T, d dbDB, repo *share.Repo) string {
+	t.Helper()
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	// Insert owner once. INSERT OR IGNORE so repeated helper calls in the
+	// same test don't trip PK uniqueness.
+	_, _ = d.WriteDB().ExecContext(context.Background(),
+		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at)
+         VALUES(?,?,?,?)`, owner.Hub, owner.UserID, "sk", time.Now().UTC())
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumID,
+		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		BrokerStatus:  share.StatusPending,
+	}
+	require.NoError(t, repo.Insert(context.Background(), s, nil))
+	return s.UUID
+}
+
+// dbDB is the subset of *db.DB that test helpers need. Defined as an
+// interface so future fakes can satisfy it without importing the real
+// db package transitively.
+type dbDB interface {
+	WriteDB() *sql.DB
+	ReadDB() *sql.DB
+}
+
+func TestRepoSetRevokingFromPending(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	n, err := repo.SetRevoking(context.Background(), uuidStr, now)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.NotNil(got.RevokedAt)
+	r.True(got.RevokedAt.Equal(now))
+	r.Equal(0, got.BrokerAttempts)
+	r.Nil(got.BrokerNextAttemptAt)
+}
+
+func TestRepoSetRevokingFromFailedPublishPhase(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='failed', broker_attempts=10, broker_last_error='gone' WHERE uuid=?`,
+		uuidStr)
+	r.NoError(err)
+
+	n, err := repo.SetRevoking(context.Background(), uuidStr, time.Now().UTC())
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.Equal(0, got.BrokerAttempts)
+	r.Empty(got.BrokerLastError)
+}
+
+func TestRepoSetRevokingFromActive(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	// Drive pending -> active via MarkPublished (the real production path).
+	grantedAt := time.Now().UTC().Truncate(time.Second)
+	_, err := repo.MarkPublished(context.Background(), uuidStr, grantedAt)
+	r.NoError(err)
+
+	// Now revoke it.
+	revokedAt := grantedAt.Add(time.Hour)
+	n, err := repo.SetRevoking(context.Background(), uuidStr, revokedAt)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.True(got.RevokedAt.Equal(revokedAt))
+	r.Equal(0, got.BrokerAttempts)
+	// broker_granted_at should still reflect the prior publish.
+	r.NotNil(got.BrokerGrantedAt)
+	r.True(got.BrokerGrantedAt.Equal(grantedAt))
+}
+
+func TestRepoSetRevokingRejectsRevokedRemote(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	now := time.Now().UTC()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoked_remote', revoked_at=? WHERE uuid=?`,
+		now, uuidStr)
+	r.NoError(err)
+
+	n, err := repo.SetRevoking(context.Background(), uuidStr, now.Add(time.Second))
+	r.NoError(err)
+	r.Equal(int64(0), n)
+}
+
+func TestRepoSetRevokingRejectsRevokingRow(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	now := time.Now().UTC()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoking', revoked_at=? WHERE uuid=?`,
+		now, uuidStr)
+	r.NoError(err)
+
+	n, err := repo.SetRevoking(context.Background(), uuidStr, now.Add(time.Second))
+	r.NoError(err)
+	r.Equal(int64(0), n)
+}
+
+func TestRepoMarkRevokedRevokingToRevokedRemote(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoking', revoked_at=? WHERE uuid=?`,
+		time.Now().UTC(), uuidStr)
+	r.NoError(err)
+
+	at := time.Now().UTC().Add(time.Second).Truncate(time.Second)
+	n, err := repo.MarkRevoked(context.Background(), uuidStr, at)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevokedRemote, got.BrokerStatus)
+	r.NotNil(got.BrokerRevokedAt)
+	r.True(got.BrokerRevokedAt.Equal(at))
+	r.Nil(got.BrokerNextAttemptAt)
+}
+
+func TestRepoMarkRevokedRejectsOtherStates(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo) // still 'pending'
+
+	n, err := repo.MarkRevoked(context.Background(), uuidStr, time.Now().UTC())
+	r.NoError(err)
+	r.Equal(int64(0), n)
+}
+
+// A row in 'revoking' without revoked_at is a broken invariant
+// (SetRevoking always sets both). MarkRevoked refuses to transition
+// such a row rather than silently producing a revoked_remote scope
+// with no local revoke timestamp.
+func TestRepoMarkRevokedRejectsRevokingWithoutRevokedAt(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	// Force the invariant violation: revoking without revoked_at.
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoking' WHERE uuid=?`, uuidStr)
+	r.NoError(err)
+
+	n, err := repo.MarkRevoked(context.Background(), uuidStr, time.Now().UTC())
+	r.NoError(err)
+	r.Equal(int64(0), n)
+}
+
+func TestRepoRetryPublishOnlyFailedWithoutRevokedAt(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='failed', broker_attempts=10, broker_last_error='x' WHERE uuid=?`,
+		uuidStr)
+	r.NoError(err)
+
+	n, err := repo.RetryPublish(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusPending, got.BrokerStatus)
+	r.Equal(0, got.BrokerAttempts)
+	r.Empty(got.BrokerLastError)
+	r.Nil(got.BrokerNextAttemptAt)
+}
+
+func TestRepoRetryPublishRejectsRevokedFailed(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	now := time.Now().UTC()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='failed', broker_attempts=10, revoked_at=? WHERE uuid=?`,
+		now, uuidStr)
+	r.NoError(err)
+
+	n, err := repo.RetryPublish(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(int64(0), n)
+}
+
+func TestRepoRetryRevokeRejectsPublishSideFailed(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='failed', broker_attempts=10, broker_last_error='x' WHERE uuid=?`,
+		uuidStr)
+	r.NoError(err)
+
+	n, err := repo.RetryRevoke(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(int64(0), n)
+}
+
+func TestRepoRetryRevokeOnlyFailedWithRevokedAt(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+	now := time.Now().UTC()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='failed', broker_attempts=10, revoked_at=? WHERE uuid=?`,
+		now, uuidStr)
+	r.NoError(err)
+
+	n, err := repo.RetryRevoke(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(int64(1), n)
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.Equal(share.StatusRevoking, got.BrokerStatus)
+	r.Equal(0, got.BrokerAttempts)
+}
+
+func TestRepoPrepareAlbumDeleteTxBlocksOnLiveScopes(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	uuidStr := seedPendingAlbumScope(t, d, repo)
+
+	got, err := repo.GetByUUID(context.Background(), uuidStr)
+	r.NoError(err)
+	r.NotNil(got.TargetAlbumID)
+	albumID := *got.TargetAlbumID
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	err = repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID)
+	r.ErrorIs(err, share.ErrAlbumHasLiveScopes)
+}
+
+func TestRepoPrepareAlbumDeleteTxPurgesOnlyRevokedRemote(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	insertStatus := func(status share.BrokerStatus, revokedAt *time.Time, brokerGrantedAt *time.Time) string {
+		s := share.Scope{
+			UUID: uuid.NewString(), Owner: owner,
+			Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+			TargetType:    share.TargetAlbumLive,
+			TargetAlbumID: &albumID,
+			CreatedAt:     time.Now().UTC().Truncate(time.Second),
+			BrokerStatus:  share.StatusPending,
+		}
+		r.NoError(repo.Insert(context.Background(), s, nil))
+		_, err := d.WriteDB().ExecContext(context.Background(),
+			`UPDATE scopes SET broker_status=?, revoked_at=?, broker_granted_at=? WHERE uuid=?`,
+			string(status), nullableTime(revokedAt), nullableTime(brokerGrantedAt), s.UUID)
+		r.NoError(err)
+		return s.UUID
+	}
+	now := time.Now().UTC()
+	remote1 := insertStatus(share.StatusRevokedRemote, &now, &now)
+	remote2 := insertStatus(share.StatusRevokedRemote, &now, &now)
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	err = repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID)
+	r.NoError(err)
+	r.NoError(tx.Commit())
+
+	// Both revoked_remote rows dropped.
+	_, err = repo.GetByUUID(context.Background(), remote1)
+	r.ErrorIs(err, errs.ErrNotFound)
+	_, err = repo.GetByUUID(context.Background(), remote2)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestRepoPrepareAlbumDeleteTxMixedPurgeAndBlock(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	insertStatus := func(status share.BrokerStatus, revokedAt *time.Time) string {
+		s := share.Scope{
+			UUID: uuid.NewString(), Owner: owner,
+			Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+			TargetType:    share.TargetAlbumLive,
+			TargetAlbumID: &albumID,
+			CreatedAt:     time.Now().UTC().Truncate(time.Second),
+			BrokerStatus:  share.StatusPending,
+		}
+		r.NoError(repo.Insert(context.Background(), s, nil))
+		_, err := d.WriteDB().ExecContext(context.Background(),
+			`UPDATE scopes SET broker_status=?, revoked_at=? WHERE uuid=?`,
+			string(status), nullableTime(revokedAt), s.UUID)
+		r.NoError(err)
+		return s.UUID
+	}
+	now := time.Now().UTC()
+	remoteID := insertStatus(share.StatusRevokedRemote, &now)
+	pendingID := insertStatus(share.StatusPending, nil)
+
+	// First pass: blocks; purge not applied (tx rolled back by caller).
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	err = repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID)
+	r.ErrorIs(err, share.ErrAlbumHasLiveScopes)
+	r.NoError(tx.Rollback())
+
+	// After rollback, both rows still present.
+	_, err = repo.GetByUUID(context.Background(), remoteID)
+	r.NoError(err)
+	_, err = repo.GetByUUID(context.Background(), pendingID)
+	r.NoError(err)
+
+	// Drive pending to revoked_remote, retry delete.
+	_, err = d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoked_remote', revoked_at=? WHERE uuid=?`,
+		now, pendingID)
+	r.NoError(err)
+
+	tx, err = d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	r.NoError(repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID))
+	r.NoError(tx.Commit())
+
+	_, err = repo.GetByUUID(context.Background(), remoteID)
+	r.ErrorIs(err, errs.ErrNotFound)
+	_, err = repo.GetByUUID(context.Background(), pendingID)
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestRepoPrepareAlbumDeleteTxEmptyIsNoop(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	r.NoError(repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID))
+}
+
+func TestRepoHasBlockingScopesForAlbum(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	blocking, err := repo.HasBlockingScopesForAlbum(context.Background(), albumID)
+	r.NoError(err)
+	r.False(blocking)
+
+	// Add a revoked_remote: still not blocking.
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumID,
+		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		BrokerStatus:  share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s, nil))
+	now := time.Now().UTC()
+	_, err = d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoked_remote', revoked_at=? WHERE uuid=?`,
+		now, s.UUID)
+	r.NoError(err)
+	blocking, err = repo.HasBlockingScopesForAlbum(context.Background(), albumID)
+	r.NoError(err)
+	r.False(blocking)
+
+	// Add a pending: now blocking.
+	s2 := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:       owners.Principal{Hub: "h", UserID: "g2"},
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumID,
+		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		BrokerStatus:  share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s2, nil))
+	blocking, err = repo.HasBlockingScopesForAlbum(context.Background(), albumID)
+	r.NoError(err)
+	r.True(blocking)
+}
+
+func TestRepoPrepareAlbumDeleteTxDoesNotTouchOtherAlbums(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumA := seedAlbum(t, d.WriteDB(), owner)
+	albumB := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	// revoked_remote scope on album B — should survive a Prepare on album A.
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumB,
+		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		BrokerStatus:  share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s, nil))
+	now := time.Now().UTC()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoked_remote', revoked_at=? WHERE uuid=?`,
+		now, s.UUID)
+	r.NoError(err)
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	r.NoError(repo.PrepareAlbumDeleteTx(context.Background(), tx, albumA))
+	r.NoError(tx.Commit())
+
+	// Album B's scope still present.
+	_, err = repo.GetByUUID(context.Background(), s.UUID)
+	r.NoError(err)
+}
+
+func TestRepoPrepareAlbumDeleteTxIgnoresMediaSetScopes(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	mediaID := seedMedia(t, d.WriteDB(), owner, "c1")
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	// media_set scope with broker_status = revoked_remote. target_album_id
+	// is NULL, so no album-delete should touch it.
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:      owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:   share.TargetMediaSet,
+		CreatedAt:    time.Now().UTC().Truncate(time.Second),
+		BrokerStatus: share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s, []string{mediaID}))
+	now := time.Now().UTC()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='revoked_remote', revoked_at=? WHERE uuid=?`,
+		now, s.UUID)
+	r.NoError(err)
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	r.NoError(repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID))
+	r.NoError(tx.Commit())
+
+	_, err = repo.GetByUUID(context.Background(), s.UUID)
+	r.NoError(err, "media_set scope should not be purged by album-delete")
+}
+
+// The blocking SELECT must filter by target_album_id as well: a live
+// scope on a *different* album must not cause PrepareAlbumDeleteTx
+// for the target album to return ErrAlbumHasLiveScopes. This pins the
+// predicate on the block path (its companion above exercises the
+// purge path).
+func TestRepoPrepareAlbumDeleteTxDoesNotBlockOnOtherAlbumLive(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumA := seedAlbum(t, d.WriteDB(), owner)
+	albumB := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	// Pending (live) scope on album B; deleting album A must succeed.
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumB,
+		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		BrokerStatus:  share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s, nil))
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	r.NoError(repo.PrepareAlbumDeleteTx(context.Background(), tx, albumA))
+	r.NoError(tx.Commit())
+
+	_, err = repo.GetByUUID(context.Background(), s.UUID)
+	r.NoError(err, "live scope on another album should survive")
+}
+
+// A live media_set scope (target_album_id IS NULL) must not block a
+// separate album-delete. Pins that the blocking SELECT's
+// target_album_id = ? predicate excludes NULL targets.
+func TestRepoPrepareAlbumDeleteTxDoesNotBlockOnLiveMediaSet(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	mediaID := seedMedia(t, d.WriteDB(), owner, "c1")
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner,
+		Grantee:      owners.Principal{Hub: "h", UserID: "g"},
+		TargetType:   share.TargetMediaSet,
+		CreatedAt:    time.Now().UTC().Truncate(time.Second),
+		BrokerStatus: share.StatusPending,
+	}
+	r.NoError(repo.Insert(context.Background(), s, []string{mediaID}))
+
+	tx, err := d.WriteDB().BeginTx(context.Background(), nil)
+	r.NoError(err)
+	defer tx.Rollback()
+	r.NoError(repo.PrepareAlbumDeleteTx(context.Background(), tx, albumID))
+	r.NoError(tx.Commit())
+
+	_, err = repo.GetByUUID(context.Background(), s.UUID)
+	r.NoError(err, "live media_set scope should not be blocked by album-delete")
+}
+
+// bumpActive flips a freshly-inserted scope's broker_status to 'active'
+// and stamps the broker timestamps, mirroring a successful PublishScope
+// without going through the worker.
+func bumpActive(t *testing.T, d dbDB, uuidStr string, at time.Time) {
+	t.Helper()
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`UPDATE scopes SET broker_status='active', broker_granted_at=?, broker_registered_at=? WHERE uuid=?`,
+		at, at, uuidStr)
+	require.NoError(t, err)
+}
+
+// makeMediaSetScope inserts a pending media_set scope owned by owner and
+// granted to grantee. Seeds a fresh media row so the scope has a valid
+// membership entry; returns the inserted Scope.
+func makeMediaSetScope(t *testing.T, d dbDB, repo *share.Repo,
+	owner, grantee owners.Principal, expiresAt *time.Time, now time.Time,
+) share.Scope {
+	t.Helper()
+	mediaID := seedMedia(t, d.WriteDB(), owner, uuid.NewString())
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner, Grantee: grantee,
+		TargetType:   share.TargetMediaSet,
+		CreatedAt:    now,
+		ExpiresAt:    expiresAt,
+		BrokerStatus: share.StatusPending,
+	}
+	require.NoError(t, repo.Insert(context.Background(), s, []string{mediaID}))
+	return s
+}
+
+// makeMediaSetScopeOver inserts a pending media_set scope over the given
+// already-seeded media ids, with download as configured.
+func makeMediaSetScopeOver(t *testing.T, d dbDB, repo *share.Repo,
+	owner, grantee owners.Principal, expiresAt *time.Time, now time.Time,
+	download bool, mediaIDs ...string,
+) share.Scope {
+	t.Helper()
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner, Grantee: grantee,
+		TargetType:    share.TargetMediaSet,
+		AllowDownload: download,
+		CreatedAt:     now,
+		ExpiresAt:     expiresAt,
+		BrokerStatus:  share.StatusPending,
+	}
+	require.NoError(t, repo.Insert(context.Background(), s, mediaIDs))
+	return s
+}
+
+// seedAlbumWithMedia seeds an album owned by owner plus n fresh media
+// rows and links them via album_media. Returns the album ID and the
+// seeded media IDs in insertion order.
+func seedAlbumWithMedia(t *testing.T, d dbDB, owner owners.Principal, n int) (string, []string) {
+	t.Helper()
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	mediaIDs := make([]string, 0, n)
+	for range n {
+		mid := seedMedia(t, d.WriteDB(), owner, uuid.NewString())
+		_, err := d.WriteDB().ExecContext(context.Background(),
+			`INSERT INTO album_media(album_id, media_id, added_at) VALUES(?,?,?)`,
+			albumID, mid, time.Now().UTC())
+		require.NoError(t, err)
+		mediaIDs = append(mediaIDs, mid)
+	}
+	return albumID, mediaIDs
+}
+
+// makeAlbumLiveScope inserts a pending album_live scope over albumID.
+func makeAlbumLiveScope(t *testing.T, d dbDB, repo *share.Repo,
+	owner, grantee owners.Principal, albumID string, expiresAt *time.Time,
+	now time.Time, download bool,
+) share.Scope {
+	t.Helper()
+	s := share.Scope{
+		UUID: uuid.NewString(), Owner: owner, Grantee: grantee,
+		TargetType:    share.TargetAlbumLive,
+		TargetAlbumID: &albumID,
+		AllowDownload: download,
+		CreatedAt:     now,
+		ExpiresAt:     expiresAt,
+		BrokerStatus:  share.StatusPending,
+	}
+	require.NoError(t, repo.Insert(context.Background(), s, nil))
+	return s
+}
+
+func TestValidateHeaderScopesFiltersByGranteeAndLivePredicate(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	charlie := owners.Principal{Hub: "h", UserID: "charlie"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	seedOwner(t, d.WriteDB(), charlie, "skc")
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	// 1. live + granted to bob — kept.
+	live := makeMediaSetScope(t, d, repo, alice, bob, nil, now)
+	bumpActive(t, d, live.UUID, now)
+
+	// 2. revoked — dropped.
+	revoked := makeMediaSetScope(t, d, repo, alice, bob, nil, now)
+	bumpActive(t, d, revoked.UUID, now)
+	_, err := repo.SetRevoking(context.Background(), revoked.UUID, now)
+	r.NoError(err)
+
+	// 3. pending (not active yet) — dropped.
+	pending := makeMediaSetScope(t, d, repo, alice, bob, nil, now)
+
+	// 4. expired — dropped.
+	past := now.Add(-time.Hour)
+	expired := makeMediaSetScope(t, d, repo, alice, bob, &past, now)
+	bumpActive(t, d, expired.UUID, now)
+
+	// 5. granted to someone else — dropped.
+	other := makeMediaSetScope(t, d, repo, alice, charlie, nil, now)
+	bumpActive(t, d, other.UUID, now)
+
+	got, err := repo.ValidateHeaderScopes(context.Background(), bob,
+		[]string{live.UUID, revoked.UUID, pending.UUID, expired.UUID, other.UUID},
+		now)
+	r.NoError(err)
+	r.Len(got, 1)
+	r.Equal(live.UUID, got[0].UUID)
+}
+
+func TestValidateHeaderScopesEmptyInputReturnsEmpty(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	got, err := repo.ValidateHeaderScopes(context.Background(),
+		owners.Principal{Hub: "h", UserID: "bob"}, nil, time.Now())
+	r.NoError(err)
+	r.Empty(got)
+}
+
+func TestListSharedMediaIDsDedupesAndOrdersByDisplayTime(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	m1 := seedMediaWithTimestamp(t, d, alice, now.Add(-3*time.Hour))
+	m2 := seedMediaWithTimestamp(t, d, alice, now.Add(-2*time.Hour))
+	m3 := seedMediaWithTimestamp(t, d, alice, now.Add(-1*time.Hour))
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	// media_set {m1, m2} download=false
+	s1 := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2)
+	bumpActive(t, d, s1.UUID, now)
+	// overlapping media_set {m2, m3} download=true
+	s2 := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, true, m2, m3)
+	bumpActive(t, d, s2.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s1.UUID, s2.UUID})
+	r.NoError(err)
+
+	rows, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rows, 3)
+	r.Equal(m3, rows[0].MediaID) // newest first
+	r.Equal(m2, rows[1].MediaID)
+	r.Equal(m1, rows[2].MediaID)
+	r.True(rows[0].CanDownload)  // m3 via s2
+	r.True(rows[1].CanDownload)  // m2 via s2 OR'd across s1+s2
+	r.False(rows[2].CanDownload) // m1 via s1 only
+}
+
+func TestListSharedMediaIDsCursorPages(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	// Seed 5 media at descending timestamps. Index 0 is newest.
+	ids := make([]string, 5)
+	for i := range ids {
+		ids[i] = seedMediaWithTimestamp(t, d, alice, now.Add(-time.Duration(i+1)*time.Hour))
+	}
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, true, ids...)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	// Page 1: limit 2 — two newest.
+	page1, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{Limit: 2})
+	r.NoError(err)
+	r.Len(page1, 2)
+	r.Equal(ids[0], page1[0].MediaID)
+	r.Equal(ids[1], page1[1].MediaID)
+
+	// Page 2: cursor from last of page 1 — next two.
+	page2, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{
+			AfterDisplayTime: page1[1].DisplayTime,
+			AfterID:          page1[1].MediaID,
+			Limit:            2,
+		})
+	r.NoError(err)
+	r.Len(page2, 2)
+	r.Equal(ids[2], page2[0].MediaID)
+	r.Equal(ids[3], page2[1].MediaID)
+
+	// Page 3: cursor from last of page 2 — one remaining.
+	page3, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{
+			AfterDisplayTime: page2[1].DisplayTime,
+			AfterID:          page2[1].MediaID,
+			Limit:            2,
+		})
+	r.NoError(err)
+	r.Len(page3, 1)
+	r.Equal(ids[4], page3[0].MediaID)
+}
+
+func TestListSharedMediaIDsEmptyValidatedReturnsNil(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	rows, err := repo.ListSharedMediaIDs(context.Background(), nil,
+		owners.Principal{Hub: "h", UserID: "alice"}, "",
+		share.SharedMediaCursor{Limit: 10})
+	require.NoError(t, err)
+	require.Nil(t, rows)
+}
+
+func TestListSharedMediaIDsAlbumFilter(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	// Two albums under alice, each with one media row.
+	albumA, aMedia := seedAlbumWithMedia(t, d, alice, 1)
+	_, bMedia := seedAlbumWithMedia(t, d, alice, 1)
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	// album_live scope over album A.
+	sA := makeAlbumLiveScope(t, d, repo, alice, bob, albumA, nil, now, false)
+	bumpActive(t, d, sA.UUID, now)
+
+	// media_set scope covering album B's media (which is outside album A).
+	sB := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, bMedia[0])
+	bumpActive(t, d, sB.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob,
+		[]string{sA.UUID, sB.UUID})
+	r.NoError(err)
+
+	// albumID=albumA restricts to album A's member.
+	rowsA, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, albumA,
+		share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rowsA, 1)
+	r.Equal(aMedia[0], rowsA[0].MediaID)
+
+	// albumID="" returns both authorised media rows.
+	rowsAll, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rowsAll, 2)
+	gotIDs := []string{rowsAll[0].MediaID, rowsAll[1].MediaID}
+	r.ElementsMatch([]string{aMedia[0], bMedia[0]}, gotIDs)
+}
+
+func TestListSharedMediaIDsTieBreakOnId(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	ts := now.Add(-1 * time.Hour)
+	// Two media with identical display_time.
+	m1 := seedMediaWithTimestamp(t, d, alice, ts)
+	m2 := seedMediaWithTimestamp(t, d, alice, ts)
+	lo, hi := m1, m2
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	rows, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rows, 2)
+	// ORDER BY id ASC on equal display_time: lexicographically smaller first.
+	r.Equal(lo, rows[0].MediaID)
+	r.Equal(hi, rows[1].MediaID)
+
+	// Cursor from row[0] should advance to row[1].
+	page2, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{
+			AfterDisplayTime: rows[0].DisplayTime,
+			AfterID:          rows[0].MediaID,
+			Limit:            10,
+		})
+	r.NoError(err)
+	r.Len(page2, 1)
+	r.Equal(hi, page2[0].MediaID)
+}
+
+func TestListSharedAlbumIDsEmptyValidatedReturnsNil(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	rows, err := repo.ListSharedAlbumIDs(context.Background(), nil,
+		owners.Principal{Hub: "h", UserID: "alice"})
+	require.NoError(t, err)
+	require.Nil(t, rows)
+}
+
+func TestListSharedAlbumIDsAllMediaSetReturnsNil(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScope(t, d, repo, alice, bob, nil, now)
+	bumpActive(t, d, s.UUID, now)
+	// Resolver not needed; feed the Scope directly (same shape as Validated).
+	rows, err := repo.ListSharedAlbumIDs(context.Background(),
+		[]share.Scope{s}, alice)
+	r.NoError(err)
+	r.Nil(rows)
+}
+
+func TestListSharedAlbumIDsReturnsAlbumLiveOnly(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	albumID, mediaIDs := seedAlbumWithMedia(t, d, alice, 2)
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	// Two album_live scopes over the same album; one download=false,
+	// one download=true. The listing must return the album once with
+	// CanDownload=true (MAX(allow_download)).
+	sA1 := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, sA1.UUID, now)
+	sA2 := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, true)
+	bumpActive(t, d, sA2.UUID, now)
+
+	// A media_set scope over the same album's media should NOT surface
+	// in an album listing.
+	sMedia := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, true, mediaIDs...)
+	bumpActive(t, d, sMedia.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob,
+		[]string{sA1.UUID, sA2.UUID, sMedia.UUID})
+	r.NoError(err)
+
+	rows, err := repo.ListSharedAlbumIDs(context.Background(),
+		resolved.Validated, resolved.Owner)
+	r.NoError(err)
+	r.Len(rows, 1)
+	r.Equal(albumID, rows[0].AlbumID)
+	r.True(rows[0].CanDownload)
+}
+
+func TestCountSharedMediaByScopeNotFound(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	_, err := repo.CountSharedMediaByScope(context.Background(), "nonexistent-uuid")
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}
+
+func TestCountSharedMediaByScopeAlbumLive(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	albumID, _ := seedAlbumWithMedia(t, d, alice, 3)
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, s.UUID, now)
+
+	n, err := repo.CountSharedMediaByScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(3, n)
+}
+
+func TestCountSharedMediaByScopeMediaSet(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	m1 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2)
+	bumpActive(t, d, s.UUID, now)
+
+	n, err := repo.CountSharedMediaByScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(2, n)
+}
+
+func TestExpandScopeAlbumLive(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	albumID, mediaIDs := seedAlbumWithMedia(t, d, alice, 2)
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+
+	exp, err := repo.ExpandScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(share.TargetAlbumLive, exp.Scope.TargetType)
+	r.NotNil(exp.Album)
+	r.Equal(albumID, exp.Album.ID)
+	r.Equal(2, exp.Album.ItemCount)
+	r.ElementsMatch(mediaIDs, exp.MediaIDs)
+}
+
+func TestExpandScopeMediaSet(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	m1 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2)
+
+	exp, err := repo.ExpandScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(share.TargetMediaSet, exp.Scope.TargetType)
+	r.Nil(exp.Album)
+	r.ElementsMatch([]string{m1, m2}, exp.MediaIDs)
+}
+
+func TestExpandScopeUnknownReturnsNotFound(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	_, err := repo.ExpandScope(context.Background(), "not-a-uuid")
+	require.ErrorIs(t, err, errs.ErrNotFound)
+}
+
+func TestExpandScopeAlbumLivePreservesOrderAddedAtDesc(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	albumID := seedAlbum(t, d.WriteDB(), alice)
+	older := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	newer := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+
+	t0 := now
+	t1 := now.Add(time.Hour)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO album_media(album_id, media_id, added_at) VALUES(?,?,?)`,
+		albumID, older, t0)
+	r.NoError(err)
+	_, err = d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO album_media(album_id, media_id, added_at) VALUES(?,?,?)`,
+		albumID, newer, t1)
+	r.NoError(err)
+
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	exp, err := repo.ExpandScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal([]string{newer, older}, exp.MediaIDs, "added_at DESC ordering")
+}
+
+// When two album_media rows share a single added_at timestamp (the
+// common shape for batched AddMedia inserts), the tie-breaker must
+// match album.Repo.ListMedia's default "added" ordering (media_id
+// DESC). An ASC tie-breaker would make owner previews disagree with
+// the owner UI and the grantee-side listing.
+func TestExpandScopeAlbumLiveTieBreakMediaIDDesc(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	albumID := seedAlbum(t, d.WriteDB(), alice)
+	// Two media with deterministic, lexicographically-ordered ids so
+	// the assertion does not depend on uuid randomness.
+	low := "00000000-0000-0000-0000-aaaaaaaaaaaa"
+	high := "00000000-0000-0000-0000-ffffffffffff"
+	for _, mid := range []string{low, high} {
+		r.NoError(media.NewRepo(d.WriteDB(), d.ReadDB()).Insert(context.Background(),
+			media.Media{
+				ID: mid, Owner: alice, Type: media.TypePhoto, MimeType: "image/jpeg",
+				Path: "2024/" + mid + ".jpg", OriginalFilename: "x.jpg",
+				ImportedAt:  time.Now().UTC().Truncate(time.Second),
+				Size:        100,
+				Checksum:    mid,
+				ThumbStatus: "pending",
+			}))
+	}
+	// Both rows share the same added_at — tie-breaker decides the order.
+	for _, mid := range []string{low, high} {
+		_, err := d.WriteDB().ExecContext(context.Background(),
+			`INSERT INTO album_media(album_id, media_id, added_at) VALUES(?,?,?)`,
+			albumID, mid, now)
+		r.NoError(err)
+	}
+
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	exp, err := repo.ExpandScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal([]string{high, low}, exp.MediaIDs, "media_id DESC tie-break matches album.Repo.ListMedia default")
+}
+
+// seedMediaWithPath inserts a media row owned by p at the given path
+// and extension, returning its ID. The path's extension governs the
+// MIME type (".jpg" → image/jpeg, ".dng" → image/x-adobe-dng) so the
+// row mirrors what the importer would create for sidecar tests.
+func seedMediaWithPath(t *testing.T, rw *sql.DB, p owners.Principal, path, mime, checksum string) string {
+	t.Helper()
+	repo := media.NewRepo(rw, rw)
+	m := media.Media{
+		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
+		MimeType:         mime,
+		Path:             path,
+		OriginalFilename: "x",
+		ImportedAt:       time.Now().UTC().Truncate(time.Second),
+		Size:             100,
+		Checksum:         checksum,
+		ThumbStatus:      "pending",
+	}
+	require.NoError(t, repo.Insert(context.Background(), m))
+	return m.ID
+}
+
+// pairSidecar links sidecarID's paired_with_id to primaryID via the
+// media repo's UpdatePairedWithID, the same path the importer's
+// post-barrier pairing pass uses.
+func pairSidecar(t *testing.T, rw *sql.DB, sidecarID, primaryID string) {
+	t.Helper()
+	repo := media.NewRepo(rw, rw)
+	require.NoError(t, repo.UpdatePairedWithID(context.Background(), sidecarID, &primaryID))
+}
+
+// TestCoverMediaByScopesIncludesSidecars verifies that a recipient
+// holding scope on a JPEG primary is also authorised against the
+// paired DNG sidecar, even though the scope's scope_media row only
+// names the primary. Without the OR-paired_with_id branch, the
+// recipient would see "this is a sidecar" and be denied.
+func TestCoverMediaByScopesIncludesSidecars(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	primary := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.jpg", "image/jpeg", "cs-pri")
+	sidecar := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.dng", "image/x-adobe-dng", "cs-sid")
+	pairSidecar(t, d.WriteDB(), sidecar, primary)
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, primary)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+	r.NotEmpty(resolved.Validated)
+
+	// Direct primary ID — covered by the existing scope_media row.
+	dec, err := repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, primary)
+	r.NoError(err)
+	r.True(dec.Authorized, "primary must be covered by a media_set scope on it")
+	r.Len(dec.Paths, 1)
+	r.Equal(s.UUID, dec.Paths[0].ScopeUUID)
+
+	// Sidecar ID — covered transitively because its primary is in scope.
+	dec, err = repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, sidecar)
+	r.NoError(err)
+	r.True(dec.Authorized, "sidecar must be covered when its primary is in scope")
+	r.Len(dec.Paths, 1)
+	r.Equal(s.UUID, dec.Paths[0].ScopeUUID)
+}
+
+// TestCoverMediaByScopesAlbumLiveCoversSidecars verifies the same
+// transitive-coverage rule for album_live scopes: a JPEG that is a
+// member of a shared album implies the recipient can also fetch the
+// paired DNG, even though album_media references primaries only.
+func TestCoverMediaByScopesAlbumLiveCoversSidecars(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	albumID := seedAlbum(t, d.WriteDB(), alice)
+	primary := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.jpg", "image/jpeg", "al-pri")
+	sidecar := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.dng", "image/x-adobe-dng", "al-sid")
+	pairSidecar(t, d.WriteDB(), sidecar, primary)
+	_, err := d.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO album_media(album_id, media_id, added_at) VALUES(?,?,?)`,
+		albumID, primary, time.Now().UTC())
+	r.NoError(err)
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	// Direct primary ID — covered by the album_media row.
+	dec, err := repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, primary)
+	r.NoError(err)
+	r.True(dec.Authorized)
+
+	// Sidecar ID — covered transitively because its primary is an
+	// album_media row.
+	dec, err = repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, sidecar)
+	r.NoError(err)
+	r.True(dec.Authorized, "sidecar must be covered when its primary is in the shared album")
+}
+
+// TestCoverMediaByScopesPrimaryOnlyScopeStillExcludesNonScoped guards
+// against the OR-clause leaking access to primaries that are not in
+// any covering scope. Adding the sidecar branch must not alter the
+// primary-only path's behavior.
+func TestCoverMediaByScopesPrimaryOnlyScopeStillExcludesNonScoped(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	a := seedMediaWithPath(t, d.WriteDB(), alice, "2024/a.jpg", "image/jpeg", "cs-a")
+	b := seedMediaWithPath(t, d.WriteDB(), alice, "2024/b.jpg", "image/jpeg", "cs-b")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, a)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	// Recipient asks for b — not in scope and not a sidecar of any
+	// covered primary — must NOT be covered.
+	dec, err := repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, b)
+	r.NoError(err)
+	r.False(dec.Authorized, "primary outside the scope must remain uncovered")
+	r.Empty(dec.Paths)
+}
+
+// TestListSharedMediaIDsExcludesSidecars locks in the spec's
+// shared-grid invariant: ListSharedMediaIDs returns primaries only.
+// The sidecar-coverage rule lives in CoverMediaByScopes (per-id auth),
+// not in the listing query — sidecars are downloadable attachments,
+// not grid rows.
+func TestListSharedMediaIDsExcludesSidecars(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	primary := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.jpg", "image/jpeg", "ls-pri")
+	sidecar := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.dng", "image/x-adobe-dng", "ls-sid")
+	pairSidecar(t, d.WriteDB(), sidecar, primary)
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, primary)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	rows, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "",
+		share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rows, 1, "shared-grid lists primaries only")
+	r.Equal(primary, rows[0].MediaID)
+}
+
+func TestRepoCountSharedMediaByScopesBatch(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	m1 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m3 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+
+	// media_set with 3 members, media_set with 1 member, album_live with no media.
+	s1 := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2, m3)
+	s2 := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1)
+	emptyAlbum := seedAlbum(t, d.WriteDB(), alice)
+	s3 := makeAlbumLiveScope(t, d, repo, alice, bob, emptyAlbum, nil, now, false)
+
+	counts, err := repo.CountSharedMediaByScopes(context.Background(),
+		[]string{s1.UUID, s2.UUID, s3.UUID, "missing"})
+	r.NoError(err)
+	r.Equal(3, counts[s1.UUID])
+	r.Equal(1, counts[s2.UUID])
+	r.Equal(0, counts[s3.UUID], "album_live with no media → 0, not absent")
+	_, ok := counts["missing"]
+	r.False(ok, "uuid not in scopes table is absent from result")
+}
+
+func TestRepoCountSharedMediaByScopesEmpty(t *testing.T) {
+	d := testutil.OpenTestDB(t)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	counts, err := repo.CountSharedMediaByScopes(context.Background(), nil)
+	require.NoError(t, err)
+	require.Empty(t, counts)
+}
+
+// hideMedia stamps hidden_at on a media row, simulating an owner hide action.
+func hideMedia(t *testing.T, rw *sql.DB, mediaID string) {
+	t.Helper()
+	_, err := rw.ExecContext(context.Background(),
+		`UPDATE media SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), mediaID)
+	require.NoError(t, err)
+}
+
+// TestListSharedMediaIDsExcludesHidden verifies that hidden media rows
+// (hidden_at IS NOT NULL) are omitted from ListSharedMediaIDs for both
+// media_set and album_live scope types.
+func TestListSharedMediaIDsExcludesHidden(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	visible := seedMediaWithTimestamp(t, d, alice, now.Add(-1*time.Hour))
+	hidden := seedMediaWithTimestamp(t, d, alice, now.Add(-2*time.Hour))
+	hideMedia(t, d.WriteDB(), hidden)
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, visible, hidden)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	rows, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, "", share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rows, 1, "hidden media must be excluded from shared listing")
+	r.Equal(visible, rows[0].MediaID)
+}
+
+// TestListSharedMediaIDsAlbumLiveExcludesHidden verifies that hidden
+// album members are omitted when listing an album_live scope.
+func TestListSharedMediaIDsAlbumLiveExcludesHidden(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	albumID, mIDs := seedAlbumWithMedia(t, d, alice, 2)
+	hideMedia(t, d.WriteDB(), mIDs[1]) // hide second member
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	rows, err := repo.ListSharedMediaIDs(context.Background(),
+		resolved.Validated, resolved.Owner, albumID, share.SharedMediaCursor{Limit: 10})
+	r.NoError(err)
+	r.Len(rows, 1, "hidden album member must be excluded from shared album media listing")
+	r.Equal(mIDs[0], rows[0].MediaID)
+}
+
+// TestCoverMediaByScopesRejectsHidden verifies that CoverMediaByScopes
+// does NOT grant access to a hidden media row, even when the scope
+// covers it via scope_media or album_media.
+func TestCoverMediaByScopesRejectsHidden(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	mID := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	hideMedia(t, d.WriteDB(), mID)
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, mID)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	dec, err := repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, mID)
+	r.NoError(err)
+	r.False(dec.Authorized, "CoverMediaByScopes must not cover hidden media")
+}
+
+// TestCoverMediaByScopesAlbumLiveRejectsHidden verifies that hidden
+// album members are not covered via the album_live path.
+func TestCoverMediaByScopesAlbumLiveRejectsHidden(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	albumID, mIDs := seedAlbumWithMedia(t, d, alice, 1)
+	hideMedia(t, d.WriteDB(), mIDs[0])
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, s.UUID, now)
+
+	resolver := share.NewScopeResolver(repo, func() time.Time { return now }, nil)
+	resolved, err := resolver.ResolveAll(context.Background(), bob, []string{s.UUID})
+	r.NoError(err)
+
+	dec, err := repo.CoverMediaByScopes(context.Background(),
+		resolved.Validated, resolved.Owner, mIDs[0])
+	r.NoError(err)
+	r.False(dec.Authorized, "album_live CoverMediaByScopes must not cover hidden album member")
+}
+
+// TestCountSharedMediaByScopeExcludesHiddenAlbumLive verifies that the
+// item count for an album_live scope does not include hidden album
+// members.
+func TestCountSharedMediaByScopeExcludesHiddenAlbumLive(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	albumID, mIDs := seedAlbumWithMedia(t, d, alice, 3)
+	hideMedia(t, d.WriteDB(), mIDs[2]) // hide one of three
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+	bumpActive(t, d, s.UUID, now)
+
+	n, err := repo.CountSharedMediaByScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(2, n, "hidden album member must not be counted")
+}
+
+// TestExpandScopeAlbumLiveExcludesHidden verifies that ExpandScope's
+// listAlbumMediaIDs path omits hidden album members from the preview.
+func TestExpandScopeAlbumLiveExcludesHidden(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "ska")
+	seedOwner(t, d.WriteDB(), bob, "skb")
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	albumID, mIDs := seedAlbumWithMedia(t, d, alice, 2)
+	hideMedia(t, d.WriteDB(), mIDs[1]) // hide second
+	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
+
+	exp, err := repo.ExpandScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Len(exp.MediaIDs, 1, "ExpandScope must not include hidden album members")
+	r.Equal(mIDs[0], exp.MediaIDs[0])
+}
+
+// TestCountSharedMediaByScopeMediaSetExcludesHidden verifies that
+// CountSharedMediaByScope filters hidden media_set members from the count.
+func TestCountSharedMediaByScopeMediaSetExcludesHidden(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk-msh")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk-msh")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	m1 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m3 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2, m3)
+	bumpActive(t, d, s.UUID, now)
+
+	// Hide one member after scope creation.
+	hideMedia(t, d.WriteDB(), m3)
+
+	n, err := repo.CountSharedMediaByScope(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Equal(2, n, "hidden media_set member must not be counted")
+}
+
+// TestGetByUUIDMediaSetExcludesHiddenMembers verifies that GetByUUID filters
+// hidden media rows from the ScopeDetail.MediaIDs slice so a media_set member
+// that became hidden after scope creation is not exposed.
+func TestGetByUUIDMediaSetExcludesHiddenMembers(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk-getuuid")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk-getuuid")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	m1 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2)
+	bumpActive(t, d, s.UUID, now)
+
+	// Hide m2 after scope creation.
+	hideMedia(t, d.WriteDB(), m2)
+
+	det, err := repo.GetByUUID(context.Background(), s.UUID)
+	r.NoError(err)
+	r.Len(det.MediaIDs, 1, "hidden media_set member must be absent from GetByUUID.MediaIDs")
+	r.Equal(m1, det.MediaIDs[0])
+}
+
+// TestRepoMattnScanCompat_AllowDownloadBoolean exercises the BOOLEAN
+// scan path on scopes.allow_download. mattn/go-sqlite3 returns Go bool
+// for BOOLEAN-affinity columns; the previous modernc.org/sqlite driver
+// returned int64. A regression where scanScope decoded the column into
+// an int64 surfaced as a "converting driver.Value type bool to a
+// *int64" Scan error on every read of the scopes table — including the
+// shared-bytes preflight that gates the /shared/* download path. Both
+// values (true and false) are checked because mattn returns each as a
+// distinct Go bool, and the original regression masked false-only and
+// true-only paths separately depending on which test ran first.
+func TestRepoMattnScanCompat_AllowDownloadBoolean(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := owners.Principal{Hub: "h", UserID: "o"}
+	seedOwner(t, d.WriteDB(), owner, "sk-bool")
+	albumID := seedAlbum(t, d.WriteDB(), owner)
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+
+	mkScope := func(allow bool) string {
+		s := share.Scope{
+			UUID: uuid.NewString(), Owner: owner,
+			Grantee:       owners.Principal{Hub: "h", UserID: "g"},
+			TargetType:    share.TargetAlbumLive,
+			TargetAlbumID: &albumID,
+			AllowDownload: allow,
+			CreatedAt:     time.Now().UTC().Truncate(time.Second),
+			BrokerStatus:  share.StatusPending,
+		}
+		r.NoError(repo.Insert(context.Background(), s, nil))
+		return s.UUID
+	}
+	allowID := mkScope(true)
+	denyID := mkScope(false)
+
+	gotAllow, err := repo.GetByUUID(context.Background(), allowID)
+	r.NoError(err)
+	r.True(gotAllow.AllowDownload, "BOOLEAN true must round-trip under mattn")
+
+	gotDeny, err := repo.GetByUUID(context.Background(), denyID)
+	r.NoError(err)
+	r.False(gotDeny.AllowDownload, "BOOLEAN false must round-trip under mattn")
+
+	// The list path uses the same scanScope helper; cover it explicitly
+	// so a regression in the list-side query (e.g. swapping column
+	// order) doesn't slip past the GetByUUID-only test.
+	got, err := repo.ListByOwner(context.Background(), owner, share.ScopeFilter{})
+	r.NoError(err)
+	r.Len(got, 2)
+	byID := map[string]share.Scope{got[0].UUID: got[0], got[1].UUID: got[1]}
+	r.True(byID[allowID].AllowDownload)
+	r.False(byID[denyID].AllowDownload)
+}
+
+// TestRepoMattnScanCompat_CoalescedDisplayTime exercises the COALESCE'd
+// TIMESTAMP scan path on m.timestamp / m.imported_at. mattn's
+// auto-decode to time.Time only fires when the column has a declared
+// TIMESTAMP/DATETIME/DATE type; expression results carry no declared
+// type, so the driver returns the underlying TEXT bytes. A direct
+// Scan(&time.Time{}) against such a value fails with "unsupported
+// Scan, storing driver.Value type string into type *time.Time"; the
+// repo scans into a string and parses with mattn's serialisation
+// layout to recover the time.Time value. Both branches of the
+// COALESCE are exercised: timestamp-present (path 1) and
+// imported_at-fallback (path 2), so a regression that hardcoded the
+// scan to one of the two branches is caught.
+func TestRepoMattnScanCompat_CoalescedDisplayTime(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	alice := owners.Principal{Hub: "h", UserID: "alice"}
+	bob := owners.Principal{Hub: "h", UserID: "bob"}
+	seedOwner(t, d.WriteDB(), alice, "alice-sk-coalesce")
+	seedOwner(t, d.WriteDB(), bob, "bob-sk-coalesce")
+
+	withTS := time.Date(2026, 1, 15, 9, 30, 0, 0, time.UTC)
+	m1 := seedMediaWithTimestamp(t, d, alice, withTS)        // path 1: timestamp present
+	m2 := seedMedia(t, d.WriteDB(), alice, uuid.NewString()) // path 2: timestamp NULL → falls back to imported_at
+
+	// Read m2's stored imported_at back out so the fallback assertion
+	// can compare against the exact value, not just IsZero(). seedMedia
+	// uses time.Now().UTC().Truncate(time.Second) at insert time and
+	// doesn't expose it; reading the row is the only reliable way to
+	// know what display_time should equal.
+	var m2ImportedAt time.Time
+	r.NoError(d.ReadDB().QueryRowContext(context.Background(),
+		`SELECT imported_at FROM media WHERE id = ?`, m2,
+	).Scan(&m2ImportedAt))
+
+	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
+	now := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, m1, m2)
+	bumpActive(t, d, s.UUID, now)
+
+	out, err := repo.ListSharedMediaIDs(
+		context.Background(),
+		[]share.Scope{s},
+		alice,
+		"",
+		share.SharedMediaCursor{Limit: 10},
+	)
+	r.NoError(err)
+	r.Len(out, 2)
+	byID := map[string]share.SharedMediaRow{out[0].MediaID: out[0], out[1].MediaID: out[1]}
+
+	// Path 1: timestamp populated; display_time must equal it exactly.
+	r.True(byID[m1].DisplayTime.Equal(withTS),
+		"display_time for media with explicit timestamp must equal it; got %v want %v",
+		byID[m1].DisplayTime, withTS)
+
+	// Path 2: timestamp NULL; display_time falls back to imported_at.
+	// The expected value is the imported_at we just read back from the
+	// row, compared with time.Time.Equal so a TZ-offset difference
+	// between the two reads doesn't cause a spurious mismatch.
+	r.True(byID[m2].DisplayTime.Equal(m2ImportedAt),
+		"display_time fallback must equal imported_at; got %v want %v",
+		byID[m2].DisplayTime, m2ImportedAt)
+}
