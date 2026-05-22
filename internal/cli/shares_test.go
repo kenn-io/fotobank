@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/cli"
 )
 
 func TestSharesCmdUsageErrorWithoutSub(t *testing.T) {

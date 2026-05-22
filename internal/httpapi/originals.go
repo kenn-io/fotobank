@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wesm/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/media"
 )
 
 // writeOriginalResponse streams the original bytes, honouring an HTTP

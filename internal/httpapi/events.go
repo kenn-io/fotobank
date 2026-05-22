@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // EventBus fans server-sent events out to per-principal subscribers and

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/wesm/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/errs"
 )
 
 // HeaderConfig names the HTTP headers a fronting reverse proxy uses to

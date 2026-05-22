@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/web"
+	"go.kenn.io/fotobank/internal/web"
 )
 
 func TestHandlerServesRoot(t *testing.T) {

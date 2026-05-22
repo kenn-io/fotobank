@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/thumb"
+	"go.kenn.io/fotobank/internal/thumb"
 )
 
 func newGradient(w, h int) image.Image {

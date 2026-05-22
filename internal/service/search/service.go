@@ -19,11 +19,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/search/hybrid"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/search/hybrid"
 )
 
 // EngineIface is the subset of *hybrid.Engine that the service uses.

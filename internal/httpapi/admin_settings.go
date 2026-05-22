@@ -8,9 +8,9 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/wesm/fotobank/internal/ai/probe"
-	"github.com/wesm/fotobank/internal/owners"
-	appsettingssvc "github.com/wesm/fotobank/internal/service/appsettings"
+	"go.kenn.io/fotobank/internal/ai/probe"
+	"go.kenn.io/fotobank/internal/owners"
+	appsettingssvc "go.kenn.io/fotobank/internal/service/appsettings"
 )
 
 type adminSettingsGETOutput struct {

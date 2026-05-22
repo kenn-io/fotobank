@@ -6,9 +6,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/service/usersettings"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/service/usersettings"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 func TestServiceScopesByCaller(t *testing.T) {

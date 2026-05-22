@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/wesm/fotobank/internal/obs"
+	"go.kenn.io/fotobank/internal/obs"
 )
 
 // syncBuf wraps bytes.Buffer with a mutex so a slog handler running in

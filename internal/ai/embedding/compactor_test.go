@@ -7,11 +7,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 // mustCreateRetiredGenAt drives the E1 Generations repo to insert a

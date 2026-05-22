@@ -15,15 +15,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/httpapi"
-	"github.com/wesm/fotobank/internal/identity"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/service"
-	"github.com/wesm/fotobank/internal/storage"
-	"github.com/wesm/fotobank/internal/testutil"
-	"github.com/wesm/fotobank/internal/thumb"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/httpapi"
+	"go.kenn.io/fotobank/internal/identity"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/storage"
+	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/thumb"
 )
 
 // hiddenMediaFixture wires up a full server with hidden auth + media

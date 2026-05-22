@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/wesm/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/db"
 )
 
 func TestInitialSchemaCreatesAllTables(t *testing.T) {

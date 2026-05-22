@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // TargetType is the binding category of a scope. Stored verbatim in

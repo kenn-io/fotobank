@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // AIEmbedEvents adapts the per-principal EventBus into the embedding

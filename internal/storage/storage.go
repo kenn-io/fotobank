@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // Tier indicates which backing tier served a read or the logical

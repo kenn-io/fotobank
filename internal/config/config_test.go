@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/wesm/fotobank/internal/config"
-	"github.com/wesm/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/errs"
 )
 
 func TestLoadAppliesDefaults(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // SettingKey is the canonical key in user_settings for the

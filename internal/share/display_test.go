@@ -7,10 +7,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/identity"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/share"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/identity"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 func TestPrincipalDisplayUpsertAndGet(t *testing.T) {

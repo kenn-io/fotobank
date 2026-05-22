@@ -3,7 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // EmitAICompleted publishes a tag/caption completion event to p. The

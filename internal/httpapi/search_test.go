@@ -16,17 +16,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/httpapi"
-	"github.com/wesm/fotobank/internal/identity"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/search"
-	"github.com/wesm/fotobank/internal/search/hybrid"
-	"github.com/wesm/fotobank/internal/search/index"
-	searchsvc "github.com/wesm/fotobank/internal/service/search"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/httpapi"
+	"go.kenn.io/fotobank/internal/identity"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/search"
+	"go.kenn.io/fotobank/internal/search/hybrid"
+	"go.kenn.io/fotobank/internal/search/index"
+	searchsvc "go.kenn.io/fotobank/internal/service/search"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 // searchFakeBackend records which engine method fired and returns

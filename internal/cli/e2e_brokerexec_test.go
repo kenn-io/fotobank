@@ -14,8 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/cli"
-	"github.com/wesm/fotobank/internal/testutil/brokerhelper"
+	"go.kenn.io/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/testutil/brokerhelper"
 )
 
 // TestMain dispatches the test binary into broker-helper mode when the

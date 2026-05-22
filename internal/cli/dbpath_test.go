@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/config"
 )
 
 func TestResolveDBPathHonorsEnvOverride(t *testing.T) {

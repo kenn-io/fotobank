@@ -12,11 +12,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai/imginput"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/storage"
-	"github.com/wesm/fotobank/internal/testutil"
-	"github.com/wesm/fotobank/internal/thumb"
+	"go.kenn.io/fotobank/internal/ai/imginput"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/storage"
+	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/thumb"
 )
 
 func TestResolverFollowsThumbVersionBump(t *testing.T) {

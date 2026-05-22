@@ -15,7 +15,7 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/wesm/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/db"
 )
 
 // RestoreResult describes a successful restore. PreRestoreSuffix is the

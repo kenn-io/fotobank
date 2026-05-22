@@ -7,7 +7,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 type Album struct {

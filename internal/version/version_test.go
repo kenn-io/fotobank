@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/wesm/fotobank/internal/version"
+	"go.kenn.io/fotobank/internal/version"
 )
 
 func TestDefaultsPopulated(t *testing.T) {

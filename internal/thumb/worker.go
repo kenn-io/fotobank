@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/obs"
-	"github.com/wesm/fotobank/internal/storage"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/obs"
+	"go.kenn.io/fotobank/internal/storage"
 )
 
 // defaultSweepInterval is how often Run triggers SweepLeases. Independent

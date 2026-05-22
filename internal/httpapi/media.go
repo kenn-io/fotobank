@@ -8,10 +8,10 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/service"
 )
 
 // mediaDTO is the JSON shape of one media row. ThumbStatus and

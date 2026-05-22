@@ -7,8 +7,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/wesm/fotobank/internal/broker"
-	"github.com/wesm/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/broker"
+	"go.kenn.io/fotobank/internal/share"
 )
 
 // Fake is a scripted BrokerClient. Tests queue per-UUID errors via

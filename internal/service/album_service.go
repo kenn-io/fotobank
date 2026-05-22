@@ -15,12 +15,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/wesm/fotobank/internal/album"
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/album"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/share"
 )
 
 // AlbumService orchestrates album CRUD on top of album.Repo. The media

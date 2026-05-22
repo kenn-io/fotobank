@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/wesm/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai"
 )
 
 // embedProfileRE anchors the canonical embed input profile shape so the

@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/wesm/fotobank/internal/broker"
-	"github.com/wesm/fotobank/internal/brokerexec"
-	"github.com/wesm/fotobank/internal/config"
-	"github.com/wesm/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/broker"
+	"go.kenn.io/fotobank/internal/brokerexec"
+	"go.kenn.io/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/errs"
 )
 
 // newBrokerClient returns the broker.BrokerClient implementation

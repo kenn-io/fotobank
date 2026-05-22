@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/search/hybrid"
+	"go.kenn.io/fotobank/internal/search/hybrid"
 )
 
 // TestBuildMatchExpr pins the FTS5 MATCH expression construction

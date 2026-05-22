@@ -19,12 +19,12 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/exifread"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/search/index"
-	"github.com/wesm/fotobank/internal/storage"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/exifread"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/search/index"
+	"go.kenn.io/fotobank/internal/storage"
 )
 
 // maxPhotoSeqAttempts bounds how many times we retry a timestamped

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/fotobank/internal/identity"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/identity"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // PrincipalDisplayRepo reads and writes the principal_display cache

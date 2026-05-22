@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/wesm/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai"
 )
 
 // ErrClaimLost is returned by Mark* when the lease no longer matches —

@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/storage"
-	"github.com/wesm/fotobank/internal/thumb"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/storage"
+	"go.kenn.io/fotobank/internal/thumb"
 )
 
 // Resolver is the production ImageResolver implementation. It reads the

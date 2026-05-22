@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // Row mirrors one app_settings row.

@@ -9,7 +9,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/wesm/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/share"
 )
 
 // BrokerClient is the external broker's wire API as seen by fotobank.

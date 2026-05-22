@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/testutil/mediaseed"
-	"github.com/wesm/fotobank/internal/testutil/scalecache"
+	"go.kenn.io/fotobank/internal/testutil/mediaseed"
+	"go.kenn.io/fotobank/internal/testutil/scalecache"
 )
 
 // TestKey_Stable_Across_Calls pins the cache-key contract: the same

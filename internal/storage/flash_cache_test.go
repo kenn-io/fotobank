@@ -12,8 +12,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/storage"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/storage"
 )
 
 func newFlashCache(t *testing.T) (*storage.FlashCache, string, string, owners.Principal) {

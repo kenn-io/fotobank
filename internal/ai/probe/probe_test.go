@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai/probe"
+	"go.kenn.io/fotobank/internal/ai/probe"
 )
 
 func TestVisionProbeOKSendsMultimodalPayload(t *testing.T) {

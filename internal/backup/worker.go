@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wesm/fotobank/internal/obs"
+	"go.kenn.io/fotobank/internal/obs"
 )
 
 // Config configures a Worker. Production constructs one from

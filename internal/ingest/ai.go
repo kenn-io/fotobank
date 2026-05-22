@@ -3,7 +3,7 @@ package ingest
 import (
 	"context"
 
-	"github.com/wesm/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai"
 )
 
 // AIEnqueuer is the surface the importer needs from the AI subsystem.

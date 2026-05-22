@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wesm/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai"
 )
 
 // OnThumbRegen drops every (gen, media) mapping in non-retired

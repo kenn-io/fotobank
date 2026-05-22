@@ -10,7 +10,7 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/wesm/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/errs"
 )
 
 // Acquire takes an advisory exclusive lock on lockPath. wait is the

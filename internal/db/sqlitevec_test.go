@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/wesm/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/db"
 )
 
 // TestRegisterSqliteVec_LoadsExtension proves that calling

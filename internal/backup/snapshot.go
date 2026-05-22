@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/wesm/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/db"
 )
 
 // Snapshot writes a defragmented self-contained copy of db's contents to

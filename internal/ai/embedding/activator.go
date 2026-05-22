@@ -8,10 +8,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/wesm/fotobank/internal/ai/ack"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/obs"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/ai/ack"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/obs"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // ActivatorCfg parametrises the activator. ThresholdPct is the

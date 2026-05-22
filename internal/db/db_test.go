@@ -12,8 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 func TestOpenEnablesWALAndReturnsBothPools(t *testing.T) {

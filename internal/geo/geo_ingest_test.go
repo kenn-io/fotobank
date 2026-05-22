@@ -1,8 +1,8 @@
 package geo_test
 
 import (
-	"github.com/wesm/fotobank/internal/geo"
-	"github.com/wesm/fotobank/internal/ingest"
+	"go.kenn.io/fotobank/internal/geo"
+	"go.kenn.io/fotobank/internal/ingest"
 )
 
 // Compile-time guard: *geo.NaturalEarth MUST satisfy

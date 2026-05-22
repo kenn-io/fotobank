@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // Repo is a SQLite-backed store of user_settings rows. It uses a split

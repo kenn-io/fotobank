@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/wesm/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/errs"
 )
 
 // GuardConfig declares the ingress checks the direct-access guard enforces.

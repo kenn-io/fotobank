@@ -8,10 +8,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/wesm/fotobank/internal/config"
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/service"
 )
 
 // LoadOwnerService loads the CLI's configuration, opens the SQLite

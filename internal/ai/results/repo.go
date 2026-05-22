@@ -12,9 +12,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/parse"
-	"github.com/wesm/fotobank/internal/search/index"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/parse"
+	"go.kenn.io/fotobank/internal/search/index"
 )
 
 // Repo is the DB-only handle.

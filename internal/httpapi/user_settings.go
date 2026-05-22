@@ -6,8 +6,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/service/usersettings"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/service/usersettings"
 )
 
 // userSettingValue is the wire shape returned by GET. The body carries

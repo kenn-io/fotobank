@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/httpapi"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/httpapi"
 )
 
 func TestTranslateMapsSentinels(t *testing.T) {

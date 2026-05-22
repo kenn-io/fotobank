@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/share"
 )
 
 func TestBrokerStatusConstants(t *testing.T) {

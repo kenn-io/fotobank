@@ -3,7 +3,7 @@ package broker
 import (
 	"context"
 
-	"github.com/wesm/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/share"
 )
 
 // NoopBroker is the production default for single-owner deployments

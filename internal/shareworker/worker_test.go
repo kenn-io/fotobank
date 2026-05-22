@@ -13,13 +13,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/broker"
-	"github.com/wesm/fotobank/internal/broker/brokertest"
-	"github.com/wesm/fotobank/internal/obs"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/share"
-	"github.com/wesm/fotobank/internal/shareworker"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/broker"
+	"go.kenn.io/fotobank/internal/broker/brokertest"
+	"go.kenn.io/fotobank/internal/obs"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/shareworker"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 type workerFixture struct {

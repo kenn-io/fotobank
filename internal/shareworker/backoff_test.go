@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/shareworker"
+	"go.kenn.io/fotobank/internal/shareworker"
 )
 
 // zeroJitterRng is a *rand.Rand whose Float64 always returns 0.5 so the

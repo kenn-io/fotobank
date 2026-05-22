@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ingest"
+	"go.kenn.io/fotobank/internal/ingest"
 )
 
 func TestChecksumKnownValue(t *testing.T) {

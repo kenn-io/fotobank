@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/wesm/fotobank/tools/testifyhelpercheck"
+	"go.kenn.io/fotobank/tools/testifyhelpercheck"
 	"golang.org/x/tools/go/analysis/singlechecker"
 )
 

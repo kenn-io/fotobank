@@ -9,11 +9,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/errs"
-	searchsvc "github.com/wesm/fotobank/internal/service/search"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/errs"
+	searchsvc "go.kenn.io/fotobank/internal/service/search"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 // autocompleteSvc wires a Service against a test DB. The service-level

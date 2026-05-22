@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // ErrClaimLost is returned by terminal Mark* methods when the

@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/cli"
 )
 
 // runAlbumsCLI invokes the CLI with background context and returns

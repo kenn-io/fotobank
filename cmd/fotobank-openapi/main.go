@@ -11,7 +11,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/wesm/fotobank/internal/httpapi"
+	"go.kenn.io/fotobank/internal/httpapi"
 )
 
 func main() {

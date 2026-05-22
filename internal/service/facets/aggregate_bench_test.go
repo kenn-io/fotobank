@@ -10,11 +10,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/service/facets"
-	"github.com/wesm/fotobank/internal/testutil/mediaseed"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/service/facets"
+	"go.kenn.io/fotobank/internal/testutil/mediaseed"
 )
 
 // Scale benchmarks for FacetService.Aggregate at 100k rows. Run with:

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/wesm/fotobank/internal/identity"
+	"go.kenn.io/fotobank/internal/identity"
 )
 
 func TestLocalAdminSynthesizesRequestID(t *testing.T) {

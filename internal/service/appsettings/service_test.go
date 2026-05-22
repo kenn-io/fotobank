@@ -10,14 +10,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	airuntime "github.com/wesm/fotobank/internal/ai/runtime"
-	store "github.com/wesm/fotobank/internal/appsettings"
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/owners"
-	svc "github.com/wesm/fotobank/internal/service/appsettings"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	airuntime "go.kenn.io/fotobank/internal/ai/runtime"
+	store "go.kenn.io/fotobank/internal/appsettings"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/owners"
+	svc "go.kenn.io/fotobank/internal/service/appsettings"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 func TestEditableKeysIncludesV1Allowlist(t *testing.T) {

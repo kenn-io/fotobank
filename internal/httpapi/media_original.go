@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/service"
 )
 
 // registerMediaOriginal wires GET /api/v1/media/{id}/original onto mux.

@@ -9,9 +9,9 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/wesm/fotobank/internal/broker"
-	"github.com/wesm/fotobank/internal/obs"
-	"github.com/wesm/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/broker"
+	"go.kenn.io/fotobank/internal/obs"
+	"go.kenn.io/fotobank/internal/share"
 )
 
 // Config carries the worker's collaborators + tunables.

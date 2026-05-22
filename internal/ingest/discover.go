@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/wesm/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/media"
 )
 
 // Candidate is one file the import pipeline plans to ingest.

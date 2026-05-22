@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	airuntime "github.com/wesm/fotobank/internal/ai/runtime"
-	store "github.com/wesm/fotobank/internal/appsettings"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	airuntime "go.kenn.io/fotobank/internal/ai/runtime"
+	store "go.kenn.io/fotobank/internal/appsettings"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 var (

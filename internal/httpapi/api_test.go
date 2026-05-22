@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/wesm/fotobank/internal/httpapi"
+	"go.kenn.io/fotobank/internal/httpapi"
 )
 
 func TestHealthzReturnsOK(t *testing.T) {

@@ -45,7 +45,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/wesm/fotobank/internal/testutil/mediaseed"
+	"go.kenn.io/fotobank/internal/testutil/mediaseed"
 )
 
 // keyPrefixLen is how many hex chars of the SHA-256 we use as the

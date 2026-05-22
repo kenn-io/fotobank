@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai/imginput/encode"
+	"go.kenn.io/fotobank/internal/ai/imginput/encode"
 )
 
 func TestEncodeChat_DownscalesToProfileEdge(t *testing.T) {

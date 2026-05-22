@@ -8,13 +8,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/search"
-	"github.com/wesm/fotobank/internal/search/hybrid"
-	"github.com/wesm/fotobank/internal/search/index"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/search"
+	"go.kenn.io/fotobank/internal/search/hybrid"
+	"go.kenn.io/fotobank/internal/search/index"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 // fakeBackend is a minimal index.Backend that records which method

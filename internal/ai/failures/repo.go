@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai"
 )
 
 // Row is one current-fingerprint failure.

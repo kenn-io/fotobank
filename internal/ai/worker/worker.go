@@ -8,16 +8,16 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/ack"
-	"github.com/wesm/fotobank/internal/ai/failures"
-	"github.com/wesm/fotobank/internal/ai/gateway"
-	"github.com/wesm/fotobank/internal/ai/imginput/encode"
-	"github.com/wesm/fotobank/internal/ai/jobs"
-	"github.com/wesm/fotobank/internal/ai/parse"
-	"github.com/wesm/fotobank/internal/ai/results"
-	"github.com/wesm/fotobank/internal/ai/skipped"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/ack"
+	"go.kenn.io/fotobank/internal/ai/failures"
+	"go.kenn.io/fotobank/internal/ai/gateway"
+	"go.kenn.io/fotobank/internal/ai/imginput/encode"
+	"go.kenn.io/fotobank/internal/ai/jobs"
+	"go.kenn.io/fotobank/internal/ai/parse"
+	"go.kenn.io/fotobank/internal/ai/results"
+	"go.kenn.io/fotobank/internal/ai/skipped"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // ImageResolver fetches the preview-tier JPEG bytes for a media id,

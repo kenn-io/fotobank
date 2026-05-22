@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/ai/embedding"
 )
 
 // probeBody is the request body shape Probe sends to the server. The

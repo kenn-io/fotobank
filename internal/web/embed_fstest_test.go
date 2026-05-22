@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/web"
+	"go.kenn.io/fotobank/internal/web"
 )
 
 // withBoth simulates a built dist: both index.html (the real SPA shell)

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/wesm/fotobank/internal/broker"
+	"go.kenn.io/fotobank/internal/broker"
 )
 
 // classifyExit maps a (exitCode, runErr) pair plus a normalized
