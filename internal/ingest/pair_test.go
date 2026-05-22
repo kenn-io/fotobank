@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ingest"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/ingest"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // pairTestOwner is the fixed principal used by cand() helpers in this

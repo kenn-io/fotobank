@@ -14,14 +14,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	airuntime "github.com/wesm/fotobank/internal/ai/runtime"
-	store "github.com/wesm/fotobank/internal/appsettings"
-	"github.com/wesm/fotobank/internal/httpapi"
-	"github.com/wesm/fotobank/internal/identity"
-	"github.com/wesm/fotobank/internal/owners"
-	appsettingssvc "github.com/wesm/fotobank/internal/service/appsettings"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	airuntime "go.kenn.io/fotobank/internal/ai/runtime"
+	store "go.kenn.io/fotobank/internal/appsettings"
+	"go.kenn.io/fotobank/internal/httpapi"
+	"go.kenn.io/fotobank/internal/identity"
+	"go.kenn.io/fotobank/internal/owners"
+	appsettingssvc "go.kenn.io/fotobank/internal/service/appsettings"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 func TestAdminSettingsAuthFailures(t *testing.T) {

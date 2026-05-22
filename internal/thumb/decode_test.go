@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/thumb"
+	"go.kenn.io/fotobank/internal/thumb"
 )
 
 func TestDecodeJPEGNoOrientation(t *testing.T) {

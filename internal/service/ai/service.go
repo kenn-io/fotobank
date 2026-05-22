@@ -9,16 +9,16 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/ack"
-	"github.com/wesm/fotobank/internal/ai/failures"
-	"github.com/wesm/fotobank/internal/ai/gapscanner"
-	"github.com/wesm/fotobank/internal/ai/jobs"
-	"github.com/wesm/fotobank/internal/ai/results"
-	airuntime "github.com/wesm/fotobank/internal/ai/runtime"
-	"github.com/wesm/fotobank/internal/ai/skipped"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/ack"
+	"go.kenn.io/fotobank/internal/ai/failures"
+	"go.kenn.io/fotobank/internal/ai/gapscanner"
+	"go.kenn.io/fotobank/internal/ai/jobs"
+	"go.kenn.io/fotobank/internal/ai/results"
+	airuntime "go.kenn.io/fotobank/internal/ai/runtime"
+	"go.kenn.io/fotobank/internal/ai/skipped"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // ConfigFingerprints captures the active per-task fingerprints derived

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 // TestOpenTestDB_VecRegistered proves that vec_version() resolves

@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ingest"
-	"github.com/wesm/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/ingest"
+	"go.kenn.io/fotobank/internal/media"
 )
 
 func TestDiscoverClassifies(t *testing.T) {

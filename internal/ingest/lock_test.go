@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/ingest"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/ingest"
 )
 
 func TestLockIsExclusive(t *testing.T) {

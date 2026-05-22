@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // Credential holds the passcode hash for one principal.

@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/broker"
-	"github.com/wesm/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/broker"
+	"go.kenn.io/fotobank/internal/share"
 )
 
 func TestNoopBrokerImplementsInterface(t *testing.T) {

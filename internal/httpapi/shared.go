@@ -8,9 +8,9 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/service"
 )
 
 type sharedPrincipalDTO struct {

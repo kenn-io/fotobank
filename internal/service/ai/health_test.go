@@ -10,18 +10,18 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/ack"
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	"github.com/wesm/fotobank/internal/ai/failures"
-	"github.com/wesm/fotobank/internal/ai/gapscanner"
-	"github.com/wesm/fotobank/internal/ai/jobs"
-	"github.com/wesm/fotobank/internal/ai/results"
-	airuntime "github.com/wesm/fotobank/internal/ai/runtime"
-	"github.com/wesm/fotobank/internal/ai/skipped"
-	"github.com/wesm/fotobank/internal/owners"
-	aiservice "github.com/wesm/fotobank/internal/service/ai"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/ack"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/ai/failures"
+	"go.kenn.io/fotobank/internal/ai/gapscanner"
+	"go.kenn.io/fotobank/internal/ai/jobs"
+	"go.kenn.io/fotobank/internal/ai/results"
+	airuntime "go.kenn.io/fotobank/internal/ai/runtime"
+	"go.kenn.io/fotobank/internal/ai/skipped"
+	"go.kenn.io/fotobank/internal/owners"
+	aiservice "go.kenn.io/fotobank/internal/service/ai"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 type stubProbe struct {

@@ -12,16 +12,16 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/ack"
-	"github.com/wesm/fotobank/internal/ai/failures"
-	"github.com/wesm/fotobank/internal/ai/gateway"
-	"github.com/wesm/fotobank/internal/ai/jobs"
-	"github.com/wesm/fotobank/internal/ai/results"
-	"github.com/wesm/fotobank/internal/ai/skipped"
-	"github.com/wesm/fotobank/internal/ai/worker"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/ack"
+	"go.kenn.io/fotobank/internal/ai/failures"
+	"go.kenn.io/fotobank/internal/ai/gateway"
+	"go.kenn.io/fotobank/internal/ai/jobs"
+	"go.kenn.io/fotobank/internal/ai/results"
+	"go.kenn.io/fotobank/internal/ai/skipped"
+	"go.kenn.io/fotobank/internal/ai/worker"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 type stubGateway struct {

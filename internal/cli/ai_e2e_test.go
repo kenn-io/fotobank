@@ -14,12 +14,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	"github.com/wesm/fotobank/internal/ai/failures"
-	"github.com/wesm/fotobank/internal/cli"
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/ai/failures"
+	"go.kenn.io/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // writeAIEmbedConfig writes a TOML config sufficient for the embed-task

@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	"github.com/wesm/fotobank/internal/cli"
-	"github.com/wesm/fotobank/internal/version"
+	"go.kenn.io/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/version"
 )
 
 // Overwritten by -ldflags "-X main.vVersion=..." in release builds.

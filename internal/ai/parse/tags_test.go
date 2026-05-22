@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai/parse"
+	"go.kenn.io/fotobank/internal/ai/parse"
 )
 
 func TestParseTags_Happy(t *testing.T) {

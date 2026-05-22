@@ -10,11 +10,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/reconcile"
-	"github.com/wesm/fotobank/internal/testutil/mediaseed"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/reconcile"
+	"go.kenn.io/fotobank/internal/testutil/mediaseed"
 )
 
 // Scale benchmark for reconcile against a 10k-row library + matching

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // Input is the structured request shape Resolve consumes. Every field

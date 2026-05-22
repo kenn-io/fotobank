@@ -15,8 +15,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // InsertMedia inserts a primary photo for owner with fields from the

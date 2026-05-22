@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai/runtime"
-	"github.com/wesm/fotobank/internal/appsettings"
+	"go.kenn.io/fotobank/internal/ai/runtime"
+	"go.kenn.io/fotobank/internal/appsettings"
 )
 
 type fakeRepo struct {

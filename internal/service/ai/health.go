@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // Probe abstracts the gateway HealthCheck. Tests pass a stub.

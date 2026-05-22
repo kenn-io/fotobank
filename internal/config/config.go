@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/search"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/search"
 )
 
 //go:embed config.example.toml

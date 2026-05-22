@@ -8,11 +8,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/broker"
-	"github.com/wesm/fotobank/internal/brokerexec"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/share"
-	"github.com/wesm/fotobank/internal/testutil/brokerhelper"
+	"go.kenn.io/fotobank/internal/broker"
+	"go.kenn.io/fotobank/internal/brokerexec"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/testutil/brokerhelper"
 )
 
 func TestMain(m *testing.M) {

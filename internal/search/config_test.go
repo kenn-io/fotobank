@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/search"
+	"go.kenn.io/fotobank/internal/search"
 )
 
 func TestConfig_DefaultsApply(t *testing.T) {

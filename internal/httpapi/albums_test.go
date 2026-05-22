@@ -14,16 +14,16 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/album"
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/httpapi"
-	"github.com/wesm/fotobank/internal/identity"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/service"
-	"github.com/wesm/fotobank/internal/share"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/album"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/httpapi"
+	"go.kenn.io/fotobank/internal/identity"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 func TestTranslateAlbumErrorOwnerMismatchMapsTo500(t *testing.T) {

@@ -9,10 +9,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/parse"
-	"github.com/wesm/fotobank/internal/ai/results"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/parse"
+	"go.kenn.io/fotobank/internal/ai/results"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 func TestWriteTagSuccess(t *testing.T) {

@@ -6,9 +6,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/appsettings"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/appsettings"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 func TestRepoUpsertGetListDelete(t *testing.T) {

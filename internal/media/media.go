@@ -6,7 +6,7 @@ package media
 import (
 	"time"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // Type is the discriminator between photo and video rows.

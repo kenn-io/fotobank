@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/geo"
+	"go.kenn.io/fotobank/internal/geo"
 )
 
 func TestNaturalEarthResolveKnownCities(t *testing.T) {

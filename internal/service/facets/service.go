@@ -19,10 +19,10 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/search/hybrid"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/search/hybrid"
 )
 
 // Filters is the auth-stamped facet input the HTTP transport assembles

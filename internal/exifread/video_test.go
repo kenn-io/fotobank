@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/exifread"
+	"go.kenn.io/fotobank/internal/exifread"
 )
 
 func TestExtractVideoMP4ParsesCreationTime(t *testing.T) {

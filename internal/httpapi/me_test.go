@@ -8,9 +8,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/httpapi"
-	"github.com/wesm/fotobank/internal/identity"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/httpapi"
+	"go.kenn.io/fotobank/internal/identity"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 func TestMeReturnsStubPrincipal(t *testing.T) {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // Backend is the read-side abstraction the hybrid Engine sits on top

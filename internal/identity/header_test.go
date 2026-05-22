@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/identity"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/identity"
 )
 
 func TestHeaderProviderReadsConfiguredHeaders(t *testing.T) {

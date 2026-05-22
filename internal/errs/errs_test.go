@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/wesm/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/errs"
 )
 
 func TestSentinelsAreDistinct(t *testing.T) {

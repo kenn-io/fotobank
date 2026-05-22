@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/wesm/fotobank/internal/identity"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/identity"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 func TestStubWithScopesCarriesScopesOnEveryRequest(t *testing.T) {

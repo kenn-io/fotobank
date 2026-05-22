@@ -6,11 +6,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/jobs"
-	"github.com/wesm/fotobank/internal/ai/skipped"
-	"github.com/wesm/fotobank/internal/ingest"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/jobs"
+	"go.kenn.io/fotobank/internal/ai/skipped"
+	"go.kenn.io/fotobank/internal/ingest"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 func TestEnqueueForPhotoCreatesBothTaskJobs(t *testing.T) {

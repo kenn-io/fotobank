@@ -11,13 +11,13 @@ import (
 	"math"
 	"strings"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	"github.com/wesm/fotobank/internal/ai/jobs"
-	"github.com/wesm/fotobank/internal/ai/results"
-	"github.com/wesm/fotobank/internal/ai/skipped"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/ai/jobs"
+	"go.kenn.io/fotobank/internal/ai/results"
+	"go.kenn.io/fotobank/internal/ai/skipped"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // ScanRequest controls one scan invocation.

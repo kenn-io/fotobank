@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // Repo is a SQLite-backed store of scopes + scope_media rows. Split

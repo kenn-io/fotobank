@@ -12,13 +12,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/service"
-	"github.com/wesm/fotobank/internal/storage"
-	"github.com/wesm/fotobank/internal/testutil"
-	"github.com/wesm/fotobank/internal/thumb"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/storage"
+	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/thumb"
 )
 
 // thumbServiceFixture bundles the collaborators the ThumbService tests

@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai"
 )
 
 func TestFingerprintString(t *testing.T) {

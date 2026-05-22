@@ -3,7 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/wesm/fotobank/internal/version"
+	"go.kenn.io/fotobank/internal/version"
 )
 
 func newVersionCmd() *cobra.Command {

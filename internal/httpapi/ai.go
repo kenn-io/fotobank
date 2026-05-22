@@ -13,11 +13,11 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/failures"
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/errs"
-	aiservice "github.com/wesm/fotobank/internal/service/ai"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/failures"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/errs"
+	aiservice "go.kenn.io/fotobank/internal/service/ai"
 )
 
 // registerAIRoutes mounts /api/v1/ai/* on api. svc==nil leaves the

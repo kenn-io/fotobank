@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/fotobank/internal/broker"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/broker"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/share"
 )
 
 const defaultCallTimeout = 30 * time.Second

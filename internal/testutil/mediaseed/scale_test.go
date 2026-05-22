@@ -6,9 +6,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/testutil"
-	"github.com/wesm/fotobank/internal/testutil/mediaseed"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/mediaseed"
 )
 
 // TestSeedScaleLibrary_Determinism pins the Seed contract: same opts

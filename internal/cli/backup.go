@@ -14,8 +14,8 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 
-	"github.com/wesm/fotobank/internal/backup"
-	"github.com/wesm/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/backup"
+	"go.kenn.io/fotobank/internal/config"
 )
 
 func newBackupCmd() *cobra.Command {

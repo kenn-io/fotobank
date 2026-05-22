@@ -7,7 +7,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // Principal carries the display handle alongside the owners Principal fields,

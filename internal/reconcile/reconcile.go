@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/fotobank/internal/exifread"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/search/index"
-	"github.com/wesm/fotobank/internal/storage"
+	"go.kenn.io/fotobank/internal/exifread"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/search/index"
+	"go.kenn.io/fotobank/internal/storage"
 )
 
 // defaultTempGrace is the minimum age a ".tmp-…" file must reach before

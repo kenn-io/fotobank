@@ -9,10 +9,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 // mustCreateActiveGen creates a fresh building generation and promotes

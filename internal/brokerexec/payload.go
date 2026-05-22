@@ -3,8 +3,8 @@ package brokerexec
 import (
 	"time"
 
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/share"
 )
 
 // schemaVersion is bumped on incompatible changes to the wire JSON.

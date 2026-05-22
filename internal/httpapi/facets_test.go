@@ -12,14 +12,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/httpapi"
-	"github.com/wesm/fotobank/internal/identity"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/service/facets"
-	"github.com/wesm/fotobank/internal/testutil"
-	"github.com/wesm/fotobank/internal/testutil/mediaseed"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/httpapi"
+	"go.kenn.io/fotobank/internal/identity"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/service/facets"
+	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/mediaseed"
 )
 
 // facetsRouteHiddenChecker satisfies facets.HiddenChecker for tests that

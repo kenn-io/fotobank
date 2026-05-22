@@ -6,9 +6,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/broker"
-	"github.com/wesm/fotobank/internal/brokerexec"
-	"github.com/wesm/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/broker"
+	"go.kenn.io/fotobank/internal/brokerexec"
+	"go.kenn.io/fotobank/internal/config"
 )
 
 func TestNewBrokerClientStub(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/share"
 )
 
 func TestNewPublishRequestShape(t *testing.T) {

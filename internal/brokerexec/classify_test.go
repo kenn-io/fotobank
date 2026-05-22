@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/broker"
+	"go.kenn.io/fotobank/internal/broker"
 )
 
 func TestClassifyExitPermanent(t *testing.T) {

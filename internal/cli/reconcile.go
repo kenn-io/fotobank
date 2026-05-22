@@ -10,12 +10,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wesm/fotobank/internal/config"
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/reconcile"
-	"github.com/wesm/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/reconcile"
+	"go.kenn.io/fotobank/internal/service"
 )
 
 // newReconcileCmd wires the `fotobank reconcile` subcommand. It walks the

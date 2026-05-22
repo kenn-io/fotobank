@@ -14,8 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/thumb"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/thumb"
 )
 
 // buildSyntheticTIFFWithPreview constructs a minimal TIFF that embeds a

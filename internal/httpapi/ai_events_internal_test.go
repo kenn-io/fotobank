@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // TestEmitAICompletedRoutesByTask confirms the helper picks the right

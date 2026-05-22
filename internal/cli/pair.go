@@ -11,12 +11,12 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/wesm/fotobank/internal/config"
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/ingest"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/ingest"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // newPairCmd wires the `fotobank pair` command group. Running `fotobank

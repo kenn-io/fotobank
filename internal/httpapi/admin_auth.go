@@ -7,7 +7,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 func requireAdmin(ctx context.Context, admins []owners.Principal) (owners.Principal, error) {

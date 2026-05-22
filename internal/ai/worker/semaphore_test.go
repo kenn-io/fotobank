@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai/worker"
+	"go.kenn.io/fotobank/internal/ai/worker"
 )
 
 func TestSemaphoreLimitsConcurrency(t *testing.T) {

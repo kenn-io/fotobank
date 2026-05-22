@@ -1,4 +1,4 @@
-module github.com/wesm/fotobank
+module go.kenn.io/fotobank
 
 go 1.26.0
 

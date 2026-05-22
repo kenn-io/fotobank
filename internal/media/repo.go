@@ -11,8 +11,8 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // ErrDuplicateChecksum wraps errs.ErrAlreadyExists and indicates that

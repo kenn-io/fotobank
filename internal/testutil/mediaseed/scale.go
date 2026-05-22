@@ -11,8 +11,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // baseTime is the fixed timestamp anchor for every time-valued column

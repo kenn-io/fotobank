@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/service"
-	"github.com/wesm/fotobank/internal/thumb"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/thumb"
 )
 
 // registerMediaThumb wires GET /api/v1/media/{id}/thumb onto mux. The

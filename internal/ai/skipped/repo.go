@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wesm/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai"
 )
 
 // Repo is the DB-only handle for ai_skipped.

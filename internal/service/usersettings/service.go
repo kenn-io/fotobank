@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // AIInspectionKey is the canonical user_settings key for the per-caller

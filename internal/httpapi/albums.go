@@ -8,11 +8,11 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/wesm/fotobank/internal/album"
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/service"
-	"github.com/wesm/fotobank/internal/share"
+	"go.kenn.io/fotobank/internal/album"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/share"
 )
 
 // translateAlbumError maps service-layer errors to huma.StatusError with

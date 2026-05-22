@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/cli"
 )
 
 // writeBackupConfig creates a TOML config sufficient for backup commands.

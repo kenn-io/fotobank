@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wesm/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/config"
 )
 
 // resolveDBPath returns the absolute SQLite path the server and CLI

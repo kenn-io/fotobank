@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/errs"
 )
 
 // Row mirrors a row in the embedding_generations table.

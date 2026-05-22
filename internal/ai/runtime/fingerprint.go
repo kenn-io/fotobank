@@ -5,10 +5,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	"github.com/wesm/fotobank/internal/ai/imginput"
-	aiprompts "github.com/wesm/fotobank/internal/ai/prompts"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/ai/imginput"
+	aiprompts "go.kenn.io/fotobank/internal/ai/prompts"
 )
 
 // ClaimFingerprints are queue-safety identities stored in

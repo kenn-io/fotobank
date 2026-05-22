@@ -8,11 +8,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/auth/hidden"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/search/hybrid"
-	searchsvc "github.com/wesm/fotobank/internal/service/search"
+	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/search/hybrid"
+	searchsvc "go.kenn.io/fotobank/internal/service/search"
 )
 
 // fakeEngine captures the hybrid.Request the service emits and returns

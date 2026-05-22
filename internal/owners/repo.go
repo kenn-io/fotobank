@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wesm/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/errs"
 )
 
 // Repo is a SQLite-backed store of registered Owners. It uses a split

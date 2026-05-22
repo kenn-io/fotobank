@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // Stub is a Provider that returns a preconfigured Principal for every

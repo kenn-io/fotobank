@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // Repo is a SQLite-backed store of album + album_media rows. It uses a

@@ -19,14 +19,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/ai/jobs"
-	airuntime "github.com/wesm/fotobank/internal/ai/runtime"
-	appsettingsstore "github.com/wesm/fotobank/internal/appsettings"
-	"github.com/wesm/fotobank/internal/cli"
-	"github.com/wesm/fotobank/internal/db"
-	"github.com/wesm/fotobank/internal/media"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/jobs"
+	airuntime "go.kenn.io/fotobank/internal/ai/runtime"
+	appsettingsstore "go.kenn.io/fotobank/internal/appsettings"
+	"go.kenn.io/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // jsonUnmarshal is a thin alias used by newTestEmbedEndpoint so we

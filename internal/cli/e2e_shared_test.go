@@ -16,7 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/cli"
 )
 
 // TestSharedE2EHeaderMode drives the grantee-side /api/v1/shared/*

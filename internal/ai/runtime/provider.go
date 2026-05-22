@@ -10,9 +10,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/wesm/fotobank/internal/ai"
-	"github.com/wesm/fotobank/internal/appsettings"
-	"github.com/wesm/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/appsettings"
+	"go.kenn.io/fotobank/internal/config"
 )
 
 // SettingsRepo is the read surface the provider needs from appsettings.

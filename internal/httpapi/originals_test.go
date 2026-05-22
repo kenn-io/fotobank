@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/media"
 )
 
 func TestWriteOriginalResponseFullBody(t *testing.T) {

@@ -7,11 +7,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wesm/fotobank/internal/ai/embedding"
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/owners"
-	"github.com/wesm/fotobank/internal/search"
-	"github.com/wesm/fotobank/internal/search/index"
+	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/search"
+	"go.kenn.io/fotobank/internal/search/index"
 )
 
 // Engine is the search v1 routing layer that sits between the service

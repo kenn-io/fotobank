@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai/prompts"
+	"go.kenn.io/fotobank/internal/ai/prompts"
 )
 
 // pinned hashes — bump these when you bump the version string.

@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // PairClass enumerates the pairing role of a row's mime type.

@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/exifread"
+	"go.kenn.io/fotobank/internal/exifread"
 )
 
 func TestExtractPhotoParsesCoreFields(t *testing.T) {

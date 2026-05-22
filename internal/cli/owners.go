@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wesm/fotobank/internal/cli/clictx"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/cli/clictx"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 func newOwnersCmd() *cobra.Command {

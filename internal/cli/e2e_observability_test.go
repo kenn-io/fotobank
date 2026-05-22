@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/cli"
 )
 
 // writeObsConfig produces a TOML config with a free-port admin listener

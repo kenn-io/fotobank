@@ -9,8 +9,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/wesm/fotobank/internal/errs"
-	"github.com/wesm/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // MediaPrivacy is the subset of the media layer that Service needs for

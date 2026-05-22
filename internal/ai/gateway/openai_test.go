@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai/gateway"
+	"go.kenn.io/fotobank/internal/ai/gateway"
 )
 
 func TestOpenAI_GenerateSuccess(t *testing.T) {

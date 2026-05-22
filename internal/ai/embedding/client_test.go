@@ -14,7 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/wesm/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/ai/embedding"
 )
 
 // vec returns a JSON array literal of length n with every entry set to v.
