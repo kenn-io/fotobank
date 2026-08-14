@@ -1,6 +1,6 @@
 module go.kenn.io/fotobank
 
-go 1.26.0
+go 1.26.6
 
 tool go.uber.org/nilaway/cmd/nilaway
 
