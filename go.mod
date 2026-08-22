@@ -1,6 +1,6 @@
 module go.kenn.io/fotobank
 
-go 1.26.6
+go 1.27.0
 
 tool go.uber.org/nilaway/cmd/nilaway
 
@@ -18,12 +18,12 @@ require (
 	github.com/paulmach/orb v0.13.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	golang.org/x/crypto v0.50.0
+	golang.org/x/crypto v0.51.0
 	golang.org/x/image v0.39.0
 	golang.org/x/sync v0.20.0
-	golang.org/x/term v0.42.0
-	golang.org/x/text v0.36.0
-	golang.org/x/tools v0.43.0
+	golang.org/x/term v0.43.0
+	golang.org/x/text v0.37.0
+	golang.org/x/tools v0.45.0
 )
 
 require (
@@ -33,16 +33,17 @@ require (
 	github.com/go-errors/errors v1.4.2 // indirect
 	github.com/golang/geo v0.0.0-20210211234256-740aa86cb551 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/klauspost/compress v1.18.4 // indirect
+	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/valyala/fastrand v1.1.0 // indirect
 	github.com/valyala/histogram v1.2.0 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
-	go.uber.org/nilaway v0.0.0-20260318203545-ad240b12fb4c // indirect
-	golang.org/x/mod v0.34.0 // indirect
-	golang.org/x/net v0.52.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+	go.uber.org/nilaway v0.0.0-20260808063849-8649a03c818a // indirect
+	golang.org/x/exp/typeparams v0.0.0-20260611194520-c48552f49976 // indirect
+	golang.org/x/mod v0.36.0 // indirect
+	golang.org/x/net v0.54.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

@@ -186,7 +186,7 @@ func (s *Service) taskHealth(ctx context.Context, caller owners.Principal, t ai.
 // round-trip to the ack store.
 func (s *Service) embedHealth(ctx context.Context, caller owners.Principal, ackMissing bool) EmbedTaskPart {
 	fp, _ := s.taskFingerprints(ai.TaskEmbed)
-	tp := EmbedTaskPart{TaskPart: TaskPart{ActiveFingerprint: fp.result.String()}}
+	tp := EmbedTaskPart{ActiveFingerprint: fp.result.String()}
 	if ackMissing {
 		tp.PausedReason = "acknowledgement_required"
 	}

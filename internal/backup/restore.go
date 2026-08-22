@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -118,8 +119,7 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 			}
 		}
 		// Restore each moved-aside file, in reverse order.
-		for i := len(movedAside) - 1; i >= 0; i-- {
-			movedTo := movedAside[i]
+		for _, movedTo := range slices.Backward(movedAside) {
 			origPath := strings.TrimSuffix(movedTo, suffix)
 			if rmErr := os.Rename(movedTo, origPath); rmErr != nil {
 				rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback rename %s -> %s: %w", movedTo, origPath, rmErr))
