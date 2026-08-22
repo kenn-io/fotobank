@@ -134,7 +134,7 @@ The setup path is still developer-oriented.
 
 Requirements:
 
-- Go 1.26+
+- Go 1.27+
 - A C compiler, because SQLite uses `mattn/go-sqlite3`, FTS5, and sqlite-vec
 - Bun 1.3+ for frontend builds
 - A writable NAS/archive directory
