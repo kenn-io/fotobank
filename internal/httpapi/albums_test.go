@@ -441,10 +441,10 @@ func newAlbumsHiddenFixture(t *testing.T) albumsHiddenFixture {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return albumsHiddenFixture{
-		albumsAPIFixture: albumsAPIFixture{srv: srv, owner: p, svc: albumSvc, rw: d.WriteDB()},
-		hiddenSvc:        hiddenSvc,
-		hiddenRepo:       hRepo,
-		cookieCfg:        cookieCfg,
+		srv: srv, owner: p, svc: albumSvc, rw: d.WriteDB(),
+		hiddenSvc:  hiddenSvc,
+		hiddenRepo: hRepo,
+		cookieCfg:  cookieCfg,
 	}
 }
 

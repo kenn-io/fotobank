@@ -94,7 +94,7 @@ func traverse(cfg *config.Config, key string) (string, error) {
 		t := v.Type()
 		found := false
 		for i := range t.NumField() {
-			tag := strings.Split(t.Field(i).Tag.Get("toml"), ",")[0]
+			tag, _, _ := strings.Cut(t.Field(i).Tag.Get("toml"), ",")
 			if tag == p {
 				v = v.Field(i)
 				found = true

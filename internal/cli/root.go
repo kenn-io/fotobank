@@ -76,8 +76,7 @@ var errFlagParse = errors.New("flag parse error")
 // args.go) so they return usageError directly instead of relying on
 // fragile substring matching.
 func isUsageError(err error) bool {
-	var u usageError
-	if errors.As(err, &u) {
+	if _, ok := errors.AsType[usageError](err); ok {
 		return true
 	}
 	if errors.Is(err, errFlagParse) {

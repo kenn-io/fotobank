@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -31,7 +32,15 @@ func TestBinaryEmitsOpenAPIWithKnownPaths(t *testing.T) {
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	localEnv, err := exec.Command("git", "rev-parse", "--local-env-vars").Output()
+	require.NoError(t, err)
+	localVars := strings.Fields(string(localEnv))
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Env = slices.DeleteFunc(os.Environ(), func(value string) bool {
+		name, _, _ := strings.Cut(value, "=")
+		return slices.Contains(localVars, name)
+	})
+	out, err := cmd.Output()
 	require.NoError(t, err)
 	return strings.TrimSpace(string(out))
 }
