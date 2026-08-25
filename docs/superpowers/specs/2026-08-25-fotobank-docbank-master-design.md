@@ -1,6 +1,6 @@
 # Fotobank on Docbank — Development Master Spec
 
-**Status:** Draft v0.2
+**Status:** Draft v0.3
 **Date:** 2026-08-25
 **Scope:** Governing architecture and development sequence for rebuilding
 Fotobank on Docbank as an embedded Go library. Each implementation stage below
@@ -553,12 +553,13 @@ Video playback requires byte ranges. Docbank's current embedded content reader
 is sequential and verified but does not expose range reads or random access.
 Docbank must add a catalog-authorized version range operation that works across
 raw loose, packed, and secondary representations. The operation always returns
-the requested logical decoded byte range. Raw loose and uncompressed pack
-entries use native offset reads. Compressed representations may decode from the
-beginning or materialize a verified temporary representation; the API does not
-promise native random access for zstd. Fotobank originals keep compression
-disabled, so their normal path does not pay that fallback cost. Fotobank must
-not bypass the catalog by opening physical files directly.
+the requested logical decoded byte range. Raw loose content uses native offset
+reads. Compressed loose and packed representations may decode from the beginning
+or materialize a temporary seekable representation; the API does not promise
+native random access for those representations. Fotobank originals keep
+compression and packing disabled, so their normal path does not pay that
+fallback cost. Fotobank must not bypass the catalog by opening physical files
+directly.
 
 Albums and shares target Fotobank asset IDs. File-level alternates are resolved
 only after the caller is authorized for the asset. Share capability IDs remain
