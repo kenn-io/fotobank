@@ -1,6 +1,6 @@
 # Fotobank on Docbank — Development Master Spec
 
-**Status:** Draft v0.1
+**Status:** Draft v0.2
 **Date:** 2026-08-25
 **Scope:** Governing architecture and development sequence for rebuilding
 Fotobank on Docbank as an embedded Go library. Each implementation stage below
@@ -208,6 +208,12 @@ an opaque Fotobank UUID. The initial file roles are:
 - `sidecar` — metadata that describes another file, initially XMP; and
 - `alternate` — another representation of the same asset, such as a DNG.
 
+Every ready asset has exactly one `primary` file. A RAW-only import uses the
+RAW as primary; a grouped camera JPEG is preferred when present; otherwise the
+single DNG, video, or supported source file is primary. A pending import may
+temporarily have no primary, but it is not listable until the asset transaction
+selects one.
+
 The schema stores explicit file relationships:
 
 - `sidecar_of`: source file contains metadata for target file;
@@ -243,6 +249,12 @@ The stable virtual path is:
 ```text
 /owners/{owner-storage-key}/media/{file-uuid}/{sanitized-original-basename}
 ```
+
+`owner-storage-key` is an immutable, path-safe, opaque UUID assigned when
+Fotobank first registers an owner and stored in the `owners` row. It is never
+derived from a mutable handle, hub, or user ID. Stub mode may supply the value
+explicitly for deterministic development; otherwise owner registration
+generates it. Re-registering an owner with a different key is an error.
 
 Checkout paths and user-visible names never change this coordinate. Allocating
 the file UUID before calling `Vault.Create` makes creation idempotent and makes
@@ -324,6 +336,12 @@ policy, and lifecycle state. The selection policy initially supports:
 - albums;
 - capture-year ranges; and
 - all assets, as an explicit capacity-consuming option.
+
+Capture-year selection uses the normalized asset capture time produced by the
+EXIF projection. A newly imported asset does not enter a year-selected checkout
+until extraction commits that time; checkout reconciliation then materializes
+it. Assets without a capture time remain absent from year ranges but are still
+reachable through explicit, album, and all-assets selections.
 
 Partial checkout is the default. It avoids silently storing a second full copy
 of the archive. An operator who selects all assets must receive an estimated
@@ -430,8 +448,10 @@ required bytes before mutation.
 ### 10.1 Thin-slice topology
 
 The semantic thin slice uses an embedded vault rooted on local scratch storage
-and a copy-based partial checkout. It needs no Docbank change. The data is
-disposable and is not treated as the production archive.
+and a copy-based partial checkout. That storage topology needs no Docbank
+placement or authority-transfer change; Milestone 1 separately requires D02
+for video reads. The data is disposable and is not treated as the production
+archive.
 
 ### 10.2 Production topology
 
@@ -466,6 +486,21 @@ benchmark records direct durable copy time as context; it does not weaken
 Docbank's durability guarantees to reach an arbitrary speed target. Results and
 the chosen concurrency/batch configuration are committed as a development
 report.
+
+The current embedded vault serializes each complete `Create` and `Put`,
+including blob streaming and durable publication, under its mutation mutex.
+Fotobank import workers can overlap source hashing and metadata extraction, but
+their vault writes queue behind one active file. The workload therefore records
+preprocessing time, time queued for the vault, and time inside the vault
+separately. Worker concurrency is tuned only for preprocessing unless Docbank's
+write contract changes.
+
+If serialized vault publication is a material bottleneck in the recorded
+deployment workload, D07 performs a separate Docbank design and implementation
+to permit safe concurrent content-addressed staging/publication while retaining
+serialized catalog authority. The master spec does not assume that moving the
+mutex is safe: cleanup, deduplication, packing exclusion, and receipt recovery
+must be resolved in that Docbank design.
 
 ### 10.4 Checkout capacity policy
 
@@ -510,13 +545,20 @@ Docbank path.
 
 Photo responses use the current Docbank version's SHA-256 as the strong content
 ETag. Hidden and shared-media cache policy remains a Fotobank authorization
-concern.
+concern. The ETag is emitted only after Fotobank authorizes the original-byte
+request. It is a cache validator, not a secrecy boundary; any caller allowed to
+receive it is also allowed to receive and hash the same bytes.
 
 Video playback requires byte ranges. Docbank's current embedded content reader
 is sequential and verified but does not expose range reads or random access.
 Docbank must add a catalog-authorized version range operation that works across
-raw, compressed, packed, and secondary representations. Fotobank must not bypass
-the catalog by opening physical files directly.
+raw loose, packed, and secondary representations. The operation always returns
+the requested logical decoded byte range. Raw loose and uncompressed pack
+entries use native offset reads. Compressed representations may decode from the
+beginning or materialize a verified temporary representation; the API does not
+promise native random access for zstd. Fotobank originals keep compression
+disabled, so their normal path does not pay that fallback cost. Fotobank must
+not bypass the catalog by opening physical files directly.
 
 Albums and shares target Fotobank asset IDs. File-level alternates are resolved
 only after the caller is authorized for the asset. Share capability IDs remain
@@ -528,13 +570,26 @@ Before production data is entrusted to the system:
 
 - Docbank must expose its backup lifecycle through the embedded library;
 - Fotobank must snapshot its SQLite authority;
-- one Fotobank backup command must hold the application mutation gate while it
-  captures both authorities; and
+- one Fotobank backup command must guarantee that every Docbank version
+  referenced by the Fotobank snapshot exists in the Docbank snapshot; and
 - a manifest must bind the Fotobank snapshot, Docbank snapshot, vault identity,
   schema versions, and creation time.
 
+The backup command establishes a destructive-operation fence that blocks
+product trash, version pruning, trash empty, and garbage collection for the
+complete coordinated capture. It holds the general application mutation gate
+only long enough to capture an immutable Fotobank SQLite snapshot, then releases
+ordinary append-only imports and version writes while Docbank takes its short
+metadata freeze and streams the archive. A later Docbank snapshot may therefore
+be a logical superset of the Fotobank snapshot, but it cannot omit or destroy a
+version referenced by Fotobank. The coordinated manifest is published before
+the destructive-operation fence is released.
+
 Restore is proven only by restoring both authorities into an empty location,
 opening the vault, verifying referenced content, and rebuilding a checkout.
+Whole-vault content scrubbing uses Docbank's existing bounded `Vault.Verify`
+operation until its report says no further page remains; backup-repository
+verification remains part of D04.
 
 V1 retains every XMP and media content version. XMP churn is measured, but
 version pruning is not a prerequisite unless the measurement shows material
@@ -648,14 +703,16 @@ where behavior changes, and no compatibility layer for the replaced design.
 | PR | Outcome | Depends on |
 |---|---|---|
 | F01 | Add the Docbank module, vault configuration/lifecycle, and the single internal adapter with real-vault integration tests. No product path writes content yet. | F00 |
-| F02 | Replace the one-row-per-file media model with opaque assets, media files, explicit file relationships, and cached Docbank mapping fields. Edit the initial migration in place and update existing foreign keys and consumers so each current single-file case remains coherent. | F01 |
-| F03 | Cut import writes and current-original reads over to Docbank, SHA-256 identity, stable virtual paths, and pending-operation receipts. Use Docbank SHA-256 for content ETags. Remove the replaced original-byte read/write path and MD5 identity in the same PR. | F02 |
+| F02a | Add and test the opaque asset, media-file, relationship, and cached Docbank-mapping schema/domain repositories. The new model is not yet used by product writes, so this additive review slice introduces no dual persistence. | F01 |
+| F02b | Cut existing foreign keys and consumers to the asset/file model, then remove the superseded one-row-per-file schema and domain shape. The Milestone 1 plan may divide this mechanical cutover into a buildable stack at real package seams. | F02a |
+| D02 | Expose catalog-authorized exact-version logical byte ranges with the raw/packed/compressed behavior defined in §12. | — |
+| F03 | Cut import writes and all current-original reads, including video ranges, over to Docbank, SHA-256 identity, stable virtual paths, and pending-operation receipts. Use Docbank SHA-256 for content ETags. Remove the replaced original-byte read/write path and MD5 identity in the same PR. | F02b, D02 |
 | F04 | Add exact-version reads and the shared asset/file/version resolver used by checkout rebuilds and projection workers. | F03 |
 | F05 | Add pending-operation restart recovery and orphan reconciliation for create/import operations. | F03 |
 
 **Gate:** A fresh deployment imports a representative RAW/JPEG/XMP set into
 Docbank, restarts at injected operation boundaries, and serves verified photo
-bytes without the legacy storage implementation.
+bytes plus video byte ranges without the legacy storage implementation.
 
 ### Milestone 2 — Writable checkout thin slice
 
@@ -678,12 +735,11 @@ materialization and prove the local checkout is not silently committed.
 | PR | Outcome | Depends on |
 |---|---|---|
 | F12 | Add repeatable 10,000-file and XMP-churn workloads plus a committed result/report format. | F11 |
-| D02 | Expose catalog-authorized exact-version byte-range reads across every physical representation. | — |
-| F13 | Serve video range requests through the Docbank range API and remove the replaced storage-range path. | F04, D02 |
+| D07 (conditional) | Redesign embedded content writes for measured parallel publication without weakening deduplication, cleanup, maintenance exclusion, or receipt recovery. | F12 evidence that serialized vault publication is a material bottleneck |
 | D03a | Expose embedded placement inventory and dry-run planning with stable resumable work coordinates. | — |
 | D03b | Expose embedded replication, authority transfer, primary retirement, and interrupted-operation recovery. | D03a |
-| F14 | Configure flash landing plus NAS authority, run placement jobs, expose backlog/readiness, and recover interrupted handoffs. | F12, D03b |
-| D04 | Expose Docbank backup create/list/verify/restore through its embedded public API. | — |
+| F14 | Configure flash landing plus NAS authority, run placement jobs, expose backlog/readiness, and recover interrupted handoffs. If F12 triggers D07, consume its released API before setting production concurrency. | F12, D03b; D07 when triggered |
+| D04 | Expose Docbank backup create/list/verify/restore through its embedded public API while preserving the short metadata freeze and permitting append mutations during long content streaming. | — |
 | F15 | Add coordinated Fotobank+Docbank backup manifests and prove restore into an empty deployment. | F05, D04 |
 
 **Gate:** Representative content is imported through the production placement
@@ -696,9 +752,9 @@ deployment. No irreplaceable archive is imported before this gate passes.
 | PR | Outcome | Depends on |
 |---|---|---|
 | F16 | Re-key EXIF extraction and normalized metadata to asset/file/current-version identity, including invalidation after checkout commits. | F08 |
-| F17 | Re-key RAW preview, thumbnail, and video-poster jobs/artifacts to exact source versions. | F13, F16 |
+| F17 | Re-key RAW preview, thumbnail, and video-poster jobs/artifacts to exact source versions. | F03, F16 |
 | F18 | Re-key AI tags, captions, embedding generations, lexical search, and hybrid search to assets plus exact source versions. | F16 |
-| F19 | Complete album, hidden-media, share, and public-route adaptation to opaque asset IDs and multi-file assets. | F02, F04 |
+| F19 | Complete album, hidden-media, share, and public-route adaptation to opaque asset IDs and multi-file assets. | F02b, F04 |
 | F20 | Add explicit product deletion, Docbank trash coordination, recovery, and checkout cleanup without automatic garbage collection. | F05, F11, F19 |
 | F21 | Add CLI/admin surfaces for checkout selection, status, conflicts, placement readiness, and recovery operations. | F10, F14 |
 
@@ -730,6 +786,9 @@ absence is a valid final state, not incomplete work.
   feature PR.
 - Pull requests may be stacked where dependencies require it, but every PR must
   state its base and remain independently reviewable.
+- F02a/F02b may be further split only at seams that leave each stack layer
+  buildable and testable. A review-sized stack does not permit dual product
+  writes, fallback reads, or a compatibility adapter between media models.
 - Performance claims require the workloads in §10.3. Storage optimizations do
   not precede those measurements.
 - A milestone gate is part of the milestone, not optional follow-up work.
@@ -748,8 +807,9 @@ The rebuild is complete when:
    resolution.
 6. The complete checkout can be rebuilt from restored authorities into an empty
    directory.
-7. Video byte ranges, storage placement, integrity, coordinated backup, and
-   restore operate through public embedded Docbank APIs.
+7. Video byte ranges, storage placement, bounded whole-vault content
+   verification, coordinated backup, and restore operate through public
+   embedded Docbank APIs.
 8. EXIF, thumbnails, search, and AI projections are keyed to exact Docbank
    versions and are rebuildable.
 9. Albums, hidden state, and sharing use opaque Fotobank asset IDs without
