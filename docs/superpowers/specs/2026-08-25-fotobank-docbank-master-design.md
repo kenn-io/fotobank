@@ -589,7 +589,9 @@ Restore is proven only by restoring both authorities into an empty location,
 opening the vault, verifying referenced content, and rebuilding a checkout.
 Whole-vault content scrubbing uses Docbank's existing bounded `Vault.Verify`
 operation until its report says no further page remains; backup-repository
-verification remains part of D04.
+verification remains part of D04. Embedded restore verification proves blob
+content integrity for catalog-authorized versions; it does not claim the
+daemon-only whole-catalog metadata validation contract.
 
 V1 retains every XMP and media content version. XMP churn is measured, but
 version pruning is not a prerequisite unless the measurement shows material
