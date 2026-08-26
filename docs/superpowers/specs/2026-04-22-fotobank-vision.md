@@ -9,6 +9,13 @@ their own follow-up sub-specs, each of which yields a separate implementation
 plan. This document settles cross-cutting decisions so sub-specs can proceed
 independently without relitigating them.
 
+> **2026-08-25 rebuild note:**
+> [`2026-08-25-fotobank-docbank-master-design.md`](./2026-08-25-fotobank-docbank-master-design.md)
+> supersedes this document's storage authority, ordinary-NAS-tree, import
+> migration, checksum, and Lightroom-coexistence decisions. The remaining
+> product decisions continue to apply where they do not conflict with the new
+> master spec.
+
 ---
 
 ## 1. Problem
