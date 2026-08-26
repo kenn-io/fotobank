@@ -30,11 +30,11 @@ func newOwnersAddCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "add",
-		Short: "Register a new owner (idempotent on identical --storage-key)",
+		Short: "Register a new owner",
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if hub == "" || userID == "" || storageKey == "" {
-				return newUsageError("--hub, --user-id, and --storage-key are required")
+			if hub == "" || userID == "" {
+				return newUsageError("--hub and --user-id are required")
 			}
 			svc, cleanup, err := clictx.LoadOwnerService()
 			if err != nil {
@@ -43,7 +43,8 @@ func newOwnersAddCmd() *cobra.Command {
 			defer cleanup()
 			p := owners.Principal{Hub: hub, UserID: userID}
 			ctx := cmd.Context()
-			if err := svc.Ensure(ctx, p, storageKey); err != nil {
+			owner, err := svc.Ensure(ctx, p, storageKey)
+			if err != nil {
 				return err
 			}
 			if handle != "" {
@@ -51,13 +52,13 @@ func newOwnersAddCmd() *cobra.Command {
 					return err
 				}
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "added", p)
+			fmt.Fprintln(cmd.OutOrStdout(), "added", p, owner.StorageKey)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&hub, "hub", "", "identity hub (required)")
 	cmd.Flags().StringVar(&userID, "user-id", "", "user ID within the hub (required)")
-	cmd.Flags().StringVar(&storageKey, "storage-key", "", "on-disk storage key (required)")
+	cmd.Flags().StringVar(&storageKey, "storage-key", "", "optional deterministic storage UUID")
 	cmd.Flags().StringVar(&handle, "handle", "", "optional display handle")
 	return cmd
 }

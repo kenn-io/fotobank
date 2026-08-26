@@ -37,7 +37,7 @@ func newWorkerFixture(t *testing.T) *workerFixture {
 	owner := owners.Principal{Hub: "h", UserID: "o"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "sk", time.Now().UTC())
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC())
 	require.NoError(t, err)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 	fake := &brokertest.Fake{}

@@ -39,11 +39,11 @@ func newMediaServiceTest(t *testing.T) mediaServiceFixture {
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	require.NoError(t, err)
 	root := t.TempDir()
-	store := storage.NewNASOnly(root, map[owners.Principal]string{p: "sk"})
+	store := storage.NewNASOnly(root, map[owners.Principal]string{p: "550e8400-e29b-41d4-a716-446655440000"})
 	svc := service.NewMediaService(repo, store)
 	return mediaServiceFixture{
 		svc: svc, owner: p, store: store, repo: repo, rw: d.WriteDB(), root: root,
@@ -121,7 +121,7 @@ func TestMediaServiceListFiltersByCaller(t *testing.T) {
 	ownerB := owners.Principal{Hub: "h", UserID: "b"}
 	_, err := fx.rw.ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		ownerB.Hub, ownerB.UserID, "sk-b", time.Now().UTC(),
+		ownerB.Hub, ownerB.UserID, "550e8400-e29b-41d4-a716-446655440002", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -442,7 +442,7 @@ func TestMediaServiceHideReturnsNotFoundForCrossOwnerID(t *testing.T) {
 	ownerB := owners.Principal{Hub: "h", UserID: "b"}
 	_, err := fx.rw.ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		ownerB.Hub, ownerB.UserID, "sk-b", time.Now().UTC(),
+		ownerB.Hub, ownerB.UserID, "550e8400-e29b-41d4-a716-446655440002", time.Now().UTC(),
 	)
 	r.NoError(err)
 	mB := insertTestMedia(t, fx.repo, ownerB, "2024/b.jpg", "cs-cross")
@@ -542,7 +542,7 @@ func TestMediaService_ListGeo_OwnerScoped(t *testing.T) {
 	ownerB := owners.Principal{Hub: "h", UserID: "b"}
 	_, err := fx.rw.ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		ownerB.Hub, ownerB.UserID, "sk-b", time.Now().UTC(),
+		ownerB.Hub, ownerB.UserID, "550e8400-e29b-41d4-a716-446655440002", time.Now().UTC(),
 	)
 	r.NoError(err)
 

@@ -167,7 +167,7 @@ func SeedScaleLibraryToDB(rw *sql.DB, p owners.Principal, opts ScaleOpts) ([]str
 	if _, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at)
 		 VALUES (?, ?, ?, ?)`,
-		p.Hub, p.UserID, "scale-storage", baseTime,
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440010", baseTime,
 	); err != nil {
 		return nil, fmt.Errorf("seed: insert owner: %w", err)
 	}

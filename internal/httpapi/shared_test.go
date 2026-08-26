@@ -54,8 +54,8 @@ func setupSharedFxInputs(t *testing.T) sharedFxInputs {
 	// bytes NASOnly will ever see. Fixture covers alice (owner) and bob
 	// (grantee); other tests can extend it as needed.
 	store := storage.NewNASOnly(t.TempDir(), map[owners.Principal]string{
-		{Hub: "h", UserID: "alice"}: "alice-sk",
-		{Hub: "h", UserID: "bob"}:   "bob-sk",
+		{Hub: "h", UserID: "alice"}: "550e8400-e29b-41d4-a716-44665544000e",
+		{Hub: "h", UserID: "bob"}:   "00000000-0000-4000-8000-61db0d8bb01d",
 	})
 	return sharedFxInputs{
 		t: t, d: d, shares: shares, mediaR: mRepo, albumsR: aRepo,
@@ -183,7 +183,7 @@ func TestSharedHTTPGetScopeUnknownReturns404(t *testing.T) {
 	r := require.New(t)
 	in := setupSharedFxInputs(t)
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	h := buildSharedFx(in, bob, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/shared/scopes/"+uuid.NewString(), nil)
@@ -198,9 +198,9 @@ func TestSharedHTTPListScopesReturnsAuthorized(t *testing.T) {
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
 	charlie := owners.Principal{Hub: "h", UserID: "charlie"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), charlie, "charlie-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), charlie, "00000000-0000-4000-8000-96616be8194d")
 
 	m := sharedHTTPSeedMedia(t, in.d.WriteDB(), alice)
 	bob1 := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, false, m)
@@ -236,8 +236,8 @@ func TestSharedHTTPListAlbumsReturnsAlbumLiveOnly(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID, mediaIDs := sharedHTTPSeedAlbum(t, in.d.WriteDB(), alice, in.now, 2)
 	live := sharedHTTPMakeAlbumLiveScope(t, in.shares, alice, bob, albumID, in.now, false)
@@ -267,8 +267,8 @@ func TestSharedHTTPGetAlbumUnauthorizedReturns404(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID, _ := sharedHTTPSeedAlbum(t, in.d.WriteDB(), alice, in.now, 1)
 	// No scope is seeded for bob, and the presented header scopes list is empty.
@@ -284,8 +284,8 @@ func TestSharedHTTPListAlbumMediaPaginates(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID, _ := sharedHTTPSeedAlbum(t, in.d.WriteDB(), alice, in.now, 3)
 	live := sharedHTTPMakeAlbumLiveScope(t, in.shares, alice, bob, albumID, in.now, false)
@@ -355,8 +355,8 @@ func TestSharedHTTPListMediaPaginates(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	t0 := in.now.Add(-2 * time.Hour)
 	t1 := in.now.Add(-1 * time.Hour)
@@ -418,8 +418,8 @@ func TestSharedHTTPListMediaPartialCursorReturns400(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	m := sharedHTTPSeedMedia(t, in.d.WriteDB(), alice)
 	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, false, m)
 	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
@@ -445,8 +445,8 @@ func TestSharedHTTPGetMediaUnauthorizedReturns404(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	m := sharedHTTPSeedMedia(t, in.d.WriteDB(), alice)
 	// No scope at all — bob must see 404, not a permission error.
 	h := buildSharedFx(in, bob, nil)
@@ -462,8 +462,8 @@ func TestSharedHTTPGetMediaAuthorizedReturnsCanDownload(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	m := sharedHTTPSeedMedia(t, in.d.WriteDB(), alice)
 	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, true, m)
 	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
@@ -535,8 +535,8 @@ func TestSharedHTTPThumbAuthorized(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID, version := sharedHTTPSeedMediaWithReadyThumb(t, in, alice, "PNGBYTES")
 	// download=false — thumbs ignore the flag.
 	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, false, mID)
@@ -559,8 +559,8 @@ func TestSharedHTTPThumbUnauthorizedReturns404(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID, _ := sharedHTTPSeedMediaWithReadyThumb(t, in, alice, "PNGBYTES")
 
 	h := buildSharedFx(in, bob, nil) // no scopes
@@ -577,8 +577,8 @@ func TestSharedHTTPOriginalAllowDownloadTrue(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID := sharedHTTPSeedStoredMedia(t, in, alice, "photobytes")
 	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, true, mID)
 	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
@@ -600,8 +600,8 @@ func TestSharedHTTPOriginalAllowDownloadFalseReturns403(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID := sharedHTTPSeedStoredMedia(t, in, alice, "photobytes")
 	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, false, mID)
 	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
@@ -618,8 +618,8 @@ func TestSharedHTTPOriginalRangeReturns206(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID := sharedHTTPSeedStoredMedia(t, in, alice, "0123456789")
 	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, true, mID)
 	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
@@ -639,8 +639,8 @@ func TestSharedHTTPOriginalUnsatisfiableRangeReturns416(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID := sharedHTTPSeedStoredMedia(t, in, alice, "0123456789")
 	s := sharedHTTPMakeMediaSetScope(t, in.shares, alice, bob, in.now, true, mID)
 	sharedHTTPBumpActive(t, in.d.WriteDB(), s.UUID, in.now)
@@ -669,8 +669,8 @@ func TestSharedHTTPListMediaExcludesHidden(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	visible := sharedHTTPSeedMedia(t, in.d.WriteDB(), alice)
 	hidden := sharedHTTPSeedMedia(t, in.d.WriteDB(), alice)
@@ -700,8 +700,8 @@ func TestSharedHTTPListAlbumMediaExcludesHidden(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID, mIDs := sharedHTTPSeedAlbum(t, in.d.WriteDB(), alice, in.now, 2)
 	sharedHTTPHideMedia(t, in.d.WriteDB(), mIDs[1])
@@ -730,8 +730,8 @@ func TestSharedHTTPGetMediaHiddenReturns404(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	mID := sharedHTTPSeedMedia(t, in.d.WriteDB(), alice)
 	sharedHTTPHideMedia(t, in.d.WriteDB(), mID)
@@ -752,8 +752,8 @@ func TestSharedHTTPOriginalHiddenReturns404(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	mID := sharedHTTPSeedStoredMedia(t, in, alice, "photobytes")
 	sharedHTTPHideMedia(t, in.d.WriteDB(), mID)
@@ -774,8 +774,8 @@ func TestSharedHTTPThumbHiddenReturns404(t *testing.T) {
 	in := setupSharedFxInputs(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "alice-sk")
-	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "bob-sk")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedHTTPSeedOwner(t, in.d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	mID, version := sharedHTTPSeedMediaWithReadyThumb(t, in, alice, "thumbbytes")
 	sharedHTTPHideMedia(t, in.d.WriteDB(), mID)

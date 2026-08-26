@@ -35,7 +35,7 @@ func TestCredentialGetNotFound(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	_, err := repo.GetCredential(context.Background(), p)
 	r.ErrorIs(err, errs.ErrNotFound)
@@ -46,7 +46,7 @@ func TestCredentialUpsertAndGet(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	r.NoError(repo.UpsertCredential(context.Background(), p, "hash1", fixedNow))
 
@@ -63,7 +63,7 @@ func TestCredentialUpsertUpdatesHash(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	r.NoError(repo.UpsertCredential(context.Background(), p, "hash1", fixedNow))
 
@@ -83,7 +83,7 @@ func TestCredentialDelete(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	r.NoError(repo.UpsertCredential(context.Background(), p, "hash1", fixedNow))
 	r.NoError(repo.DeleteCredential(context.Background(), p))
@@ -104,7 +104,7 @@ func TestSessionInsertAndLookupActive(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	tok := tokenSHA256("token1")
 	sess := hidden.Session{
@@ -126,7 +126,7 @@ func TestSessionLookupActiveRejectsExpired(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	tok := tokenSHA256("token-expired")
 	sess := hidden.Session{
@@ -146,7 +146,7 @@ func TestRepoLookupActiveSessionRejectsExpiredAndRevoked(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	now := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
 	tok := tokenSHA256("token")
@@ -170,7 +170,7 @@ func TestSessionRevokeAllForPrincipal(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	tok1 := tokenSHA256("t1")
 	tok2 := tokenSHA256("t2")
@@ -195,7 +195,7 @@ func TestSessionSweepExpired(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	expiredTok := tokenSHA256("expired")
 	activeTok := tokenSHA256("active")
@@ -228,7 +228,7 @@ func TestRevokeSessionIdempotent(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	tok := tokenSHA256("token-idempotent")
 	r.NoError(repo.InsertSession(context.Background(), hidden.Session{
@@ -257,7 +257,7 @@ func TestLookupActiveSessionBoundaryAtExactNow(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	now := fixedNow
 	tok := tokenSHA256("token-boundary-exact")
@@ -276,7 +276,7 @@ func TestLookupActiveSessionBoundaryOneNsAfterNow(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	now := fixedNow
 	tok := tokenSHA256("token-boundary-1ns")
@@ -300,7 +300,7 @@ func TestSweepExpiredSessionsBoundaryAtExactNow(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	now := fixedNow
 	tok := tokenSHA256("token-sweep-boundary")
@@ -328,7 +328,7 @@ func TestFailureInsertAndCountRecent(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	since := fixedNow.Add(-10 * time.Minute)
 	n, err := repo.CountRecentFailures(context.Background(), p, since)
@@ -350,7 +350,7 @@ func TestFailurePurgeOld(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	r.NoError(repo.InsertFailure(context.Background(), p, fixedNow.Add(-2*time.Hour)))
 	r.NoError(repo.InsertFailure(context.Background(), p, fixedNow.Add(-30*time.Minute)))
@@ -370,7 +370,7 @@ func TestLockoutGetNotFound(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	_, err := repo.GetLockout(context.Background(), p)
 	r.ErrorIs(err, errs.ErrNotFound)
@@ -381,7 +381,7 @@ func TestLockoutUpsertAndGet(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	until := fixedNow.Add(5 * time.Minute)
 	r.NoError(repo.UpsertLockout(context.Background(), p, until, fixedNow))
@@ -398,7 +398,7 @@ func TestLockoutUpsertExtends(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	until1 := fixedNow.Add(5 * time.Minute)
 	r.NoError(repo.UpsertLockout(context.Background(), p, until1, fixedNow))
@@ -418,7 +418,7 @@ func TestLockoutDelete(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testPrincipal()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	r.NoError(repo.UpsertLockout(context.Background(), p, fixedNow.Add(time.Hour), fixedNow))
 	r.NoError(repo.DeleteLockout(context.Background(), p))

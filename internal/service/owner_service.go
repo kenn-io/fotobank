@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/owners"
 )
@@ -46,36 +48,69 @@ func NewOwnerService(repo OwnerRepo) *OwnerService {
 // the principal exists with a different storage_key. Safe under
 // concurrent callers: an Insert that races and loses to another caller
 // inserting the same row is reinterpreted via a re-read.
-func (s *OwnerService) Ensure(ctx context.Context, p owners.Principal, storageKey string) error {
+func (s *OwnerService) Ensure(
+	ctx context.Context,
+	p owners.Principal,
+	requestedStorageKey string,
+) (owners.Owner, error) {
 	existing, err := s.repo.GetByPrincipal(ctx, p)
 	switch {
 	case err == nil:
-		return s.reconcileStorageKey(existing, p, storageKey)
+		return reconcileStorageKey(existing, p, requestedStorageKey)
 	case errors.Is(err, errs.ErrNotFound):
-		insertErr := s.repo.Insert(ctx, owners.Owner{
-			Principal: p, StorageKey: storageKey, CreatedAt: s.now(),
-		})
+		requestedWasEmpty := requestedStorageKey == ""
+		storageKey, normalizeErr := normalizeStorageKey(requestedStorageKey)
+		if normalizeErr != nil {
+			return owners.Owner{}, normalizeErr
+		}
+		owner := owners.Owner{Principal: p, StorageKey: storageKey, CreatedAt: s.now()}
+		insertErr := s.repo.Insert(ctx, owner)
 		if insertErr == nil {
-			return nil
+			return owner, nil
 		}
 		// A concurrent caller may have inserted a row between our
 		// GetByPrincipal probe and this Insert. Re-read: if the stored
 		// storage_key matches, the caller's intent was already realised.
 		existing, getErr := s.repo.GetByPrincipal(ctx, p)
 		if getErr != nil {
-			return insertErr
+			return owners.Owner{}, insertErr
 		}
-		return s.reconcileStorageKey(existing, p, storageKey)
+		if requestedWasEmpty {
+			return existing, nil
+		}
+		return reconcileStorageKey(existing, p, storageKey)
 	default:
-		return err
+		return owners.Owner{}, err
 	}
 }
 
-func (s *OwnerService) reconcileStorageKey(existing owners.Owner, p owners.Principal, storageKey string) error {
-	if existing.StorageKey == storageKey {
-		return nil
+func normalizeStorageKey(requested string) (string, error) {
+	if requested == "" {
+		return uuid.NewString(), nil
 	}
-	return fmt.Errorf("%w: owner %s has storage_key %q, got %q",
+	parsed, err := uuid.Parse(requested)
+	if err != nil {
+		return "", fmt.Errorf("%w: storage key must be a UUID", errs.ErrInvalidArgument)
+	}
+	return parsed.String(), nil
+}
+
+func reconcileStorageKey(
+	existing owners.Owner,
+	p owners.Principal,
+	requestedStorageKey string,
+) (owners.Owner, error) {
+	if requestedStorageKey == "" {
+		return existing, nil
+	}
+	storageKey, err := normalizeStorageKey(requestedStorageKey)
+	if err != nil {
+		return owners.Owner{}, err
+	}
+	if existing.StorageKey == storageKey {
+		return existing, nil
+	}
+	return owners.Owner{}, fmt.Errorf("%w: owner %s has storage_key %q, got %q",
 		errs.ErrAlreadyExists, p, existing.StorageKey, storageKey)
 }
 

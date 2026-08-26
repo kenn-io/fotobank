@@ -24,8 +24,8 @@ func TestOwnerConsistencyTriggerOnScopeMedia(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	a := owners.Principal{Hub: "h", UserID: "a"}
 	b := owners.Principal{Hub: "h", UserID: "b"}
-	seedOwner(t, d.WriteDB(), a, "ska")
-	seedOwner(t, d.WriteDB(), b, "skb")
+	seedOwner(t, d.WriteDB(), a, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), b, "00000000-0000-4000-8000-7f8246cf1abe")
 	mBID := seedMedia(t, d.WriteDB(), b, "cB")
 
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())

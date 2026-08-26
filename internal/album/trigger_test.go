@@ -25,8 +25,8 @@ func TestAddMediaCrossOwnerTrigger(t *testing.T) {
 
 	ownerA := owners.Principal{Hub: "h", UserID: "a"}
 	ownerB := owners.Principal{Hub: "h", UserID: "b"}
-	seedOwner(t, d.WriteDB(), ownerA, "sk-a")
-	seedOwner(t, d.WriteDB(), ownerB, "sk-b")
+	seedOwner(t, d.WriteDB(), ownerA, "550e8400-e29b-41d4-a716-446655440001")
+	seedOwner(t, d.WriteDB(), ownerB, "550e8400-e29b-41d4-a716-446655440002")
 
 	a := seedAlbum(t, repo, ownerA, "A-Trip") // album belongs to A
 	mB := uuid.NewString()

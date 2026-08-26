@@ -40,7 +40,7 @@ func TestPairBackfillRecomputesPairs(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(dbCtx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "u", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 	now := time.Now().UTC()

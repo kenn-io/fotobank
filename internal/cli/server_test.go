@@ -183,11 +183,11 @@ func TestServerDrainsPendingThumbRow(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
 	nasRoot := filepath.Join(tmp, "nas")
-	r.NoError(os.MkdirAll(filepath.Join(nasRoot, "u", "2024"), 0o700))
+	r.NoError(os.MkdirAll(filepath.Join(nasRoot, "550e8400-e29b-41d4-a716-446655440000", "2024"), 0o700))
 	// Place a source JPEG where NASOnly expects it.
 	fixture, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "photo-with-timestamp.jpg"))
 	r.NoError(err)
-	srcPath := filepath.Join(nasRoot, "u", "2024", "a.jpg")
+	srcPath := filepath.Join(nasRoot, "550e8400-e29b-41d4-a716-446655440000", "2024", "a.jpg")
 	r.NoError(os.WriteFile(srcPath, fixture, 0o600))
 
 	cfgPath := filepath.Join(tmp, "c.toml")
@@ -220,7 +220,7 @@ admin_listen = "127.0.0.1:0"
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err = d.WriteDB().ExecContext(context.Background(),
 		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "u", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 	mediaID := uuid.NewString()
@@ -295,7 +295,7 @@ func TestServerShutdownWaitsForThumbWorker(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
 	nasRoot := filepath.Join(tmp, "nas")
-	r.NoError(os.MkdirAll(filepath.Join(nasRoot, "u", "2024"), 0o700))
+	r.NoError(os.MkdirAll(filepath.Join(nasRoot, "550e8400-e29b-41d4-a716-446655440000", "2024"), 0o700))
 
 	fixture, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "photo-with-timestamp.jpg"))
 	r.NoError(err)
@@ -332,14 +332,14 @@ admin_listen = "127.0.0.1:0"
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err = d.WriteDB().ExecContext(context.Background(),
 		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "u", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	for i := range nRows {
 		id := uuid.NewString()
 		rel := fmt.Sprintf("2024/row-%03d.jpg", i)
-		srcPath := filepath.Join(nasRoot, "u", rel)
+		srcPath := filepath.Join(nasRoot, "550e8400-e29b-41d4-a716-446655440000", rel)
 		r.NoError(os.WriteFile(srcPath, fixture, 0o600))
 		r.NoError(repo.Insert(context.Background(), media.Media{
 			ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
@@ -776,7 +776,7 @@ mode = "stub"
 [identity.stub]
 hub = "h"
 user_id = "u"
-storage_key = "h/u"
+storage_key = "550e8400-e29b-41d4-a716-44665544000f"
 [http]
 listen_address = "127.0.0.1:0"
 [ai]
@@ -813,7 +813,7 @@ admin_listen = "127.0.0.1:0"
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err = d.WriteDB().ExecContext(context.Background(),
 		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "h/u", time.Now().UTC())
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-44665544000f", time.Now().UTC())
 	r.NoError(err)
 	mid := uuid.NewString()
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
@@ -923,7 +923,7 @@ mode = "stub"
 [identity.stub]
 hub = "h"
 user_id = "u"
-storage_key = "h/u"
+storage_key = "550e8400-e29b-41d4-a716-44665544000f"
 [http]
 listen_address = "127.0.0.1:0"
 [ai]
@@ -947,7 +947,7 @@ admin_listen = "127.0.0.1:0"
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err = d.WriteDB().ExecContext(context.Background(),
 		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "h/u", time.Now().UTC())
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-44665544000f", time.Now().UTC())
 	r.NoError(err)
 	mid := uuid.NewString()
 	repoM := media.NewRepo(d.WriteDB(), d.ReadDB())

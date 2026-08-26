@@ -31,7 +31,7 @@ import (
 	"go.kenn.io/fotobank/internal/testutil"
 )
 
-const testStorageKey = "sk-importer"
+const testStorageKey = "550e8400-e29b-41d4-a716-446655440013"
 
 // importerFixture wires a DB, a NAS-only store, and a registered owner.
 type importerFixture struct {

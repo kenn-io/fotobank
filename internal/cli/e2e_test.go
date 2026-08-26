@@ -73,7 +73,6 @@ admin_listen = "127.0.0.1:0"
 
 	resp, err := client.Get("http://" + addr + "/api/v1/me")
 	r.NoError(err)
-	defer resp.Body.Close()
 	r.Equal(http.StatusOK, resp.StatusCode)
 
 	var body struct {
@@ -84,6 +83,7 @@ admin_listen = "127.0.0.1:0"
 		} `json:"principal"`
 	}
 	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
+	r.NoError(resp.Body.Close())
 	r.Equal("local", body.Principal.Hub)
 	r.Equal("alice", body.Principal.UserID)
 	r.Equal("Alice", body.Principal.Handle)
@@ -91,6 +91,7 @@ admin_listen = "127.0.0.1:0"
 	// Trigger shutdown explicitly and assert the server exits cleanly.
 	// t.Cleanup will also call cancel(), but a second cancel on an
 	// already-cancelled context is a no-op.
+	client.CloseIdleConnections()
 	cancel()
 	select {
 	case code := <-done:

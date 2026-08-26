@@ -119,7 +119,7 @@ func TestSchema_AIJobsAcceptsEmbedTask(t *testing.T) {
 
 	rw := d.WriteDB()
 	_, err := rw.Exec(
-		`INSERT INTO owners VALUES('h1','u1','k1','u1',datetime('now'))`,
+		`INSERT INTO owners VALUES('h1','u1','550e8400-e29b-41d4-a716-446655440000','u1',datetime('now'))`,
 	)
 	r.NoError(err)
 
@@ -201,7 +201,7 @@ func TestSchema_MediaEmbeddingIDsUniqueVecID(t *testing.T) {
 	rw := d.WriteDB()
 
 	_, err := rw.Exec(
-		`INSERT INTO owners VALUES('h1','u1','k1','u1',datetime('now'))`,
+		`INSERT INTO owners VALUES('h1','u1','550e8400-e29b-41d4-a716-446655440000','u1',datetime('now'))`,
 	)
 	r.NoError(err)
 
@@ -252,7 +252,7 @@ func TestSchema_MediaFTSPresentAndDeletable(t *testing.T) {
 	rw := d.WriteDB()
 
 	_, err := rw.Exec(
-		`INSERT INTO owners VALUES('h1','u1','k1','u1',datetime('now'))`,
+		`INSERT INTO owners VALUES('h1','u1','550e8400-e29b-41d4-a716-446655440000','u1',datetime('now'))`,
 	)
 	r.NoError(err)
 
@@ -302,7 +302,7 @@ func TestSchema_FullMigrationSmoke(t *testing.T) {
 	rw := d.WriteDB()
 
 	_, err := rw.Exec(
-		`INSERT INTO owners VALUES('h1','u1','k1','u1',datetime('now'))`,
+		`INSERT INTO owners VALUES('h1','u1','550e8400-e29b-41d4-a716-446655440000','u1',datetime('now'))`,
 	)
 	r.NoError(err)
 

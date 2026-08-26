@@ -41,7 +41,7 @@ func newTestServiceWithOwner(t *testing.T) (*hidden.Service, *hidden.Repo, *fake
 	mp := &fakeMediaPrivacy{}
 	svc := hidden.NewService(repo, mp)
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	return svc, repo, mp, p
 }
 
@@ -79,7 +79,7 @@ func TestUnlockFailsClosedOnLockoutLookupError(t *testing.T) {
 	mp := &fakeMediaPrivacy{}
 	svc := hidden.NewService(repo, mp)
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	r.NoError(svc.Setup(context.Background(), p, "correct-passcode"))
 
@@ -530,7 +530,7 @@ func TestSetupDBErrorOnExistenceCheckIsReturned(t *testing.T) {
 	mp := &fakeMediaPrivacy{}
 	svc := hidden.NewService(repo, mp)
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	// Close the read pool so GetCredential hits a non-NotFound DB error.
 	r.NoError(d.ReadDB().Close())

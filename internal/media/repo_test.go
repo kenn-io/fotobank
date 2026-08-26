@@ -118,7 +118,7 @@ func TestMediaInsertAndGet(t *testing.T) {
 	p := testOwner()
 	_, err := d.WriteDB().ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk-a", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440001", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -143,7 +143,7 @@ func TestMediaInsertDuplicateChecksumReturnsAlreadyExists(t *testing.T) {
 	p := testOwner()
 	_, err := d.WriteDB().ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk-b", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440002", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -165,7 +165,7 @@ func TestMediaInsertDuplicatePathReturnsAlreadyExists(t *testing.T) {
 	p := testOwner()
 	_, err := d.WriteDB().ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk-c", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440003", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -187,7 +187,7 @@ func TestMediaListFiltersByOwnerAndType(t *testing.T) {
 	p := testOwner()
 	_, err := d.WriteDB().ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk-d", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440004", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -238,7 +238,7 @@ func TestMediaHiddenAtRoundTrips(t *testing.T) {
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-h")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-324c89d5f74d")
 
 	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
 	hidden := baseMedia(uuid.NewString(), p)
@@ -273,7 +273,7 @@ func TestMediaListPaginationIsStableOnTies(t *testing.T) {
 	p := testOwner()
 	_, err := d.WriteDB().ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk-page", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440005", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -317,7 +317,7 @@ func TestMediaGetByOwnerPath(t *testing.T) {
 	p := testOwner()
 	_, err := d.WriteDB().ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk-path", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440006", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -341,7 +341,7 @@ func TestMediaInsertUniqueViolationsDistinguishSentinels(t *testing.T) {
 	p := testOwner()
 	_, err := d.WriteDB().ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk-kinds", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440007", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -372,7 +372,7 @@ func TestMediaListAllReturnsEveryRow(t *testing.T) {
 	p := testOwner()
 	_, err := d.WriteDB().ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk-all", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440008", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -397,7 +397,7 @@ func TestMediaDeleteRemovesRow(t *testing.T) {
 	p := testOwner()
 	_, err := d.WriteDB().ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk-del", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440009", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -429,7 +429,7 @@ func TestMediaGetByOwnerChecksum(t *testing.T) {
 	p := testOwner()
 	_, err := d.WriteDB().ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk-e", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-44665544000a", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -448,7 +448,7 @@ func TestMediaGetByIDsPreservesInputOrder(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 
 	a := seedOneMedia(t, repo, p)
@@ -467,7 +467,7 @@ func TestMediaGetByIDsReturnsNotFoundOnMissing(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	a := seedOneMedia(t, repo, p)
 	missingID := "00000000-0000-0000-0000-000000000000"
@@ -481,7 +481,7 @@ func TestMediaGetByIDsChunksLargeInput(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	// Seed enough rows to span multiple chunks (chunk size = 250).
 	const n = 600
@@ -512,7 +512,7 @@ func TestRepoInsertGetByIDPreservesGPS(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -559,7 +559,7 @@ func TestRepoInsertGetByIDPreservesAbsentGPS(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -586,7 +586,7 @@ func TestUpdateGPSRoundTrips(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -617,7 +617,7 @@ func TestUpdateGPSClearsAllFieldsWhenNil(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -655,7 +655,7 @@ func TestListGPSBackfillCandidatesByMode(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -718,7 +718,7 @@ func TestListGPSBackfillCandidatesSinceFilter(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -753,7 +753,7 @@ func TestInsertRejectsPartialGPSPair(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -785,7 +785,7 @@ func TestUpdateGPSRejectsPartialPair(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -806,7 +806,7 @@ func TestRepoInsertGetByIDPreservesPairingFields(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := testOwner()
-	seedOwner(t, d.WriteDB(), owner, "sk-pair")
+	seedOwner(t, d.WriteDB(), owner, "00000000-0000-4000-8000-2fb1c69fd0e5")
 
 	primary := baseMedia(uuid.NewString(), owner)
 	primary.Path = "2024/a.jpg"
@@ -848,7 +848,7 @@ func TestListGPSBackfillCandidatesKeysetPagination(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "sk", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 
@@ -893,8 +893,8 @@ func TestRepoListByOwnerDirectories(t *testing.T) {
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
 	other := owners.Principal{Hub: "h", UserID: "u2"}
-	seedOwner(t, d.WriteDB(), p, "sk-a")
-	seedOwner(t, d.WriteDB(), other, "sk-u2")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440001")
+	seedOwner(t, d.WriteDB(), other, "00000000-0000-4000-8000-49cdd6151a36")
 
 	mk := func(id, ownerHub, ownerUser, path, importPath, checksum string) media.Media {
 		m := baseMedia(id, owners.Principal{Hub: ownerHub, UserID: ownerUser})
@@ -933,7 +933,7 @@ func TestRepoListByOwnerDirectoriesMatchesAcrossNFCNFD(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-a")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440001")
 
 	// Construct NFC vs NFD at byte level so the literal isn't
 	// re-normalized by an editor or the source file's encoding pass.
@@ -960,7 +960,7 @@ func TestRepoUpdatePairedWithIDRoundTrips(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-a")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440001")
 
 	primary := baseMedia(uuid.NewString(), p)
 	primary.Path = "2024/a.jpg"
@@ -995,7 +995,7 @@ func TestRepoGetSidecarsReturnsSortedByOriginalFilename(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-a")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440001")
 
 	primary := baseMedia(uuid.NewString(), p)
 	primary.Path = "2024/a.jpg"
@@ -1040,7 +1040,7 @@ func TestListExcludesHiddenByDefault(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-hidden-list")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-de99af0411da")
 
 	visible := baseMedia(uuid.NewString(), p)
 	visible.Path = "2024/vis.jpg"
@@ -1068,7 +1068,7 @@ func TestListIncludesHiddenWhenFlagSet(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-hidden-include")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-278f81e207b1")
 
 	visible := baseMedia(uuid.NewString(), p)
 	visible.Path = "2024/vis2.jpg"
@@ -1095,7 +1095,7 @@ func TestGetByIDVisibleRejectsHiddenWhenIncludeFalse(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-getvis")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-0aa320a7c568")
 
 	hiddenAt := time.Date(2026, 4, 29, 10, 0, 0, 0, time.UTC)
 	hidden := baseMedia(uuid.NewString(), p)
@@ -1116,7 +1116,7 @@ func TestGetByIDVisibleReturnsHiddenWhenIncludeTrue(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-getvis2")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-a8a348bc5571")
 
 	hiddenAt := time.Date(2026, 4, 29, 10, 0, 0, 0, time.UTC)
 	hidden := baseMedia(uuid.NewString(), p)
@@ -1138,7 +1138,7 @@ func TestGetByIDVisibleReturnsVisibleRow(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-getvis3")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-ef827c35e80b")
 
 	visible := baseMedia(uuid.NewString(), p)
 	visible.Path = "2024/vis3.jpg"
@@ -1158,7 +1158,7 @@ func TestSetHiddenCascadeHidesPrimaryAndSidecar(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-cascade")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-84e4ca4ca74a")
 
 	primary := baseMedia(uuid.NewString(), p)
 	primary.Path = "2024/p.jpg"
@@ -1194,8 +1194,8 @@ func TestSetHiddenCascadeIsOwnerScoped(t *testing.T) {
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	pA := testOwner()
 	pB := owners.Principal{Hub: "h", UserID: "other"}
-	seedOwner(t, d.WriteDB(), pA, "sk-ca")
-	seedOwner(t, d.WriteDB(), pB, "sk-cb")
+	seedOwner(t, d.WriteDB(), pA, "00000000-0000-4000-8000-a795faab7839")
+	seedOwner(t, d.WriteDB(), pB, "00000000-0000-4000-8000-37eb36a48ca9")
 
 	mA := baseMedia(uuid.NewString(), pA)
 	mA.Path = "2024/a.jpg"
@@ -1224,7 +1224,7 @@ func TestClearHiddenCascadeClearsAndCascades(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-clear-cascade")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-14c31b3adf5e")
 
 	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
 	primary := baseMedia(uuid.NewString(), p)
@@ -1261,8 +1261,8 @@ func TestClearAllHiddenForOwnerClearsOnlyThatOwner(t *testing.T) {
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	pA := testOwner()
 	pB := owners.Principal{Hub: "h", UserID: "other2"}
-	seedOwner(t, d.WriteDB(), pA, "sk-clrA")
-	seedOwner(t, d.WriteDB(), pB, "sk-clrB")
+	seedOwner(t, d.WriteDB(), pA, "00000000-0000-4000-8000-56bbbfa52405")
+	seedOwner(t, d.WriteDB(), pB, "00000000-0000-4000-8000-f967515f3a3b")
 
 	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
 
@@ -1297,7 +1297,7 @@ func TestListHiddenReturnsPrimaryAndStandaloneOnly(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-listhidden")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-2577b21f1446")
 
 	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
 
@@ -1347,7 +1347,7 @@ func TestListHiddenSortOrder(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-listhidden-sort")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-0a12f9fe948b")
 
 	hiddenAt := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
 	base := time.Now().UTC().Truncate(time.Second)
@@ -1405,7 +1405,7 @@ func TestSetHiddenCascadeChunksLargeIDList(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-chunk-large")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-3b7756d0e808")
 
 	// Seed 5 real rows spread across the 600-id list.
 	real := make([]media.Media, 5)
@@ -1458,7 +1458,7 @@ func TestMediaListAllReturnsHiddenRows(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-listall-hidden")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-a018fe2be5e6")
 
 	visible := baseMedia(uuid.NewString(), p)
 	visible.Path = "2024/la-vis.jpg"
@@ -1491,7 +1491,7 @@ func TestGetSidecarsFiltersHiddenWhenIncludeFalse(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-sidecars-hidden")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-d64c50954aae")
 
 	primary := baseMedia(uuid.NewString(), p)
 	primary.Path = "2024/sc-primary.jpg"
@@ -1534,7 +1534,7 @@ func TestRepoLensModelRoundTrip(t *testing.T) {
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 
 	p := testOwner()
-	seedOwner(t, d.WriteDB(), p, "sk-lens")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-bad25f2d387e")
 
 	const lens = "EF 50mm f/1.8 STM"
 	withLens := baseMedia(uuid.NewString(), p)
@@ -1570,8 +1570,8 @@ func TestRepo_ListGeo_OwnerScoped(t *testing.T) {
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	ownerA := owners.Principal{Hub: "h", UserID: "a"}
 	ownerB := owners.Principal{Hub: "h", UserID: "b"}
-	seedOwner(t, d.WriteDB(), ownerA, "a")
-	seedOwner(t, d.WriteDB(), ownerB, "b")
+	seedOwner(t, d.WriteDB(), ownerA, "550e8400-e29b-41d4-a716-446655440001")
+	seedOwner(t, d.WriteDB(), ownerB, "550e8400-e29b-41d4-a716-446655440002")
 	insertMediaGPS(t, repo, ownerA, "p1.jpg", new(40.0), new(-105.0))
 	insertMediaGPS(t, repo, ownerB, "p2.jpg", new(35.0), new(-115.0))
 
@@ -1585,7 +1585,7 @@ func TestRepo_ListGeo_ExcludesSidecars(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), owner, "u")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	primary := insertMediaGPS(t, repo, owner, "primary.jpg", new(10.0), new(20.0))
 	sidecar := insertMediaGPS(t, repo, owner, "primary.arw", new(10.0), new(20.0))
 	pairSidecar(t, repo, sidecar, primary.ID)
@@ -1601,7 +1601,7 @@ func TestRepo_ListGeo_ExcludesHiddenByDefault(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), owner, "u")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	visible := insertMediaGPS(t, repo, owner, "v.jpg", new(0.0), new(0.0))
 	hidden := insertMediaGPS(t, repo, owner, "h.jpg", new(1.0), new(1.0))
 	r.NoError(repo.SetHiddenCascade(context.Background(), owner, []string{hidden.ID}, time.Now()))
@@ -1617,7 +1617,7 @@ func TestRepo_ListGeo_IncludesHiddenWhenRequested(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), owner, "u")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	visible := insertMediaGPS(t, repo, owner, "v.jpg", new(0.0), new(0.0))
 	hidden := insertMediaGPS(t, repo, owner, "h.jpg", new(1.0), new(1.0))
 	r.NoError(repo.SetHiddenCascade(context.Background(), owner, []string{hidden.ID}, time.Now()))
@@ -1634,7 +1634,7 @@ func TestRepo_ListGeo_OmitsRowsWithoutGPS(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), owner, "u")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	insertMediaGPS(t, repo, owner, "with-gps.jpg", new(40.0), new(-105.0))
 	insertMediaGPS(t, repo, owner, "no-gps.jpg", nil, nil)
 
@@ -1659,7 +1659,7 @@ func TestRepo_ListGeo_OrderingTimestampDescThenImportedDescThenIDDesc(t *testing
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), owner, "u")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	t1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 	older := insertMediaGPSAt(t, repo, owner, "older.jpg", new(10.0), new(20.0), &t1)
@@ -1678,7 +1678,7 @@ func TestRepo_ListGeo_EmptyReturnsEmptySlice(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), owner, "u")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 
 	rows, err := repo.ListGeo(context.Background(), media.ListGeoFilter{Owner: owner})
 	require.NoError(t, err)
@@ -1704,7 +1704,7 @@ func TestRepoList_Cameras(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := testOwner()
-	seedOwner(t, d.WriteDB(), owner, "sk-cam")
+	seedOwner(t, d.WriteDB(), owner, "00000000-0000-4000-8000-63362f3922e4")
 
 	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-sony", media.Media{Make: "Sony", Model: "A7R IV"})
 	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-canon", media.Media{Make: "Canon", Model: "EOS R5"})
@@ -1726,7 +1726,7 @@ func TestRepoList_Lenses(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := testOwner()
-	seedOwner(t, d.WriteDB(), owner, "sk-lens-fac")
+	seedOwner(t, d.WriteDB(), owner, "00000000-0000-4000-8000-becd717f5cd6")
 
 	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-2470", media.Media{LensModel: "FE 24-70mm F2.8 GM"})
 	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-50", media.Media{LensModel: "FE 50mm F1.4 GM"})
@@ -1745,7 +1745,7 @@ func TestRepoList_HasGPS_True(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := testOwner()
-	seedOwner(t, d.WriteDB(), owner, "sk-gps-true")
+	seedOwner(t, d.WriteDB(), owner, "00000000-0000-4000-8000-4c885548dd78")
 
 	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-geo",
 		media.Media{Latitude: new(48.8), Longitude: new(2.3)})
@@ -1762,7 +1762,7 @@ func TestRepoList_HasGPS_False(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := testOwner()
-	seedOwner(t, d.WriteDB(), owner, "sk-gps-false")
+	seedOwner(t, d.WriteDB(), owner, "00000000-0000-4000-8000-6b2628384ca4")
 
 	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-geo",
 		media.Media{Latitude: new(48.8), Longitude: new(2.3)})
@@ -1780,7 +1780,7 @@ func TestRepoList_AnyTagKeys(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := testOwner()
-	seedOwner(t, d.WriteDB(), owner, "sk-anytag")
+	seedOwner(t, d.WriteDB(), owner, "00000000-0000-4000-8000-aa2beb88b08d")
 
 	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-dog", media.Media{})
 	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-cat", media.Media{})
@@ -1805,7 +1805,7 @@ func TestRepoListGeo_Cameras(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := testOwner()
-	seedOwner(t, d.WriteDB(), owner, "sk-geo-cam")
+	seedOwner(t, d.WriteDB(), owner, "00000000-0000-4000-8000-5dbef0650d0e")
 
 	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-sony-geo", media.Media{
 		Make: "Sony", Model: "A7R IV",
@@ -1834,7 +1834,7 @@ func TestRepoListGeo_Type(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := testOwner()
-	seedOwner(t, d.WriteDB(), owner, "sk-geo-type")
+	seedOwner(t, d.WriteDB(), owner, "00000000-0000-4000-8000-2e7aff28c14b")
 
 	mediaseed.InsertMedia(t, d.WriteDB(), owner, "id-photo", media.Media{
 		Type:     media.TypePhoto,
