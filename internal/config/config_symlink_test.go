@@ -63,6 +63,35 @@ root = %q
 	}
 }
 
+func TestValidateRejectsFlashRootInsideDocbankWithExternalCacheSymlinks(t *testing.T) {
+	require := require.New(t)
+	tmp := t.TempDir()
+	docbankRoot := filepath.Join(tmp, "vault")
+	flashRoot := filepath.Join(docbankRoot, "flash")
+	externalCacheRoot := filepath.Join(tmp, "external-cache")
+	require.NoError(os.MkdirAll(flashRoot, 0o700))
+	for _, cacheDir := range []string{"originals", "thumbs"} {
+		target := filepath.Join(externalCacheRoot, cacheDir)
+		require.NoError(os.MkdirAll(target, 0o700))
+		if err := os.Symlink(target, filepath.Join(flashRoot, cacheDir)); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	}
+
+	p := filepath.Join(tmp, "config.toml")
+	require.NoError(os.WriteFile(p, []byte(fmt.Sprintf(`
+[flash]
+root = %q
+[nas]
+root = %q
+[docbank]
+root = %q
+`, flashRoot, filepath.Join(tmp, "nas"), docbankRoot)), 0o600))
+
+	_, err := config.Load(p)
+	require.ErrorIs(err, errs.ErrBadConfiguration)
+}
+
 func TestValidateRejectsDanglingDocbankSymlinkAncestor(t *testing.T) {
 	tmp := t.TempDir()
 	nasRoot := filepath.Join(tmp, "future-storage")

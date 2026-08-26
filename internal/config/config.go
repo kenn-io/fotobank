@@ -328,6 +328,9 @@ func (c *Config) Validate() error {
 	if pathsOverlap(docbankRoot, nasRoot) {
 		return fmt.Errorf("%w: [docbank].root and [nas].root must not overlap", errs.ErrBadConfiguration)
 	}
+	if pathContains(docbankRoot, flashRoot) {
+		return fmt.Errorf("%w: [docbank].root must not contain [flash].root", errs.ErrBadConfiguration)
+	}
 	for _, cacheDir := range []string{FlashOriginalsCacheDir, FlashThumbsCacheDir} {
 		cacheRoot, err := canonicalConfigPath(filepath.Join(flashRoot, cacheDir))
 		if err != nil {
