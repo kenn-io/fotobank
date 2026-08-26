@@ -82,6 +82,12 @@ Design docs live in `docs/superpowers/specs/`, plans in `docs/superpowers/plans/
 - **Plan D** — Albums (CRUD service + HTTP + CLI; no sharing). **Done.**
 - **Plan E** — Sharing: scopes, broker registration, outbox worker, cross-owner reads. **Done (owner side; grantee-side viewing deferred).**
 - **Observability** — Structured logging (slog), Prometheus metrics, /readyz, admin HTTP listener. **Done.**
+- **Fotobank on Docbank** — The
+  [master design](docs/superpowers/specs/2026-08-25-fotobank-docbank-master-design.md)
+  controls the rebuild. The
+  [Milestone 1 index](docs/superpowers/plans/2026-08-25-fotobank-docbank-milestone-1.md)
+  links only the executable pull-request plans whose direct inputs exist;
+  later plans are written just in time after their dependencies merge.
 
 ## Task tracking
 
