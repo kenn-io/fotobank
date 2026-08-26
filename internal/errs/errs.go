@@ -12,16 +12,19 @@ var (
 	// reference it via paired_with_id. F2.2 ships the sentinel and the
 	// HTTP translator mapping (409 Conflict) but no service path
 	// throws it yet — Delete is deferred per the broader roadmap.
-	ErrPairedSidecarsExist   = errors.New("paired sidecars exist")
-	ErrInvalidArgument       = errors.New("invalid argument")
-	ErrPermissionDenied      = errors.New("permission denied")
-	ErrOwnerMismatch         = errors.New("owner mismatch")
-	ErrConcurrentImport      = errors.New("another import is in progress")
-	ErrBrokerUnavailable     = errors.New("broker unavailable")
-	ErrIdentityMissing       = errors.New("identity unavailable")
-	ErrDirectAccessBlocked   = errors.New("direct access blocked")
-	ErrMigrationPrecondition = errors.New("migration precondition failed")
-	ErrBadConfiguration      = errors.New("bad configuration")
+	ErrPairedSidecarsExist     = errors.New("paired sidecars exist")
+	ErrInvalidArgument         = errors.New("invalid argument")
+	ErrPermissionDenied        = errors.New("permission denied")
+	ErrOwnerMismatch           = errors.New("owner mismatch")
+	ErrConcurrentImport        = errors.New("another import is in progress")
+	ErrBrokerUnavailable       = errors.New("broker unavailable")
+	ErrIdentityMissing         = errors.New("identity unavailable")
+	ErrDirectAccessBlocked     = errors.New("direct access blocked")
+	ErrMigrationPrecondition   = errors.New("migration precondition failed")
+	ErrBadConfiguration        = errors.New("bad configuration")
+	ErrContentConflict         = errors.New("content conflict")
+	ErrContentIdentityMismatch = errors.New("content identity mismatch")
+	ErrContentUnavailable      = errors.New("content unavailable")
 	// ErrLockedOut is returned by the hidden-auth service when the principal
 	// has exceeded the failure threshold. HTTP maps it to 429 with Retry-After.
 	ErrLockedOut = errors.New("locked out")

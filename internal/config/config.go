@@ -7,9 +7,11 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -58,6 +60,7 @@ func EnsureDefault(path string) (bool, error) {
 
 type Config struct {
 	Flash         Flash         `toml:"flash"`
+	Docbank       Docbank       `toml:"docbank"`
 	NAS           NAS           `toml:"nas"`
 	Storage       Storage       `toml:"storage"`
 	Identity      Identity      `toml:"identity"`
@@ -87,6 +90,10 @@ type UI struct {
 }
 
 type Flash struct {
+	Root string `toml:"root"`
+}
+
+type Docbank struct {
 	Root string `toml:"root"`
 }
 
@@ -227,6 +234,7 @@ func LoadUnchecked(path string) (*Config, error) {
 func expandHomePaths(c *Config) error {
 	fields := []*string{
 		&c.Flash.Root,
+		&c.Docbank.Root,
 		&c.NAS.Root,
 		&c.Imports.FileLockPath,
 		&c.Identity.Header.ProxyMTLSCAFile,
@@ -294,6 +302,27 @@ func applyEnvOverrides(c *Config) {
 func (c *Config) Validate() error {
 	if c.NAS.Root == "" {
 		return fmt.Errorf("%w: [nas].root is required", errs.ErrBadConfiguration)
+	}
+	if c.Docbank.Root == "" {
+		return fmt.Errorf("%w: [docbank].root is required", errs.ErrBadConfiguration)
+	}
+	docbankRoot, err := canonicalConfigPath(c.Docbank.Root)
+	if err != nil {
+		return fmt.Errorf("%w: canonicalize [docbank].root: %v", errs.ErrBadConfiguration, err)
+	}
+	nasRoot, err := canonicalConfigPath(c.NAS.Root)
+	if err != nil {
+		return fmt.Errorf("%w: canonicalize [nas].root: %v", errs.ErrBadConfiguration, err)
+	}
+	flashRoot, err := canonicalConfigPath(c.Flash.Root)
+	if err != nil {
+		return fmt.Errorf("%w: canonicalize [flash].root: %v", errs.ErrBadConfiguration, err)
+	}
+	if pathsOverlap(docbankRoot, nasRoot) {
+		return fmt.Errorf("%w: [docbank].root and [nas].root must not overlap", errs.ErrBadConfiguration)
+	}
+	if pathContains(docbankRoot, flashRoot) {
+		return fmt.Errorf("%w: [docbank].root must not contain [flash].root", errs.ErrBadConfiguration)
 	}
 	switch c.Identity.Mode {
 	case "stub":
@@ -387,6 +416,42 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+func canonicalConfigPath(value string) (string, error) {
+	absolute, err := filepath.Abs(value)
+	if err != nil {
+		return "", err
+	}
+	current := filepath.Clean(absolute)
+	var missing []string
+	for {
+		resolved, resolveErr := filepath.EvalSymlinks(current)
+		if resolveErr == nil {
+			slices.Reverse(missing)
+			return filepath.Join(append([]string{resolved}, missing...)...), nil
+		}
+		if !errors.Is(resolveErr, fs.ErrNotExist) {
+			return "", resolveErr
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", resolveErr
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
+func pathContains(parent, candidate string) bool {
+	rel, err := filepath.Rel(parent, candidate)
+	return err == nil && (rel == "." ||
+		(rel != ".." &&
+			!strings.HasPrefix(rel, ".."+string(os.PathSeparator))))
+}
+
+func pathsOverlap(left, right string) bool {
+	return pathContains(left, right) || pathContains(right, left)
+}
+
 func (c *Config) validateHeaderGuard() error {
 	h := c.Identity.Header
 	if isLoopbackBind(c.HTTP.ListenAddress) ||
@@ -441,6 +506,9 @@ func isLoopbackOrUnixListen(addr string) bool {
 func applyDefaults(c *Config, meta toml.MetaData) {
 	if c.Flash.Root == "" {
 		c.Flash.Root = defaultFlashRoot()
+	}
+	if c.Docbank.Root == "" {
+		c.Docbank.Root = filepath.Join(c.Flash.Root, "docbank")
 	}
 	if c.Storage.Mode == "" {
 		c.Storage.Mode = "flash_cache"

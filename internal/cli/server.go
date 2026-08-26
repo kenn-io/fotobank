@@ -38,6 +38,7 @@ import (
 	"go.kenn.io/fotobank/internal/auth/hidden"
 	"go.kenn.io/fotobank/internal/backup"
 	"go.kenn.io/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
@@ -129,7 +130,7 @@ type serverOpts struct {
 // runServer loads config, opens the database, wires the identity provider
 // and HTTP handler, binds the configured listen address, and serves until
 // ctx is cancelled or the process receives SIGINT/SIGTERM.
-func runServer(ctx context.Context, opts serverOpts) error {
+func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	path := opts.cfgPath
 	if path == "" {
 		path = config.DefaultConfigPath()
@@ -193,6 +194,14 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		return err
 	}
 	defer d.Close()
+
+	contentStore, err := content.Open(ctx, content.Config{Root: cfg.Docbank.Root})
+	if err != nil {
+		return fmt.Errorf("open Docbank vault: %w", err)
+	}
+	defer func() {
+		retErr = errors.Join(retErr, contentStore.Close())
+	}()
 
 	appSettingsRepo := appsettingsstore.NewRepo(d.WriteDB(), d.ReadDB())
 	aiProvider, err := airuntime.NewProvider(ctx, airuntime.Source{

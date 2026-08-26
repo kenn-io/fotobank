@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +18,8 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	r.NoError(err)
 
 	r.Equal("/tmp/test-nas", cfg.NAS.Root)
-	r.NotEmpty(cfg.Flash.Root)               // defaulted
+	r.NotEmpty(cfg.Flash.Root) // defaulted
+	r.Equal(filepath.Join(cfg.Flash.Root, "docbank"), cfg.Docbank.Root)
 	r.Equal("flash_cache", cfg.Storage.Mode) // defaulted
 	r.True(cfg.Storage.ThumbsCacheEnabled)   // defaulted true when unset
 	r.Equal("stub", cfg.Identity.Mode)       // defaulted
@@ -27,6 +29,100 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	r.Equal(2, cfg.Imports.ConcurrentWorkers)
 	r.Equal(4, cfg.Thumbs.WorkerConcurrency)
 	r.Equal("stub", cfg.Broker.Mode)
+}
+
+func TestLoadDocbankRoot(t *testing.T) {
+	tmp := t.TempDir()
+	vaultRoot := filepath.Join(tmp, "vault")
+	nasRoot := filepath.Join(tmp, "nas")
+	flashRoot := filepath.Join(tmp, "flash")
+	p := filepath.Join(tmp, "config.toml")
+	require.NoError(t, os.WriteFile(p, []byte(fmt.Sprintf(`
+[flash]
+root = %q
+[nas]
+root = %q
+[docbank]
+root = %q
+`, flashRoot, nasRoot, vaultRoot)), 0o600))
+
+	cfg, err := config.Load(p)
+	require.NoError(t, err)
+	require.Equal(t, vaultRoot, cfg.Docbank.Root)
+}
+
+func TestValidateDocbankRootOverlap(t *testing.T) {
+	tmp := t.TempDir()
+	tests := []struct {
+		name        string
+		docbankRoot string
+		nasRoot     string
+		flashRoot   string
+		wantErr     bool
+	}{
+		{
+			name:        "equals NAS",
+			docbankRoot: filepath.Join(tmp, "nas-equal"),
+			nasRoot:     filepath.Join(tmp, "nas-equal"),
+			flashRoot:   filepath.Join(tmp, "flash-equal-nas"),
+			wantErr:     true,
+		},
+		{
+			name:        "beneath NAS",
+			docbankRoot: filepath.Join(tmp, "nas-parent", "vault"),
+			nasRoot:     filepath.Join(tmp, "nas-parent"),
+			flashRoot:   filepath.Join(tmp, "flash-nas-parent"),
+			wantErr:     true,
+		},
+		{
+			name:        "contains NAS",
+			docbankRoot: filepath.Join(tmp, "vault-parent"),
+			nasRoot:     filepath.Join(tmp, "vault-parent", "nas"),
+			flashRoot:   filepath.Join(tmp, "flash-vault-parent"),
+			wantErr:     true,
+		},
+		{
+			name:        "equals flash",
+			docbankRoot: filepath.Join(tmp, "flash-equal"),
+			nasRoot:     filepath.Join(tmp, "nas-flash-equal"),
+			flashRoot:   filepath.Join(tmp, "flash-equal"),
+			wantErr:     true,
+		},
+		{
+			name:        "contains flash",
+			docbankRoot: filepath.Join(tmp, "vault-contains-flash"),
+			nasRoot:     filepath.Join(tmp, "nas-vault-contains-flash"),
+			flashRoot:   filepath.Join(tmp, "vault-contains-flash", "flash"),
+			wantErr:     true,
+		},
+		{
+			name:        "beneath flash",
+			docbankRoot: filepath.Join(tmp, "flash-parent", "docbank"),
+			nasRoot:     filepath.Join(tmp, "nas-flash-parent"),
+			flashRoot:   filepath.Join(tmp, "flash-parent"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(p, []byte(fmt.Sprintf(`
+[flash]
+root = %q
+[nas]
+root = %q
+[docbank]
+root = %q
+`, tt.flashRoot, tt.nasRoot, tt.docbankRoot)), 0o600))
+
+			_, err := config.Load(p)
+			if tt.wantErr {
+				require.ErrorIs(t, err, errs.ErrBadConfiguration)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestLoadMissingFileIsError(t *testing.T) {
@@ -824,7 +920,9 @@ func TestLoadExpandsBareTilde(t *testing.T) {
 
 	tmp := t.TempDir()
 	p := filepath.Join(tmp, "c.toml")
-	require.NoError(t, os.WriteFile(p, []byte(`
+	require.NoError(t, os.WriteFile(p, []byte(fmt.Sprintf(`
+[flash]
+root = %q
 [nas]
 root = "~"
 [identity]
@@ -834,7 +932,7 @@ hub = "h"
 user_id = "u"
 [http]
 listen_address = "127.0.0.1:0"
-`), 0o600))
+`, filepath.Join(tmp, "flash"))), 0o600))
 	cfg, err := config.Load(p)
 	r.NoError(err)
 	r.Equal(home, cfg.NAS.Root)

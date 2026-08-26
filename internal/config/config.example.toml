@@ -3,6 +3,11 @@
 [flash]
 root = "~/.fotobank"                 # default; ~ expanded
 
+[docbank]
+# Authoritative content-addressed vault. Defaults to <flash.root>/docbank.
+# Keep this distinct from import sources and the NAS artifact root.
+root = ""
+
 # Where durable bytes live. Imports write originals here before the
 # media row is committed; thumbnails are written here asynchronously
 # by the background worker after the row commits (see §10, §11).

@@ -14,6 +14,8 @@ func TestSentinelsAreDistinct(t *testing.T) {
 		errs.ErrPermissionDenied, errs.ErrOwnerMismatch, errs.ErrConcurrentImport,
 		errs.ErrBrokerUnavailable, errs.ErrIdentityMissing, errs.ErrDirectAccessBlocked,
 		errs.ErrMigrationPrecondition, errs.ErrBadConfiguration,
+		errs.ErrContentConflict, errs.ErrContentIdentityMismatch,
+		errs.ErrContentUnavailable,
 	}
 	for i, a := range sentinels {
 		for j, b := range sentinels {
