@@ -7,7 +7,6 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -327,7 +326,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%w: [docbank].root and [nas].root must not overlap", errs.ErrBadConfiguration)
 	}
 	for _, cacheDir := range []string{FlashOriginalsCacheDir, FlashThumbsCacheDir} {
-		if pathsOverlap(docbankRoot, filepath.Join(flashRoot, cacheDir)) {
+		cacheRoot, err := canonicalConfigPath(filepath.Join(flashRoot, cacheDir))
+		if err != nil {
+			return fmt.Errorf("%w: canonicalize [flash].root/%s: %v",
+				errs.ErrBadConfiguration, cacheDir, err)
+		}
+		if pathsOverlap(docbankRoot, cacheRoot) {
 			return fmt.Errorf("%w: [docbank].root must not overlap [flash].root/%s",
 				errs.ErrBadConfiguration, cacheDir)
 		}
@@ -432,21 +436,26 @@ func canonicalConfigPath(value string) (string, error) {
 	current := filepath.Clean(absolute)
 	var missing []string
 	for {
-		resolved, resolveErr := filepath.EvalSymlinks(current)
-		if resolveErr == nil {
-			slices.Reverse(missing)
-			return filepath.Join(append([]string{resolved}, missing...)...), nil
+		_, lstatErr := os.Lstat(current)
+		if lstatErr == nil {
+			break
 		}
-		if !errors.Is(resolveErr, fs.ErrNotExist) {
-			return "", resolveErr
+		if !errors.Is(lstatErr, os.ErrNotExist) {
+			return "", lstatErr
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return "", resolveErr
+			return "", lstatErr
 		}
 		missing = append(missing, filepath.Base(current))
 		current = parent
 	}
+	resolved, err := filepath.EvalSymlinks(current)
+	if err != nil {
+		return "", err
+	}
+	slices.Reverse(missing)
+	return filepath.Join(append([]string{resolved}, missing...)...), nil
 }
 
 func pathContains(parent, candidate string) bool {
