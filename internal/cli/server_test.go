@@ -24,6 +24,7 @@ import (
 	airuntime "go.kenn.io/fotobank/internal/ai/runtime"
 	appsettingsstore "go.kenn.io/fotobank/internal/appsettings"
 	"go.kenn.io/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
@@ -110,6 +111,69 @@ admin_listen = "127.0.0.1:0"
 	case <-time.After(5 * time.Second):
 		r.Fail("server did not shut down within 5s")
 	}
+}
+
+func TestRunServerOwnsDocbankVaultForLifetime(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	nasRoot := filepath.Join(tmp, "nas")
+	flashRoot := filepath.Join(tmp, "flash")
+	vaultRoot := filepath.Join(tmp, "vault")
+	r.NoError(os.MkdirAll(nasRoot, 0o700))
+
+	cfgPath := filepath.Join(tmp, "config.toml")
+	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
+[nas]
+root = %q
+[flash]
+root = %q
+[docbank]
+root = %q
+[http]
+listen_address = "127.0.0.1:0"
+[observability]
+admin_listen = "127.0.0.1:0"
+`, nasRoot, flashRoot, vaultRoot), 0o600))
+
+	addrFile := filepath.Join(tmp, "addr")
+	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
+	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan int, 1)
+	var stdout, stderr lockedBuffer
+	go func() {
+		errCh <- cli.RunContext(ctx, []string{"serve", "--config", cfgPath}, &stdout, &stderr)
+	}()
+
+	for range 100 {
+		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	addr, err := os.ReadFile(addrFile)
+	r.NoError(err, "server did not publish its address: %s", stderr.String())
+	r.NotEmpty(strings.TrimSpace(string(addr)), "server did not publish its address: %s", stderr.String())
+
+	contender, openErr := content.Open(t.Context(), content.Config{Root: vaultRoot})
+	if contender != nil {
+		r.NoError(contender.Close())
+	}
+	r.Error(openErr)
+
+	cancel()
+	select {
+	case code := <-errCh:
+		r.Equal(0, code, "server stderr: %s", stderr.String())
+	case <-time.After(5 * time.Second):
+		r.Fail("server did not shut down within 5s", stderr.String())
+	}
+
+	reopened, err := content.Open(t.Context(), content.Config{Root: vaultRoot})
+	r.NoError(err)
+	r.NoError(reopened.Close())
 }
 
 func TestServerDrainsPendingThumbRow(t *testing.T) {
