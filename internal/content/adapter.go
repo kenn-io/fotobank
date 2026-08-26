@@ -111,7 +111,7 @@ func (a *Adapter) OpenCurrent(ctx context.Context, virtualPath string) (*Read, e
 		SHA256:    opened.Node.BlobHash,
 		MediaType: opened.Node.MediaType,
 		Size:      opened.Node.Size,
-		Reader:    opened.Reader,
+		Reader:    translateReader(opened.Reader),
 	}, nil
 }
 
@@ -126,8 +126,29 @@ func (a *Adapter) OpenVersion(ctx context.Context, versionID string) (*Read, err
 		SHA256:    opened.Version.BlobHash,
 		MediaType: opened.Version.MediaType,
 		Size:      opened.Version.Size,
-		Reader:    opened.Reader,
+		Reader:    translateReader(opened.Reader),
 	}, nil
+}
+
+type translatedReader struct {
+	docbank.VerifiedReadCloser
+}
+
+func translateReader(reader docbank.VerifiedReadCloser) VerifiedReadCloser {
+	return &translatedReader{VerifiedReadCloser: reader}
+}
+
+func (r *translatedReader) Read(p []byte) (int, error) {
+	n, err := r.VerifiedReadCloser.Read(p)
+	return n, translateReaderError(err)
+}
+
+func (r *translatedReader) Verify() error {
+	return translateReaderError(r.VerifiedReadCloser.Verify())
+}
+
+func (r *translatedReader) Close() error {
+	return translateReaderError(r.VerifiedReadCloser.Close())
 }
 
 func (a *Adapter) Create(ctx context.Context, request CreateRequest) (CreateReceipt, error) {

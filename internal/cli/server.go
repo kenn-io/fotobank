@@ -1195,18 +1195,6 @@ func loadStorageKeys(ctx context.Context, ownerSvc *service.OwnerService) (map[o
 	return keys, nil
 }
 
-// flashCacheSubdir is the subdirectory of cfg.Flash.Root that holds
-// cached originals. Isolating the cache from cfg.Flash.Root keeps the
-// FlashCache janitor (which walks its root and deletes stale entries)
-// from ever touching sibling state files such as the sqlite DB, WAL,
-// or shm files that live directly under cfg.Flash.Root.
-const flashCacheSubdir = "originals"
-
-// flashThumbsSubdir is the sibling subdirectory of flashCacheSubdir that
-// holds cached thumbnail bytes. Kept adjacent to flashCacheSubdir so the
-// FlashCache directory layout lives in one place.
-const flashThumbsSubdir = "thumbs"
-
 // buildStorageLayer assembles the Store implementation dictated by
 // cfg.Storage.Mode. When mode is "flash_cache" the returned *FlashCache
 // is non-nil so the caller can drive its daily janitor; otherwise it's
@@ -1217,13 +1205,13 @@ func buildStorageLayer(cfg *config.Config, keys map[owners.Principal]string) (st
 	if cfg.Storage.Mode != "flash_cache" {
 		return nasStore, nil
 	}
-	cacheRoot := filepath.Join(cfg.Flash.Root, flashCacheSubdir)
+	cacheRoot := filepath.Join(cfg.Flash.Root, config.FlashOriginalsCacheDir)
 	fc := storage.NewFlashCache(nasStore, cacheRoot, keys, storage.FlashCacheOptions{
 		OriginalsCacheDays:     cfg.Storage.OriginalsCacheDays,
 		OriginalsCacheMaxMedia: cfg.Storage.OriginalsCacheMaxMedia,
 	})
 	if cfg.Storage.ThumbsCacheEnabled {
-		thumbsCacheRoot := filepath.Join(cfg.Flash.Root, flashThumbsSubdir)
+		thumbsCacheRoot := filepath.Join(cfg.Flash.Root, config.FlashThumbsCacheDir)
 		fc.EnableThumbs(thumbsCacheRoot)
 	}
 	return fc, fc

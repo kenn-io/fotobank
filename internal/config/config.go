@@ -97,6 +97,11 @@ type Docbank struct {
 	Root string `toml:"root"`
 }
 
+const (
+	FlashOriginalsCacheDir = "originals"
+	FlashThumbsCacheDir    = "thumbs"
+)
+
 type NAS struct {
 	Root string `toml:"root"`
 }
@@ -321,8 +326,11 @@ func (c *Config) Validate() error {
 	if pathsOverlap(docbankRoot, nasRoot) {
 		return fmt.Errorf("%w: [docbank].root and [nas].root must not overlap", errs.ErrBadConfiguration)
 	}
-	if pathContains(docbankRoot, flashRoot) {
-		return fmt.Errorf("%w: [docbank].root must not contain [flash].root", errs.ErrBadConfiguration)
+	for _, cacheDir := range []string{FlashOriginalsCacheDir, FlashThumbsCacheDir} {
+		if pathsOverlap(docbankRoot, filepath.Join(flashRoot, cacheDir)) {
+			return fmt.Errorf("%w: [docbank].root must not overlap [flash].root/%s",
+				errs.ErrBadConfiguration, cacheDir)
+		}
 	}
 	switch c.Identity.Mode {
 	case "stub":
@@ -443,9 +451,40 @@ func canonicalConfigPath(value string) (string, error) {
 
 func pathContains(parent, candidate string) bool {
 	rel, err := filepath.Rel(parent, candidate)
-	return err == nil && (rel == "." ||
+	if err == nil && (rel == "." ||
 		(rel != ".." &&
-			!strings.HasPrefix(rel, ".."+string(os.PathSeparator))))
+			!strings.HasPrefix(rel, ".."+string(os.PathSeparator)))) {
+		return true
+	}
+	return pathContainsFold(parent, candidate)
+}
+
+// pathContainsFold rejects case-only aliases on case-insensitive filesystems.
+// Applying the rule on every platform also keeps a configuration portable
+// between a case-sensitive development machine and a case-insensitive NAS.
+func pathContainsFold(parent, candidate string) bool {
+	parentVolume, parentParts := pathParts(parent)
+	candidateVolume, candidateParts := pathParts(candidate)
+	if !strings.EqualFold(parentVolume, candidateVolume) || len(parentParts) > len(candidateParts) {
+		return false
+	}
+	for i, part := range parentParts {
+		if !strings.EqualFold(part, candidateParts[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func pathParts(value string) (string, []string) {
+	clean := filepath.Clean(value)
+	volume := filepath.VolumeName(clean)
+	remainder := strings.TrimPrefix(clean, volume)
+	remainder = strings.Trim(remainder, string(os.PathSeparator))
+	if remainder == "" {
+		return volume, []string{}
+	}
+	return volume, strings.Split(remainder, string(os.PathSeparator))
 }
 
 func pathsOverlap(left, right string) bool {

@@ -101,6 +101,34 @@ func TestValidateDocbankRootOverlap(t *testing.T) {
 			nasRoot:     filepath.Join(tmp, "nas-flash-parent"),
 			flashRoot:   filepath.Join(tmp, "flash-parent"),
 		},
+		{
+			name:        "equals flash originals cache",
+			docbankRoot: filepath.Join(tmp, "flash-originals", "originals"),
+			nasRoot:     filepath.Join(tmp, "nas-flash-originals"),
+			flashRoot:   filepath.Join(tmp, "flash-originals"),
+			wantErr:     true,
+		},
+		{
+			name:        "beneath flash originals cache",
+			docbankRoot: filepath.Join(tmp, "flash-originals-child", "originals", "vault"),
+			nasRoot:     filepath.Join(tmp, "nas-flash-originals-child"),
+			flashRoot:   filepath.Join(tmp, "flash-originals-child"),
+			wantErr:     true,
+		},
+		{
+			name:        "beneath flash thumbs cache",
+			docbankRoot: filepath.Join(tmp, "flash-thumbs", "thumbs", "vault"),
+			nasRoot:     filepath.Join(tmp, "nas-flash-thumbs"),
+			flashRoot:   filepath.Join(tmp, "flash-thumbs"),
+			wantErr:     true,
+		},
+		{
+			name:        "case-only NAS alias",
+			docbankRoot: filepath.Join(tmp, "Case-Root", "vault"),
+			nasRoot:     filepath.Join(tmp, "case-root"),
+			flashRoot:   filepath.Join(tmp, "flash-case-root"),
+			wantErr:     true,
+		},
 	}
 
 	for _, tt := range tests {

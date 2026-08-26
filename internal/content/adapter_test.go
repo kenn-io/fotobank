@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -136,6 +138,44 @@ func TestAdapterOpenVersion(t *testing.T) {
 
 	_, err = adapter.OpenVersion(t.Context(), "01J00000000000000000000000")
 	require.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestAdapterTranslatesReaderErrors(t *testing.T) {
+	require := require.New(t)
+	root := t.TempDir()
+	adapter, err := content.Open(t.Context(), content.Config{Root: root})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(adapter.Close()) })
+
+	payload := []byte("test photo bytes")
+	virtualPath := "/owners/owner/media/file/IMG.JPG"
+	receipt, err := adapter.Create(t.Context(), content.CreateRequest{
+		VirtualPath: virtualPath,
+		MediaType:   "image/jpeg",
+		Expected:    identityFor(payload),
+		Reader:      bytes.NewReader(payload),
+	})
+	require.NoError(err)
+	blobPath := filepath.Join(root, "blobs", receipt.Identity.SHA256[:2], receipt.Identity.SHA256)
+	require.NoError(os.WriteFile(blobPath, bytes.Repeat([]byte("x"), len(payload)), 0o600))
+
+	current, err := adapter.OpenCurrent(t.Context(), virtualPath)
+	require.NoError(err)
+	_, readErr := io.ReadAll(current.Reader)
+	readCloseErr := current.Reader.Close()
+	require.ErrorIs(readErr, errs.ErrContentUnavailable)
+	require.ErrorIs(readCloseErr, errs.ErrContentUnavailable)
+
+	version, err := adapter.OpenVersion(t.Context(), receipt.Version.ID)
+	require.NoError(err)
+	verifyErr := version.Reader.Verify()
+	verifyCloseErr := version.Reader.Close()
+	require.ErrorIs(verifyErr, errs.ErrContentUnavailable)
+	require.ErrorIs(verifyCloseErr, errs.ErrContentUnavailable)
+
+	incomplete, err := adapter.OpenCurrent(t.Context(), virtualPath)
+	require.NoError(err)
+	require.ErrorIs(incomplete.Reader.Close(), errs.ErrContentUnavailable)
 }
 
 func createTestContent(t *testing.T) (*content.Adapter, string, []byte, content.CreateReceipt) {
