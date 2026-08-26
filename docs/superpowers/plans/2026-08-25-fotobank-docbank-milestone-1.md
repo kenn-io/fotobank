@@ -18,10 +18,9 @@ released dependency signatures available when their pull request can start.
 An absent later plan is deliberate, not missing work.
 
 - D02, F01, and F02a can be planned now because their inputs exist.
-- F02b is planned after F02a lands, using the merged asset repository and
-  schema rather than the proposed shapes in the master design.
-- F03 is planned after D02 is released and F02b lands. Its adapter calls use
-  the released D02 types and signatures.
+- F03 is planned after D02 is released and F02a lands. Its consumer cutover
+  uses the merged final-shaped asset repository, and its adapter calls use the
+  released D02 types and signatures.
 - F04 and F05 are planned after F03 lands. They use the actual content adapter,
   operation ledger, and asset/file repository that F03 establishes.
 
@@ -35,19 +34,18 @@ the plan directs.
 ## Pull-request graph
 
 ```text
-D02 ───────────────────────────────┐
-                                   ▼
-F01 → F02a → F02b ───────────────→ F03 → F04
-                                   └──────→ F05
+D02 ───────────────┐
+                   ▼
+F01 → F02a ──────→ F03 → F04
+                   └────→ F05
 ```
 
 | PR | Target | Executable plan | Plan timing |
 |---|---|---|---|
 | D02 | Docbank | [Exact-version logical ranges](2026-08-26-docbank-d02-version-ranges.md) | Ready |
 | F01 | Fotobank | [Embedded vault boundary](2026-08-26-fotobank-f01-embedded-vault.md) | Ready |
-| F02a | Fotobank | [Additive asset/file domain](2026-08-26-fotobank-f02a-asset-domain.md) | Ready |
-| F02b | Fotobank | Not yet authored | After F02a merges |
-| F03 | Fotobank | Not yet authored | After D02 releases and F02b merges |
+| F02a | Fotobank | [Final-shaped asset/file domain](2026-08-26-fotobank-f02a-asset-domain.md) | Ready |
+| F03 | Fotobank | Not yet authored | After D02 releases and F02a merges |
 | F04 | Fotobank | Not yet authored | After F03 merges |
 | F05 | Fotobank | Not yet authored | After F03 merges |
 
@@ -120,7 +118,7 @@ commands:
 ```bash
 kata create --project fotobank \
   "Milestone 1: Docbank content substrate and asset domain" \
-  --body "Deliver D02 and F01 through F05, then pass the representative import, restart-recovery, verified-photo, and video-range gate in the master design." \
+  --body "Deliver D02 plus F01, F02a, and F03 through F05, then pass the representative import, restart-recovery, verified-photo, and video-range gate in the master design." \
   --label epic --label backend \
   --idempotency-key fotobank-docbank-m1 \
   --agent
@@ -135,14 +133,9 @@ kata create --project fotobank "F02a: add the asset and file domain" \
   --parent <m1-ref> --blocked-by <f01-ref> --label backend \
   --idempotency-key fotobank-docbank-f02a --agent
 
-kata create --project fotobank "F02b: cut product consumers to assets" \
-  --body "Move every active consumer and foreign key to the asset/file model, remove the old media row, and retain no compatibility adapter or dual persistence." \
-  --parent <m1-ref> --blocked-by <f02a-ref> --label backend \
-  --idempotency-key fotobank-docbank-f02b --agent
-
 kata create --project fotobank "F03: make Docbank original authority" \
-  --body "Move grouped imports and all original reads, including video ranges, to released Docbank APIs with SHA-256 identity and durable operation receipts." \
-  --parent <m1-ref> --blocked-by <f02b-ref> \
+  --body "Atomically move active consumers and foreign keys to assets, grouped imports and all original reads to released Docbank APIs, and remove the old media schema, storage path, and MD5 identity without a compatibility bridge." \
+  --parent <m1-ref> --blocked-by <f02a-ref> \
   --blocked-by docbank#<d02-ref> --label backend \
   --idempotency-key fotobank-docbank-f03 --agent
 
@@ -162,12 +155,11 @@ parent, and blockers. The resulting edges must be:
 
 ```text
 F01 blocks F02a
-F02a blocks F02b
-F02b and docbank#D02 block F03
+F02a and docbank#D02 block F03
 F03 blocks F04 and F05
 ```
 
-Do not create F02b, F03, F04, or F05 plan documents merely because their kata
+Do not create F03, F04, or F05 plan documents merely because their kata
 issues exist. Their issue bodies preserve approved scope; their executable
 plans still wait for the exact dependency baselines described above.
 

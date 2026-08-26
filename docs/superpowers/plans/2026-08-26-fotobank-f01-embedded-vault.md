@@ -473,7 +473,12 @@ func (a *Adapter) Close() error {
 }
 ```
 
-Docbank's zero-value compression policy remains disabled.
+At the pinned Docbank v0.14.0 release, `Vault.Close` holds Docbank's lifecycle
+write lock, waits for active operations and readers, and is documented safe to
+call more than once. The adapter deliberately delegates that lifecycle instead
+of duplicating it with a second `sync.Once`; the repeated-call assertion above
+tests the Fotobank contract. Docbank's zero-value compression policy remains
+disabled.
 
 - [ ] **Step 4: Run the lifecycle test**
 

@@ -1,4 +1,4 @@
-# Fotobank F02a Additive Asset and File Domain Implementation Plan
+# Fotobank F02a Final-Shaped Asset and File Domain Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
@@ -14,7 +14,8 @@ Fotobank product read or write path.
 table. A DB-only `AssetRepo` persists a complete graph transactionally and
 enforces exactly one primary before an asset becomes ready. Owner storage keys
 become immutable UUIDs generated once at registration. No importer or product
-consumer writes both media models; F02b performs the later forward cutover.
+consumer writes both media models; F03 later performs the atomic product and
+Docbank-authority cutover.
 
 **Tech Stack:** Go 1.27, SQLite through Fotobank's existing sqlx wrapper,
 `github.com/google/uuid`, Testify, and the editable pre-alpha initial migration.
@@ -41,6 +42,8 @@ especially §§3, 5, 6, 7, 15.3, 16 F02a, and 17.
   tables in F02a.
 - Do not add aliases, views, dual writes, fallback reads, or a `Media = Asset`
   compatibility type.
+- The inactive file model is final-shaped: it contains only Docbank mapping and
+  media semantics, never the legacy storage path or MD5 identity.
 
 ## Produced domain contract
 
@@ -98,7 +101,6 @@ type File struct {
     MimeType, OriginalFilename          string
     ImportSourcePath                    string
     Size                                int64
-    StoragePath, MD5                    string
     DocbankNodeID                       *int64
     DocbankVirtualPath, CurrentVersionID string
     SHA256                              string
@@ -131,9 +133,9 @@ func (r *AssetRepo) GetPrimaryFile(
 ) (File, error)
 ```
 
-The temporary `StoragePath` and `MD5` fields exist only to let F02b cut active
-consumers to the new graph before F03 changes original authority. They are not
-Docbank fallbacks and F02a does not populate them in parallel with `media`.
+The four Docbank mapping fields are either all absent or all present; a pending
+graph may use the absent state. F02a carries no authority coordinate other than
+this mapping.
 
 ---
 
@@ -197,6 +199,10 @@ ORDER BY name
 ```
 
 Assert all four names. This proves the additive boundary explicitly.
+Also inspect `PRAGMA table_info(media_files)` and assert the final-shaped
+Docbank mapping columns exist. Do not encode an absence test for deleted code;
+the branch diff and the F02a review check prove no legacy bridge columns were
+introduced.
 
 - [ ] **Step 2: Run the table-presence test**
 
@@ -266,8 +272,6 @@ CREATE TABLE media_files (
     original_filename     TEXT NOT NULL,
     import_source_path    TEXT NOT NULL DEFAULT '',
     size                  INTEGER NOT NULL CHECK (size >= 0),
-    storage_path          TEXT,
-    md5                   TEXT,
     docbank_node_id       INTEGER,
     docbank_virtual_path  TEXT,
     current_version_id    TEXT,
@@ -360,7 +364,7 @@ go test -tags sqlite_fts5 ./internal/db \
 Expected: the second-primary case passes once Task 2's index exists, while the
 database rejects the second primary.
 
-- [ ] **Step 3: Add ready-state triggers**
+- [ ] **Step 3: Add ready-state and file-coordinate triggers**
 
 Add triggers with these exact outcomes:
 
@@ -368,14 +372,19 @@ Add triggers with these exact outcomes:
 2. Updating an asset to ready aborts unless exactly one primary exists.
 3. Deleting the primary of a ready asset aborts.
 4. Demoting the primary of a ready asset aborts.
+5. Updating a file's `asset_id`, `owner_hub`, or `owner_user_id` aborts. A
+   file's asset and owner coordinate are immutable after insertion, so a
+   primary cannot be moved away from a ready asset and existing relationship
+   invariants cannot be invalidated indirectly.
 
 Use stable error text such as `ready asset requires exactly one primary` and
-`cannot remove primary from ready asset` so migration tests can distinguish the
-constraints.
+`cannot remove primary from ready asset` for ready-state violations, and
+`file asset and owner are immutable` for coordinate changes, so migration tests
+can distinguish the constraints.
 
-- [ ] **Step 4: Add ready-state test cases**
+- [ ] **Step 4: Add ready-state and file-coordinate test cases**
 
-Exercise all four triggers through SQL against a fresh migrated database and
+Exercise all five outcomes through SQL against a fresh migrated database and
 assert the operation fails at the database boundary.
 
 - [ ] **Step 5: Run the primary and ready tests**
@@ -483,9 +492,9 @@ Expected: PASS.
 - [ ] **Step 1: Add a failing ready-graph repository test**
 
 Use `testutil.OpenTestDB(t)`, a valid owner fixture, one ready photo asset, one
-primary file with legacy `StoragePath`/`MD5`, and no relationships. Call
-`InsertGraph`, then query all three tables and assert one asset, one file, and
-zero relationships.
+primary file with a complete synthetic Docbank mapping, and no relationships.
+Call `InsertGraph`, then query all three tables and assert one asset, one file,
+and zero relationships.
 
 - [ ] **Step 2: Run the ready-graph test**
 
@@ -945,10 +954,11 @@ Use `kenn:commit-push-pr`. The description leads with the additive graph and
 stable owner identity, explains why no product dual write exists, states the
 F01 base, and avoids a routine test checklist. Do not merge.
 
-- [ ] **Step 9: Trigger just-in-time F02b planning after merge**
+- [ ] **Step 9: Trigger just-in-time F03 planning when dependencies land**
 
 After the user merges F02a, close its kata issue with the merged commit and
-typed evidence, then use `superpowers:brainstorming` and
-`superpowers:writing-plans` against the merged schema/repository to author the
-F02b plan. Do not copy the speculative F02b section from the superseded
+typed evidence. Once D02 is also released, use `superpowers:brainstorming` and
+`superpowers:writing-plans` against both exact baselines to author the atomic
+F03 consumer-and-authority cutover plan. Do not reintroduce a separately
+mergeable consumer cutover or copy speculative steps from the superseded
 mega-plan.

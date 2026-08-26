@@ -1,6 +1,6 @@
 # Fotobank on Docbank — Development Master Spec
 
-**Status:** Draft v0.3
+**Status:** Draft v0.4
 **Date:** 2026-08-25
 **Scope:** Governing architecture and development sequence for rebuilding
 Fotobank on Docbank as an embedded Go library. Each implementation stage below
@@ -706,12 +706,18 @@ where behavior changes, and no compatibility layer for the replaced design.
 | PR | Outcome | Depends on |
 |---|---|---|
 | F01 | Add the Docbank module, vault configuration/lifecycle, and the single internal adapter with real-vault integration tests. No product path writes content yet. | F00 |
-| F02a | Add and test the opaque asset, media-file, relationship, and cached Docbank-mapping schema/domain repositories. The new model is not yet used by product writes, so this additive review slice introduces no dual persistence. | F01 |
-| F02b | Cut existing foreign keys and consumers to the asset/file model, then remove the superseded one-row-per-file schema and domain shape. The Milestone 1 plan may divide this mechanical cutover into a buildable stack at real package seams. | F02a |
+| F02a | Add and test the final-shaped opaque asset, media-file, relationship, and cached Docbank-mapping schema/domain repositories. The new model is not yet used by product writes, so this additive review slice introduces no dual persistence or legacy storage fields. | F01 |
 | D02 | Expose catalog-authorized exact-version logical byte ranges with the raw/packed/compressed behavior defined in §12. | — |
-| F03 | Cut import writes and all current-original reads, including video ranges, over to Docbank, SHA-256 identity, stable virtual paths, and pending-operation receipts. Use Docbank SHA-256 for content ETags. Remove the replaced original-byte read/write path and MD5 identity in the same PR. | F02b, D02 |
+| F03 | Atomically cut existing foreign keys, product consumers, import writes, and all current-original reads—including video ranges—to the asset/file model and Docbank authority. Add SHA-256 identity, stable virtual paths, and pending-operation receipts; use Docbank SHA-256 for content ETags. Remove the superseded one-row-per-file schema, original-byte storage path, and MD5 identity in the same PR. | F02a, D02 |
 | F04 | Add exact-version reads and the shared asset/file/version resolver used by checkout rebuilds and projection workers. | F03 |
 | F05 | Add pending-operation restart recovery and orphan reconciliation for create/import operations. | F03 |
+
+F03 deliberately owns both the active consumer cutover and the authority
+cutover. Making those separately mergeable would require the new file model to
+carry the legacy storage path or MD5 identity between pull requests, creating
+the compatibility state this greenfield rebuild forbids. F02a absorbs as much
+final-shaped inactive repository work as is useful; F03 may use reviewable
+commits internally, but it lands as one forward cutover.
 
 **Gate:** A fresh deployment imports a representative RAW/JPEG/XMP set into
 Docbank, restarts at injected operation boundaries, and serves verified photo
@@ -757,7 +763,7 @@ deployment. No irreplaceable archive is imported before this gate passes.
 | F16 | Re-key EXIF extraction and normalized metadata to asset/file/current-version identity, including invalidation after checkout commits. | F08 |
 | F17 | Re-key RAW preview, thumbnail, and video-poster jobs/artifacts to exact source versions. | F03, F16 |
 | F18 | Re-key AI tags, captions, embedding generations, lexical search, and hybrid search to assets plus exact source versions. | F16 |
-| F19 | Complete album, hidden-media, share, and public-route adaptation to opaque asset IDs and multi-file assets. | F02b, F04 |
+| F19 | Complete album, hidden-media, share, and public-route semantics for opaque asset IDs and multi-file assets after the mechanical F03 cutover. | F03, F04 |
 | F20 | Add explicit product deletion, Docbank trash coordination, recovery, and checkout cleanup without automatic garbage collection. | F05, F11, F19 |
 | F21 | Add CLI/admin surfaces for checkout selection, status, conflicts, placement readiness, and recovery operations. | F10, F14 |
 
@@ -789,9 +795,11 @@ absence is a valid final state, not incomplete work.
   feature PR.
 - Pull requests may be stacked where dependencies require it, but every PR must
   state its base and remain independently reviewable.
-- F02a/F02b may be further split only at seams that leave each stack layer
-  buildable and testable. A review-sized stack does not permit dual product
-  writes, fallback reads, or a compatibility adapter between media models.
+- F02a may absorb final-shaped inactive repository work that reduces F03's
+  mechanical breadth. The active asset/file consumer cutover and Docbank
+  authority cutover remain one F03 pull request; review-sized commits do not
+  permit an intermediate merge with dual product writes, fallback reads,
+  legacy storage fields, or a compatibility adapter between media models.
 - Performance claims require the workloads in §10.3. Storage optimizations do
   not precede those measurements.
 - A milestone gate is part of the milestone, not optional follow-up work.
