@@ -85,27 +85,61 @@ Design docs live in `docs/superpowers/specs/`, plans in `docs/superpowers/plans/
 
 ## Task tracking
 
-Outstanding work for fotobank is tracked in **kata** (`kata` CLI). The workspace is bound — `.kata.toml` points at project `github.com/wesm/fotobank`.
+Outstanding work for fotobank is tracked in **kata** (`kata` CLI). The
+workspace is bound to the Fotobank project through `.kata.toml`.
 
-- Search before creating: `kata search "<phrase>" --json`
-- Create: `kata create "<title>" --body "..." --label <label> --idempotency-key <stable-key> --json`
-- Inspect: `kata show <id> --json`, `kata list --json`, `kata ready --json` (open issues with no blockers)
-- Update: `kata comment <id> --body "..."`, `kata label add <id> <label>`, `kata block <blocker> <blocked>`, `kata parent <child> <parent>`
-- Close: `kata close <id> --reason done` — only when work is actually complete
-- Never run `kata delete` or `kata purge` unless the user explicitly asks for that exact destructive action and issue number
+- Run `kata quickstart` at the start of a work session and follow its current
+  command contract.
+- Search before creating: `kata search "<phrase>" --agent`.
+- Create durable work with an idempotency key:
+  `kata create "<title>" --body "..." --label <label> --idempotency-key <stable-key> --agent`.
+- Inspect with `kata show <ref> --agent`, `kata list --agent`, and
+  `kata ready --agent`.
+- Add dependency and parent relationships with `kata create` or `kata edit`
+  flags such as `--blocked-by`, `--blocks`, and `--parent`. Cross-project refs
+  use `<project>#<short-id>`, for example `docbank#abc4`.
+- Close only verified work with `kata close <ref> --done --message "..."`
+  and the required evidence flags. If work remains, comment and add
+  `needs-review` instead.
+- Never run `kata delete`, `kata purge`, or project removal commands unless the
+  user explicitly asks for that exact destructive action and reference.
 
 Don't track ad-hoc one-turn tasks in kata — it's for outstanding designed/planned work that survives across sessions. In-conversation step tracking belongs in TaskCreate/TaskList.
 
+## Git and pull requests
+
+1. Commit every turn that changes tracked files; never amend.
+2. Never push to or commit on `main`. Use feature branches and pull requests.
+   Use an isolated worktree when an implementation workflow requires one or
+   when concurrent work must not share a checkout.
+3. Push the feature branch and open or update its pull request as part of the
+   handoff. Do not merge pull requests; merging is the user's job.
+4. Run `prek run` before committing. Never bypass hooks with `--no-verify`; fix
+   the underlying problem.
+5. Use conventional commit messages (`fix:`, `feat:`, `refactor:`, `docs:`,
+   `test:`, `chore:`, optionally scoped like `fix(httpapi):`). Use imperative
+   mood and a subject of at most 72 characters. Keep one logical change per
+   commit and split unrelated changes.
+6. Write pull request descriptions for humans. Lead with the reviewer-visible
+   outcome, explain the important boundary or tradeoff, and avoid a mechanical
+   inventory of commits and files.
+7. Do not add routine validation checklists to pull request descriptions.
+   Report ordinary test, lint, generation, and hook results in the handoff.
+   Include validation in the description only when novel evidence materially
+   informs review.
+8. A pull request that changes the web interface must include a screenshot of
+   the actual rendered result using synthetic data. Inspect it before
+   publishing; never substitute a mockup for the implementation.
+
 ## Instructions for agents
 
-- Commit directly to master. No feature branches, no worktrees.
-- **Commit every turn** — always commit your work at the end of each turn, no exceptions. Don't ask first.
-- Use conventional commit messages (`fix:`, `feat:`, `refactor:`, `docs:`, `test:`, `chore:`, optionally scoped like `fix(httpapi):`). Imperative mood, ≤72 char subject.
-- One logical change per commit. Split unrelated changes into separate commits.
-- Never amend commits — always create a new commit for fixes.
-- Never bypass pre-commit hooks (no `--no-verify`). If a hook fails, fix the underlying issue and create a new commit.
-- Never push or pull unless explicitly asked.
-- Schema changes go in-place into `000001_initial_schema.{up,down}.sql` (pre-alpha policy). Keep up and down in sync.
-- When touching HTTP routes, run `make api-generate` (the prek hook does this automatically on commit).
-- Prefer `require.ErrorIs` for sentinel checks; raw `==` comparison misses wrapped errors.
-- The existing `httpapi.Translate` maps `errs.ErrOwnerMismatch → 403`, which matches the scopes/sharing surface but not the albums surface. If a surface needs a different mapping, write a local translator that overrides the sentinels it cares about and delegates the rest to `Translate`.
+- Schema changes go in-place into `000001_initial_schema.{up,down}.sql`
+  (pre-alpha policy). Keep up and down in sync.
+- When touching HTTP routes, run `make api-generate` (the prek hook does this
+  automatically on commit).
+- Prefer `require.ErrorIs` for sentinel checks; raw `==` comparison misses
+  wrapped errors.
+- The existing `httpapi.Translate` maps `errs.ErrOwnerMismatch → 403`, which
+  matches the scopes/sharing surface but not the albums surface. If a surface
+  needs a different mapping, write a local translator that overrides the
+  sentinels it cares about and delegates the rest to `Translate`.
