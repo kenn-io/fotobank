@@ -1,6 +1,6 @@
 # Fotobank on Docbank — Development Master Spec
 
-**Status:** Draft v0.5
+**Status:** Draft v0.6
 **Date:** 2026-08-25
 **Scope:** Governing architecture and development sequence for rebuilding
 Fotobank on Docbank as an embedded Go library. Each implementation stage below
@@ -294,12 +294,14 @@ On restart, the recovery worker examines pending operations:
   orphan. Reconciliation either completes its matching pending operation or
   reports it for explicit cleanup.
 
-The adapter serializes every Docbank content mutation. This makes a
-Fotobank-side base-version comparison and `Put` indivisible with respect to all
-other Fotobank writers during the thin slice. Before production checkout writes
-are enabled, Docbank must also accept a caller-supplied revision or version
-precondition on `Put`; correctness must not depend permanently on every future
-caller remembering an application mutex.
+The adapter serializes Docbank content mutations to bound local concurrency, but
+that mutex is not the stale-write correctness boundary. F08 depends on D01 and
+passes the checkout's base revision or version into one conditional Docbank
+`Put`. Docbank validates that precondition in the same catalog transaction that
+publishes the new version. An earlier Fotobank read may report an obvious
+conflict sooner, but a race after that read still fails the conditional `Put`;
+correctness never depends on a caller holding an application mutex across
+separate calls.
 
 ## 8. Import flow
 
@@ -408,15 +410,14 @@ The scanner:
 For a settled change to a tracked file, the checkout manager:
 
 1. hashes the working bytes;
-2. enters the adapter's mutation gate;
-3. reads the current Docbank node;
-4. compares its current version with the checkout entry's base version;
-5. records `conflict` and stops if they differ;
-6. calls conditional `Put` with the expected base revision/version and expected
-   new content identity;
-7. atomically updates the Fotobank file cache and checkout base to the returned
+2. calls one adapter operation with the checkout entry's base revision/version,
+   the expected new content identity, and the working bytes;
+3. the adapter calls D01's conditional Docbank `Put`, which validates the base
+   and publishes the new version atomically in Docbank;
+4. records `conflict` and stops if Docbank reports a stale base;
+5. atomically updates the Fotobank file cache and checkout base to the returned
    version; and
-8. invalidates and queues every version-sensitive projection.
+6. invalidates and queues every version-sensitive projection.
 
 An XMP auto-write therefore becomes a new version of the existing XMP file
 node. A writable JPEG or DNG modification becomes a new version of that file
@@ -734,8 +735,8 @@ bytes plus video byte ranges without the legacy storage implementation.
 |---|---|---|
 | F06 | Add checkout and checkout-entry persistence, selection policies, capacity estimates, and copy materialization. | F04 |
 | F07 | Add the periodic settle/scan/reconcile engine; notifications may enqueue scans but are not required for correctness. | F06 |
-| D01 | Add caller-supplied revision or current-version preconditions to embedded `Put`, with a stale-base contract and tests. | — |
-| F08 | Commit tracked file modifications as conditional Docbank versions and invalidate version-sensitive projections. | F07, D01 |
+| D01 | Add caller-supplied revision or current-version preconditions to embedded `Put`, evaluated atomically with catalog version publication, with a stale-base contract and tests. | — |
+| F08 | Commit tracked file modifications through one adapter operation backed by D01's conditional Docbank `Put`, then invalidate version-sensitive projections. | F07, D01 |
 | F09 | Import new XMP and DNG files and create `sidecar_of`/`derived_from` relationships. | F08 |
 | F10 | Persist checkout conflicts, missing entries, and explicit conflict-resolution operations. | F08 |
 | F11 | Preserve checkout renames, recover lost rename events by unique identity, and add dry-run plus rebuild-from-empty commands. | F09, F10 |
@@ -808,6 +809,12 @@ absence is a valid final state, not incomplete work.
 - Performance claims require the workloads in §10.3. Storage optimizations do
   not precede those measurements.
 - A milestone gate is part of the milestone, not optional follow-up work.
+- Once this governing spec and an executable PR plan are approved, planning is
+  frozen and implementation begins. Reopen a frozen plan only for an
+  unimplementable contract, a violated governing invariant, a reachable
+  data-loss path, or a missing dependency. Resolve ordinary implementation
+  details and additional test cases in the affected code PR instead of cycling
+  the planning PR.
 - Kata tracks approved outstanding implementation work. The master spec itself
   is not a substitute for milestone issues and dependency links.
 

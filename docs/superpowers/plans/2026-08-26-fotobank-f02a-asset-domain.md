@@ -133,6 +133,12 @@ func (r *AssetRepo) GetPrimaryFile(
 ) (File, error)
 ```
 
+`thumb_claimed_at` is deliberately absent from `Asset`. It is a thumbnail-queue
+lease token, not an asset-domain projection. `internal/thumb.Queue` owns that
+column and returns it separately on `thumb.Claim`; F02a leaves the active queue
+on the legacy `media` table, and the just-in-time F03 plan will move its SQL to
+`assets`. General `AssetRepo` reads and writes do not round-trip queue leases.
+
 The four Docbank mapping fields are either all absent or all present; a pending
 graph may use the absent state. F02a carries no authority coordinate other than
 this mapping.
@@ -256,6 +262,9 @@ CREATE TABLE assets (
     UNIQUE (id, owner_hub, owner_user_id)
 );
 ```
+
+Keep `thumb_claimed_at` nullable and queue-owned as defined in the produced
+domain contract. Do not add it to `Asset` or to general `AssetRepo` projections.
 
 - [ ] **Step 4: Add the `media_files` table**
 
@@ -406,6 +415,10 @@ Add triggers with these exact outcomes:
    file's asset and owner coordinate are immutable after insertion, so a
    primary cannot be moved away from a ready asset and existing relationship
    invariants cannot be invalidated indirectly.
+7. Inserting an unmapped file into a ready asset aborts.
+8. Clearing the complete mapping from a file owned by a ready asset aborts.
+   Updates from one complete valid mapping to another remain allowed so F03 can
+   advance the cached current version.
 
 Use stable error text such as `ready asset requires exactly one primary` and
 `ready asset requires mapped files` for readiness violations,
@@ -426,10 +439,34 @@ BEGIN
 END;
 ```
 
+Preserve the invariant after the transition with these two trigger conditions;
+the table check proves `docbank_node_id IS NULL` means all four mapping columns
+are null:
+
+```sql
+-- BEFORE INSERT ON media_files
+WHEN NEW.docbank_node_id IS NULL AND EXISTS (
+  SELECT 1 FROM assets WHERE id = NEW.asset_id AND state = 'ready'
+)
+
+-- BEFORE UPDATE OF docbank_node_id, docbank_virtual_path,
+--                  current_version_id, sha256 ON media_files
+WHEN NEW.docbank_node_id IS NULL AND EXISTS (
+  SELECT 1 FROM assets WHERE id = NEW.asset_id AND state = 'ready'
+)
+```
+
+Both triggers abort with `ready asset requires mapped files`.
+
 - [ ] **Step 4: Add ready-state and file-coordinate test cases**
 
-Exercise all six outcomes through SQL against a fresh migrated database and
-assert the operation fails at the database boundary.
+Exercise all eight outcomes through SQL against a fresh migrated database and
+assert the operation fails at the database boundary. For outcomes 7 and 8,
+first create a pending asset with one fully mapped primary and transition it to
+ready. Then prove an unmapped secondary insert and an all-null mapping update
+fail while a fully mapped secondary insert and a complete mapping-to-mapping
+version advance succeed. These tests exercise Fotobank's trigger behavior, not
+SQLite implementation details.
 
 - [ ] **Step 5: Run the primary and ready tests**
 
@@ -591,7 +628,8 @@ Return a wrapped `errs.ErrNotFound` when the owner row does not exist.
 
 Add one named SQL statement containing every `Asset` projection field. Store
 the row as pending even when `asset.State` is ready; remember the requested
-state locally.
+state locally. `thumb_claimed_at` is queue-owned state, not an `Asset`
+projection field, so this statement leaves it null.
 
 - [ ] **Step 5: Validate mappings, then insert files and relationships**
 
@@ -750,6 +788,8 @@ Expected: PASS.
 - Modify: `internal/owners/repo_test.go`
 - Modify: `internal/service/owner_service.go`
 - Modify: `internal/service/owner_service_test.go`
+- Modify: existing owner-row and configuration fixtures under `cmd/` and
+  `internal/` selected by Step 9's exact searches
 
 **Interfaces:** Replaces `OwnerService.Ensure` with:
 
@@ -761,18 +801,60 @@ func (s *OwnerService) Ensure(
 ) (owners.Owner, error)
 ```
 
-- [ ] **Step 1: Change the schema declaration to UUID**
+- [ ] **Step 1: Add failing storage-key schema tests**
 
-Change `owners.storage_key` from `TEXT NOT NULL` to `UUID NOT NULL`. Keep the
-unique index. Update migration fixtures to use valid UUIDs.
+Against a fresh migrated database, insert one owner with
+`550e8400-e29b-41d4-a716-446655440000` and assert it succeeds. Table-test empty,
+short, uppercase, non-hex, misplaced-hyphen, and extra-suffix values and assert
+each direct insert fails. This tests Fotobank's persistent UUID contract.
 
-- [ ] **Step 2: Add failing generated-key service tests**
+- [ ] **Step 2: Run the storage-key schema test**
+
+```bash
+go test -tags sqlite_fts5 ./internal/db \
+  -run TestSchemaOwnerStorageKey -count=1
+```
+
+Expected: FAIL because SQLite's current `TEXT` declaration does not validate
+UUID syntax.
+
+- [ ] **Step 3: Enforce canonical UUID text in SQLite**
+
+Keep text affinity and replace `storage_key TEXT NOT NULL` with this exact
+declaration; a custom `UUID` type name alone does not validate values in SQLite:
+
+```sql
+storage_key TEXT NOT NULL CHECK (
+  length(storage_key) = 36 AND
+  storage_key = lower(storage_key) AND
+  substr(storage_key, 9, 1) = '-' AND
+  substr(storage_key, 14, 1) = '-' AND
+  substr(storage_key, 19, 1) = '-' AND
+  substr(storage_key, 24, 1) = '-' AND
+  length(replace(storage_key, '-', '')) = 32 AND
+  replace(storage_key, '-', '') NOT GLOB '*[^0-9a-f]*'
+),
+```
+
+Keep the unique index. Update the down migration in step with the amended
+pre-alpha schema.
+
+- [ ] **Step 4: Run the storage-key schema test**
+
+```bash
+go test -tags sqlite_fts5 ./internal/db \
+  -run TestSchemaOwnerStorageKey -count=1
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Add failing generated-key service tests**
 
 For a missing owner and empty requested key, assert returned owner fields match
 the principal, `uuid.Parse(returned.StorageKey)` succeeds, and the repo stores
 that exact key.
 
-- [ ] **Step 3: Add failing existing-owner tests**
+- [ ] **Step 6: Add failing existing-owner tests**
 
 Prove:
 
@@ -781,7 +863,7 @@ Prove:
 - a different explicit UUID returns `errs.ErrAlreadyExists`; and
 - an invalid explicit key returns `errs.ErrInvalidArgument` without insert.
 
-- [ ] **Step 4: Run focused owner-service tests**
+- [ ] **Step 7: Run focused owner-service tests**
 
 ```bash
 go test -tags sqlite_fts5 ./internal/service \
@@ -790,7 +872,7 @@ go test -tags sqlite_fts5 ./internal/service \
 
 Expected: FAIL to compile against the old return signature.
 
-- [ ] **Step 5: Implement requested-key normalization**
+- [ ] **Step 8: Implement requested-key normalization**
 
 ```go
 func normalizeStorageKey(requested string) (string, error) {
@@ -808,14 +890,32 @@ func normalizeStorageKey(requested string) (string, error) {
 
 Generate only after the first lookup proves the owner is missing.
 
-- [ ] **Step 6: Return the authoritative stored owner**
+- [ ] **Step 9: Sweep every existing storage-key fixture**
+
+Run both searches from the repository root:
+
+```bash
+rg -n 'storage_key\s*=|StorageKey:' cmd internal \
+  --glob '*.go' --glob '*.toml'
+rg -n 'INSERT( OR IGNORE)? INTO owners|INSERT INTO owners VALUES' \
+  cmd internal --glob '*.go'
+```
+
+Replace every explicit non-UUID configuration value and every direct owner-row
+fixture with canonical lowercase UUID text. This includes the current `sk`,
+`alice-sk`, `h/u`, `k`, `k1`, `k2`, `key1`, `winner`, and `scale-storage`
+fixtures. Use distinct UUIDs where one database contains multiple owners; keep
+each fixture's value stable where a path assertion depends on it. Do not add a
+compatibility parser for the old values.
+
+- [ ] **Step 10: Return the authoritative stored owner**
 
 On successful insert, return the inserted owner. On a concurrent unique race,
 re-read and return the winner when an empty request allowed either generated
 key; for an explicit request, require the stored canonical UUID to match or
 return `errs.ErrAlreadyExists`.
 
-- [ ] **Step 7: Run owner-service tests under the race detector**
+- [ ] **Step 11: Run owner-service tests under the race detector**
 
 ```bash
 go test -race -tags sqlite_fts5 ./internal/service \
@@ -825,13 +925,15 @@ go test -race -tags sqlite_fts5 ./internal/service \
 Expected: PASS, including the existing concurrent-insert fixture adapted to
 the returned owner.
 
-- [ ] **Step 8: Run owner repository and migration tests**
+- [ ] **Step 12: Run owner, migration, and short repository tests**
 
 ```bash
 go test -tags sqlite_fts5 ./internal/owners ./internal/db -count=1
+make test-short
 ```
 
-Expected: PASS with valid UUID fixtures.
+Expected: PASS with every persisted or configured storage key using the final
+canonical UUID contract.
 
 ---
 
