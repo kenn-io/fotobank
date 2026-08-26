@@ -322,6 +322,9 @@ func (c *Config) Validate() error {
 	if err != nil {
 		return fmt.Errorf("%w: canonicalize [flash].root: %v", errs.ErrBadConfiguration, err)
 	}
+	c.Docbank.Root = docbankRoot
+	c.NAS.Root = nasRoot
+	c.Flash.Root = flashRoot
 	if pathsOverlap(docbankRoot, nasRoot) {
 		return fmt.Errorf("%w: [docbank].root and [nas].root must not overlap", errs.ErrBadConfiguration)
 	}
@@ -429,11 +432,18 @@ func (c *Config) Validate() error {
 }
 
 func canonicalConfigPath(value string) (string, error) {
-	absolute, err := filepath.Abs(value)
-	if err != nil {
-		return "", err
+	target := value
+	if !filepath.IsAbs(target) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		target = cwd + string(os.PathSeparator) + target
 	}
-	current := filepath.Clean(absolute)
+	current := strings.TrimRight(target, string(os.PathSeparator))
+	if current == "" {
+		current = string(os.PathSeparator)
+	}
 	var missing []string
 	for {
 		_, lstatErr := os.Lstat(current)
@@ -443,11 +453,14 @@ func canonicalConfigPath(value string) (string, error) {
 		if !errors.Is(lstatErr, os.ErrNotExist) {
 			return "", lstatErr
 		}
-		parent := filepath.Dir(current)
+		parent, component := rawPathParent(current)
 		if parent == current {
 			return "", lstatErr
 		}
-		missing = append(missing, filepath.Base(current))
+		if component == "." || component == ".." {
+			return "", fmt.Errorf("path traverses %q after a missing component", component)
+		}
+		missing = append(missing, component)
 		current = parent
 	}
 	resolved, err := filepath.EvalSymlinks(current)
@@ -456,6 +469,22 @@ func canonicalConfigPath(value string) (string, error) {
 	}
 	slices.Reverse(missing)
 	return filepath.Join(append([]string{resolved}, missing...)...), nil
+}
+
+func rawPathParent(value string) (string, string) {
+	volume := filepath.VolumeName(value)
+	remainder := value[len(volume):]
+	remainder = strings.TrimRight(remainder, string(os.PathSeparator))
+	index := strings.LastIndex(remainder, string(os.PathSeparator))
+	if index < 0 {
+		return value, ""
+	}
+	component := remainder[index+1:]
+	parentRemainder := strings.TrimRight(remainder[:index], string(os.PathSeparator))
+	if parentRemainder == "" {
+		parentRemainder = string(os.PathSeparator)
+	}
+	return volume + parentRemainder, component
 }
 
 func pathContains(parent, candidate string) bool {

@@ -908,14 +908,15 @@ listen_address = "127.0.0.1:0"
 	r.Equal(filepath.Join(home, "locks", "import.lock"), cfg.Imports.FileLockPath)
 }
 
-// TestLoadLeavesAbsoluteAndRelativePathsAlone proves the expander is
-// a no-op for paths that don't start with "~". Absolute paths must
-// pass through unchanged so deployments writing to /var/lib/fotobank
-// don't get rewritten; relative paths likewise.
-func TestLoadLeavesAbsoluteAndRelativePathsAlone(t *testing.T) {
+// TestLoadCanonicalizesAbsoluteAndRelativeStoragePaths proves paths that do
+// not start with "~" retain their meaning while final storage roots use the
+// same absolute canonical spelling for validation and runtime access.
+func TestLoadCanonicalizesAbsoluteAndRelativeStoragePaths(t *testing.T) {
 	r := require.New(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	cwd, err := os.Getwd()
+	r.NoError(err)
 
 	tmp := t.TempDir()
 	p := filepath.Join(tmp, "c.toml")
@@ -935,7 +936,7 @@ listen_address = "127.0.0.1:0"
 	cfg, err := config.Load(p)
 	r.NoError(err)
 	r.Equal("/var/lib/fotobank", cfg.Flash.Root)
-	r.Equal("./relative-nas", cfg.NAS.Root)
+	r.Equal(filepath.Join(cwd, "relative-nas"), cfg.NAS.Root)
 }
 
 // TestLoadExpandsBareTilde covers the edge case where a path is just

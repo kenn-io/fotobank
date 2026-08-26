@@ -84,3 +84,59 @@ root = %q
 	_, err := config.Load(p)
 	require.ErrorIs(t, err, errs.ErrBadConfiguration)
 }
+
+func TestValidateDocbankRootSymlinkParentOverlap(t *testing.T) {
+	require := require.New(t)
+	tmp := t.TempDir()
+	flashRoot := filepath.Join(tmp, "flash")
+	cacheChild := filepath.Join(flashRoot, "originals", "child")
+	require.NoError(os.MkdirAll(cacheChild, 0o700))
+	aliasesRoot := filepath.Join(tmp, "aliases")
+	require.NoError(os.Mkdir(aliasesRoot, 0o700))
+	alias := filepath.Join(aliasesRoot, "vault")
+	if err := os.Symlink(cacheChild, alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	p := filepath.Join(tmp, "config.toml")
+	require.NoError(os.WriteFile(p, []byte(fmt.Sprintf(`
+[flash]
+root = %q
+[nas]
+root = %q
+[docbank]
+root = %q
+`, flashRoot, filepath.Join(tmp, "nas"), alias+string(os.PathSeparator)+"..")), 0o600))
+
+	_, err := config.Load(p)
+	require.ErrorIs(err, errs.ErrBadConfiguration)
+}
+
+func TestLoadReturnsCanonicalDocbankRootAfterSymlinkParent(t *testing.T) {
+	require := require.New(t)
+	tmp := t.TempDir()
+	realRoot := filepath.Join(tmp, "real-vault")
+	realChild := filepath.Join(realRoot, "child")
+	require.NoError(os.MkdirAll(realChild, 0o700))
+	aliasesRoot := filepath.Join(tmp, "aliases")
+	require.NoError(os.Mkdir(aliasesRoot, 0o700))
+	alias := filepath.Join(aliasesRoot, "vault")
+	if err := os.Symlink(realChild, alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	p := filepath.Join(tmp, "config.toml")
+	require.NoError(os.WriteFile(p, []byte(fmt.Sprintf(`
+[flash]
+root = %q
+[nas]
+root = %q
+[docbank]
+root = %q
+`, filepath.Join(tmp, "flash"), filepath.Join(tmp, "nas"),
+		alias+string(os.PathSeparator)+"..")), 0o600))
+
+	cfg, err := config.Load(p)
+	require.NoError(err)
+	require.Equal(realRoot, cfg.Docbank.Root)
+}
