@@ -281,8 +281,36 @@ CREATE TABLE media_files (
     CHECK (
       (docbank_node_id IS NULL AND docbank_virtual_path IS NULL AND
        current_version_id IS NULL AND sha256 IS NULL) OR
-      (docbank_node_id IS NOT NULL AND docbank_virtual_path IS NOT NULL AND
-       current_version_id IS NOT NULL AND sha256 IS NOT NULL)
+      (docbank_node_id IS NOT NULL AND docbank_node_id > 0 AND
+       docbank_virtual_path IS NOT NULL AND
+       length(docbank_virtual_path) > 1 AND
+       substr(docbank_virtual_path, 1, 1) = '/' AND
+       docbank_virtual_path = trim(docbank_virtual_path) AND
+       instr(docbank_virtual_path, char(0)) = 0 AND
+       instr(docbank_virtual_path, char(92)) = 0 AND
+       docbank_virtual_path NOT LIKE '%//%' AND
+       docbank_virtual_path NOT LIKE '%/./%' AND
+       docbank_virtual_path NOT LIKE '%/../%' AND
+       substr(docbank_virtual_path, -2) <> '/.' AND
+       substr(docbank_virtual_path, -3) <> '/..' AND
+       substr(docbank_virtual_path, -1) <> '/' AND
+       docbank_virtual_path LIKE '/owners/%/media/' || id || '/%' AND
+       length(docbank_virtual_path) -
+         length(replace(docbank_virtual_path, '/', '')) = 5 AND
+       current_version_id IS NOT NULL AND
+       length(current_version_id) = 36 AND
+       current_version_id = lower(current_version_id) AND
+       substr(current_version_id, 9, 1) = '-' AND
+       substr(current_version_id, 14, 1) = '-' AND
+       substr(current_version_id, 15, 1) = '4' AND
+       substr(current_version_id, 19, 1) = '-' AND
+       substr(current_version_id, 20, 1) GLOB '[89ab]' AND
+       substr(current_version_id, 24, 1) = '-' AND
+       length(replace(current_version_id, '-', '')) = 32 AND
+       replace(current_version_id, '-', '') NOT GLOB '*[^0-9a-f]*' AND
+       sha256 IS NOT NULL AND
+       length(sha256) = 64 AND sha256 = lower(sha256) AND
+       sha256 NOT GLOB '*[^0-9a-f]*')
     )
 );
 
@@ -370,21 +398,37 @@ Add triggers with these exact outcomes:
 
 1. A direct insert with `state = 'ready'` aborts; graphs start pending.
 2. Updating an asset to ready aborts unless exactly one primary exists.
-3. Deleting the primary of a ready asset aborts.
-4. Demoting the primary of a ready asset aborts.
-5. Updating a file's `asset_id`, `owner_hub`, or `owner_user_id` aborts. A
+3. Updating an asset to ready aborts if any owned file lacks its complete
+   Docbank mapping.
+4. Deleting the primary of a ready asset aborts.
+5. Demoting the primary of a ready asset aborts.
+6. Updating a file's `asset_id`, `owner_hub`, or `owner_user_id` aborts. A
    file's asset and owner coordinate are immutable after insertion, so a
    primary cannot be moved away from a ready asset and existing relationship
    invariants cannot be invalidated indirectly.
 
 Use stable error text such as `ready asset requires exactly one primary` and
-`cannot remove primary from ready asset` for ready-state violations, and
-`file asset and owner are immutable` for coordinate changes, so migration tests
-can distinguish the constraints.
+`ready asset requires mapped files` for readiness violations,
+`cannot remove primary from ready asset` for primary removal, and `file asset
+and owner are immutable` for coordinate changes, so migration tests can
+distinguish the constraints.
+
+The mapping branch of the ready-update trigger uses the all-null state defined
+by the table check:
+
+```sql
+WHEN NEW.state = 'ready' AND EXISTS (
+  SELECT 1 FROM media_files
+  WHERE asset_id = NEW.id AND docbank_node_id IS NULL
+)
+BEGIN
+  SELECT RAISE(ABORT, 'ready asset requires mapped files');
+END;
+```
 
 - [ ] **Step 4: Add ready-state and file-coordinate test cases**
 
-Exercise all five outcomes through SQL against a fresh migrated database and
+Exercise all six outcomes through SQL against a fresh migrated database and
 assert the operation fails at the database boundary.
 
 - [ ] **Step 5: Run the primary and ready tests**
@@ -425,8 +469,18 @@ Expected: PASS.
 - [ ] **Step 9: Add mapping all-or-none tests**
 
 Insert one file with all four mapping fields null and one with all four fields
-present. Then test each partial combination and assert it fails the table
-check.
+present and valid. Then assert the table check rejects:
+
+- each partial null/non-null combination;
+- zero and negative node IDs;
+- empty, relative, backslash-containing, repeated-separator, dot-segment,
+  wrong-prefix, and wrong-file-ID virtual paths;
+- empty, noncanonical, non-v4, or uppercase version IDs; and
+- empty, short, uppercase, or non-hex SHA-256 values.
+
+These are direct SQL tests of the persistent cache boundary. Task 5 separately
+tests the stronger repository rule that the path must equal the F01 path for
+the owning storage key and file ID.
 
 - [ ] **Step 10: Run all new schema tests**
 
@@ -518,9 +572,20 @@ func NewAssetRepo(rw, ro *sql.DB) *AssetRepo {
 }
 ```
 
-`InsertGraph` validates IDs/enums before `BeginTx`, inserts the asset as
-pending, inserts every file and relationship with prepared statements, and
-commits only after the requested final state is applied.
+`InsertGraph` validates local IDs/enums before `BeginTx`, starts the transaction,
+reads the owner's immutable storage key, validates every optional Docbank
+mapping against that key, inserts the asset as pending, inserts every file and
+relationship with prepared statements, and commits only after the requested
+final state is applied.
+
+Read the storage key inside that transaction with the graph owner's complete
+principal coordinate:
+
+```sql
+SELECT storage_key FROM owners WHERE hub = ? AND user_id = ?
+```
+
+Return a wrapped `errs.ErrNotFound` when the owner row does not exist.
 
 - [ ] **Step 4: Insert the asset projection**
 
@@ -528,10 +593,48 @@ Add one named SQL statement containing every `Asset` projection field. Store
 the row as pending even when `asset.State` is ready; remember the requested
 state locally.
 
-- [ ] **Step 5: Insert files and relationships**
+- [ ] **Step 5: Validate mappings, then insert files and relationships**
 
-Reject a file whose `AssetID` or owner differs from the asset before SQL. Insert
-all file columns and then all relationship rows in caller order.
+Reject a file whose `AssetID` or owner differs from the asset before SQL. For
+each file, apply this private validation before its insert:
+
+```go
+func validateDocbankMapping(file File, ownerStorageKey string) error {
+    absent := file.DocbankNodeID == nil &&
+        file.DocbankVirtualPath == "" &&
+        file.CurrentVersionID == "" && file.SHA256 == ""
+    if absent {
+        return nil
+    }
+    if file.DocbankNodeID == nil || *file.DocbankNodeID <= 0 {
+        return fmt.Errorf("%w: invalid Docbank node ID", errs.ErrInvalidArgument)
+    }
+    versionID, err := uuid.Parse(file.CurrentVersionID)
+    if err != nil || versionID.Version() != 4 ||
+        versionID.String() != file.CurrentVersionID {
+        return fmt.Errorf("%w: invalid Docbank version ID", errs.ErrInvalidArgument)
+    }
+    digest, err := hex.DecodeString(file.SHA256)
+    if err != nil || len(digest) != sha256.Size ||
+        hex.EncodeToString(digest) != file.SHA256 {
+        return fmt.Errorf("%w: invalid Docbank SHA-256", errs.ErrInvalidArgument)
+    }
+    expectedPath, err := content.VirtualPath(
+        ownerStorageKey, file.ID, file.OriginalFilename,
+    )
+    if err != nil || file.DocbankVirtualPath != expectedPath {
+        return fmt.Errorf("%w: invalid Docbank virtual path", errs.ErrInvalidArgument)
+    }
+    return nil
+}
+```
+
+An all-absent mapping is allowed only while the graph remains pending or
+conflict. Reject a requested ready state if any file mapping is absent; the
+database ready trigger is the final enforcement boundary. Import
+`internal/content` only for its pure `VirtualPath` contract—`AssetRepo` does not
+open or call the Docbank adapter. Insert all file columns and then all
+relationship rows in caller order.
 
 - [ ] **Step 6: Finalize the requested state**
 
@@ -553,6 +656,11 @@ Expected: PASS.
 Insert a graph whose relationship crosses assets or references an absent file.
 Assert `InsertGraph` errors and subsequent counts show no asset, file, or
 relationship from that graph.
+
+Add table cases for a zero node ID, malformed version UUID, malformed SHA-256,
+a virtual path with the wrong owner storage key, and a path with the wrong file
+ID. Each must wrap `errs.ErrInvalidArgument` and leave all graph tables
+unchanged.
 
 - [ ] **Step 9: Run the rollback test**
 

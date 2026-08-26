@@ -1,6 +1,6 @@
 # Fotobank on Docbank — Development Master Spec
 
-**Status:** Draft v0.4
+**Status:** Draft v0.5
 **Date:** 2026-08-25
 **Scope:** Governing architecture and development sequence for rebuilding
 Fotobank on Docbank as an embedded Go library. Each implementation stage below
@@ -308,17 +308,20 @@ feature explicitly introduces move semantics.
 
 For each stable source file, Fotobank:
 
-1. waits until size and modification time remain unchanged for the configured
+1. before discovery, canonicalizes the source root and Docbank root through
+   their deepest existing filesystem ancestors and rejects overlap in either
+   direction, including overlap through symlink aliases;
+2. waits until size and modification time remain unchanged for the configured
    settle interval;
-2. computes SHA-256 and byte count;
-3. extracts enough local metadata to group related files and choose an asset;
-4. allocates asset/file IDs and a pending operation;
-5. calls `Vault.Create` with required expected identity and filesystem-source
+3. computes SHA-256 and byte count;
+4. extracts enough local metadata to group related files and choose an asset;
+5. allocates asset/file IDs and a pending operation;
+6. calls `Vault.Create` with required expected identity and filesystem-source
    provenance;
-6. commits the mapping and relationship rows;
-7. queues EXIF, thumbnail, and search/AI projections against the returned
+7. commits the mapping and relationship rows;
+8. queues EXIF, thumbnail, and search/AI projections against the returned
    version ID; and
-8. optionally materializes the file into selected checkouts.
+9. optionally materializes the file into selected checkouts.
 
 Docbank's SHA-256 is the only durable content identity. Fotobank does not
 compute or retain MD5. Deduplication follows Docbank's content identity while
@@ -448,10 +451,12 @@ required bytes before mutation.
 ### 10.1 Thin-slice topology
 
 The semantic thin slice uses an embedded vault rooted on local scratch storage
-and a copy-based partial checkout. That storage topology needs no Docbank
-placement or authority-transfer change; Milestone 1 separately requires D02
-for video reads. The data is disposable and is not treated as the production
-archive.
+and a copy-based partial checkout. The vault may use the intended
+`<flash.root>/docbank` directory, but its canonical path must remain disjoint
+from the NAS root and every admitted import source. That storage topology needs
+no Docbank placement or authority-transfer change; Milestone 1 separately
+requires D02 for video reads. The data is disposable and is not treated as the
+production archive.
 
 ### 10.2 Production topology
 
@@ -708,7 +713,7 @@ where behavior changes, and no compatibility layer for the replaced design.
 | F01 | Add the Docbank module, vault configuration/lifecycle, and the single internal adapter with real-vault integration tests. No product path writes content yet. | F00 |
 | F02a | Add and test the final-shaped opaque asset, media-file, relationship, and cached Docbank-mapping schema/domain repositories. The new model is not yet used by product writes, so this additive review slice introduces no dual persistence or legacy storage fields. | F01 |
 | D02 | Expose catalog-authorized exact-version logical byte ranges with the raw/packed/compressed behavior defined in §12. | — |
-| F03 | Atomically cut existing foreign keys, product consumers, import writes, and all current-original reads—including video ranges—to the asset/file model and Docbank authority. Add SHA-256 identity, stable virtual paths, and pending-operation receipts; use Docbank SHA-256 for content ETags. Remove the superseded one-row-per-file schema, original-byte storage path, and MD5 identity in the same PR. | F02a, D02 |
+| F03 | Atomically cut existing foreign keys, product consumers, import writes, and all current-original reads—including video ranges—to the asset/file model and Docbank authority. Reject canonical or symlink-aliased overlap between import sources and the vault before discovery. Add SHA-256 identity, stable virtual paths, and pending-operation receipts; use Docbank SHA-256 for content ETags. Remove the superseded one-row-per-file schema, original-byte storage path, and MD5 identity in the same PR. | F02a, D02 |
 | F04 | Add exact-version reads and the shared asset/file/version resolver used by checkout rebuilds and projection workers. | F03 |
 | F05 | Add pending-operation restart recovery and orphan reconciliation for create/import operations. | F03 |
 

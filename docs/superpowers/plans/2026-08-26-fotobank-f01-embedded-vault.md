@@ -186,6 +186,7 @@ Expected: PASS with the new module unused.
 **Files:**
 - Modify: `internal/config/config.go`
 - Modify: `internal/config/config_test.go`
+- Create: `internal/config/config_symlink_test.go`
 - Modify: `internal/config/config.example.toml`
 
 **Interfaces:**
@@ -248,14 +249,22 @@ go test -tags sqlite_fts5 ./internal/config \
 
 Expected: PASS.
 
-- [ ] **Step 6: Add failing overlap validation tests**
+- [ ] **Step 6: Add failing root-containment validation tests**
 
-Cover exact cleaned-path equality for:
+Cover these canonical path relationships:
 
-- Docbank root and `Flash.Root`; and
-- Docbank root and `NAS.Root`.
+- Docbank and NAS equality;
+- Docbank beneath NAS and NAS beneath Docbank;
+- a symlink alias that makes otherwise different Docbank and NAS spellings
+  overlap, including a missing suffix beneath the aliased existing ancestor;
+- Docbank and Flash equality;
+- Flash beneath Docbank; and
+- the intended Docbank child beneath Flash, which must pass.
 
-Each case must use `require.ErrorIs(t, err, errs.ErrBadConfiguration)`.
+Each rejected case must use
+`require.ErrorIs(t, err, errs.ErrBadConfiguration)`. Put the symlink cases in
+`config_symlink_test.go`; skip them only when `os.Symlink` itself fails on the
+test platform, and report that error in the skip message.
 
 - [ ] **Step 7: Run the overlap tests**
 
@@ -266,23 +275,58 @@ go test -tags sqlite_fts5 ./internal/config \
 
 Expected: FAIL because overlap validation is absent.
 
-- [ ] **Step 8: Implement cleaned absolute-path equality checks**
+- [ ] **Step 8: Implement canonical containment checks**
 
-Add a small unexported normalizer:
+Add an unexported normalizer that resolves the deepest existing prefix and
+retains a missing suffix. This matches Docbank's pinned root semantics without
+importing a Docbank internal package:
 
 ```go
-func cleanAbsolutePath(value string) (string, error) {
+func canonicalConfigPath(value string) (string, error) {
     absolute, err := filepath.Abs(value)
     if err != nil {
         return "", err
     }
-    return filepath.Clean(absolute), nil
+    current := filepath.Clean(absolute)
+    var missing []string
+    for {
+        resolved, resolveErr := filepath.EvalSymlinks(current)
+        if resolveErr == nil {
+            slices.Reverse(missing)
+            return filepath.Join(
+                append([]string{resolved}, missing...)...,
+            ), nil
+        }
+        if !errors.Is(resolveErr, fs.ErrNotExist) {
+            return "", resolveErr
+        }
+        parent := filepath.Dir(current)
+        if parent == current {
+            return "", resolveErr
+        }
+        missing = append(missing, filepath.Base(current))
+        current = parent
+    }
+}
+
+func pathContains(parent, candidate string) bool {
+    rel, err := filepath.Rel(parent, candidate)
+    return err == nil && (rel == "." ||
+        (rel != ".." &&
+            !strings.HasPrefix(rel, ".."+string(os.PathSeparator))))
+}
+
+func pathsOverlap(left, right string) bool {
+    return pathContains(left, right) || pathContains(right, left)
 }
 ```
 
-Require a non-empty Docbank root, normalize it and the two storage roots, and
-reject equality. Do not reject the intended Docbank subdirectory beneath
-`Flash.Root`, and do not attempt symlink identity inference.
+Add `io/fs` and `slices` to the existing imports. Require a non-empty Docbank
+root and canonicalize Docbank, NAS, and Flash roots. Reject any Docbank/NAS
+overlap. For Flash, reject only `pathContains(docbankRoot, flashRoot)`, which
+covers equality and Flash nested beneath Docbank; intentionally allow Docbank
+beneath Flash. F03 separately owns runtime rejection of import-source/vault
+overlap because the source root is a command argument, not configuration.
 
 - [ ] **Step 9: Run all config tests**
 
@@ -313,11 +357,12 @@ Do not enable compression or packing options in Fotobank configuration.
 - Modify: `internal/errs/errs.go`
 - Modify: `internal/errs/errs_test.go`
 - Create: `internal/content/errors.go`
+- Create: `internal/content/errors_test.go`
 - Create: `internal/content/path.go`
 - Create: `internal/content/path_test.go`
 
 **Interfaces:** Produces `errs.ErrContentConflict`,
-`errs.ErrContentUnavailable`, and:
+`errs.ErrContentIdentityMismatch`, `errs.ErrContentUnavailable`, and:
 
 ```go
 func VirtualPath(
@@ -325,11 +370,12 @@ func VirtualPath(
 ) (string, error)
 ```
 
-- [ ] **Step 1: Add the two Fotobank sentinels**
+- [ ] **Step 1: Add the three Fotobank sentinels**
 
 ```go
-ErrContentConflict    = errors.New("content conflict")
-ErrContentUnavailable = errors.New("content unavailable")
+ErrContentConflict         = errors.New("content conflict")
+ErrContentIdentityMismatch = errors.New("content identity mismatch")
+ErrContentUnavailable      = errors.New("content unavailable")
 ```
 
 Add them to the existing sentinel uniqueness/classification test table.
@@ -357,8 +403,8 @@ require.Equal(t,
 ```
 
 Add cases for invalid owner UUID, invalid file UUID, invalid UTF-8, empty,
-`.`, `..`, NFC normalization, and an input whose directory components must be
-discarded by `filepath.Base`.
+`.`, `..`, NUL, NFC normalization, and original names containing either `/` or
+`\`. Both separator forms must fail on every host OS.
 
 - [ ] **Step 4: Run the path tests**
 
@@ -370,17 +416,28 @@ Expected: FAIL because the package and function are absent.
 
 - [ ] **Step 5: Implement the virtual path**
 
-Validate both identifiers with the repository's existing UUID dependency,
-take `filepath.Base`, reject invalid names, normalize with
-`norm.NFC.String`, and join virtual components with `path.Join`:
+Validate both identifiers with the repository's existing UUID dependency and
+require their canonical lowercase spelling. Treat `originalBasename` as a
+basename contract: reject invalid UTF-8, empty, `.`, `..`, NUL, `/`, and `\`
+instead of silently discarding path components. Normalize the accepted name
+with `norm.NFC.String`, then join virtual components with `path.Join`:
 
 ```go
+if !utf8.ValidString(originalBasename) || originalBasename == "" ||
+    originalBasename == "." || originalBasename == ".." ||
+    strings.ContainsAny(originalBasename, "/\\\x00") {
+    return "", fmt.Errorf("%w: invalid original basename", errs.ErrInvalidArgument)
+}
+basename := norm.NFC.String(originalBasename)
 return path.Join(
     "/owners", ownerStorageKey, "media", fileID, basename,
 ), nil
 ```
 
-Filesystem path parsing is host-specific; virtual path assembly is always
+Add `unicode/utf8`; use the existing `strings` import if present or add it.
+
+The caller extracts a host path's basename before this boundary. Virtual path
+validation is therefore host-independent, and assembly is always
 slash-separated.
 
 - [ ] **Step 6: Run the path tests**
@@ -391,7 +448,35 @@ go test -tags sqlite_fts5 ./internal/content -run TestVirtualPath -count=1
 
 Expected: PASS on the current platform.
 
-- [ ] **Step 7: Implement Docbank error translation**
+- [ ] **Step 7: Add failing Docbank error-translation tests**
+
+Create `internal/content/errors_test.go` in package `content` so it can exercise
+the unexported adapter seam. Table-test these identities:
+
+```go
+{docbank.ErrDigestMismatch, errs.ErrContentIdentityMismatch},
+{docbank.ErrSizeMismatch, errs.ErrContentIdentityMismatch},
+{docbank.ErrContentConflict, errs.ErrContentConflict},
+{docbank.ErrContentUnavailable, errs.ErrContentUnavailable},
+{docbank.ErrNotFound, errs.ErrNotFound},
+```
+
+For each case, call `translateError`, assert `require.ErrorIs` for the Fotobank
+sentinel, and retain the upstream identity through wrapping. Digest and size
+mismatches must not classify as `errs.ErrInvalidArgument` or
+`errs.ErrContentConflict`.
+
+- [ ] **Step 8: Run the translation test to verify it fails**
+
+```bash
+go test -tags sqlite_fts5 ./internal/content \
+  -run TestTranslateError -count=1
+```
+
+Expected: FAIL because identity mismatches still map to
+`errs.ErrInvalidArgument`.
+
+- [ ] **Step 9: Implement Docbank error translation**
 
 In `internal/content/errors.go`:
 
@@ -407,7 +492,7 @@ func translateError(err error) error {
         return fmt.Errorf("%w: %w", errs.ErrContentConflict, err)
     case errors.Is(err, docbank.ErrDigestMismatch),
         errors.Is(err, docbank.ErrSizeMismatch):
-        return fmt.Errorf("%w: %w", errs.ErrInvalidArgument, err)
+        return fmt.Errorf("%w: %w", errs.ErrContentIdentityMismatch, err)
     case errors.Is(err, docbank.ErrContentUnavailable),
         errors.Is(err, docbank.ErrClosed):
         return fmt.Errorf("%w: %w", errs.ErrContentUnavailable, err)
@@ -418,6 +503,15 @@ func translateError(err error) error {
 ```
 
 No other package imports Docbank to classify these errors.
+
+- [ ] **Step 10: Run the translation and sentinel tests**
+
+```bash
+go test -tags sqlite_fts5 ./internal/content ./internal/errs \
+  -run 'TestTranslateError|TestSentinelsAreDistinct' -count=1
+```
+
+Expected: PASS.
 
 ---
 
@@ -502,8 +596,12 @@ require.Equal(t, first.Version.ID, second.Version.ID)
 require.Equal(t, expected, first.Identity)
 ```
 
-Also assert a different expected identity at the same path returns
-`errs.ErrContentConflict`.
+Also exercise both classifications through the public adapter:
+
+- bytes that disagree with the request's expected digest or size return
+  `errs.ErrContentIdentityMismatch`; and
+- a second create at the same path with different bytes and their matching
+  expected identity returns `errs.ErrContentConflict`.
 
 - [ ] **Step 6: Run the create test**
 

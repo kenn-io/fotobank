@@ -134,7 +134,7 @@ kata create --project fotobank "F02a: add the asset and file domain" \
   --idempotency-key fotobank-docbank-f02a --agent
 
 kata create --project fotobank "F03: make Docbank original authority" \
-  --body "Atomically move active consumers and foreign keys to assets, grouped imports and all original reads to released Docbank APIs, and remove the old media schema, storage path, and MD5 identity without a compatibility bridge." \
+  --body "Atomically move active consumers and foreign keys to assets, grouped imports and all original reads to released Docbank APIs; reject canonical or symlink-aliased import-source/vault overlap before discovery; and remove the old media schema, storage path, and MD5 identity without a compatibility bridge." \
   --parent <m1-ref> --blocked-by <f02a-ref> \
   --blocked-by docbank#<d02-ref> --label backend \
   --idempotency-key fotobank-docbank-f03 --agent
