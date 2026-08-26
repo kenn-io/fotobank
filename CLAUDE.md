@@ -126,13 +126,16 @@ Don't track ad-hoc one-turn tasks in kata — it's for outstanding designed/plan
    `test:`, `chore:`, optionally scoped like `fix(httpapi):`). Use imperative
    mood and a subject of at most 72 characters. Keep one logical change per
    commit and split unrelated changes.
-6. Write pull request descriptions for humans. Lead with the reviewer-visible
-   outcome, explain the important boundary or tradeoff, and avoid a mechanical
-   inventory of commits and files.
-7. Do not add routine validation checklists to pull request descriptions.
-   Report ordinary test, lint, generation, and hook results in the handoff.
-   Include validation in the description only when novel evidence materially
-   informs review.
+6. Write pull request descriptions in plain language for users and reviewers.
+   Lead with the outcome and its user-understandable implications. Explain only
+   the important boundary or tradeoff, and keep the description clear and
+   concise.
+7. Do not put routine test commands, validation checklists, implementation
+   diaries, agent process, or unrelated debugging details in pull request
+   descriptions. This includes `Evidence` sections and explanations of test
+   runner tuning or pre-existing flakes. Report ordinary verification in the
+   handoff instead. Include unusual evidence only when it materially changes a
+   review decision or explains a product risk.
 8. A pull request that changes the web interface must include a screenshot of
    the actual rendered result using synthetic data. Inspect it before
    publishing; never substitute a mockup for the implementation.

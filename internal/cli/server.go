@@ -38,6 +38,7 @@ import (
 	"go.kenn.io/fotobank/internal/auth/hidden"
 	"go.kenn.io/fotobank/internal/backup"
 	"go.kenn.io/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
@@ -129,7 +130,7 @@ type serverOpts struct {
 // runServer loads config, opens the database, wires the identity provider
 // and HTTP handler, binds the configured listen address, and serves until
 // ctx is cancelled or the process receives SIGINT/SIGTERM.
-func runServer(ctx context.Context, opts serverOpts) error {
+func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	path := opts.cfgPath
 	if path == "" {
 		path = config.DefaultConfigPath()
@@ -193,6 +194,14 @@ func runServer(ctx context.Context, opts serverOpts) error {
 		return err
 	}
 	defer d.Close()
+
+	contentStore, err := content.Open(ctx, content.Config{Root: cfg.Docbank.Root})
+	if err != nil {
+		return fmt.Errorf("open Docbank vault: %w", err)
+	}
+	defer func() {
+		retErr = errors.Join(retErr, contentStore.Close())
+	}()
 
 	appSettingsRepo := appsettingsstore.NewRepo(d.WriteDB(), d.ReadDB())
 	aiProvider, err := airuntime.NewProvider(ctx, airuntime.Source{
@@ -1186,18 +1195,6 @@ func loadStorageKeys(ctx context.Context, ownerSvc *service.OwnerService) (map[o
 	return keys, nil
 }
 
-// flashCacheSubdir is the subdirectory of cfg.Flash.Root that holds
-// cached originals. Isolating the cache from cfg.Flash.Root keeps the
-// FlashCache janitor (which walks its root and deletes stale entries)
-// from ever touching sibling state files such as the sqlite DB, WAL,
-// or shm files that live directly under cfg.Flash.Root.
-const flashCacheSubdir = "originals"
-
-// flashThumbsSubdir is the sibling subdirectory of flashCacheSubdir that
-// holds cached thumbnail bytes. Kept adjacent to flashCacheSubdir so the
-// FlashCache directory layout lives in one place.
-const flashThumbsSubdir = "thumbs"
-
 // buildStorageLayer assembles the Store implementation dictated by
 // cfg.Storage.Mode. When mode is "flash_cache" the returned *FlashCache
 // is non-nil so the caller can drive its daily janitor; otherwise it's
@@ -1208,13 +1205,13 @@ func buildStorageLayer(cfg *config.Config, keys map[owners.Principal]string) (st
 	if cfg.Storage.Mode != "flash_cache" {
 		return nasStore, nil
 	}
-	cacheRoot := filepath.Join(cfg.Flash.Root, flashCacheSubdir)
+	cacheRoot := filepath.Join(cfg.Flash.Root, config.FlashOriginalsCacheDir)
 	fc := storage.NewFlashCache(nasStore, cacheRoot, keys, storage.FlashCacheOptions{
 		OriginalsCacheDays:     cfg.Storage.OriginalsCacheDays,
 		OriginalsCacheMaxMedia: cfg.Storage.OriginalsCacheMaxMedia,
 	})
 	if cfg.Storage.ThumbsCacheEnabled {
-		thumbsCacheRoot := filepath.Join(cfg.Flash.Root, flashThumbsSubdir)
+		thumbsCacheRoot := filepath.Join(cfg.Flash.Root, config.FlashThumbsCacheDir)
 		fc.EnableThumbs(thumbsCacheRoot)
 	}
 	return fc, fc

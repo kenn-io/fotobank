@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -58,6 +59,7 @@ func EnsureDefault(path string) (bool, error) {
 
 type Config struct {
 	Flash         Flash         `toml:"flash"`
+	Docbank       Docbank       `toml:"docbank"`
 	NAS           NAS           `toml:"nas"`
 	Storage       Storage       `toml:"storage"`
 	Identity      Identity      `toml:"identity"`
@@ -89,6 +91,15 @@ type UI struct {
 type Flash struct {
 	Root string `toml:"root"`
 }
+
+type Docbank struct {
+	Root string `toml:"root"`
+}
+
+const (
+	FlashOriginalsCacheDir = "originals"
+	FlashThumbsCacheDir    = "thumbs"
+)
 
 type NAS struct {
 	Root string `toml:"root"`
@@ -227,6 +238,7 @@ func LoadUnchecked(path string) (*Config, error) {
 func expandHomePaths(c *Config) error {
 	fields := []*string{
 		&c.Flash.Root,
+		&c.Docbank.Root,
 		&c.NAS.Root,
 		&c.Imports.FileLockPath,
 		&c.Identity.Header.ProxyMTLSCAFile,
@@ -294,6 +306,41 @@ func applyEnvOverrides(c *Config) {
 func (c *Config) Validate() error {
 	if c.NAS.Root == "" {
 		return fmt.Errorf("%w: [nas].root is required", errs.ErrBadConfiguration)
+	}
+	if c.Docbank.Root == "" {
+		return fmt.Errorf("%w: [docbank].root is required", errs.ErrBadConfiguration)
+	}
+	docbankRoot, err := canonicalConfigPath(c.Docbank.Root)
+	if err != nil {
+		return fmt.Errorf("%w: canonicalize [docbank].root: %v", errs.ErrBadConfiguration, err)
+	}
+	nasRoot, err := canonicalConfigPath(c.NAS.Root)
+	if err != nil {
+		return fmt.Errorf("%w: canonicalize [nas].root: %v", errs.ErrBadConfiguration, err)
+	}
+	flashRoot, err := canonicalConfigPath(c.Flash.Root)
+	if err != nil {
+		return fmt.Errorf("%w: canonicalize [flash].root: %v", errs.ErrBadConfiguration, err)
+	}
+	c.Docbank.Root = docbankRoot
+	c.NAS.Root = nasRoot
+	c.Flash.Root = flashRoot
+	if pathsOverlap(docbankRoot, nasRoot) {
+		return fmt.Errorf("%w: [docbank].root and [nas].root must not overlap", errs.ErrBadConfiguration)
+	}
+	if pathContains(docbankRoot, flashRoot) {
+		return fmt.Errorf("%w: [docbank].root must not contain [flash].root", errs.ErrBadConfiguration)
+	}
+	for _, cacheDir := range []string{FlashOriginalsCacheDir, FlashThumbsCacheDir} {
+		cacheRoot, err := canonicalConfigPath(filepath.Join(flashRoot, cacheDir))
+		if err != nil {
+			return fmt.Errorf("%w: canonicalize [flash].root/%s: %v",
+				errs.ErrBadConfiguration, cacheDir, err)
+		}
+		if pathsOverlap(docbankRoot, cacheRoot) {
+			return fmt.Errorf("%w: [docbank].root must not overlap [flash].root/%s",
+				errs.ErrBadConfiguration, cacheDir)
+		}
 	}
 	switch c.Identity.Mode {
 	case "stub":
@@ -387,6 +434,104 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+func canonicalConfigPath(value string) (string, error) {
+	target := value
+	if !filepath.IsAbs(target) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		target = cwd + string(os.PathSeparator) + target
+	}
+	current := strings.TrimRight(target, string(os.PathSeparator))
+	if current == "" {
+		current = string(os.PathSeparator)
+	}
+	var missing []string
+	for {
+		_, lstatErr := os.Lstat(current)
+		if lstatErr == nil {
+			break
+		}
+		if !errors.Is(lstatErr, os.ErrNotExist) {
+			return "", lstatErr
+		}
+		parent, component := rawPathParent(current)
+		if parent == current {
+			return "", lstatErr
+		}
+		if component == "." || component == ".." {
+			return "", fmt.Errorf("path traverses %q after a missing component", component)
+		}
+		missing = append(missing, component)
+		current = parent
+	}
+	resolved, err := filepath.EvalSymlinks(current)
+	if err != nil {
+		return "", err
+	}
+	slices.Reverse(missing)
+	return filepath.Join(append([]string{resolved}, missing...)...), nil
+}
+
+func rawPathParent(value string) (string, string) {
+	volume := filepath.VolumeName(value)
+	remainder := value[len(volume):]
+	remainder = strings.TrimRight(remainder, string(os.PathSeparator))
+	index := strings.LastIndex(remainder, string(os.PathSeparator))
+	if index < 0 {
+		return value, ""
+	}
+	component := remainder[index+1:]
+	parentRemainder := strings.TrimRight(remainder[:index], string(os.PathSeparator))
+	if parentRemainder == "" {
+		parentRemainder = string(os.PathSeparator)
+	}
+	return volume + parentRemainder, component
+}
+
+func pathContains(parent, candidate string) bool {
+	rel, err := filepath.Rel(parent, candidate)
+	if err == nil && (rel == "." ||
+		(rel != ".." &&
+			!strings.HasPrefix(rel, ".."+string(os.PathSeparator)))) {
+		return true
+	}
+	return pathContainsFold(parent, candidate)
+}
+
+// pathContainsFold rejects case-only aliases on case-insensitive filesystems.
+// Applying the rule on every platform also keeps a configuration portable
+// between a case-sensitive development machine and a case-insensitive NAS.
+func pathContainsFold(parent, candidate string) bool {
+	parentVolume, parentParts := pathParts(parent)
+	candidateVolume, candidateParts := pathParts(candidate)
+	if !strings.EqualFold(parentVolume, candidateVolume) || len(parentParts) > len(candidateParts) {
+		return false
+	}
+	for i, part := range parentParts {
+		if !strings.EqualFold(part, candidateParts[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func pathParts(value string) (string, []string) {
+	clean := filepath.Clean(value)
+	volume := filepath.VolumeName(clean)
+	remainder := strings.TrimPrefix(clean, volume)
+	remainder = strings.Trim(remainder, string(os.PathSeparator))
+	if remainder == "" {
+		return volume, []string{}
+	}
+	return volume, strings.Split(remainder, string(os.PathSeparator))
+}
+
+func pathsOverlap(left, right string) bool {
+	return pathContains(left, right) || pathContains(right, left)
+}
+
 func (c *Config) validateHeaderGuard() error {
 	h := c.Identity.Header
 	if isLoopbackBind(c.HTTP.ListenAddress) ||
@@ -441,6 +586,9 @@ func isLoopbackOrUnixListen(addr string) bool {
 func applyDefaults(c *Config, meta toml.MetaData) {
 	if c.Flash.Root == "" {
 		c.Flash.Root = defaultFlashRoot()
+	}
+	if c.Docbank.Root == "" {
+		c.Docbank.Root = filepath.Join(c.Flash.Root, "docbank")
 	}
 	if c.Storage.Mode == "" {
 		c.Storage.Mode = "flash_cache"
