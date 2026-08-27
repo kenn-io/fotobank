@@ -150,8 +150,10 @@ github.com/valyala/histogram v1.2.0 h1:wyYGAZZt3CpwUiIb9AU/Zbllg1llXyrtApRS815OL
 github.com/valyala/histogram v1.2.0/go.mod h1:Hb4kBwb4UxsaNbbbh+RRz8ZR6pdodR57tzWUS3BUzXY=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
-go.kenn.io/docbank v0.14.0 h1:qzkCnFIAKucpZIvblMouEV948MyjX+p49F+pqPtB5bk=
-go.kenn.io/docbank v0.14.0/go.mod h1:sd4cATphlFCUU/Ea6VlB+LnFKFt18mbPvkDijhG42h4=
+github.com/yuin/goldmark v1.7.17 h1:p36OVWwRb246iHxA/U4p8OPEpOTESm4n+g+8t0EE5uA=
+github.com/yuin/goldmark v1.7.17/go.mod h1:ip/1k0VRfGynBgxOz0yCqHrbZXhcjxyuS66Brc7iBKg=
+go.kenn.io/docbank v0.14.1-0.20260826164655-db49081eed88 h1:oMTpBmIs14/inMXkOXVCEOyfAbnyy461c3AXrLV4HXs=
+go.kenn.io/docbank v0.14.1-0.20260826164655-db49081eed88/go.mod h1:sd4cATphlFCUU/Ea6VlB+LnFKFt18mbPvkDijhG42h4=
 go.kenn.io/kit v0.17.1 h1:ycQ7IpI3tIDaZ3h3rH5bLtSZY5PCkW2DyjqaqW6BEp0=
 go.kenn.io/kit v0.17.1/go.mod h1:SXD5SAxpYlH65wmBnfNqr5Za3NVFzKWJph+Sobx/ZMA=
 go.mongodb.org/mongo-driver/v2 v2.5.0 h1:yXUhImUjjAInNcpTcAlPHiT7bIXhshCTL3jVBkF3xaE=

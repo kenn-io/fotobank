@@ -692,8 +692,12 @@ settings required for reproducibility.
 ## 16. Pull-request program
 
 Prefixes identify the target repository: **F** is Fotobank and **D** is
-Docbank. A Docbank pull request lands and is released before its dependent
-Fotobank pull request updates the module version. Provider/conversion work from
+Docbank. During alpha integration, a Docbank pull request lands before its
+dependent Fotobank work pins that exact commit as a Go pseudo-version. Floating
+branches, local replacements, and unmerged revisions are not dependency
+boundaries. Once the dependent milestone gate demonstrates that the public API
+is sufficient, Docbank tags the accepted revision and Fotobank moves to that
+tag before real data is entrusted to the system. Provider/conversion work from
 the existing Docbank stack is not part of this dependency graph.
 
 Each pull request has one reviewer-visible outcome, focused tests, updated docs
@@ -796,9 +800,10 @@ absence is a valid final state, not incomplete work.
   subset receives a separate implementation plan before code changes begin.
 - Plans use the exact Docbank version and public signatures present when that
   milestone starts; they do not design against unmerged provider PRs.
-- Cross-repository contracts are implemented and released in Docbank first,
-  then consumed by a small Fotobank dependency-update PR or the named dependent
-  feature PR.
+- Cross-repository contracts are implemented and merged in Docbank first, then
+  consumed at an exact tagged or pseudo-versioned commit by a small Fotobank
+  dependency-update PR or the named dependent feature PR. Alpha integration
+  may use pseudo-versions until the dependent milestone proves the contract.
 - Pull requests may be stacked where dependencies require it, but every PR must
   state its base and remain independently reviewable.
 - F02a may absorb final-shaped inactive repository work that reduces F03's

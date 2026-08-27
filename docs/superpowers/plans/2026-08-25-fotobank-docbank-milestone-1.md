@@ -5,7 +5,7 @@ pull requests without designing later work against APIs that have not landed.
 
 **Architecture:** The master design controls cross-cutting decisions. Each
 pull request gets its own executable Superpowers plan when its direct inputs
-exist. This file records ordering, plan availability, release gates, and the
+exist. This file records ordering, plan availability, dependency gates, and the
 post-merge kata setup; it is not a second implementation plan.
 
 **Spec:**
@@ -14,13 +14,13 @@ post-merge kata setup; it is not a second implementation plan.
 ## Planning rule
 
 Plans are written just in time from the exact target-repository baseline and
-released dependency signatures available when their pull request can start.
-An absent later plan is deliberate, not missing work.
+pinned dependency signatures available when their pull request can start. An
+absent later plan is deliberate, not missing work.
 
 - D02, F01, and F02a can be planned now because their inputs exist.
-- F03 is planned after D02 is released and F02a lands. Its consumer cutover
-  uses the merged final-shaped asset repository, and its adapter calls use the
-  released D02 types and signatures.
+- F03 is planned after D02 and F02a land. Its consumer cutover uses the merged
+  final-shaped asset repository, and its adapter calls use D02's exact pinned
+  Go pseudo-version and public signatures.
 - F04 and F05 are planned after F03 lands. They use the actual content adapter,
   operation ledger, and asset/file repository that F03 establishes.
 
@@ -45,7 +45,7 @@ F01 → F02a ──────→ F03 → F04
 | D02 | Docbank | [Exact-version logical ranges](2026-08-26-docbank-d02-version-ranges.md) | Ready |
 | F01 | Fotobank | [Embedded vault boundary](2026-08-26-fotobank-f01-embedded-vault.md) | Ready |
 | F02a | Fotobank | [Final-shaped asset/file domain](2026-08-26-fotobank-f02a-asset-domain.md) | Ready |
-| F03 | Fotobank | Not yet authored | After D02 releases and F02a merges |
+| F03 | Fotobank | Not yet authored | Ready: D02 and F02a are merged |
 | F04 | Fotobank | Not yet authored | After F03 merges |
 | F05 | Fotobank | Not yet authored | After F03 merges |
 
@@ -65,10 +65,18 @@ reconstruct the request from Fotobank commits.
 - F01 consumes released Docbank `v0.14.0` at
   `41a0fbba06f173aa0690505d16584addb58cff5d`; its required public embedded
   surface matches the D02 planning baseline.
+- Fotobank pins D02 commit `db49081eed887228d57cec1af3d175e2e0f2c8dd`
+  as Go pseudo-version `v0.14.1-0.20260826164655-db49081eed88`. This exact
+  merged development revision is the F03 planning and implementation baseline.
 - Docbank at the D02 baseline consumes `go.kenn.io/kit v0.17.1`.
 
 Each later plan replaces these planning-time facts with the exact merged base
-and released module tag present when that plan is written.
+and exact pinned Docbank version present when that plan is written. During the
+alpha integration, a merged commit expressed as a Go pseudo-version is the
+normal dependency boundary: never use a floating branch, local replacement,
+or unmerged revision. After the Milestone 1 gate demonstrates that the public
+surface is sufficient, Docbank tags the accepted revision and Fotobank moves
+to that tag before real data is entrusted to the system.
 
 ## Operational transition
 
@@ -134,7 +142,7 @@ kata create --project fotobank "F02a: add the asset and file domain" \
   --idempotency-key fotobank-docbank-f02a --agent
 
 kata create --project fotobank "F03: make Docbank original authority" \
-  --body "Atomically move active consumers and foreign keys to assets, grouped imports and all original reads to released Docbank APIs; reject canonical or symlink-aliased import-source/vault overlap before discovery; and remove the old media schema, storage path, and MD5 identity without a compatibility bridge." \
+  --body "Atomically move active consumers and foreign keys to assets, grouped imports and all original reads to exact pinned Docbank APIs; reject canonical or symlink-aliased import-source/vault overlap before discovery; and remove the old media schema, storage path, and MD5 identity without a compatibility bridge." \
   --parent <m1-ref> --blocked-by <f02a-ref> \
   --blocked-by docbank#<d02-ref> --label backend \
   --idempotency-key fotobank-docbank-f03 --agent
