@@ -17,9 +17,11 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	cfg, err := config.Load(filepath.Join("..", "..", "testdata", "config", "minimal.toml"))
 	r.NoError(err)
 
-	wantNAS, err := filepath.Abs(filepath.FromSlash("/tmp/test-nas"))
+	cwd, err := os.Getwd()
 	r.NoError(err)
-	r.Equal(wantNAS, cfg.NAS.Root)
+	canonicalCWD, err := filepath.EvalSymlinks(cwd)
+	r.NoError(err)
+	r.Equal(filepath.Join(canonicalCWD, "test-nas"), cfg.NAS.Root)
 	r.NotEmpty(cfg.Flash.Root) // defaulted
 	r.Equal(filepath.Join(cfg.Flash.Root, "docbank"), cfg.Docbank.Root)
 	r.Equal("flash_cache", cfg.Storage.Mode) // defaulted

@@ -107,7 +107,7 @@ func buildDSN(path string) string {
 }
 
 func fsyncFile(path string) error {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
