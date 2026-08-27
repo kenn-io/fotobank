@@ -167,5 +167,7 @@ root = %q
 
 	cfg, err := config.Load(p)
 	require.NoError(err)
-	require.Equal(realRoot, cfg.Docbank.Root)
+	want, err := filepath.EvalSymlinks(realRoot)
+	require.NoError(err)
+	require.Equal(want, cfg.Docbank.Root)
 }

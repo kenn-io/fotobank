@@ -10,19 +10,20 @@ import (
 )
 
 func TestResolveDBPathHonorsEnvOverride(t *testing.T) {
-	t.Setenv("FOTOBANK_DB_PATH", "/custom/path/db.sqlite")
+	want := filepath.Join(t.TempDir(), "db.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", want)
 	cfg := &config.Config{}
-	require.Equal(t, "/custom/path/db.sqlite", resolveDBPath(cfg))
+	require.Equal(t, want, resolveDBPath(cfg))
 }
 
 func TestResolveDBPathFallsBackToFlashRoot(t *testing.T) {
 	t.Setenv("FOTOBANK_DB_PATH", "")
 	cfg := &config.Config{}
-	cfg.Flash.Root = "/tmp/flashroot"
-	require.Equal(t, filepath.Join("/tmp/flashroot", "fotobank.sqlite"), resolveDBPath(cfg))
+	cfg.Flash.Root = filepath.Join(t.TempDir(), "flashroot")
+	require.Equal(t, filepath.Join(cfg.Flash.Root, "fotobank.sqlite"), resolveDBPath(cfg))
 }
 
 func TestLockPathForDerivesFromDBPath(t *testing.T) {
-	require.Equal(t, "/var/db/fotobank.sqlite.lock", lockPathFor("/var/db/fotobank.sqlite"))
-	require.Equal(t, "/custom/x.sqlite.lock", lockPathFor("/custom/x.sqlite"))
+	dbPath := filepath.Join(t.TempDir(), "fotobank.sqlite")
+	require.Equal(t, dbPath+".lock", lockPathFor(dbPath))
 }

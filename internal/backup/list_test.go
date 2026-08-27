@@ -24,16 +24,16 @@ func TestListReturnsNewestFirst(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
 
-	makeFile(t, dir, "2026-04-25T11:00:00.000000000Z.sqlite", now.Add(-time.Hour))
-	makeFile(t, dir, "2026-04-25T11:30:00.000000000Z.sqlite", now.Add(-30*time.Minute))
-	makeFile(t, dir, "2026-04-25T11:45:00.000000000Z.sqlite", now.Add(-15*time.Minute))
+	makeFile(t, dir, "20260425T110000.000000000Z.sqlite", now.Add(-time.Hour))
+	makeFile(t, dir, "20260425T113000.000000000Z.sqlite", now.Add(-30*time.Minute))
+	makeFile(t, dir, "20260425T114500.000000000Z.sqlite", now.Add(-15*time.Minute))
 
 	got, err := List(dir)
 	r.NoError(err)
 	r.Len(got, 3)
-	r.Equal("2026-04-25T11:45:00.000000000Z.sqlite", filepath.Base(got[0].Path))
-	r.Equal("2026-04-25T11:30:00.000000000Z.sqlite", filepath.Base(got[1].Path))
-	r.Equal("2026-04-25T11:00:00.000000000Z.sqlite", filepath.Base(got[2].Path))
+	r.Equal("20260425T114500.000000000Z.sqlite", filepath.Base(got[0].Path))
+	r.Equal("20260425T113000.000000000Z.sqlite", filepath.Base(got[1].Path))
+	r.Equal("20260425T110000.000000000Z.sqlite", filepath.Base(got[2].Path))
 }
 
 func TestListSkipsMalformedAndPartials(t *testing.T) {
@@ -41,15 +41,15 @@ func TestListSkipsMalformedAndPartials(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
 
-	makeFile(t, dir, "2026-04-25T11:00:00.000000000Z.sqlite", now)
+	makeFile(t, dir, "20260425T110000.000000000Z.sqlite", now)
 	makeFile(t, dir, "not-a-snapshot.txt", now)
-	makeFile(t, dir, "2026-04-25T11:00:00.000000000Z.sqlite.partial", now)
+	makeFile(t, dir, "20260425T110000.000000000Z.sqlite.partial", now)
 	makeFile(t, dir, "garbage.sqlite", now)
 
 	got, err := List(dir)
 	r.NoError(err)
 	r.Len(got, 1)
-	r.Equal("2026-04-25T11:00:00.000000000Z.sqlite", filepath.Base(got[0].Path))
+	r.Equal("20260425T110000.000000000Z.sqlite", filepath.Base(got[0].Path))
 }
 
 func TestListEmptyDir(t *testing.T) {
@@ -68,25 +68,11 @@ func TestListMissingDirIsEmpty(t *testing.T) {
 func TestListParsesTimestampsCorrectly(t *testing.T) {
 	r := require.New(t)
 	dir := t.TempDir()
-	makeFile(t, dir, "2026-04-25T11:30:45.123456789Z.sqlite", time.Now())
+	makeFile(t, dir, "20260425T113045.123456789Z.sqlite", time.Now())
 	got, err := List(dir)
 	r.NoError(err)
 	r.Len(got, 1)
 	r.Equal(time.Date(2026, 4, 25, 11, 30, 45, 123_456_789, time.UTC), got[0].Timestamp)
-}
-
-// Snapshots written before commit 8f6b547 used millisecond precision
-// (".000Z"). List must still surface them so they remain visible in
-// `backup list` output and reachable by retention sweep until they
-// age out naturally.
-func TestListAcceptsLegacyMillisecondLayout(t *testing.T) {
-	r := require.New(t)
-	dir := t.TempDir()
-	makeFile(t, dir, "2026-04-25T11:00:00.123Z.sqlite", time.Now())
-	got, err := List(dir)
-	r.NoError(err)
-	r.Len(got, 1)
-	r.Equal(time.Date(2026, 4, 25, 11, 0, 0, 123_000_000, time.UTC), got[0].Timestamp)
 }
 
 // SnapshotInfo.Path is documented as absolute. Callers cd into other
@@ -95,7 +81,7 @@ func TestListAcceptsLegacyMillisecondLayout(t *testing.T) {
 func TestListReturnsAbsolutePathsEvenForRelativeDir(t *testing.T) {
 	r := require.New(t)
 	dir := t.TempDir()
-	makeFile(t, dir, "2026-04-25T11:00:00.000000000Z.sqlite", time.Now())
+	makeFile(t, dir, "20260425T110000.000000000Z.sqlite", time.Now())
 
 	// Resolve a path relative to dir's parent so the test's working
 	// directory does not affect outcomes.

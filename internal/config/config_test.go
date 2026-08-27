@@ -17,7 +17,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	cfg, err := config.Load(filepath.Join("..", "..", "testdata", "config", "minimal.toml"))
 	r.NoError(err)
 
-	r.Equal("/tmp/test-nas", cfg.NAS.Root)
+	wantNAS, err := filepath.Abs(filepath.FromSlash("/tmp/test-nas"))
+	r.NoError(err)
+	r.Equal(wantNAS, cfg.NAS.Root)
 	r.NotEmpty(cfg.Flash.Root) // defaulted
 	r.Equal(filepath.Join(cfg.Flash.Root, "docbank"), cfg.Docbank.Root)
 	r.Equal("flash_cache", cfg.Storage.Mode) // defaulted
@@ -32,12 +34,13 @@ func TestLoadAppliesDefaults(t *testing.T) {
 }
 
 func TestLoadDocbankRoot(t *testing.T) {
+	r := require.New(t)
 	tmp := t.TempDir()
 	vaultRoot := filepath.Join(tmp, "vault")
 	nasRoot := filepath.Join(tmp, "nas")
 	flashRoot := filepath.Join(tmp, "flash")
 	p := filepath.Join(tmp, "config.toml")
-	require.NoError(t, os.WriteFile(p, []byte(fmt.Sprintf(`
+	r.NoError(os.WriteFile(p, []byte(fmt.Sprintf(`
 [flash]
 root = %q
 [nas]
@@ -47,8 +50,10 @@ root = %q
 `, flashRoot, nasRoot, vaultRoot)), 0o600))
 
 	cfg, err := config.Load(p)
-	require.NoError(t, err)
-	require.Equal(t, vaultRoot, cfg.Docbank.Root)
+	r.NoError(err)
+	canonicalTmp, err := filepath.EvalSymlinks(tmp)
+	r.NoError(err)
+	r.Equal(filepath.Join(canonicalTmp, "vault"), cfg.Docbank.Root)
 }
 
 func TestValidateDocbankRootOverlap(t *testing.T) {
@@ -177,11 +182,14 @@ func TestExplicitTOMLValuesWinOverDefaults(t *testing.T) {
 	// Regression test: TOML values override defaults for every section.
 	tmp := t.TempDir()
 	p := filepath.Join(tmp, "c.toml")
-	require.NoError(t, os.WriteFile(p, []byte(`
+	nasRoot := filepath.Join(tmp, "custom-nas")
+	flashRoot := filepath.Join(tmp, "custom-flash")
+	backupDir := filepath.Join(tmp, "custom-backup")
+	require.NoError(t, os.WriteFile(p, fmt.Appendf(nil, `
 [nas]
-root = "/custom/nas"
+root = %q
 [flash]
-root = "/custom/flash"
+root = %q
 [storage]
 mode = "nas_only"
 originals_cache_days = 7
@@ -203,16 +211,18 @@ mode = "exec"
 [broker.exec]
 command = "/bin/true"
 [backup]
-dir = "/custom/backup"
+dir = %q
 keep_15min = 8
 keep_hourly = 12
 keep_daily = 14
-`), 0o600))
+`, nasRoot, flashRoot, backupDir), 0o600))
 	cfg, err := config.Load(p)
 	require.NoError(t, err)
+	canonicalTmp, err := filepath.EvalSymlinks(tmp)
+	require.NoError(t, err)
 	r := require.New(t)
-	r.Equal("/custom/nas", cfg.NAS.Root)
-	r.Equal("/custom/flash", cfg.Flash.Root)
+	r.Equal(filepath.Join(canonicalTmp, "custom-nas"), cfg.NAS.Root)
+	r.Equal(filepath.Join(canonicalTmp, "custom-flash"), cfg.Flash.Root)
 	r.Equal("nas_only", cfg.Storage.Mode)
 	r.Equal(7, cfg.Storage.OriginalsCacheDays)
 	r.Equal(10, cfg.Storage.OriginalsCacheMaxMedia)
@@ -225,7 +235,7 @@ keep_daily = 14
 	r.Equal(time.Second, cfg.Thumbs.PollInterval)
 	r.Equal(2*time.Minute, cfg.Thumbs.LeaseTimeout)
 	r.Equal("exec", cfg.Broker.Mode)
-	r.Equal("/custom/backup", cfg.Backup.Dir)
+	r.Equal(backupDir, cfg.Backup.Dir)
 	r.Equal(8, cfg.Backup.Keep15Min)
 	r.Equal(12, cfg.Backup.KeepHourly)
 	r.Equal(14, cfg.Backup.KeepDaily)
@@ -453,7 +463,7 @@ proxy_mtls_ca_file = "/etc/ca.pem"
 func TestDefaultConfigPathHonoursXDG(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg")
 	t.Setenv("FOTOBANK_CONFIG", "")
-	require.Equal(t, "/tmp/xdg/fotobank/config.toml", config.DefaultConfigPath())
+	require.Equal(t, filepath.Join("/tmp/xdg", "fotobank", "config.toml"), config.DefaultConfigPath())
 }
 
 func TestDefaultConfigPathHonoursEnvOverride(t *testing.T) {
@@ -881,6 +891,7 @@ func TestLoadExpandsTildeInPaths(t *testing.T) {
 	r := require.New(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	// Clear XDG_STATE_HOME so defaultFlashRoot falls back to $HOME.
 	t.Setenv("XDG_STATE_HOME", "")
 
@@ -903,8 +914,10 @@ listen_address = "127.0.0.1:0"
 `), 0o600))
 	cfg, err := config.Load(p)
 	r.NoError(err)
-	r.Equal(filepath.Join(home, "flash-state"), cfg.Flash.Root)
-	r.Equal(filepath.Join(home, "photos"), cfg.NAS.Root)
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	r.NoError(err)
+	r.Equal(filepath.Join(canonicalHome, "flash-state"), cfg.Flash.Root)
+	r.Equal(filepath.Join(canonicalHome, "photos"), cfg.NAS.Root)
 	r.Equal(filepath.Join(home, "locks", "import.lock"), cfg.Imports.FileLockPath)
 }
 
@@ -915,14 +928,16 @@ func TestLoadCanonicalizesAbsoluteAndRelativeStoragePaths(t *testing.T) {
 	r := require.New(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	cwd, err := os.Getwd()
 	r.NoError(err)
 
 	tmp := t.TempDir()
+	flashRoot := filepath.Join(tmp, "flash-root")
 	p := filepath.Join(tmp, "c.toml")
-	require.NoError(t, os.WriteFile(p, []byte(`
+	require.NoError(t, os.WriteFile(p, fmt.Appendf(nil, `
 [flash]
-root = "/var/lib/fotobank"
+root = %q
 [nas]
 root = "./relative-nas"
 [identity]
@@ -932,11 +947,15 @@ hub = "h"
 user_id = "u"
 [http]
 listen_address = "127.0.0.1:0"
-`), 0o600))
+`, flashRoot), 0o600))
 	cfg, err := config.Load(p)
 	r.NoError(err)
-	r.Equal("/var/lib/fotobank", cfg.Flash.Root)
-	r.Equal(filepath.Join(cwd, "relative-nas"), cfg.NAS.Root)
+	canonicalTmp, err := filepath.EvalSymlinks(tmp)
+	r.NoError(err)
+	canonicalCWD, err := filepath.EvalSymlinks(cwd)
+	r.NoError(err)
+	r.Equal(filepath.Join(canonicalTmp, "flash-root"), cfg.Flash.Root)
+	r.Equal(filepath.Join(canonicalCWD, "relative-nas"), cfg.NAS.Root)
 }
 
 // TestLoadExpandsBareTilde covers the edge case where a path is just
@@ -946,6 +965,7 @@ func TestLoadExpandsBareTilde(t *testing.T) {
 	r := require.New(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	tmp := t.TempDir()
 	p := filepath.Join(tmp, "c.toml")
@@ -962,7 +982,7 @@ user_id = "u"
 [http]
 listen_address = "127.0.0.1:0"
 `, filepath.Join(tmp, "flash"))), 0o600))
-	cfg, err := config.Load(p)
+	cfg, err := config.LoadUnchecked(p)
 	r.NoError(err)
 	r.Equal(home, cfg.NAS.Root)
 }

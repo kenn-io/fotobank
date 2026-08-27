@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.kenn.io/fotobank/internal/db"
 )
@@ -92,7 +93,11 @@ func buildDSN(path string) string {
 	if err != nil {
 		abs = path
 	}
-	u := url.URL{Scheme: "file", Path: abs}
+	uriPath := filepath.ToSlash(abs)
+	if filepath.VolumeName(abs) != "" && !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	u := url.URL{Scheme: "file", Path: uriPath}
 	q := u.Query()
 	q.Set("mode", "rw")
 	q.Add("_busy_timeout", "5000")

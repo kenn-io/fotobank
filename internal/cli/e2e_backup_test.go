@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -112,11 +113,11 @@ func writeBackupE2EConfig(t *testing.T, tmp string) string {
 	r.NoError(os.MkdirAll(flashRoot, 0o700))
 
 	cfgPath := filepath.Join(tmp, "fotobank.toml")
-	r.NoError(os.WriteFile(cfgPath, []byte(`
+	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
 [nas]
-root = "`+nasRoot+`"
+root = %q
 [flash]
-root = "`+flashRoot+`"
+root = %q
 [identity]
 mode = "stub"
 [identity.stub]
@@ -127,10 +128,10 @@ storage_key = "550e8400-e29b-41d4-a716-44665544000e"
 [http]
 listen_address = "127.0.0.1:0"
 [imports]
-file_lock_path = "`+filepath.Join(tmp, "import.lock")+`"
+file_lock_path = %q
 [observability]
 admin_listen = "127.0.0.1:0"
-`), 0o600))
+`, nasRoot, flashRoot, filepath.Join(tmp, "import.lock")), 0o600))
 	return cfgPath
 }
 
