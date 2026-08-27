@@ -90,7 +90,7 @@ const (
 	e2eMappedCount   = 22 // 22/30 ≈ 73% — under the 80% banner threshold.
 	e2eOwnerHub      = "local"
 	e2eOwnerUserID   = "alice"
-	e2eOwnerStorageK = "alice-sk"
+	e2eOwnerStorageK = "550e8400-e29b-41d4-a716-44665544000e"
 )
 
 // e2ePort returns the listen port for the e2e server, honoring
@@ -477,7 +477,7 @@ func seedFixtures(dbPath, nasRoot string) error {
 	if _, err := d.WriteDB().ExecContext(ctx,
 		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at)
 		 VALUES (?, ?, ?, ?)`,
-		owner.Hub, owner.UserID, "alice-sk", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-44665544000e", time.Now().UTC(),
 	); err != nil {
 		return fmt.Errorf("seed owner: %w", err)
 	}
@@ -788,7 +788,7 @@ func seedFixtures(dbPath, nasRoot string) error {
 		return fmt.Errorf("seed f2.5 fixtures: %w", err)
 	}
 
-	if err := seedAIFixtures(ctx, d, repo, owner, nasRoot, "alice-sk"); err != nil {
+	if err := seedAIFixtures(ctx, d, repo, owner, nasRoot, "550e8400-e29b-41d4-a716-44665544000e"); err != nil {
 		return fmt.Errorf("seed ai fixtures: %w", err)
 	}
 
@@ -907,8 +907,8 @@ func seedScaleFixtures(dbPath, nasRoot string, n int, realThumbs bool) error {
 	defer func() { closeOnce() }()
 
 	// SeedScaleLibrary inserts the owner row itself (INSERT OR IGNORE
-	// against owners.{hub,user_id}) with storage_key="scale-storage";
-	// override that to "alice-sk" so the SPA's stub identity (which
+	// against owners.{hub,user_id}) with storage_key="550e8400-e29b-41d4-a716-446655440010";
+	// override that to "550e8400-e29b-41d4-a716-44665544000e" so the SPA's stub identity (which
 	// matches storage_key alice-sk per cli/server.go's stub wiring)
 	// resolves to the seeded principal. We pre-insert the owner so the
 	// IGNORE branch fires inside SeedScaleLibrary.

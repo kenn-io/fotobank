@@ -90,7 +90,7 @@ func TestPersist_Then_Restore_RoundTrip(t *testing.T) {
 	r.NoError(os.MkdirAll(srcNAS, 0o700))
 	dbPayload := []byte("fake-sqlite-bytes-for-round-trip-test")
 	r.NoError(os.WriteFile(srcDB, dbPayload, 0o600))
-	thumbPath := filepath.Join(srcNAS, "alice-sk", ".thumbs", "scale-0000001", "v0", "grid.jpg")
+	thumbPath := filepath.Join(srcNAS, "550e8400-e29b-41d4-a716-44665544000e", ".thumbs", "scale-0000001", "v0", "grid.jpg")
 	r.NoError(os.MkdirAll(filepath.Dir(thumbPath), 0o700))
 	thumbPayload := []byte("\xff\xd8\xff fake jpeg")
 	r.NoError(os.WriteFile(thumbPath, thumbPayload, 0o600))
@@ -112,7 +112,7 @@ func TestPersist_Then_Restore_RoundTrip(t *testing.T) {
 	r.NoError(err)
 	r.Equal(dbPayload, gotDB)
 
-	gotThumb, err := os.ReadFile(filepath.Join(dstNAS, "alice-sk", ".thumbs", "scale-0000001", "v0", "grid.jpg"))
+	gotThumb, err := os.ReadFile(filepath.Join(dstNAS, "550e8400-e29b-41d4-a716-44665544000e", ".thumbs", "scale-0000001", "v0", "grid.jpg"))
 	r.NoError(err)
 	r.Equal(thumbPayload, gotThumb)
 }

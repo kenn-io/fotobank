@@ -26,7 +26,7 @@ func SeedOwner(t *testing.T, rw *sql.DB, hub, user string) owners.Principal {
 	t.Helper()
 	_, err := rw.ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES (?,?,?,?)`,
-		hub, user, hub+"/"+user, time.Now().UTC())
+		hub, user, uuid.NewSHA1(uuid.NameSpaceOID, []byte(hub+"\x00"+user)).String(), time.Now().UTC())
 	require.NoError(t, err)
 	return owners.Principal{Hub: hub, UserID: user}
 }

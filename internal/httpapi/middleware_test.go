@@ -353,7 +353,7 @@ func newHiddenMiddleFx(t *testing.T) hiddenMiddleFx {
 	// Seed the owner row so FK constraints on auth_hidden_* tables pass.
 	_, err := rw.ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk", time.Now().UTC())
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC())
 	require.NoError(t, err)
 
 	repo := hidden.NewRepo(rw, ro)

@@ -33,10 +33,10 @@ func newThumbAPITest(t *testing.T) (*httptest.Server, *media.Repo, owners.Princi
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	require.NoError(t, err)
-	store := storage.NewNASOnly(t.TempDir(), map[owners.Principal]string{p: "sk"})
+	store := storage.NewNASOnly(t.TempDir(), map[owners.Principal]string{p: "550e8400-e29b-41d4-a716-446655440000"})
 	mediaSvc := service.NewMediaService(repo, store)
 	thumbSvc := service.NewThumbService(repo, q, store)
 	h, err := httpapi.New(httpapi.Deps{

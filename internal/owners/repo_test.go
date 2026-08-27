@@ -19,7 +19,7 @@ func TestInsertThenGet(t *testing.T) {
 
 	o := owners.Owner{
 		Principal:     owners.Principal{Hub: "h", UserID: "u"},
-		StorageKey:    "key1",
+		StorageKey:    "550e8400-e29b-41d4-a716-446655440000",
 		DisplayHandle: "User",
 		CreatedAt:     time.Now().UTC(),
 	}
@@ -36,8 +36,9 @@ func TestInsertDuplicatePrincipalFails(t *testing.T) {
 	repo := owners.NewRepo(d.WriteDB(), d.ReadDB())
 
 	o := owners.Owner{
-		Principal: owners.Principal{Hub: "h", UserID: "u"}, StorageKey: "k",
-		CreatedAt: time.Now().UTC(),
+		Principal:  owners.Principal{Hub: "h", UserID: "u"},
+		StorageKey: "550e8400-e29b-41d4-a716-446655440000",
+		CreatedAt:  time.Now().UTC(),
 	}
 	require.NoError(t, repo.Insert(context.Background(), o))
 	require.Error(t, repo.Insert(context.Background(), o))
@@ -48,9 +49,9 @@ func TestInsertDuplicateStorageKeyFails(t *testing.T) {
 	repo := owners.NewRepo(d.WriteDB(), d.ReadDB())
 	now := time.Now().UTC()
 	require.NoError(t, repo.Insert(context.Background(),
-		owners.Owner{Principal: owners.Principal{Hub: "h", UserID: "u1"}, StorageKey: "k", CreatedAt: now}))
+		owners.Owner{Principal: owners.Principal{Hub: "h", UserID: "u1"}, StorageKey: "550e8400-e29b-41d4-a716-446655440000", CreatedAt: now}))
 	require.Error(t, repo.Insert(context.Background(),
-		owners.Owner{Principal: owners.Principal{Hub: "h", UserID: "u2"}, StorageKey: "k", CreatedAt: now}))
+		owners.Owner{Principal: owners.Principal{Hub: "h", UserID: "u2"}, StorageKey: "550e8400-e29b-41d4-a716-446655440000", CreatedAt: now}))
 }
 
 func TestListReturnsAll(t *testing.T) {
@@ -61,7 +62,7 @@ func TestListReturnsAll(t *testing.T) {
 	for i := range 3 {
 		r.NoError(repo.Insert(context.Background(), owners.Owner{
 			Principal:  owners.Principal{Hub: "h", UserID: fmt.Sprintf("u%d", i)},
-			StorageKey: fmt.Sprintf("k%d", i),
+			StorageKey: fmt.Sprintf("550e8400-e29b-41d4-a716-44665544000%d", i),
 			CreatedAt:  now,
 		}))
 	}
@@ -76,7 +77,7 @@ func TestDeleteRemoves(t *testing.T) {
 	repo := owners.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	r.NoError(repo.Insert(context.Background(),
-		owners.Owner{Principal: p, StorageKey: "k", CreatedAt: time.Now().UTC()}))
+		owners.Owner{Principal: p, StorageKey: "550e8400-e29b-41d4-a716-446655440000", CreatedAt: time.Now().UTC()}))
 	r.NoError(repo.Delete(context.Background(), p))
 	_, err := repo.GetByPrincipal(context.Background(), p)
 	r.ErrorIs(err, errs.ErrNotFound)

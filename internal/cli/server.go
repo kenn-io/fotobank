@@ -1150,11 +1150,7 @@ func buildIdentityProvider(
 			Hub:    cfg.Identity.Stub.Hub,
 			UserID: cfg.Identity.Stub.UserID,
 		}
-		storageKey := cfg.Identity.Stub.StorageKey
-		if storageKey == "" {
-			storageKey = cfg.Identity.Stub.UserID
-		}
-		if err := ownerSvc.Ensure(ctx, p, storageKey); err != nil {
+		if _, err := ownerSvc.Ensure(ctx, p, cfg.Identity.Stub.StorageKey); err != nil {
 			return nil, err
 		}
 		return identity.NewStub(p, cfg.Identity.Stub.Handle), nil

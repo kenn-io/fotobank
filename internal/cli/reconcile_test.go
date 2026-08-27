@@ -38,7 +38,7 @@ func newReconcileFixture(t *testing.T) reconcileFixture {
 
 	tmp := t.TempDir()
 	nasRoot := filepath.Join(tmp, "nas")
-	storageKey := "sk"
+	storageKey := "550e8400-e29b-41d4-a716-446655440000"
 	r.NoError(os.MkdirAll(filepath.Join(nasRoot, storageKey), 0o700))
 
 	cfgPath := filepath.Join(tmp, "c.toml")

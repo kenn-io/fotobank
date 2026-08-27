@@ -40,7 +40,7 @@ mode = "stub"
 [identity.stub]
 hub = "h"
 user_id = "u"
-storage_key = "h/u"
+storage_key = "550e8400-e29b-41d4-a716-44665544000f"
 [ai]
 enabled = false
 [ai.embed]
@@ -92,7 +92,7 @@ func seedEmbedOwnerAndPhoto(t *testing.T, dbPath string) (owners.Principal, stri
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err = d.WriteDB().ExecContext(context.Background(),
 		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at) VALUES (?,?,?,?)`,
-		p.Hub, p.UserID, "h/u", time.Now().UTC())
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-44665544000f", time.Now().UTC())
 	require.NoError(t, err)
 
 	mid := uuid.NewString()

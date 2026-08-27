@@ -29,7 +29,7 @@ import (
 
 const benchScale = 10_000
 
-const benchStorageKey = "bench-storage"
+const benchStorageKey = "550e8400-e29b-41d4-a716-446655440011"
 
 var benchOwner = owners.Principal{Hub: "bench-hub", UserID: "bench-user"}
 

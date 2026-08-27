@@ -45,7 +45,7 @@ func seedReadyRow(t *testing.T, dbPath string) media.Media {
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err = d.WriteDB().ExecContext(context.Background(),
 		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "u", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	require.NoError(t, err)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
@@ -166,7 +166,9 @@ func seedRowForOwner(t *testing.T, dbPath string, p owners.Principal) media.Medi
 	defer func() { _ = d.Close() }()
 	_, err = d.WriteDB().ExecContext(context.Background(),
 		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, p.Hub+":"+p.UserID, time.Now().UTC(),
+		p.Hub, p.UserID,
+		uuid.NewSHA1(uuid.NameSpaceOID, []byte(p.Hub+"\x00"+p.UserID)).String(),
+		time.Now().UTC(),
 	)
 	require.NoError(t, err)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())

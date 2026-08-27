@@ -6,39 +6,64 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
-func TestOwnersAddCreatesRow(t *testing.T) {
+func TestOwnersAddGeneratedAndExplicitKeys(t *testing.T) {
 	r := require.New(t)
 	tmp := newCLITempEnv(t)
 
 	var out, eout bytes.Buffer
 	code := cli.Run([]string{"owners", "add",
-		"--hub", "h", "--user-id", "u", "--storage-key", "k", "--handle", "User",
+		"--hub", "h", "--user-id", "u", "--handle", "User",
 	}, &out, &eout)
 	r.Equal(0, code, eout.String())
+	outputFields := strings.Fields(out.String())
+	r.NotEmpty(outputFields)
+	generatedKey := outputFields[len(outputFields)-1]
+	_, err := uuid.Parse(generatedKey)
+	r.NoError(err)
 
-	// Second invocation with same args should also succeed (idempotent).
+	// Repeating an add without an explicit key returns the stored winner.
 	out.Reset()
 	eout.Reset()
 	code = cli.Run([]string{"owners", "add",
-		"--hub", "h", "--user-id", "u", "--storage-key", "k",
+		"--hub", "h", "--user-id", "u",
 	}, &out, &eout)
 	r.Equal(0, code, eout.String())
+	r.Contains(out.String(), generatedKey)
 
-	// But conflict on storage_key change must fail.
+	explicitKey := "660e8400-e29b-41d4-a716-446655440000"
 	out.Reset()
 	eout.Reset()
 	code = cli.Run([]string{"owners", "add",
-		"--hub", "h", "--user-id", "u", "--storage-key", "different",
+		"--hub", "h", "--user-id", "explicit", "--storage-key", explicitKey,
+	}, &out, &eout)
+	r.Equal(0, code, eout.String())
+	r.Contains(out.String(), explicitKey)
+
+	out.Reset()
+	eout.Reset()
+	code = cli.Run([]string{"owners", "add",
+		"--hub", "h", "--user-id", "invalid", "--storage-key", "not-a-uuid",
 	}, &out, &eout)
 	r.Equal(1, code)
-	r.Contains(eout.String(), "already")
-	_ = tmp
+	r.Contains(eout.String(), "invalid argument")
+
+	d, err := db.Open(filepath.Join(tmp, "fotobank.sqlite"))
+	r.NoError(err)
+	stored, err := owners.NewRepo(d.WriteDB(), d.ReadDB()).GetByPrincipal(
+		t.Context(), owners.Principal{Hub: "h", UserID: "u"})
+	r.NoError(err)
+	r.Equal(generatedKey, stored.StorageKey)
+	r.NoError(d.Close())
 }
 
 func TestOwnersListShowsAddedRow(t *testing.T) {
@@ -47,7 +72,7 @@ func TestOwnersListShowsAddedRow(t *testing.T) {
 
 	var out, eout bytes.Buffer
 	r.Equal(0, cli.Run([]string{"owners", "add",
-		"--hub", "h", "--user-id", "u", "--storage-key", "k",
+		"--hub", "h", "--user-id", "u", "--storage-key", "550e8400-e29b-41d4-a716-446655440000",
 	}, &out, &eout))
 
 	out.Reset()
@@ -81,7 +106,7 @@ func TestOwnersRemoveSucceedsWhenEmpty(t *testing.T) {
 	_ = newCLITempEnv(t)
 	var out, eout bytes.Buffer
 	r.Equal(0, cli.Run([]string{"owners", "add",
-		"--hub", "h", "--user-id", "u", "--storage-key", "k",
+		"--hub", "h", "--user-id", "u", "--storage-key", "550e8400-e29b-41d4-a716-446655440000",
 	}, &out, &eout))
 	out.Reset()
 	eout.Reset()

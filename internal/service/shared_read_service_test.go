@@ -47,9 +47,9 @@ func newSharedReadFixture(t *testing.T) sharedReadFixture {
 	// the map registers the fixture's canonical hub/user_id → storage_key
 	// pairs up front.
 	store := storage.NewNASOnly(t.TempDir(), map[owners.Principal]string{
-		{Hub: "h", UserID: "alice"}:   "alice-sk",
-		{Hub: "h", UserID: "bob"}:     "bob-sk",
-		{Hub: "h", UserID: "charlie"}: "charlie-sk",
+		{Hub: "h", UserID: "alice"}:   "550e8400-e29b-41d4-a716-44665544000e",
+		{Hub: "h", UserID: "bob"}:     "00000000-0000-4000-8000-61db0d8bb01d",
+		{Hub: "h", UserID: "charlie"}: "00000000-0000-4000-8000-96616be8194d",
 	})
 	resolver := share.NewScopeResolver(shares, func() time.Time { return now }, nil)
 	svc := service.NewSharedReadService(shares, mRepo, aRepo, store, resolver)
@@ -173,9 +173,9 @@ func TestSharedReadListScopesReturnsAuthorizedOnly(t *testing.T) {
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
 	charlie := owners.Principal{Hub: "h", UserID: "charlie"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), charlie, "charlie-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
+	sharedSeedOwner(t, fx.db.WriteDB(), charlie, "00000000-0000-4000-8000-96616be8194d")
 
 	m := sharedSeedMedia(t, fx.db.WriteDB(), alice)
 	live := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, m)
@@ -196,8 +196,8 @@ func TestSharedReadGetScopeEnforcesHeaderMembership(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	m := sharedSeedMedia(t, fx.db.WriteDB(), alice)
 	live := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, m)
@@ -220,8 +220,8 @@ func TestSharedReadGetScopeRevokedReturnsNotFound(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	m := sharedSeedMedia(t, fx.db.WriteDB(), alice)
 	live := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, m)
 	sharedBumpActive(t, fx.db.WriteDB(), live.UUID, fx.now)
@@ -239,8 +239,8 @@ func TestSharedReadGetScopeAlbumLiveItemCount(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID, _ := sharedSeedAlbumWithMedia(t, fx.db.WriteDB(), alice, 3)
 	live := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now, false)
@@ -294,8 +294,8 @@ func TestSharedReadListAlbumsReturnsAlbumLiveOnly(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID, mediaIDs := sharedSeedAlbumWithMedia(t, fx.db.WriteDB(), alice, 2)
 	// Two album_live scopes over the same album — download OR'd across.
@@ -321,8 +321,8 @@ func TestSharedReadListAlbumsCanDownloadFalseWhenNoDownloadScope(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID, _ := sharedSeedAlbumWithMedia(t, fx.db.WriteDB(), alice, 1)
 	live := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now, false)
@@ -338,8 +338,8 @@ func TestSharedReadGetAlbumUnauthorizedReturns404(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	albumID, _ := sharedSeedAlbumWithMedia(t, fx.db.WriteDB(), alice, 1)
 	_, err := fx.svc.GetAlbum(context.Background(), bob, nil, albumID)
 	require.ErrorIs(t, err, errs.ErrNotFound)
@@ -350,8 +350,8 @@ func TestSharedReadListAlbumMediaPaginates(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	albumID, _ := sharedSeedAlbumWithMediaTimestamped(t, fx.db.WriteDB(), alice, fx.now, 3)
 	live := sharedMakeAlbumLiveScope(t, fx.shares, alice, bob, albumID, fx.now, false)
 	sharedBumpActive(t, fx.db.WriteDB(), live.UUID, fx.now)
@@ -379,8 +379,8 @@ func TestSharedReadListAlbumsSortsByUpdatedAtDesc(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	tsOlder := fx.now
 	tsNewer := fx.now.Add(time.Hour)
@@ -416,8 +416,8 @@ func TestSharedReadListMediaUnionOfScopes(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	t0 := fx.now.Add(-2 * time.Hour)
 	t1 := fx.now.Add(-1 * time.Hour)
@@ -449,8 +449,8 @@ func TestSharedReadGetMediaUnauthorizedReturns404(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	m := sharedSeedMedia(t, fx.db.WriteDB(), alice)
 	_, err := fx.svc.GetMedia(context.Background(), bob, nil, m)
 	require.ErrorIs(t, err, errs.ErrNotFound)
@@ -461,8 +461,8 @@ func TestSharedReadGetMediaAuthorizedSetsCanDownload(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	m := sharedSeedMedia(t, fx.db.WriteDB(), alice)
 	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, true, m)
 	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
@@ -527,8 +527,8 @@ func TestSharedReadOpenOriginalAuthorizedWithDownload(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	mID, body := sharedSeedStoredMedia(t, fx, alice, "hello")
 	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, true, mID)
@@ -548,8 +548,8 @@ func TestSharedReadOpenOriginalAuthorizedWithoutDownloadReturnsForbidden(t *test
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID, _ := sharedSeedStoredMedia(t, fx, alice, "hello")
 	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, mID)
 	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
@@ -563,8 +563,8 @@ func TestSharedReadOpenOriginalUnauthorizedReturnsNotFound(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID, _ := sharedSeedStoredMedia(t, fx, alice, "hello")
 	_, _, err := fx.svc.OpenOriginal(context.Background(),
 		bob, nil, mID, 0, -1)
@@ -576,8 +576,8 @@ func TestSharedReadOpenOriginalRange(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID, _ := sharedSeedStoredMedia(t, fx, alice, "0123456789")
 	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, true, mID)
 	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
@@ -596,8 +596,8 @@ func TestSharedReadOpenThumbAuthorizedIgnoresDownload(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID, version := sharedSeedMediaWithReadyThumb(t, fx, alice, "jpegbytes")
 	// download=false on the scope — thumb must still be served.
 	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, mID)
@@ -618,8 +618,8 @@ func TestSharedReadOpenThumbUnauthorizedReturnsNotFound(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID, version := sharedSeedMediaWithReadyThumb(t, fx, alice, "jpegbytes")
 
 	_, _, err := fx.svc.OpenThumb(context.Background(),
@@ -631,8 +631,8 @@ func TestSharedReadOpenThumbVersionMismatchReturnsNotFound(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID, version := sharedSeedMediaWithReadyThumb(t, fx, alice, "jpegbytes")
 	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, mID)
 	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
@@ -646,8 +646,8 @@ func TestSharedReadOpenThumbPendingReturnsNotFound(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID := sharedSeedMedia(t, fx.db.WriteDB(), alice) // thumb_status=pending
 	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, mID)
 	sharedBumpActive(t, fx.db.WriteDB(), s.UUID, fx.now)
@@ -672,8 +672,8 @@ func TestSharedReadListMediaExcludesHidden(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	visible := sharedSeedMedia(t, fx.db.WriteDB(), alice)
 	hidden := sharedSeedMedia(t, fx.db.WriteDB(), alice)
@@ -696,8 +696,8 @@ func TestSharedReadListAlbumMediaExcludesHidden(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID, mIDs := sharedSeedAlbumWithMedia(t, fx.db.WriteDB(), alice, 2)
 	sharedHideMedia(t, fx.db.WriteDB(), mIDs[1])
@@ -718,8 +718,8 @@ func TestSharedReadGetMediaHiddenReturnsNotFound(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID := sharedSeedMedia(t, fx.db.WriteDB(), alice)
 	sharedHideMedia(t, fx.db.WriteDB(), mID)
 	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, true, mID)
@@ -735,8 +735,8 @@ func TestSharedReadOpenOriginalHiddenReturnsNotFound(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID, _ := sharedSeedStoredMedia(t, fx, alice, "bytes")
 	sharedHideMedia(t, fx.db.WriteDB(), mID)
 	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, true, mID)
@@ -753,8 +753,8 @@ func TestSharedReadOpenThumbHiddenReturnsNotFound(t *testing.T) {
 	fx := newSharedReadFixture(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	sharedSeedOwner(t, fx.db.WriteDB(), alice, "alice-sk")
-	sharedSeedOwner(t, fx.db.WriteDB(), bob, "bob-sk")
+	sharedSeedOwner(t, fx.db.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	sharedSeedOwner(t, fx.db.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	mID, version := sharedSeedMediaWithReadyThumb(t, fx, alice, "jpegbytes")
 	sharedHideMedia(t, fx.db.WriteDB(), mID)
 	s := sharedMakeMediaSetScopeOver(t, fx.shares, alice, bob, fx.now, false, mID)

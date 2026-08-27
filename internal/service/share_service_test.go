@@ -34,7 +34,7 @@ func newShareFixture(t *testing.T) *shareFixture {
 	owner := owners.Principal{Hub: "h", UserID: "o"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "sk", time.Now().UTC())
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC())
 	require.NoError(t, err)
 
 	shares := share.NewRepo(d.WriteDB(), d.ReadDB())
@@ -163,7 +163,7 @@ func TestShareCreateRejectsCrossOwnerAlbum(t *testing.T) {
 	otherOwner := owners.Principal{Hub: "h", UserID: "other"}
 	_, err := fx.rw.ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		otherOwner.Hub, otherOwner.UserID, "sk2", time.Now().UTC())
+		otherOwner.Hub, otherOwner.UserID, "550e8400-e29b-41d4-a716-44665544000c", time.Now().UTC())
 	r.NoError(err)
 	otherAlbumID := uuid.NewString()
 	now := time.Now().UTC()
@@ -188,7 +188,7 @@ func TestShareCreateRejectsCrossOwnerMediaSet(t *testing.T) {
 	otherOwner := owners.Principal{Hub: "h", UserID: "other"}
 	_, err := fx.rw.ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		otherOwner.Hub, otherOwner.UserID, "sk2", time.Now().UTC())
+		otherOwner.Hub, otherOwner.UserID, "550e8400-e29b-41d4-a716-44665544000c", time.Now().UTC())
 	r.NoError(err)
 	otherM := media.Media{
 		ID: uuid.NewString(), Owner: otherOwner, Type: media.TypePhoto,
@@ -515,7 +515,7 @@ func TestPreviewScopeCrossOwnerReturnsNotFound(t *testing.T) {
 	charlie := owners.Principal{Hub: "h", UserID: "charlie"}
 	_, err := fx.rw.ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		charlie.Hub, charlie.UserID, "sk-c", time.Now().UTC())
+		charlie.Hub, charlie.UserID, "550e8400-e29b-41d4-a716-446655440003", time.Now().UTC())
 	require.NoError(t, err)
 
 	albumID := fx.seedAlbum(t, 1)

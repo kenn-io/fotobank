@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	testStorageKey = "sk-recon"
+	testStorageKey = "550e8400-e29b-41d4-a716-446655440012"
 )
 
 // reconcileFixture wires a DB, a registered owner, and a NAS root with

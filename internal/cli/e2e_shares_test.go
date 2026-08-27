@@ -47,7 +47,7 @@ mode = "stub"
 hub = "local"
 user_id = "alice"
 handle = "Alice"
-storage_key = "alice-sk"
+storage_key = "550e8400-e29b-41d4-a716-44665544000e"
 [http]
 listen_address = "127.0.0.1:0"
 [imports]
@@ -215,6 +215,7 @@ admin_listen = "127.0.0.1:0"
 		"expected 200/204, got %d", resp.StatusCode)
 
 	// Shutdown.
+	client.CloseIdleConnections()
 	cancel()
 	select {
 	case code := <-done:
