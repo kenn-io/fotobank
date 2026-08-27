@@ -10,21 +10,13 @@ import (
 	"time"
 )
 
-// StampLayout is the on-disk filename layout: RFC3339 with nanosecond
+// StampLayout is the portable on-disk filename layout with nanosecond
 // precision and a literal "Z" suffix. UTC. Exported so the worker
 // (this package) and the CLI (internal/cli) write filenames List can
 // parse — the layout is the contract between writers and the reader.
 // Nanosecond precision (vs. millisecond) prevents filename collision
 // between back-to-back snapshots taken within the same millisecond.
-const StampLayout = "2006-01-02T15:04:05.000000000Z"
-
-// legacyStampLayout was the millisecond-precision filename format used
-// before commit 8f6b547 tightened precision. List parses both so that
-// ms-format snapshots written by an earlier worker still appear in
-// `backup list` and are still managed by retention sweep. Safe to
-// remove once a full retention horizon (7d) has elapsed since the
-// switch — the daily tier will have aged out the last ms-format file.
-const legacyStampLayout = "2006-01-02T15:04:05.000Z"
+const StampLayout = "20060102T150405.000000000Z"
 
 // SnapshotExt is the suffix every snapshot filename carries.
 const SnapshotExt = ".sqlite"
@@ -69,12 +61,7 @@ func List(dir string) ([]SnapshotInfo, error) {
 		stamp := strings.TrimSuffix(name, SnapshotExt)
 		ts, err := time.Parse(StampLayout, stamp)
 		if err != nil {
-			// Fall back to the legacy ms-precision layout so older
-			// snapshots remain visible during the deprecation window.
-			ts, err = time.Parse(legacyStampLayout, stamp)
-			if err != nil {
-				continue
-			}
+			continue
 		}
 		info, err := e.Info()
 		if err != nil {

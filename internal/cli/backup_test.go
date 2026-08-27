@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,11 +20,11 @@ import (
 func writeBackupConfig(t *testing.T, tmp string) string {
 	t.Helper()
 	cfgPath := filepath.Join(tmp, "fotobank.toml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte(`
+	require.NoError(t, os.WriteFile(cfgPath, fmt.Appendf(nil, `
 [nas]
-root = "`+filepath.Join(tmp, "nas")+`"
+root = %q
 [flash]
-root = "`+filepath.Join(tmp, "flash")+`"
+root = %q
 [identity]
 mode = "stub"
 [identity.stub]
@@ -34,10 +35,11 @@ storage_key = "550e8400-e29b-41d4-a716-44665544000e"
 [http]
 listen_address = "127.0.0.1:0"
 [imports]
-file_lock_path = "`+filepath.Join(tmp, "import.lock")+`"
+file_lock_path = %q
 [observability]
 admin_listen = "127.0.0.1:0"
-`), 0o600))
+`, filepath.Join(tmp, "nas"), filepath.Join(tmp, "flash"),
+		filepath.Join(tmp, "import.lock")), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "nas"), 0o700))
 	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "flash"), 0o700))
 	return cfgPath

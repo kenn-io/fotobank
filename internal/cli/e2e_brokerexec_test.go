@@ -74,6 +74,7 @@ func TestE2EBrokerExecPublishesAndRevokes(t *testing.T) {
 	// grantee uses hub "h" — cross-hub grantees are explicitly the
 	// pattern e2e_shared_test.go:150 already exercises.
 	cfgPath := filepath.Join(tmp, "fotobank.toml")
+	recordEnv := "BROKEREXEC_TEST_RECORD_FILE=" + brokerRecord
 	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
 [nas]
 root = %q
@@ -100,12 +101,12 @@ call_timeout = "5s"
 env = [
   "%s=1",
   "BROKEREXEC_TEST_EXIT=0",
-  "BROKEREXEC_TEST_RECORD_FILE=%s",
+  %q,
 ]
 [observability]
 admin_listen = "127.0.0.1:0"
 `, nasRoot, flashRoot, filepath.Join(tmp, "import.lock"),
-		self, brokerhelper.EnvVar, brokerRecord), 0o600))
+		self, brokerhelper.EnvVar, recordEnv), 0o600))
 
 	t.Setenv("FOTOBANK_CONFIG", cfgPath)
 	t.Setenv("FOTOBANK_TEST_SHARE_WORKER_TICK", "50ms")

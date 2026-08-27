@@ -244,6 +244,7 @@ func TestFotobankImportColdStartFromTildePaths(t *testing.T) {
 	// instead of clobbering the developer's actual ~/fotobank.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_STATE_HOME", "")
 	// Run from a deliberately unrelated CWD so any literal-"~" bug
 	// would land debris there, where this assertion can catch it.
@@ -278,15 +279,17 @@ storage_key = "550e8400-e29b-41d4-a716-446655440000"
 
 	// Resolved paths are visible up-front so a bad config can't sneak
 	// past the user. The startup banner is part of the contract.
-	r.Contains(out.String(), filepath.Join(home, "fotobank"))
-	r.Contains(out.String(), filepath.Join(home, ".fotobank", "fotobank.sqlite"))
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	r.NoError(err)
+	r.Contains(out.String(), filepath.Join(canonicalHome, "fotobank"))
+	r.Contains(out.String(), filepath.Join(canonicalHome, ".fotobank", "fotobank.sqlite"))
 
 	// Photos landed under $HOME/fotobank/<storage_key>/...
 	r.FileExists(filepath.Join(home, "fotobank", "550e8400-e29b-41d4-a716-446655440000", "2024", "20240615_143022_0.jpg"))
 	r.FileExists(filepath.Join(home, "fotobank", "550e8400-e29b-41d4-a716-446655440000", "unknown_date", "photo-no-exif_0.jpg"))
 
 	// DB landed under $HOME/.fotobank, not in CWD or under a literal "~".
-	_, err := os.Stat(filepath.Join(home, ".fotobank", "fotobank.sqlite"))
+	_, err = os.Stat(filepath.Join(home, ".fotobank", "fotobank.sqlite"))
 	r.NoError(err)
 
 	// Crucially: NO literal "~" subdirectory leaked into CWD.
