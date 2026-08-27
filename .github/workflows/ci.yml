@@ -4,7 +4,6 @@ on:
   workflow_call:
   push:
     branches: [main]
-  pull_request:
 
 permissions:
   contents: read
@@ -16,7 +15,7 @@ concurrency:
 jobs:
   test:
     name: Linux tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'kenn-io/fotobank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -28,6 +27,7 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: ${{ github.repository == 'kenn-io/fotobank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Vet
         run: make vet
@@ -37,7 +37,7 @@ jobs:
 
   lint:
     name: golangci-lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'kenn-io/fotobank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - name: Check out repository
@@ -49,6 +49,7 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: ${{ github.repository == 'kenn-io/fotobank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
@@ -57,7 +58,7 @@ jobs:
 
   testify:
     name: Testify helper check
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'kenn-io/fotobank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - name: Check out repository
@@ -69,6 +70,7 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: ${{ github.repository == 'kenn-io/fotobank' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Check Testify helper usage
         run: make testify-helper-check
