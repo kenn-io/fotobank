@@ -120,21 +120,24 @@ func (s *OwnerService) List(ctx context.Context) ([]owners.Owner, error) {
 }
 
 // Remove deletes the owner row for p. With purge=false, it refuses if
-// any media rows still reference the owner. Purge=true is reserved for
-// Plan B (storage-layer byte deletion) and is rejected here.
+// any media or asset rows still reference the owner. Purge=true is reserved
+// for Plan B (storage-layer byte deletion) and is rejected here.
 func (s *OwnerService) Remove(ctx context.Context, p owners.Principal, purge bool) error {
 	if purge {
 		return fmt.Errorf("%w: --purge requires the storage layer (Plan B)", errs.ErrInvalidArgument)
 	}
-	var n int
+	var mediaCount, assetCount int
 	row := s.repo.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM media WHERE owner_hub=? AND owner_user_id=?`, p.Hub, p.UserID)
-	if err := row.Scan(&n); err != nil {
-		return fmt.Errorf("count media for owner: %w", err)
+		`SELECT
+			(SELECT COUNT(*) FROM media WHERE owner_hub=? AND owner_user_id=?),
+			(SELECT COUNT(*) FROM assets WHERE owner_hub=? AND owner_user_id=?)`,
+		p.Hub, p.UserID, p.Hub, p.UserID)
+	if err := row.Scan(&mediaCount, &assetCount); err != nil {
+		return fmt.Errorf("count content for owner: %w", err)
 	}
-	if n > 0 {
-		return fmt.Errorf("%w: owner %s has %d media rows (use --purge)",
-			errs.ErrInvalidArgument, p, n)
+	if mediaCount > 0 || assetCount > 0 {
+		return fmt.Errorf("%w: owner %s has %d media rows and %d assets (use --purge)",
+			errs.ErrInvalidArgument, p, mediaCount, assetCount)
 	}
 	return s.repo.Delete(ctx, p)
 }

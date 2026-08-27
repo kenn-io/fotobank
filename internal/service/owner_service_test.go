@@ -176,6 +176,27 @@ func TestRemoveRefusesWhenMediaExists(t *testing.T) {
 	r.ErrorIs(svc.Remove(context.Background(), p, false), errs.ErrInvalidArgument)
 }
 
+func TestRemoveRefusesWhenAssetExists(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	svc := service.NewOwnerService(owners.NewRepo(d.WriteDB(), d.ReadDB()))
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := svc.Ensure(t.Context(), p, "550e8400-e29b-41d4-a716-446655440000")
+	r.NoError(err)
+
+	_, err = d.WriteDB().ExecContext(t.Context(), `
+		INSERT INTO assets (
+			id, owner_hub, owner_user_id, state, media_type,
+			imported_at, thumb_status, thumb_version
+		) VALUES (
+			'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'h', 'u', 'pending', 'photo',
+			datetime('now'), 'pending', 0
+		)`)
+	r.NoError(err)
+
+	r.ErrorIs(svc.Remove(t.Context(), p, false), errs.ErrInvalidArgument)
+}
+
 func TestRemoveSucceedsWhenEmpty(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
