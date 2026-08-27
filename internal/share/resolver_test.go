@@ -67,8 +67,8 @@ func TestResolveAllDropsMalformedDedupsAndCaps(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "ska")
-	seedOwner(t, d.WriteDB(), bob, "skb")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-7f8246cf1abe")
 
 	live := makeMediaSetScope(t, d, repo, alice, bob, nil, now)
 	bumpActive(t, d, live.UUID, now)
@@ -96,8 +96,8 @@ func TestResolveAllAppliesMaxHeaderScopesCap(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "ska")
-	seedOwner(t, d.WriteDB(), bob, "skb")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-7f8246cf1abe")
 
 	total := share.MaxHeaderScopes + 5
 	minted := make([]string, 0, total)
@@ -130,9 +130,9 @@ func TestResolveAllMultiOwnerKeepsLexSmallest(t *testing.T) {
 	aliceA := owners.Principal{Hub: "hubA", UserID: "alice"}
 	aliceB := owners.Principal{Hub: "hubB", UserID: "alice"}
 	bob := owners.Principal{Hub: "hubA", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), aliceA, "ska")
-	seedOwner(t, d.WriteDB(), aliceB, "skb")
-	seedOwner(t, d.WriteDB(), bob, "skbob")
+	seedOwner(t, d.WriteDB(), aliceA, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), aliceB, "00000000-0000-4000-8000-7f8246cf1abe")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-a2c662cd2e6b")
 
 	scopeA := makeMediaSetScope(t, d, repo, aliceA, bob, nil, now)
 	bumpActive(t, d, scopeA.UUID, now)
@@ -171,8 +171,8 @@ func TestResolveAllSingleOwnerDoesNotLog(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "ska")
-	seedOwner(t, d.WriteDB(), bob, "skb")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-7f8246cf1abe")
 
 	live := makeMediaSetScope(t, d, repo, alice, bob, nil, now)
 	bumpActive(t, d, live.UUID, now)
@@ -189,8 +189,8 @@ func TestResolveAllDedupesBeforeCap(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "ska")
-	seedOwner(t, d.WriteDB(), bob, "skb")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-7f8246cf1abe")
 
 	// Seed MaxHeaderScopes unique live scopes.
 	minted := make([]string, 0, share.MaxHeaderScopes)
@@ -230,8 +230,8 @@ func TestCheckMediaAccessViaMediaSet(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	mediaID := seedMedia(t, d.WriteDB(), alice, "media-set-c1")
 	s := makeMediaSetScopeOver(t, d, repo, alice, bob, nil, now, false, mediaID)
@@ -252,8 +252,8 @@ func TestCheckMediaAccessViaAlbumLive(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID, mediaIDs := seedAlbumWithMedia(t, d, alice, 2)
 	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
@@ -275,8 +275,8 @@ func TestCheckMediaAccessUnauthorized(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	covered := seedMedia(t, d.WriteDB(), alice, "covered-c1")
 	other := seedMedia(t, d.WriteDB(), alice, "other-c1")
@@ -296,8 +296,8 @@ func TestCheckMediaAccessOverlappingScopesORsDownload(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID, mediaIDs := seedAlbumWithMedia(t, d, alice, 1)
 	albumScope := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
@@ -321,8 +321,8 @@ func TestCheckAlbumAccessAlbumLiveAuthorized(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID, _ := seedAlbumWithMedia(t, d, alice, 1)
 	s := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
@@ -343,8 +343,8 @@ func TestCheckAlbumAccessMediaSetDoesNotImplyAlbum(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID, mediaIDs := seedAlbumWithMedia(t, d, alice, 1)
 	// media_set scope covers every media in the album — must NOT authorise the album.
@@ -364,8 +364,8 @@ func TestCheckAlbumAccessOverlappingAlbumLiveScopesORsDownload(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID, _ := seedAlbumWithMedia(t, d, alice, 1)
 	s1 := makeAlbumLiveScope(t, d, repo, alice, bob, albumID, nil, now, false)
@@ -395,9 +395,9 @@ func TestCheckMediaAccessMultiOwnerLogs(t *testing.T) {
 	aliceA := owners.Principal{Hub: "hubA", UserID: "alice"}
 	aliceB := owners.Principal{Hub: "hubB", UserID: "alice"}
 	bob := owners.Principal{Hub: "hubA", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), aliceA, "ska")
-	seedOwner(t, d.WriteDB(), aliceB, "skb")
-	seedOwner(t, d.WriteDB(), bob, "skbob")
+	seedOwner(t, d.WriteDB(), aliceA, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), aliceB, "00000000-0000-4000-8000-7f8246cf1abe")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-a2c662cd2e6b")
 
 	mediaA := seedMedia(t, d.WriteDB(), aliceA, "media-a")
 	scopeA := makeMediaSetScopeOver(t, d, repo, aliceA, bob, nil, now, false, mediaA)
@@ -428,9 +428,9 @@ func TestCheckAlbumAccessMultiOwnerLogs(t *testing.T) {
 	aliceA := owners.Principal{Hub: "hubA", UserID: "alice"}
 	aliceB := owners.Principal{Hub: "hubB", UserID: "alice"}
 	bob := owners.Principal{Hub: "hubA", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), aliceA, "ska")
-	seedOwner(t, d.WriteDB(), aliceB, "skb")
-	seedOwner(t, d.WriteDB(), bob, "skbob")
+	seedOwner(t, d.WriteDB(), aliceA, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), aliceB, "00000000-0000-4000-8000-7f8246cf1abe")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-a2c662cd2e6b")
 
 	albumA, _ := seedAlbumWithMedia(t, d, aliceA, 1)
 	scopeA := makeAlbumLiveScope(t, d, repo, aliceA, bob, albumA, nil, now, false)

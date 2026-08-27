@@ -115,12 +115,9 @@ func runImport(ctx context.Context, opts importOpts) error {
 		Hub:    cfg.Identity.Stub.Hub,
 		UserID: cfg.Identity.Stub.UserID,
 	}
-	storageKey := cfg.Identity.Stub.StorageKey
-	if storageKey == "" {
-		storageKey = cfg.Identity.Stub.UserID
-	}
 	ownerSvc := service.NewOwnerService(owners.NewRepo(d.WriteDB(), d.ReadDB()))
-	if err := ownerSvc.Ensure(ctx, owner, storageKey); err != nil {
+	registeredOwner, err := ownerSvc.Ensure(ctx, owner, cfg.Identity.Stub.StorageKey)
+	if err != nil {
 		return err
 	}
 
@@ -128,6 +125,7 @@ func runImport(ctx context.Context, opts importOpts) error {
 	if err != nil {
 		return err
 	}
+	keys[owner] = registeredOwner.StorageKey
 	storeLayer, _ := buildStorageLayer(cfg, keys)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 

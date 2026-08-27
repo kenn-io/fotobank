@@ -29,10 +29,31 @@ func runGPS(t *testing.T, args ...string) (int, string, string) {
 	return code, stdout.String(), stderr.String()
 }
 
+func writeGPSConfig(t *testing.T, tmp string) string {
+	t.Helper()
+	cfgPath := filepath.Join(tmp, "gps.toml")
+	require.NoError(t, os.WriteFile(cfgPath, fmt.Appendf(nil, `
+[nas]
+root = %q
+[flash]
+root = %q
+[storage]
+mode = "nas_only"
+[identity]
+mode = "stub"
+[identity.stub]
+hub = "h"
+user_id = "u"
+`, filepath.Join(tmp, "nas"), filepath.Join(tmp, "flash")), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "nas"), 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "flash"), 0o700))
+	return cfgPath
+}
+
 func TestGPSBackfillBadSinceErrorsBeforeOpeningDB(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
-	cfgPath := writeBasicConfig(t, tmp)
+	cfgPath := writeGPSConfig(t, tmp)
 	dbPath := filepath.Join(tmp, "fotobank.sqlite")
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
@@ -44,7 +65,7 @@ func TestGPSBackfillBadSinceErrorsBeforeOpeningDB(t *testing.T) {
 func TestGPSBackfillNegativeSinceErrors(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
-	cfgPath := writeBasicConfig(t, tmp)
+	cfgPath := writeGPSConfig(t, tmp)
 	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
 
 	code, _, stderr := runGPS(t, "backfill", "--config", cfgPath, "--since", "-1h")
@@ -93,7 +114,7 @@ func TestGPSBackfillAllOwnersBypassesStubModeRequirement(t *testing.T) {
 func TestGPSBackfillOwnerAndAllOwnersMutuallyExclusive(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
-	cfgPath := writeBasicConfig(t, tmp)
+	cfgPath := writeGPSConfig(t, tmp)
 	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
 
 	code, _, stderr := runGPS(t, "backfill",
@@ -107,7 +128,7 @@ func TestGPSBackfillOwnerAndAllOwnersMutuallyExclusive(t *testing.T) {
 func TestGPSBackfillRelabelOnlyTouchesRowsWithCoords(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
-	cfgPath := writeBasicConfig(t, tmp)
+	cfgPath := writeGPSConfig(t, tmp)
 	dbPath := filepath.Join(tmp, "fotobank.sqlite")
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
@@ -117,7 +138,7 @@ func TestGPSBackfillRelabelOnlyTouchesRowsWithCoords(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(dbCtx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "u", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 	lat, lon := 48.8566, 2.3522
@@ -155,7 +176,7 @@ func TestGPSBackfillRelabelOnlyTouchesRowsWithCoords(t *testing.T) {
 func TestGPSBackfillSkipsVideos(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
-	cfgPath := writeBasicConfig(t, tmp)
+	cfgPath := writeGPSConfig(t, tmp)
 	dbPath := filepath.Join(tmp, "fotobank.sqlite")
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
@@ -165,7 +186,7 @@ func TestGPSBackfillSkipsVideos(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(dbCtx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "u", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 	lat, lon := 48.8566, 2.3522
@@ -194,7 +215,7 @@ func TestGPSBackfillSkipsVideos(t *testing.T) {
 func TestGPSBackfillFinalSummaryAlwaysEmitted(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
-	cfgPath := writeBasicConfig(t, tmp)
+	cfgPath := writeGPSConfig(t, tmp)
 	dbPath := filepath.Join(tmp, "fotobank.sqlite")
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
@@ -202,7 +223,7 @@ func TestGPSBackfillFinalSummaryAlwaysEmitted(t *testing.T) {
 	d := testutil.OpenTestDBAt(t, dbPath)
 	_, err := d.WriteDB().ExecContext(dbCtx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		"h", "u", "u", time.Now().UTC(),
+		"h", "u", "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 	r.NoError(d.Close())
@@ -222,7 +243,7 @@ func TestGPSBackfillFinalSummaryAlwaysEmitted(t *testing.T) {
 func TestGPSBackfillFullClearsCoordsWhenEXIFLacksGPS(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
-	cfgPath := writeBasicConfig(t, tmp)
+	cfgPath := writeGPSConfig(t, tmp)
 	dbPath := filepath.Join(tmp, "fotobank.sqlite")
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
@@ -232,7 +253,7 @@ func TestGPSBackfillFullClearsCoordsWhenEXIFLacksGPS(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(dbCtx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "u", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 	lat, lon := 48.8566, 2.3522
@@ -250,7 +271,7 @@ func TestGPSBackfillFullClearsCoordsWhenEXIFLacksGPS(t *testing.T) {
 	// Stage the NAS file at <nasRoot>/<storage_key>/<path>. Non-EXIF
 	// bytes — exifread treats this as Metadata{} with nil error, which
 	// drives the Full-mode authoritative clear branch.
-	nasFile := filepath.Join(tmp, "nas", "u", "x.jpg")
+	nasFile := filepath.Join(tmp, "nas", "550e8400-e29b-41d4-a716-446655440000", "x.jpg")
 	r.NoError(os.MkdirAll(filepath.Dir(nasFile), 0o700))
 	r.NoError(os.WriteFile(nasFile, []byte("not-an-image"), 0o600))
 
@@ -278,7 +299,7 @@ func TestGPSBackfillFullClearsCoordsWhenEXIFLacksGPS(t *testing.T) {
 func TestGPSBackfillFillMissingTerminatesOnUnchangedBatch(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
-	cfgPath := writeBasicConfig(t, tmp)
+	cfgPath := writeGPSConfig(t, tmp)
 	dbPath := filepath.Join(tmp, "fotobank.sqlite")
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
@@ -291,7 +312,7 @@ func TestGPSBackfillFillMissingTerminatesOnUnchangedBatch(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(dbCtx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "u", time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 	// Seed 5 photo rows with both coords NULL and matching NAS files
@@ -305,7 +326,7 @@ func TestGPSBackfillFillMissingTerminatesOnUnchangedBatch(t *testing.T) {
 			Path: path, ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
 			ThumbStatus: "pending",
 		}))
-		nasFile := filepath.Join(tmp, "nas", "u", path)
+		nasFile := filepath.Join(tmp, "nas", "550e8400-e29b-41d4-a716-446655440000", path)
 		r.NoError(os.MkdirAll(filepath.Dir(nasFile), 0o700))
 		r.NoError(os.WriteFile(nasFile, []byte("no-exif"), 0o600))
 	}

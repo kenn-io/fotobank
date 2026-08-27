@@ -43,11 +43,11 @@ func newThumbServiceFixture(t *testing.T) thumbServiceFixture {
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	require.NoError(t, err)
 	root := filepath.Join(t.TempDir(), "nas")
-	store := storage.NewNASOnly(root, map[owners.Principal]string{p: "sk"})
+	store := storage.NewNASOnly(root, map[owners.Principal]string{p: "550e8400-e29b-41d4-a716-446655440000"})
 	svc := service.NewThumbService(repo, q, store)
 	return thumbServiceFixture{
 		svc: svc, owner: p, store: store, repo: repo, queue: q,
@@ -155,7 +155,7 @@ func TestThumbServiceGetReturnsNotFoundForOtherOwner(t *testing.T) {
 	ownerB := owners.Principal{Hub: "h", UserID: "b"}
 	_, err := fx.rw.ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		ownerB.Hub, ownerB.UserID, "sk-b", time.Now().UTC(),
+		ownerB.Hub, ownerB.UserID, "550e8400-e29b-41d4-a716-446655440002", time.Now().UTC(),
 	)
 	r.NoError(err)
 	m := insertThumbMedia(t, fx.repo, ownerB, "ready", 1)
@@ -228,7 +228,7 @@ func TestThumbServiceEnqueueScopesToOwner(t *testing.T) {
 	ownerB := owners.Principal{Hub: "h", UserID: "b"}
 	_, err := fx.rw.ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		ownerB.Hub, ownerB.UserID, "sk-b", time.Now().UTC(),
+		ownerB.Hub, ownerB.UserID, "550e8400-e29b-41d4-a716-446655440002", time.Now().UTC(),
 	)
 	r.NoError(err)
 	mA1 := insertThumbMedia(t, fx.repo, fx.owner, "ready", 0)

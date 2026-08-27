@@ -2,7 +2,16 @@
 CREATE TABLE owners (
     hub              TEXT NOT NULL,
     user_id          TEXT NOT NULL,
-    storage_key      TEXT NOT NULL,
+    storage_key      TEXT NOT NULL CHECK (
+      length(storage_key) = 36 AND
+      storage_key = lower(storage_key) AND
+      substr(storage_key, 9, 1) = '-' AND
+      substr(storage_key, 14, 1) = '-' AND
+      substr(storage_key, 19, 1) = '-' AND
+      substr(storage_key, 24, 1) = '-' AND
+      length(replace(storage_key, '-', '')) = 32 AND
+      replace(storage_key, '-', '') NOT GLOB '*[^0-9a-f]*'
+    ),
     display_handle   TEXT,
     created_at       TIMESTAMP NOT NULL,
     PRIMARY KEY (hub, user_id)
@@ -162,6 +171,238 @@ WHEN (NEW.owner_hub != OLD.owner_hub OR NEW.owner_user_id != OLD.owner_user_id)
      AND EXISTS (SELECT 1 FROM media WHERE paired_with_id = NEW.id)
 BEGIN
     SELECT RAISE(ABORT, 'cannot change primary owner while sidecars reference it');
+END;
+
+-- Final-shaped media domain. F02a leaves active product paths on media while
+-- these tables establish the Docbank-backed asset and file contract.
+CREATE TABLE assets (
+    id                UUID PRIMARY KEY,
+    owner_hub         TEXT NOT NULL,
+    owner_user_id     TEXT NOT NULL,
+    state             TEXT NOT NULL
+                      CHECK (state IN ('pending', 'ready', 'conflict')),
+    media_type        TEXT NOT NULL
+                      CHECK (media_type IN ('photo', 'video')),
+    imported_at       TIMESTAMP NOT NULL,
+    timestamp         TIMESTAMP,
+    make              TEXT,
+    model             TEXT,
+    lens_model        TEXT,
+    focal_length      TEXT,
+    shutter           TEXT,
+    width             INTEGER,
+    height            INTEGER,
+    iso               INTEGER,
+    aperture          REAL,
+    duration_ms       INTEGER,
+    latitude          REAL,
+    longitude         REAL,
+    gps_at            TIMESTAMP,
+    location_label    TEXT,
+    thumb_status      TEXT NOT NULL CHECK (
+        thumb_status IN ('pending', 'working', 'ready',
+                         'no_preview', 'failed')
+    ),
+    thumb_claimed_at  TIMESTAMP,
+    thumb_version     INTEGER NOT NULL DEFAULT 0,
+    thumb_updated_at  TIMESTAMP,
+    hidden_at         TIMESTAMP,
+    FOREIGN KEY (owner_hub, owner_user_id)
+      REFERENCES owners(hub, user_id),
+    UNIQUE (id, owner_hub, owner_user_id)
+);
+
+CREATE TABLE media_files (
+    id                    UUID PRIMARY KEY,
+    asset_id              UUID NOT NULL,
+    owner_hub             TEXT NOT NULL,
+    owner_user_id         TEXT NOT NULL,
+    role                  TEXT NOT NULL CHECK (
+        role IN ('primary', 'original', 'sidecar', 'alternate')
+    ),
+    mime_type             TEXT NOT NULL,
+    original_filename     TEXT NOT NULL,
+    import_source_path    TEXT NOT NULL DEFAULT '',
+    size                  INTEGER NOT NULL CHECK (size >= 0),
+    docbank_node_id       INTEGER,
+    docbank_virtual_path  TEXT,
+    current_version_id    TEXT,
+    sha256                TEXT,
+    FOREIGN KEY (asset_id, owner_hub, owner_user_id)
+      REFERENCES assets(id, owner_hub, owner_user_id) ON DELETE CASCADE,
+    CHECK (
+      (docbank_node_id IS NULL AND docbank_virtual_path IS NULL AND
+       current_version_id IS NULL AND sha256 IS NULL) OR
+      (docbank_node_id IS NOT NULL AND docbank_node_id > 0 AND
+       docbank_virtual_path IS NOT NULL AND
+       length(docbank_virtual_path) > 1 AND
+       substr(docbank_virtual_path, 1, 1) = '/' AND
+       docbank_virtual_path = trim(docbank_virtual_path) AND
+       instr(docbank_virtual_path, char(0)) = 0 AND
+       instr(docbank_virtual_path, char(92)) = 0 AND
+       docbank_virtual_path NOT LIKE '%//%' AND
+       docbank_virtual_path NOT LIKE '%/./%' AND
+       docbank_virtual_path NOT LIKE '%/../%' AND
+       substr(docbank_virtual_path, -2) <> '/.' AND
+       substr(docbank_virtual_path, -3) <> '/..' AND
+       substr(docbank_virtual_path, -1) <> '/' AND
+       docbank_virtual_path LIKE '/owners/%/media/' || id || '/%' AND
+       length(docbank_virtual_path) -
+         length(replace(docbank_virtual_path, '/', '')) = 5 AND
+       current_version_id IS NOT NULL AND
+       length(current_version_id) = 36 AND
+       current_version_id = lower(current_version_id) AND
+       substr(current_version_id, 9, 1) = '-' AND
+       substr(current_version_id, 14, 1) = '-' AND
+       substr(current_version_id, 15, 1) = '4' AND
+       substr(current_version_id, 19, 1) = '-' AND
+       substr(current_version_id, 20, 1) GLOB '[89ab]' AND
+       substr(current_version_id, 24, 1) = '-' AND
+       length(replace(current_version_id, '-', '')) = 32 AND
+       replace(current_version_id, '-', '') NOT GLOB '*[^0-9a-f]*' AND
+       sha256 IS NOT NULL AND
+       length(sha256) = 64 AND sha256 = lower(sha256) AND
+       sha256 NOT GLOB '*[^0-9a-f]*')
+    )
+);
+
+CREATE UNIQUE INDEX media_files_one_primary_uq
+  ON media_files(asset_id) WHERE role = 'primary';
+CREATE UNIQUE INDEX media_files_docbank_node_uq
+  ON media_files(docbank_node_id) WHERE docbank_node_id IS NOT NULL;
+CREATE UNIQUE INDEX media_files_docbank_path_uq
+  ON media_files(docbank_virtual_path)
+  WHERE docbank_virtual_path IS NOT NULL;
+CREATE UNIQUE INDEX media_files_current_version_uq
+  ON media_files(current_version_id) WHERE current_version_id IS NOT NULL;
+CREATE INDEX media_files_asset_idx ON media_files(asset_id, role, id);
+
+CREATE TRIGGER assets_ready_insert
+BEFORE INSERT ON assets
+FOR EACH ROW
+WHEN NEW.state = 'ready'
+BEGIN
+    SELECT RAISE(ABORT, 'asset graphs start pending');
+END;
+
+CREATE TRIGGER assets_ready_primary_update
+BEFORE UPDATE OF state ON assets
+FOR EACH ROW
+WHEN NEW.state = 'ready' AND (
+    SELECT COUNT(*) FROM media_files
+    WHERE asset_id = NEW.id AND role = 'primary'
+) <> 1
+BEGIN
+    SELECT RAISE(ABORT, 'ready asset requires exactly one primary');
+END;
+
+CREATE TRIGGER assets_ready_mapping_update
+BEFORE UPDATE OF state ON assets
+FOR EACH ROW
+WHEN NEW.state = 'ready' AND EXISTS (
+    SELECT 1 FROM media_files
+    WHERE asset_id = NEW.id AND docbank_node_id IS NULL
+)
+BEGIN
+    SELECT RAISE(ABORT, 'ready asset requires mapped files');
+END;
+
+CREATE TRIGGER media_files_ready_primary_delete
+BEFORE DELETE ON media_files
+FOR EACH ROW
+WHEN OLD.role = 'primary' AND EXISTS (
+    SELECT 1 FROM assets WHERE id = OLD.asset_id AND state = 'ready'
+)
+BEGIN
+    SELECT RAISE(ABORT, 'cannot remove primary from ready asset');
+END;
+
+CREATE TRIGGER media_files_ready_primary_update
+BEFORE UPDATE OF role ON media_files
+FOR EACH ROW
+WHEN OLD.role = 'primary' AND NEW.role <> 'primary' AND EXISTS (
+    SELECT 1 FROM assets WHERE id = OLD.asset_id AND state = 'ready'
+)
+BEGIN
+    SELECT RAISE(ABORT, 'cannot remove primary from ready asset');
+END;
+
+CREATE TRIGGER media_files_coordinate_update
+BEFORE UPDATE OF asset_id, owner_hub, owner_user_id ON media_files
+FOR EACH ROW
+WHEN NEW.asset_id <> OLD.asset_id
+  OR NEW.owner_hub <> OLD.owner_hub
+  OR NEW.owner_user_id <> OLD.owner_user_id
+BEGIN
+    SELECT RAISE(ABORT, 'file asset and owner are immutable');
+END;
+
+CREATE TRIGGER media_files_ready_mapping_insert
+BEFORE INSERT ON media_files
+FOR EACH ROW
+WHEN NEW.docbank_node_id IS NULL AND EXISTS (
+    SELECT 1 FROM assets WHERE id = NEW.asset_id AND state = 'ready'
+)
+BEGIN
+    SELECT RAISE(ABORT, 'ready asset requires mapped files');
+END;
+
+CREATE TRIGGER media_files_ready_mapping_update
+BEFORE UPDATE OF docbank_node_id, docbank_virtual_path,
+                 current_version_id, sha256 ON media_files
+FOR EACH ROW
+WHEN NEW.docbank_node_id IS NULL AND EXISTS (
+    SELECT 1 FROM assets WHERE id = NEW.asset_id AND state = 'ready'
+)
+BEGIN
+    SELECT RAISE(ABORT, 'ready asset requires mapped files');
+END;
+
+CREATE TABLE media_file_relationships (
+    source_file_id UUID NOT NULL
+      REFERENCES media_files(id) ON DELETE CASCADE,
+    target_file_id UUID NOT NULL
+      REFERENCES media_files(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (
+      kind IN ('sidecar_of', 'derived_from', 'paired_with')
+    ),
+    PRIMARY KEY (source_file_id, target_file_id, kind),
+    CHECK (source_file_id <> target_file_id)
+);
+
+CREATE INDEX media_file_relationships_target_idx
+  ON media_file_relationships(target_file_id, kind, source_file_id);
+
+CREATE TRIGGER media_file_relationships_consistency_insert
+BEFORE INSERT ON media_file_relationships
+FOR EACH ROW
+WHEN NOT EXISTS (
+    SELECT 1
+    FROM media_files AS source
+    JOIN media_files AS target ON target.id = NEW.target_file_id
+    WHERE source.id = NEW.source_file_id
+      AND source.asset_id = target.asset_id
+      AND source.owner_hub = target.owner_hub
+      AND source.owner_user_id = target.owner_user_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'relationship files must share asset and owner');
+END;
+
+CREATE TRIGGER media_file_relationships_consistency_update
+BEFORE UPDATE OF source_file_id, target_file_id ON media_file_relationships
+FOR EACH ROW
+WHEN NOT EXISTS (
+    SELECT 1
+    FROM media_files AS source
+    JOIN media_files AS target ON target.id = NEW.target_file_id
+    WHERE source.id = NEW.source_file_id
+      AND source.asset_id = target.asset_id
+      AND source.owner_hub = target.owner_hub
+      AND source.owner_user_id = target.owner_user_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'relationship files must share asset and owner');
 END;
 
 -- Albums.

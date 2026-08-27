@@ -40,7 +40,7 @@ func bootstrapHiddenOwner(t *testing.T) {
 	t.Helper()
 	_, stderr, code := runHiddenCLI(
 		"owners", "add",
-		"--hub", "h", "--user-id", "u", "--storage-key", "sk",
+		"--hub", "h", "--user-id", "u", "--storage-key", "550e8400-e29b-41d4-a716-446655440000",
 	)
 	require.Equal(t, 0, code, "bootstrap owner must succeed: %s", stderr)
 }
@@ -66,7 +66,7 @@ func seedOwnerDirectly(t *testing.T, dbPath, hub, userID string) {
 	defer func() { _ = d.Close() }()
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		hub, userID, "sk", time.Now().UTC(),
+		hub, userID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	require.NoError(t, err)
 }

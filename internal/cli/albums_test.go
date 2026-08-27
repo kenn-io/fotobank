@@ -28,7 +28,7 @@ func runAlbumsCLI(args ...string) (string, string, int) {
 func bootstrapAlbumsOwner(t *testing.T) {
 	t.Helper()
 	_, stderr, code := runAlbumsCLI("owners", "add",
-		"--hub", "h", "--user-id", "u", "--storage-key", "sk",
+		"--hub", "h", "--user-id", "u", "--storage-key", "550e8400-e29b-41d4-a716-446655440000",
 	)
 	require.Equal(t, 0, code, "bootstrap owner must succeed: %s", stderr)
 }

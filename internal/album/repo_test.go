@@ -45,7 +45,7 @@ func TestRepoInsertAndGetByID(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	a := seedAlbum(t, repo, p, "Trip")
 	got, err := repo.GetByID(context.Background(), a.ID)
@@ -68,7 +68,7 @@ func TestRepoRenameUpdatesName(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Old")
 
 	// Move the clock forward so updated_at can change.
@@ -95,7 +95,7 @@ func TestRepoDelete(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 
 	r.NoError(repo.Delete(context.Background(), a.ID))
@@ -148,7 +148,7 @@ func TestRepoGetDetailByIDEmpty(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Empty")
 
 	got, err := repo.GetDetailByID(context.Background(), a.ID)
@@ -163,7 +163,7 @@ func TestRepoGetDetailByIDWithReadyCover(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 
 	// Older pending member, newer ready member — cover should be the newer one.
@@ -192,7 +192,7 @@ func TestRepoGetDetailByIDSkipsNewerPendingForOlderReady(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 
 	older := uuid.NewString()
@@ -216,7 +216,7 @@ func TestRepoGetDetailByIDPendingOnlyNilCover(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Pending")
 
 	m := uuid.NewString()
@@ -242,7 +242,7 @@ func TestRepoListByOwnerSortsByUpdatedDesc(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	oldA := seedAlbum(t, repo, p, "Old")
 	// Advance the updated_at on the second album explicitly so the
@@ -264,8 +264,8 @@ func TestRepoListByOwnerIsolatesOwners(t *testing.T) {
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	pA := owners.Principal{Hub: "h", UserID: "a"}
 	pB := owners.Principal{Hub: "h", UserID: "b"}
-	seedOwner(t, d.WriteDB(), pA, "sk-a")
-	seedOwner(t, d.WriteDB(), pB, "sk-b")
+	seedOwner(t, d.WriteDB(), pA, "550e8400-e29b-41d4-a716-446655440001")
+	seedOwner(t, d.WriteDB(), pB, "550e8400-e29b-41d4-a716-446655440002")
 
 	seedAlbum(t, repo, pA, "A-1")
 	seedAlbum(t, repo, pA, "A-2")
@@ -284,7 +284,7 @@ func TestRepoListByOwnerPagination(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 
 	for i := range 5 {
 		a := seedAlbum(t, repo, p, "x")
@@ -320,7 +320,7 @@ func TestRepoListByOwnerDerivesCoverAndCount(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 
 	ready := uuid.NewString()
@@ -340,7 +340,7 @@ func TestRepoAddMediaHappyPath(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 	m1 := uuid.NewString()
 	m2 := uuid.NewString()
@@ -358,7 +358,7 @@ func TestRepoAddMediaIsIdempotent(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 	m := uuid.NewString()
 	seedMediaRow(t, d.WriteDB(), p, m, "cs", "ready", 1)
@@ -379,7 +379,7 @@ func TestRepoAddMediaEmptyInputNoOp(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Empty")
 
 	added, already, err := repo.AddMedia(context.Background(), a.ID, nil, time.Now().UTC())
@@ -394,7 +394,7 @@ func TestRepoAddMediaScalesToBatchCap(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Big")
 
 	ids := make([]string, 500)
@@ -414,7 +414,7 @@ func TestRepoRemoveMediaHappyPath(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 	m := uuid.NewString()
 	seedMediaRow(t, d.WriteDB(), p, m, "cs", "ready", 1)
@@ -428,7 +428,7 @@ func TestRepoRemoveMediaNotInAlbum(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 
 	err := repo.RemoveMedia(context.Background(), a.ID, "nonesuch")
@@ -440,7 +440,7 @@ func TestRepoDeleteAlbumCascadesAlbumMedia(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 	m1 := uuid.NewString()
 	m2 := uuid.NewString()
@@ -462,7 +462,7 @@ func TestRepoDeleteMediaCascadesAlbumMedia(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 	m := uuid.NewString()
 	seedMediaRow(t, d.WriteDB(), p, m, "cs", "ready", 1)
@@ -481,7 +481,7 @@ func TestRepoListMediaSortModes(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 
 	first := uuid.NewString()
@@ -522,7 +522,7 @@ func TestRepoListMediaPagination(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 
 	ids := make([]string, 3)
@@ -547,7 +547,7 @@ func TestRepoDeleteTxCommitRemovesAlbum(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	a := album.Album{
 		ID: uuid.NewString(), Owner: owner,
 		Name: "t", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
@@ -568,7 +568,7 @@ func TestRepoDeleteTxRollbackLeavesAlbum(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	a := album.Album{
 		ID: uuid.NewString(), Owner: owner,
 		Name: "t", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
@@ -600,7 +600,7 @@ func TestAlbumGetDetailsByIDsPreservesOrder(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 
 	a := seedAlbum(t, repo, p, "A")
@@ -619,7 +619,7 @@ func TestAlbumGetDetailsByIDsSkipsMissing(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	a := seedAlbum(t, repo, p, "A")
 	got, err := repo.GetDetailsByIDs(context.Background(), []string{a.ID, "00000000-0000-0000-0000-000000000000"})
@@ -646,7 +646,7 @@ func TestAlbumGetDetailsByIDsHiddenAwareCounts(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk-bd")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-bb881d56151a")
 	a := seedAlbum(t, repo, p, "Batch")
 
 	v1 := uuid.NewString()
@@ -677,7 +677,7 @@ func TestRepoListMediaImportedSort(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 
 	// seedMediaRow hardcodes imported_at = time.Now() at call time, so
@@ -730,7 +730,7 @@ func TestRepoListMediaSortByTakenDescNullsLast(t *testing.T) {
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	ctx := context.Background()
 	owner := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, owner, "T1")
 
 	m1 := uuid.NewString()
@@ -763,7 +763,7 @@ func TestRepoListMediaSortByTakenAscNullsLast(t *testing.T) {
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	ctx := context.Background()
 	owner := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, owner, "T2")
 
 	m1 := uuid.NewString()
@@ -813,7 +813,7 @@ func TestRepoItemCountCountsVisibleOnly(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk-ic")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-d47b769053e8")
 	a := seedAlbum(t, repo, p, "Mixed")
 
 	visibleID := uuid.NewString()
@@ -839,7 +839,7 @@ func TestRepoHiddenCountGetDetailByID(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk-gd-hid")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-599b261b9454")
 	a := seedAlbum(t, repo, p, "Mixed")
 
 	v1 := uuid.NewString()
@@ -867,7 +867,7 @@ func TestRepoCoverIgnoresHiddenRows(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk-cov-hid")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-9c7dbf94664d")
 	a := seedAlbum(t, repo, p, "CoverTest")
 
 	visibleID := uuid.NewString()
@@ -897,7 +897,7 @@ func TestRepoGetNamesByIDsHappy(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	owner := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 
 	a1 := seedAlbum(t, repo, owner, "Italy 2025")
 	a2 := seedAlbum(t, repo, owner, "Family")
@@ -923,7 +923,7 @@ func TestRepoListMediaPreservesGPS(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk")
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
 	a := seedAlbum(t, repo, p, "Trip")
 
 	id := uuid.NewString()
@@ -968,7 +968,7 @@ func TestRepoListMediaExcludesHiddenRows(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	repo := album.NewRepo(d.WriteDB(), d.ReadDB())
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwner(t, d.WriteDB(), p, "sk-hidden-album")
+	seedOwner(t, d.WriteDB(), p, "00000000-0000-4000-8000-ded093cc4bc1")
 	a := seedAlbum(t, repo, p, "Mixed")
 
 	visibleID := uuid.NewString()

@@ -91,7 +91,7 @@ func newAIAPIFixture(t *testing.T) aiAPIFixture {
 	owner := owners.Principal{Hub: "local", UserID: "alice"}
 	_, err := rw.ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, owner.Hub+"/"+owner.UserID, time.Now().UTC(),
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	require.NoError(t, err)
 

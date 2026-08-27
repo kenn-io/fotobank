@@ -71,7 +71,7 @@ mode = "stub"
 hub = "local"
 user_id = "alice"
 handle = "Alice"
-storage_key = "alice-sk"
+storage_key = "550e8400-e29b-41d4-a716-44665544000e"
 [http]
 listen_address = "127.0.0.1:0"
 [imports]
@@ -166,6 +166,7 @@ admin_listen = "127.0.0.1:0"
 	// Shut down the stub server cleanly before touching the DB so the
 	// WAL is flushed and the second server can reopen the file without
 	// observing stale in-flight state.
+	client.CloseIdleConnections()
 	stubCancel()
 	select {
 	case ec := <-stubDone:
@@ -289,6 +290,7 @@ admin_listen = "127.0.0.1:0"
 	r.Empty(emptyResp.Items)
 
 	// Shut down the header server.
+	client.CloseIdleConnections()
 	headerCancel()
 	select {
 	case ec := <-headerDone:

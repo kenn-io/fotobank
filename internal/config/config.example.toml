@@ -28,7 +28,8 @@ mode = "stub"                        # "stub" | "header"
 hub = "dev-local"
 user_id = "owner"
 handle = "owner"
-# auto-registers the owner with storage_key = "owner" on first start
+# Omitting storage_key generates and persists an opaque UUID on first start.
+# storage_key = "550e8400-e29b-41d4-a716-446655440000" # deterministic provisioning
 
 [admin]
 # In stub mode this defaults to the configured stub principal when omitted.

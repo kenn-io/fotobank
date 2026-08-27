@@ -175,7 +175,7 @@ func TestGapScannerSkipsAlreadySkipped(t *testing.T) {
 	ctx := context.Background()
 	rw, ro := testutil.OpenTestDBPair(t)
 	owner := testutil.SeedOwner(t, rw, "local", "alice")
-	skippedID := testutil.SeedPhoto(t, rw, owner, "p-skipped")
+	skippedID := testutil.SeedPhoto(t, rw, owner, "00000000-0000-4000-8000-1725c9f3951c")
 	fresh := testutil.SeedPhoto(t, rw, owner, "p-fresh")
 
 	q := jobs.NewQueue(rw, ro)

@@ -149,7 +149,7 @@ func TestFlashCacheRoutesThumbsToThumbsRootWhenEnabled(t *testing.T) {
 	r.NoError(os.MkdirAll(nasRoot, 0o700))
 
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	keys := map[owners.Principal]string{p: "sk"}
+	keys := map[owners.Principal]string{p: "550e8400-e29b-41d4-a716-446655440000"}
 	nas := storage.NewNASOnly(nasRoot, keys)
 	cache := storage.NewFlashCache(nas, originalsRoot, keys, storage.FlashCacheOptions{})
 	cache.EnableThumbs(thumbsRoot)
@@ -159,7 +159,7 @@ func TestFlashCacheRoutesThumbsToThumbsRootWhenEnabled(t *testing.T) {
 
 	// Allow the best-effort populate goroutine to finish.
 	deadline := time.Now().Add(2 * time.Second)
-	thumbPath := filepath.Join(thumbsRoot, "sk", ".thumbs", "abc", "v0", "grid.jpg")
+	thumbPath := filepath.Join(thumbsRoot, "550e8400-e29b-41d4-a716-446655440000", ".thumbs", "abc", "v0", "grid.jpg")
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(thumbPath); err == nil {
 			break
@@ -169,7 +169,7 @@ func TestFlashCacheRoutesThumbsToThumbsRootWhenEnabled(t *testing.T) {
 	_, statErr := os.Stat(thumbPath)
 	r.NoError(statErr, "thumbs bytes missing from thumbs root")
 	// Must NOT have populated originals root.
-	origPath := filepath.Join(originalsRoot, "sk", ".thumbs", "abc", "v0", "grid.jpg")
+	origPath := filepath.Join(originalsRoot, "550e8400-e29b-41d4-a716-446655440000", ".thumbs", "abc", "v0", "grid.jpg")
 	_, origErr := os.Stat(origPath)
 	r.True(os.IsNotExist(origErr), "thumbs bytes leaked into originals root")
 }
@@ -182,7 +182,7 @@ func TestFlashCacheSkipsThumbsWhenDisabled(t *testing.T) {
 	r.NoError(os.MkdirAll(nasRoot, 0o700))
 
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	keys := map[owners.Principal]string{p: "sk"}
+	keys := map[owners.Principal]string{p: "550e8400-e29b-41d4-a716-446655440000"}
 	nas := storage.NewNASOnly(nasRoot, keys)
 	cache := storage.NewFlashCache(nas, originalsRoot, keys, storage.FlashCacheOptions{})
 	// EnableThumbs never called — cache disabled for thumbs.
@@ -192,7 +192,7 @@ func TestFlashCacheSkipsThumbsWhenDisabled(t *testing.T) {
 
 	// Nothing lands in either flash root — writes go straight to NAS.
 	time.Sleep(100 * time.Millisecond)
-	_, origErr := os.Stat(filepath.Join(originalsRoot, "sk", ".thumbs", "abc", "v0", "grid.jpg"))
+	_, origErr := os.Stat(filepath.Join(originalsRoot, "550e8400-e29b-41d4-a716-446655440000", ".thumbs", "abc", "v0", "grid.jpg"))
 	r.True(os.IsNotExist(origErr))
 }
 
@@ -212,7 +212,7 @@ func TestFlashJanitorIgnoresThumbsRoot(t *testing.T) {
 	r.NoError(os.Chtimes(sentinel, old, old))
 
 	p := owners.Principal{Hub: "h", UserID: "u"}
-	keys := map[owners.Principal]string{p: "sk"}
+	keys := map[owners.Principal]string{p: "550e8400-e29b-41d4-a716-446655440000"}
 	nas := storage.NewNASOnly(filepath.Join(tmp, "nas"), keys)
 	cache := storage.NewFlashCache(nas, originalsRoot, keys, storage.FlashCacheOptions{OriginalsCacheDays: 1})
 	cache.EnableThumbs(thumbsRoot)

@@ -63,7 +63,7 @@ func TestSnapshotIncludesAppSettingsWithoutRawAPIKeys(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "fotobank.sqlite")
 	d := testutil.OpenTestDBAt(t, dbPath)
 	t.Cleanup(func() { _ = d.Close() })
-	t.Setenv("FOTOBANK_VLM_KEY", "sk-live-should-not-enter-db")
+	t.Setenv("FOTOBANK_VLM_KEY", "00000000-0000-4000-8000-7cebe437c3ca")
 
 	_, err := d.WriteDB().ExecContext(ctx,
 		`INSERT INTO app_settings(key, value, updated_at)
@@ -81,7 +81,7 @@ func TestSnapshotIncludesAppSettingsWithoutRawAPIKeys(t *testing.T) {
 		`SELECT value FROM app_settings WHERE key='ai.vision.api_key_env'`,
 	).Scan(&value))
 	r.Equal(`"FOTOBANK_VLM_KEY"`, value)
-	r.NotContains(value, "sk-live")
+	r.NotContains(value, "00000000-0000-4000-8000-3f3086c6cd3b")
 }
 
 func TestSnapshotRefusesExistingDestination(t *testing.T) {

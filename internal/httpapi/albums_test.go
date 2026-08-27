@@ -84,7 +84,7 @@ func newAlbumsAPIFixture(t *testing.T) albumsAPIFixture {
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	require.NoError(t, err)
 	aRepo := album.NewRepo(d.WriteDB(), d.ReadDB())
@@ -149,7 +149,7 @@ func TestGetAlbumCrossOwnerReturns404(t *testing.T) {
 	other := owners.Principal{Hub: "h", UserID: "o"}
 	_, err := fx.rw.ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		other.Hub, other.UserID, "sk-o", time.Now().UTC(),
+		other.Hub, other.UserID, "550e8400-e29b-41d4-a716-44665544000b", time.Now().UTC(),
 	)
 	r.NoError(err)
 	otherIt, err := fx.svc.Create(context.Background(), other, "Theirs")
@@ -202,7 +202,7 @@ func TestListAlbumsIsolatesOwner(t *testing.T) {
 	other := owners.Principal{Hub: "h", UserID: "o"}
 	_, err := fx.rw.ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		other.Hub, other.UserID, "sk-o", time.Now().UTC(),
+		other.Hub, other.UserID, "550e8400-e29b-41d4-a716-44665544000b", time.Now().UTC(),
 	)
 	r.NoError(err)
 	_, err = fx.svc.Create(context.Background(), fx.owner, "Mine")
@@ -303,7 +303,7 @@ func TestAddAlbumMediaCrossOwnerReturns404NotFound(t *testing.T) {
 	other := owners.Principal{Hub: "h", UserID: "other"}
 	_, err = fx.rw.ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		other.Hub, other.UserID, "sk-o", time.Now().UTC(),
+		other.Hub, other.UserID, "550e8400-e29b-41d4-a716-44665544000b", time.Now().UTC(),
 	)
 	r.NoError(err)
 	theirMedia := "foreign-" + it.ID
@@ -419,7 +419,7 @@ func newAlbumsHiddenFixture(t *testing.T) albumsHiddenFixture {
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	require.NoError(t, err)
 

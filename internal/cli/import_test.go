@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/cli"
@@ -67,7 +68,6 @@ mode = "stub"
 [identity.stub]
 hub = "local"
 user_id = "alice"
-storage_key = "sk"
 [imports]
 file_lock_path = %q
 `, nasRoot, filepath.Join(tmp, "flash"),
@@ -95,9 +95,18 @@ file_lock_path = %q
 	r.Contains(out.String(), "failures=0")
 	r.Empty(eout.String())
 
-	// Bytes landed on the NAS under the configured storage key.
-	r.FileExists(filepath.Join(nasRoot, "sk", "2024", "20240615_143022_0.jpg"))
-	r.FileExists(filepath.Join(nasRoot, "sk", "unknown_date", "photo-no-exif_0.jpg"))
+	d, err := db.Open(dbPath)
+	r.NoError(err)
+	storedOwner, err := owners.NewRepo(d.WriteDB(), d.ReadDB()).GetByPrincipal(
+		t.Context(), owners.Principal{Hub: "local", UserID: "alice"})
+	r.NoError(err)
+	_, err = uuid.Parse(storedOwner.StorageKey)
+	r.NoError(err)
+	r.NoError(d.Close())
+
+	// Bytes landed on the NAS under the generated, persisted storage key.
+	r.FileExists(filepath.Join(nasRoot, storedOwner.StorageKey, "2024", "20240615_143022_0.jpg"))
+	r.FileExists(filepath.Join(nasRoot, storedOwner.StorageKey, "unknown_date", "photo-no-exif_0.jpg"))
 
 	// Second run of the same source should see three duplicates.
 	out.Reset()
@@ -171,7 +180,7 @@ mode = "stub"
 [identity.stub]
 hub = "local"
 user_id = "alice"
-storage_key = "sk"
+storage_key = "550e8400-e29b-41d4-a716-446655440000"
 [imports]
 file_lock_path = %q
 `, nasRoot, filepath.Join(tmp, "flash"),
@@ -257,7 +266,7 @@ mode = "stub"
 [identity.stub]
 hub = "local"
 user_id = "alice"
-storage_key = "sk"
+storage_key = "550e8400-e29b-41d4-a716-446655440000"
 `), 0o600))
 
 	var out, eout bytes.Buffer
@@ -273,8 +282,8 @@ storage_key = "sk"
 	r.Contains(out.String(), filepath.Join(home, ".fotobank", "fotobank.sqlite"))
 
 	// Photos landed under $HOME/fotobank/<storage_key>/...
-	r.FileExists(filepath.Join(home, "fotobank", "sk", "2024", "20240615_143022_0.jpg"))
-	r.FileExists(filepath.Join(home, "fotobank", "sk", "unknown_date", "photo-no-exif_0.jpg"))
+	r.FileExists(filepath.Join(home, "fotobank", "550e8400-e29b-41d4-a716-446655440000", "2024", "20240615_143022_0.jpg"))
+	r.FileExists(filepath.Join(home, "fotobank", "550e8400-e29b-41d4-a716-446655440000", "unknown_date", "photo-no-exif_0.jpg"))
 
 	// DB landed under $HOME/.fotobank, not in CWD or under a literal "~".
 	_, err := os.Stat(filepath.Join(home, ".fotobank", "fotobank.sqlite"))

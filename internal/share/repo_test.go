@@ -76,7 +76,7 @@ func TestRepoInsertAlbumLiveAndGet(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	albumID := seedAlbum(t, d.WriteDB(), owner)
 
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
@@ -105,7 +105,7 @@ func TestRepoInsertMediaSetAndGet(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	m1 := seedMedia(t, d.WriteDB(), owner, "c1")
 	m2 := seedMedia(t, d.WriteDB(), owner, "c2")
 
@@ -138,7 +138,7 @@ func TestRepoInsertRoundtripsAllColumns(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	albumID := seedAlbum(t, d.WriteDB(), owner)
 
 	expires := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
@@ -168,7 +168,7 @@ func TestRepoListByOwnerDefaultHidesRevokedRemote(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	albumID := seedAlbum(t, d.WriteDB(), owner)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -225,8 +225,8 @@ func TestRepoListByOwnerScopedToCaller(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	a := owners.Principal{Hub: "h", UserID: "a"}
 	b := owners.Principal{Hub: "h", UserID: "b"}
-	seedOwner(t, d.WriteDB(), a, "ska")
-	seedOwner(t, d.WriteDB(), b, "skb")
+	seedOwner(t, d.WriteDB(), a, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), b, "00000000-0000-4000-8000-7f8246cf1abe")
 	alA := seedAlbum(t, d.WriteDB(), a)
 	alB := seedAlbum(t, d.WriteDB(), b)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
@@ -257,7 +257,7 @@ func TestRepoListReadyReturnsDueRowsOnly(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	albumID := seedAlbum(t, d.WriteDB(), owner)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -308,7 +308,7 @@ func TestRepoListReadyRespectsMaxBrokerAttempts(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	albumID := seedAlbum(t, d.WriteDB(), owner)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -529,7 +529,7 @@ func seedPendingAlbumScope(t *testing.T, d dbDB, repo *share.Repo) string {
 	// same test don't trip PK uniqueness.
 	_, _ = d.WriteDB().ExecContext(context.Background(),
 		`INSERT OR IGNORE INTO owners(hub, user_id, storage_key, created_at)
-         VALUES(?,?,?,?)`, owner.Hub, owner.UserID, "sk", time.Now().UTC())
+         VALUES(?,?,?,?)`, owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC())
 	albumID := seedAlbum(t, d.WriteDB(), owner)
 	s := share.Scope{
 		UUID: uuid.NewString(), Owner: owner,
@@ -799,7 +799,7 @@ func TestRepoPrepareAlbumDeleteTxPurgesOnlyRevokedRemote(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	albumID := seedAlbum(t, d.WriteDB(), owner)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -841,7 +841,7 @@ func TestRepoPrepareAlbumDeleteTxMixedPurgeAndBlock(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	albumID := seedAlbum(t, d.WriteDB(), owner)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -899,7 +899,7 @@ func TestRepoPrepareAlbumDeleteTxEmptyIsNoop(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	albumID := seedAlbum(t, d.WriteDB(), owner)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -913,7 +913,7 @@ func TestRepoHasBlockingScopesForAlbum(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	albumID := seedAlbum(t, d.WriteDB(), owner)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -959,7 +959,7 @@ func TestRepoPrepareAlbumDeleteTxDoesNotTouchOtherAlbums(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	albumA := seedAlbum(t, d.WriteDB(), owner)
 	albumB := seedAlbum(t, d.WriteDB(), owner)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
@@ -995,7 +995,7 @@ func TestRepoPrepareAlbumDeleteTxIgnoresMediaSetScopes(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	albumID := seedAlbum(t, d.WriteDB(), owner)
 	mediaID := seedMedia(t, d.WriteDB(), owner, "c1")
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
@@ -1035,7 +1035,7 @@ func TestRepoPrepareAlbumDeleteTxDoesNotBlockOnOtherAlbumLive(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	albumA := seedAlbum(t, d.WriteDB(), owner)
 	albumB := seedAlbum(t, d.WriteDB(), owner)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
@@ -1068,7 +1068,7 @@ func TestRepoPrepareAlbumDeleteTxDoesNotBlockOnLiveMediaSet(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk")
+	seedOwner(t, d.WriteDB(), owner, "550e8400-e29b-41d4-a716-446655440000")
 	albumID := seedAlbum(t, d.WriteDB(), owner)
 	mediaID := seedMedia(t, d.WriteDB(), owner, "c1")
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
@@ -1184,9 +1184,9 @@ func TestValidateHeaderScopesFiltersByGranteeAndLivePredicate(t *testing.T) {
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
 	charlie := owners.Principal{Hub: "h", UserID: "charlie"}
-	seedOwner(t, d.WriteDB(), alice, "ska")
-	seedOwner(t, d.WriteDB(), bob, "skb")
-	seedOwner(t, d.WriteDB(), charlie, "skc")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-7f8246cf1abe")
+	seedOwner(t, d.WriteDB(), charlie, "00000000-0000-4000-8000-fb650f5de515")
 
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -1237,8 +1237,8 @@ func TestListSharedMediaIDsDedupesAndOrdersByDisplayTime(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	m1 := seedMediaWithTimestamp(t, d, alice, now.Add(-3*time.Hour))
@@ -1276,8 +1276,8 @@ func TestListSharedMediaIDsCursorPages(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	// Seed 5 media at descending timestamps. Index 0 is newest.
@@ -1345,8 +1345,8 @@ func TestListSharedMediaIDsAlbumFilter(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	// Two albums under alice, each with one media row.
@@ -1392,8 +1392,8 @@ func TestListSharedMediaIDsTieBreakOnId(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	ts := now.Add(-1 * time.Hour)
@@ -1449,8 +1449,8 @@ func TestListSharedAlbumIDsAllMediaSetReturnsNil(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "ska")
-	seedOwner(t, d.WriteDB(), bob, "skb")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-7f8246cf1abe")
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 	s := makeMediaSetScope(t, d, repo, alice, bob, nil, now)
@@ -1468,8 +1468,8 @@ func TestListSharedAlbumIDsReturnsAlbumLiveOnly(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	albumID, mediaIDs := seedAlbumWithMedia(t, d, alice, 2)
@@ -1515,8 +1515,8 @@ func TestCountSharedMediaByScopeAlbumLive(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	albumID, _ := seedAlbumWithMedia(t, d, alice, 3)
@@ -1536,8 +1536,8 @@ func TestCountSharedMediaByScopeMediaSet(t *testing.T) {
 
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	m1 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
@@ -1557,8 +1557,8 @@ func TestExpandScopeAlbumLive(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "ska")
-	seedOwner(t, d.WriteDB(), bob, "skb")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-7f8246cf1abe")
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -1579,8 +1579,8 @@ func TestExpandScopeMediaSet(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "ska")
-	seedOwner(t, d.WriteDB(), bob, "skb")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-7f8246cf1abe")
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -1607,8 +1607,8 @@ func TestExpandScopeAlbumLivePreservesOrderAddedAtDesc(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "ska")
-	seedOwner(t, d.WriteDB(), bob, "skb")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-7f8246cf1abe")
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -1643,8 +1643,8 @@ func TestExpandScopeAlbumLiveTieBreakMediaIDDesc(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "ska")
-	seedOwner(t, d.WriteDB(), bob, "skb")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-7f8246cf1abe")
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -1718,8 +1718,8 @@ func TestCoverMediaByScopesIncludesSidecars(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	primary := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.jpg", "image/jpeg", "cs-pri")
 	sidecar := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.dng", "image/x-adobe-dng", "cs-sid")
@@ -1761,8 +1761,8 @@ func TestCoverMediaByScopesAlbumLiveCoversSidecars(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	albumID := seedAlbum(t, d.WriteDB(), alice)
 	primary := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.jpg", "image/jpeg", "al-pri")
@@ -1805,8 +1805,8 @@ func TestCoverMediaByScopesPrimaryOnlyScopeStillExcludesNonScoped(t *testing.T) 
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	a := seedMediaWithPath(t, d.WriteDB(), alice, "2024/a.jpg", "image/jpeg", "cs-a")
 	b := seedMediaWithPath(t, d.WriteDB(), alice, "2024/b.jpg", "image/jpeg", "cs-b")
@@ -1839,8 +1839,8 @@ func TestListSharedMediaIDsExcludesSidecars(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	primary := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.jpg", "image/jpeg", "ls-pri")
 	sidecar := seedMediaWithPath(t, d.WriteDB(), alice, "2024/p.dng", "image/x-adobe-dng", "ls-sid")
@@ -1868,8 +1868,8 @@ func TestRepoCountSharedMediaByScopesBatch(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -1917,8 +1917,8 @@ func TestListSharedMediaIDsExcludesHidden(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	visible := seedMediaWithTimestamp(t, d, alice, now.Add(-1*time.Hour))
@@ -1947,8 +1947,8 @@ func TestListSharedMediaIDsAlbumLiveExcludesHidden(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	albumID, mIDs := seedAlbumWithMedia(t, d, alice, 2)
@@ -1977,8 +1977,8 @@ func TestCoverMediaByScopesRejectsHidden(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	mID := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
@@ -2005,8 +2005,8 @@ func TestCoverMediaByScopesAlbumLiveRejectsHidden(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	albumID, mIDs := seedAlbumWithMedia(t, d, alice, 1)
@@ -2034,8 +2034,8 @@ func TestCountSharedMediaByScopeExcludesHiddenAlbumLive(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk")
+	seedOwner(t, d.WriteDB(), alice, "550e8400-e29b-41d4-a716-44665544000e")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-61db0d8bb01d")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	albumID, mIDs := seedAlbumWithMedia(t, d, alice, 3)
@@ -2057,8 +2057,8 @@ func TestExpandScopeAlbumLiveExcludesHidden(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "ska")
-	seedOwner(t, d.WriteDB(), bob, "skb")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-15d3a52f3a69")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-7f8246cf1abe")
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -2079,8 +2079,8 @@ func TestCountSharedMediaByScopeMediaSetExcludesHidden(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk-msh")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk-msh")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-faea5d422222")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-822e2bbca037")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	m1 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
@@ -2107,8 +2107,8 @@ func TestGetByUUIDMediaSetExcludesHiddenMembers(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk-getuuid")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk-getuuid")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-2dda416400c6")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-2419aeda7bc1")
 
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	m1 := seedMedia(t, d.WriteDB(), alice, uuid.NewString())
@@ -2141,7 +2141,7 @@ func TestRepoMattnScanCompat_AllowDownloadBoolean(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := owners.Principal{Hub: "h", UserID: "o"}
-	seedOwner(t, d.WriteDB(), owner, "sk-bool")
+	seedOwner(t, d.WriteDB(), owner, "00000000-0000-4000-8000-2df0780613ad")
 	albumID := seedAlbum(t, d.WriteDB(), owner)
 	repo := share.NewRepo(d.WriteDB(), d.ReadDB())
 
@@ -2197,8 +2197,8 @@ func TestRepoMattnScanCompat_CoalescedDisplayTime(t *testing.T) {
 	d := testutil.OpenTestDB(t)
 	alice := owners.Principal{Hub: "h", UserID: "alice"}
 	bob := owners.Principal{Hub: "h", UserID: "bob"}
-	seedOwner(t, d.WriteDB(), alice, "alice-sk-coalesce")
-	seedOwner(t, d.WriteDB(), bob, "bob-sk-coalesce")
+	seedOwner(t, d.WriteDB(), alice, "00000000-0000-4000-8000-61de20311482")
+	seedOwner(t, d.WriteDB(), bob, "00000000-0000-4000-8000-d49b89b74d16")
 
 	withTS := time.Date(2026, 1, 15, 9, 30, 0, 0, time.UTC)
 	m1 := seedMediaWithTimestamp(t, d, alice, withTS)        // path 1: timestamp present

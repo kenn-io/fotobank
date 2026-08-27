@@ -33,7 +33,7 @@ func newQueueFixture(t *testing.T, nRows int) queueFixture {
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	require.NoError(t, err)
 	ids := make([]string, nRows)
@@ -248,7 +248,7 @@ func TestClaimBatchOrdersNewestFirst(t *testing.T) {
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := d.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		p.Hub, p.UserID, "sk", time.Now().UTC(),
+		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
 

@@ -37,7 +37,7 @@ func newAlbumSvcFixture(t *testing.T) albumSvcFixture {
 	mRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	sRepo := share.NewRepo(d.WriteDB(), d.ReadDB())
 	caller := owners.Principal{Hub: "h", UserID: "u"}
-	seedOwnerSvc(t, d.WriteDB(), caller, "sk")
+	seedOwnerSvc(t, d.WriteDB(), caller, "550e8400-e29b-41d4-a716-446655440000")
 	return albumSvcFixture{
 		svc:    service.NewAlbumService(aRepo, mRepo, sRepo, d),
 		albums: aRepo,
@@ -92,7 +92,7 @@ func TestAlbumServiceGetCrossOwnerReturnsNotFound(t *testing.T) {
 	fx := newAlbumSvcFixture(t)
 
 	other := owners.Principal{Hub: "h", UserID: "other"}
-	seedOwnerSvc(t, fx.rw, other, "sk-o")
+	seedOwnerSvc(t, fx.rw, other, "550e8400-e29b-41d4-a716-44665544000b")
 	otherItem, err := fx.svc.Create(context.Background(), other, "OtherAlbum")
 	r.NoError(err)
 
@@ -105,7 +105,7 @@ func TestAlbumServiceGetDetailCrossOwnerReturnsNotFound(t *testing.T) {
 	fx := newAlbumSvcFixture(t)
 
 	other := owners.Principal{Hub: "h", UserID: "other"}
-	seedOwnerSvc(t, fx.rw, other, "sk-o")
+	seedOwnerSvc(t, fx.rw, other, "550e8400-e29b-41d4-a716-44665544000b")
 	otherItem, err := fx.svc.Create(context.Background(), other, "OtherAlbum")
 	r.NoError(err)
 
@@ -146,7 +146,7 @@ func TestAlbumServiceRenameCrossOwner(t *testing.T) {
 	fx := newAlbumSvcFixture(t)
 
 	other := owners.Principal{Hub: "h", UserID: "other"}
-	seedOwnerSvc(t, fx.rw, other, "sk-o")
+	seedOwnerSvc(t, fx.rw, other, "550e8400-e29b-41d4-a716-44665544000b")
 	otherIt, err := fx.svc.Create(context.Background(), other, "Theirs")
 	r.NoError(err)
 
@@ -169,7 +169,7 @@ func TestAlbumServiceDeleteCrossOwner(t *testing.T) {
 	fx := newAlbumSvcFixture(t)
 
 	other := owners.Principal{Hub: "h", UserID: "other"}
-	seedOwnerSvc(t, fx.rw, other, "sk-o")
+	seedOwnerSvc(t, fx.rw, other, "550e8400-e29b-41d4-a716-44665544000b")
 	otherIt, err := fx.svc.Create(context.Background(), other, "Theirs")
 	r.NoError(err)
 
@@ -193,7 +193,7 @@ func TestAlbumServiceListIsolatesOwners(t *testing.T) {
 	fx := newAlbumSvcFixture(t)
 
 	other := owners.Principal{Hub: "h", UserID: "other"}
-	seedOwnerSvc(t, fx.rw, other, "sk-o")
+	seedOwnerSvc(t, fx.rw, other, "550e8400-e29b-41d4-a716-44665544000b")
 
 	_, err := fx.svc.Create(context.Background(), fx.caller, "Mine-1")
 	r.NoError(err)
@@ -335,7 +335,7 @@ func TestAlbumServiceAddMediaCrossOwnerMaskedAsNotFound(t *testing.T) {
 	it, err := fx.svc.Create(context.Background(), fx.caller, "Trip")
 	r.NoError(err)
 	other := owners.Principal{Hub: "h", UserID: "other"}
-	seedOwnerSvc(t, fx.rw, other, "sk-o")
+	seedOwnerSvc(t, fx.rw, other, "550e8400-e29b-41d4-a716-44665544000b")
 	otherMedia := uuid.NewString()
 	seedMediaSvc(t, fx.rw, other, otherMedia, "cs-o")
 
@@ -349,7 +349,7 @@ func TestAlbumServiceAddMediaCrossOwnerAlbumNotFound(t *testing.T) {
 	r := require.New(t)
 	fx := newAlbumSvcFixture(t)
 	other := owners.Principal{Hub: "h", UserID: "other"}
-	seedOwnerSvc(t, fx.rw, other, "sk-o")
+	seedOwnerSvc(t, fx.rw, other, "550e8400-e29b-41d4-a716-44665544000b")
 	otherIt, err := fx.svc.Create(context.Background(), other, "Theirs")
 	r.NoError(err)
 	m := uuid.NewString()
@@ -400,7 +400,7 @@ func TestAlbumServiceRemoveMediaCrossOwnerAlbum(t *testing.T) {
 	r := require.New(t)
 	fx := newAlbumSvcFixture(t)
 	other := owners.Principal{Hub: "h", UserID: "other"}
-	seedOwnerSvc(t, fx.rw, other, "sk-o")
+	seedOwnerSvc(t, fx.rw, other, "550e8400-e29b-41d4-a716-44665544000b")
 	otherIt, err := fx.svc.Create(context.Background(), other, "Theirs")
 	r.NoError(err)
 
@@ -453,7 +453,7 @@ func TestAlbumServiceListMediaCrossOwner(t *testing.T) {
 	r := require.New(t)
 	fx := newAlbumSvcFixture(t)
 	other := owners.Principal{Hub: "h", UserID: "other"}
-	seedOwnerSvc(t, fx.rw, other, "sk-o")
+	seedOwnerSvc(t, fx.rw, other, "550e8400-e29b-41d4-a716-44665544000b")
 	otherIt, err := fx.svc.Create(context.Background(), other, "Theirs")
 	r.NoError(err)
 
@@ -487,7 +487,7 @@ func TestAlbumDeleteBlocksWhenLiveScopes(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "o"}
 	_, err := d.WriteDB().ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "sk", time.Now().UTC())
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC())
 	r.NoError(err)
 	albums := album.NewRepo(d.WriteDB(), d.ReadDB())
 	shares := share.NewRepo(d.WriteDB(), d.ReadDB())
@@ -527,7 +527,7 @@ func TestAlbumDeletePurgesRevokedRemote(t *testing.T) {
 	owner := owners.Principal{Hub: "h", UserID: "o"}
 	_, err := d.WriteDB().ExecContext(ctx,
 		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
-		owner.Hub, owner.UserID, "sk", time.Now().UTC())
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC())
 	r.NoError(err)
 	albums := album.NewRepo(d.WriteDB(), d.ReadDB())
 	shares := share.NewRepo(d.WriteDB(), d.ReadDB())
