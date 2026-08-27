@@ -64,6 +64,41 @@ func TestAssetRepoInsertGraphRollsBack(t *testing.T) {
 	}
 }
 
+func TestAssetRepoInsertGraphRejectsRelationshipOutsideSubmittedFiles(t *testing.T) {
+	d, repo, existingAsset, existingFiles := newAssetRepoFixture(t, media.AssetPending)
+	existingFiles = append(existingFiles, media.File{
+		ID:               "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+		AssetID:          existingAsset.ID,
+		Owner:            existingAsset.Owner,
+		Role:             media.RoleSidecar,
+		MimeType:         "application/rdf+xml",
+		OriginalFilename: "photo.xmp",
+		Size:             10,
+	})
+	require.NoError(t, repo.InsertGraph(t.Context(), existingAsset, existingFiles, nil))
+
+	newAsset := existingAsset
+	newAsset.ID = "11111111-1111-4111-8111-111111111111"
+	newFile := media.File{
+		ID:               "22222222-2222-4222-8222-222222222222",
+		AssetID:          newAsset.ID,
+		Owner:            newAsset.Owner,
+		Role:             media.RolePrimary,
+		MimeType:         "image/jpeg",
+		OriginalFilename: "other.jpg",
+		Size:             20,
+	}
+	relationship := media.FileRelationship{
+		SourceFileID: existingFiles[1].ID,
+		TargetFileID: existingFiles[0].ID,
+		Kind:         media.SidecarOf,
+	}
+
+	err := repo.InsertGraph(t.Context(), newAsset, []media.File{newFile}, []media.FileRelationship{relationship})
+	require.ErrorIs(t, err, errs.ErrInvalidArgument)
+	requireAssetGraphCounts(t, d, 1, 2, 0)
+}
+
 func TestAssetRepoInsertGraphPending(t *testing.T) {
 	d, repo, asset, files := newAssetRepoFixture(t, media.AssetPending)
 	files = append(files,

@@ -414,6 +414,7 @@ func validateAssetGraphInput(
 		return err
 	}
 
+	fileIDs := make(map[string]struct{}, len(files))
 	for _, file := range files {
 		if err := validateOpaqueUUID(file.ID, "file ID"); err != nil {
 			return err
@@ -424,6 +425,7 @@ func validateAssetGraphInput(
 		if err := ValidateFileRole(file.Role); err != nil {
 			return err
 		}
+		fileIDs[file.ID] = struct{}{}
 	}
 	for _, relationship := range relationships {
 		if err := validateOpaqueUUID(relationship.SourceFileID, "relationship source file ID"); err != nil {
@@ -434,6 +436,12 @@ func validateAssetGraphInput(
 		}
 		if err := ValidateRelationshipKind(relationship.Kind); err != nil {
 			return err
+		}
+		if _, ok := fileIDs[relationship.SourceFileID]; !ok {
+			return fmt.Errorf("%w: relationship source file is outside asset graph", errs.ErrInvalidArgument)
+		}
+		if _, ok := fileIDs[relationship.TargetFileID]; !ok {
+			return fmt.Errorf("%w: relationship target file is outside asset graph", errs.ErrInvalidArgument)
 		}
 	}
 	return nil
