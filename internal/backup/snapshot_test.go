@@ -161,7 +161,7 @@ func TestSnapshotSurfaceErrorFromSyncDir(t *testing.T) {
 func TestBuildDSNEscapesReserved(t *testing.T) {
 	r := require.New(t)
 
-	dsn := buildDSN("/tmp/foo bar?x#y.sqlite")
+	dsn := buildDSN(filepath.Join(t.TempDir(), "foo bar?x#y.sqlite"))
 	r.Contains(dsn, "%20", "space must be percent-escaped")
 	r.Contains(dsn, "%3F", "'?' must be percent-escaped")
 	r.Contains(dsn, "%23", "'#' must be percent-escaped")

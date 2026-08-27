@@ -164,13 +164,13 @@ UPDATE media
        thumb_version    = thumb_version + 1,
        thumb_updated_at = ?
  WHERE thumb_status = 'working'
-   AND thumb_claimed_at < ?
+   AND thumb_claimed_at <= ?
 `
 
-// SweepLeases returns 'working' rows whose lease has expired (older
-// than `after`) back to 'pending', bumping thumb_version so lease
-// retries never collide with the no-clobber storage write. Returns
-// the number of rows reset.
+// SweepLeases returns 'working' rows whose lease has expired (claimed at or
+// before `after` ago) back to 'pending', bumping thumb_version so lease retries
+// never collide with the no-clobber storage write. Returns the number of rows
+// reset.
 func (q *Queue) SweepLeases(ctx context.Context, after time.Duration) (int, error) {
 	now := time.Now().UTC()
 	cutoff := now.Add(-after)

@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -28,11 +29,11 @@ func writeObsConfig(t *testing.T, tmp string) (cfgPath, adminAddrSink string) {
 	r.NoError(os.MkdirAll(nasRoot, 0o700))
 	r.NoError(os.MkdirAll(flashRoot, 0o700))
 	cfgPath = filepath.Join(tmp, "fotobank.toml")
-	r.NoError(os.WriteFile(cfgPath, []byte(`
+	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
 [nas]
-root = "`+nasRoot+`"
+root = %q
 [flash]
-root = "`+flashRoot+`"
+root = %q
 [identity]
 mode = "stub"
 [identity.stub]
@@ -43,12 +44,12 @@ storage_key = "550e8400-e29b-41d4-a716-44665544000e"
 [http]
 listen_address = "127.0.0.1:0"
 [imports]
-file_lock_path = "`+filepath.Join(tmp, "import.lock")+`"
+file_lock_path = %q
 [backup]
 enabled = false
 [observability]
 admin_listen = "127.0.0.1:0"
-`), 0o600))
+`, nasRoot, flashRoot, filepath.Join(tmp, "import.lock")), 0o600))
 	adminAddrSink = filepath.Join(tmp, "admin-addr")
 	t.Setenv("FOTOBANK_TEST_ADMIN_ADDR_SINK", adminAddrSink)
 	return cfgPath, adminAddrSink
@@ -184,11 +185,11 @@ func TestE2EObservabilityRejectsNonLoopbackAdmin(t *testing.T) {
 	r.NoError(os.MkdirAll(nasRoot, 0o700))
 	r.NoError(os.MkdirAll(flashRoot, 0o700))
 	cfgPath := filepath.Join(tmp, "fotobank.toml")
-	r.NoError(os.WriteFile(cfgPath, []byte(`
+	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
 [nas]
-root = "`+nasRoot+`"
+root = %q
 [flash]
-root = "`+flashRoot+`"
+root = %q
 [identity]
 mode = "stub"
 [identity.stub]
@@ -199,10 +200,10 @@ storage_key = "550e8400-e29b-41d4-a716-44665544000e"
 [http]
 listen_address = "127.0.0.1:0"
 [imports]
-file_lock_path = "`+filepath.Join(tmp, "import.lock")+`"
+file_lock_path = %q
 [observability]
 admin_listen = "0.0.0.0:9090"
-`), 0o600))
+`, nasRoot, flashRoot, filepath.Join(tmp, "import.lock")), 0o600))
 	// Bounded ctx + goroutine: if validation regresses and the server
 	// accepts 0.0.0.0, RunContext would block on Serve indefinitely.
 	// The 5s timeout forces a clean exit and surfaces the regression

@@ -572,6 +572,9 @@ admin_listen = "127.0.0.1:0"
 }
 
 func TestServerListensOnUnixSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-domain socket listener is not part of the Windows contract")
+	}
 	// Regression: [http].listen_address may be "unix:/path/to/sock",
 	// which Validate accepts. runServer must bind a Unix socket rather
 	// than pass the literal string to net.Listen("tcp", ...).

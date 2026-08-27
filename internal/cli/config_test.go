@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,16 +31,20 @@ root = "/tmp/nas"
 }
 
 func TestConfigReadReturnsScalar(t *testing.T) {
+	r := require.New(t)
 	tmp := t.TempDir()
 	p := filepath.Join(tmp, "c.toml")
-	require.NoError(t, os.WriteFile(p, []byte(`[nas]
-root = "/my/nas"
-`), 0o600))
+	nasRoot := filepath.Join(tmp, "nas")
+	r.NoError(os.WriteFile(p, fmt.Appendf(nil, `[nas]
+root = %q
+`, nasRoot), 0o600))
 	t.Setenv("FOTOBANK_CONFIG", p)
 
 	var out, eout bytes.Buffer
-	require.Equal(t, 0, cli.Run([]string{"config", "read", "nas.root"}, &out, &eout))
-	require.Equal(t, "/my/nas\n", out.String())
+	r.Equal(0, cli.Run([]string{"config", "read", "nas.root"}, &out, &eout))
+	canonicalTmp, err := filepath.EvalSymlinks(tmp)
+	r.NoError(err)
+	r.Equal(filepath.Join(canonicalTmp, "nas")+"\n", out.String())
 }
 
 func TestConfigReadRejectsDescentIntoScalar(t *testing.T) {
