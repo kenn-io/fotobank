@@ -18,7 +18,7 @@ require (
 	github.com/paulmach/orb v0.13.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	go.kenn.io/docbank v0.14.0
+	go.kenn.io/docbank v0.14.1-0.20260826164655-db49081eed88
 	golang.org/x/crypto v0.53.0
 	golang.org/x/image v0.39.0
 	golang.org/x/sync v0.21.0
@@ -61,6 +61,7 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/valyala/fastrand v1.1.0 // indirect
 	github.com/valyala/histogram v1.2.0 // indirect
+	github.com/yuin/goldmark v1.7.17 // indirect
 	go.kenn.io/kit v0.17.1 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	go.uber.org/nilaway v0.0.0-20260808063849-8649a03c818a // indirect
