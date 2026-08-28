@@ -70,8 +70,9 @@ do not become labels.
 The durable content-operation ledger, rather than a scan of NAS paths, is the
 source for Docbank recovery and orphan reporting. A pending operation means the
 cross-database import has not yet recorded a receipt; a conflict is terminal
-until an explicit resolution workflow is invoked. The importer persists those
-states today; an operator-facing recovery command has not been added yet.
+until an explicit resolution workflow is invoked. Re-running an import resumes
+matching pending identities with their recorded IDs and virtual paths. An
+operator-facing whole-vault recovery command has not been added yet.
 
 Garbage collection and destructive pruning are deliberate maintenance actions,
 not side effects of ordinary reads or cache eviction. Rebuildable caches may be

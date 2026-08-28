@@ -24,6 +24,7 @@ DROP TRIGGER IF EXISTS album_media_owner_consistency_update;
 DROP TRIGGER IF EXISTS album_media_owner_consistency_insert;
 DROP TABLE IF EXISTS album_media;
 DROP TABLE IF EXISTS albums;
+DROP INDEX IF EXISTS content_operations_owner_sha256_uq;
 DROP TABLE IF EXISTS content_operations;
 DROP TRIGGER IF EXISTS media_file_relationships_consistency_update;
 DROP TRIGGER IF EXISTS media_file_relationships_consistency_insert;

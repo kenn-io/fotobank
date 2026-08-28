@@ -1,13 +1,18 @@
 package ingest_test
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/content"
@@ -57,7 +62,7 @@ func TestImporterGroupsJPEGRAWAndXMPIntoOneReadyAsset(t *testing.T) {
 		Owner: owner, ConcurrentWorkers: 1, SettleInterval: time.Millisecond,
 	})
 	r.NoError(err)
-	r.Equal(1, result.Imported)
+	r.Equal(1, result.Imported, "result: %+v", result)
 	r.Zero(result.Duplicates)
 	r.Empty(result.Failures)
 
@@ -121,4 +126,113 @@ func TestImporterRejectsXMPOnlyGroupBeforeReservation(t *testing.T) {
 	r.NoError(ro.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM content_operations`).Scan(&operationsCount))
 	r.Zero(assetsCount)
 	r.Zero(operationsCount)
+}
+
+func TestImporterDiscoversFilesThroughSymlinkRoot(t *testing.T) {
+	r := require.New(t)
+	imp, _, _, _, owner, _ := newImporterFixture(t)
+	target := t.TempDir()
+	writeSource(t, target, "linked.jpg", []byte("linked content"))
+	link := filepath.Join(t.TempDir(), "import-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	result, err := imp.ImportDirectory(t.Context(), link, ingest.Options{
+		Owner: owner, ConcurrentWorkers: 1, SettleInterval: time.Millisecond,
+	})
+	r.NoError(err)
+	r.Equal(1, result.Imported, "result: %+v", result)
+	r.Empty(result.Failures)
+}
+
+func TestImporterResumesReservedDocbankCreate(t *testing.T) {
+	r := require.New(t)
+	imp, assets, repo, contentStore, owner, ro := newImporterFixture(t)
+	source := t.TempDir()
+	body := []byte("interrupted import")
+	sourcePath := writeSource(t, source, "resume.jpg", body)
+	info, err := os.Stat(sourcePath)
+	r.NoError(err)
+
+	var storageKey string
+	r.NoError(ro.QueryRowContext(t.Context(),
+		`SELECT storage_key FROM owners WHERE hub=? AND user_id=?`, owner.Hub, owner.UserID,
+	).Scan(&storageKey))
+	assetID, fileID, operationID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	virtualPath, err := content.VirtualPath(storageKey, fileID, "resume.jpg")
+	r.NoError(err)
+	digest := sha256.Sum256(body)
+	sha := hex.EncodeToString(digest[:])
+	modified := info.ModTime()
+	r.NoError(assets.ReserveImport(t.Context(), media.Asset{
+		ID: assetID, Owner: owner, Type: media.TypePhoto,
+		ImportedAt: time.Now().UTC(), ThumbStatus: "pending",
+	}, []media.PendingContent{{
+		OperationID: operationID,
+		File: media.File{
+			ID: fileID, AssetID: assetID, Owner: owner, Role: media.RolePrimary,
+			MimeType: "image/jpeg", OriginalFilename: "resume.jpg",
+			ImportSourcePath: "resume.jpg", Size: int64(len(body)),
+		},
+		SHA256: sha, Size: int64(len(body)), VirtualPath: virtualPath,
+	}}, nil))
+	_, err = contentStore.Create(t.Context(), content.CreateRequest{
+		VirtualPath: virtualPath, MediaType: "image/jpeg",
+		Expected: content.Identity{SHA256: sha, Size: int64(len(body))},
+		Source: content.Source{
+			Kind: "filesystem-import", Description: "Fotobank source import",
+			Reference: "resume.jpg", ModifiedAt: &modified,
+		},
+		Reader: bytes.NewReader(body),
+	})
+	r.NoError(err)
+
+	result, err := imp.ImportDirectory(t.Context(), source, ingest.Options{
+		Owner: owner, ConcurrentWorkers: 1, SettleInterval: time.Millisecond,
+	})
+	r.NoError(err)
+	r.Equal(1, result.Imported, "result: %+v", result)
+	r.Empty(result.Failures)
+
+	items, err := repo.List(t.Context(), media.ListFilter{Owner: owner})
+	r.NoError(err)
+	r.Len(items, 1)
+	r.Equal(assetID, items[0].ID)
+	var status string
+	r.NoError(ro.QueryRowContext(t.Context(),
+		`SELECT status FROM content_operations WHERE id=?`, operationID,
+	).Scan(&status))
+	r.Equal("applied", status)
+}
+
+func TestConcurrentImportsShareOneContentReservation(t *testing.T) {
+	r := require.New(t)
+	imp, _, _, _, owner, ro := newImporterFixture(t)
+	source := t.TempDir()
+	writeSource(t, source, "same.jpg", []byte("same content"))
+
+	results := make([]ingest.Result, 2)
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Go(func() {
+			results[i], errs[i] = imp.ImportDirectory(t.Context(), source, ingest.Options{
+				Owner: owner, ConcurrentWorkers: 1, SettleInterval: time.Millisecond,
+			})
+		})
+	}
+	wg.Wait()
+	for i := range results {
+		r.NoError(errs[i])
+		r.Empty(results[i].Failures)
+	}
+
+	var assetsCount, operationsCount, readyCount int
+	r.NoError(ro.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM assets`).Scan(&assetsCount))
+	r.NoError(ro.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM content_operations`).Scan(&operationsCount))
+	r.NoError(ro.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM assets WHERE state='ready'`).Scan(&readyCount))
+	r.Equal(1, assetsCount)
+	r.Equal(1, operationsCount)
+	r.Equal(1, readyCount)
 }

@@ -321,6 +321,9 @@ CREATE INDEX content_operations_pending_idx
   ON content_operations(owner_hub, owner_user_id, status, created_at)
   WHERE status = 'pending';
 
+CREATE UNIQUE INDEX content_operations_owner_sha256_uq
+  ON content_operations(owner_hub, owner_user_id, expected_sha256);
+
 -- Albums.
 CREATE TABLE albums (
     id               UUID PRIMARY KEY,

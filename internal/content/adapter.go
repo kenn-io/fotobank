@@ -124,32 +124,34 @@ func (a *Adapter) Close() error {
 	return a.closeErr
 }
 
-// ValidateImportRoot rejects an import tree that is equal to, contains, or is
-// contained by the opened Docbank vault. Both paths must exist and are checked
-// after symlink resolution before discovery starts.
-func (a *Adapter) ValidateImportRoot(sourceRoot string) error {
+// ResolveImportRoot returns the canonical import tree after rejecting a path
+// that is equal to, contains, or is contained by the opened Docbank vault.
+// Discovery must use the returned path so validation and traversal observe the
+// same directory when the configured root is a symlink.
+func (a *Adapter) ResolveImportRoot(sourceRoot string) (string, error) {
 	if a == nil || a.vault == nil {
-		return fmt.Errorf("%w: Docbank vault is not open", errs.ErrContentUnavailable)
+		return "", fmt.Errorf("%w: Docbank vault is not open", errs.ErrContentUnavailable)
 	}
 	resolved, err := filepath.EvalSymlinks(sourceRoot)
 	if err != nil {
-		return fmt.Errorf("resolve import root: %w", err)
+		return "", fmt.Errorf("resolve import root: %w", err)
 	}
 	resolved, err = filepath.Abs(resolved)
 	if err != nil {
-		return fmt.Errorf("make import root absolute: %w", err)
+		return "", fmt.Errorf("make import root absolute: %w", err)
 	}
+	resolved = filepath.Clean(resolved)
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return fmt.Errorf("stat import root: %w", err)
+		return "", fmt.Errorf("stat import root: %w", err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("%w: import root is not a directory", errs.ErrInvalidArgument)
+		return "", fmt.Errorf("%w: import root is not a directory", errs.ErrInvalidArgument)
 	}
-	if pathsOverlap(filepath.Clean(resolved), a.root) {
-		return fmt.Errorf("%w: import root overlaps Docbank vault", errs.ErrBadConfiguration)
+	if pathsOverlap(resolved, a.root) {
+		return "", fmt.Errorf("%w: import root overlaps Docbank vault", errs.ErrBadConfiguration)
 	}
-	return nil
+	return resolved, nil
 }
 
 func pathsOverlap(left, right string) bool {
@@ -158,8 +160,31 @@ func pathsOverlap(left, right string) bool {
 
 func pathContains(parent, child string) bool {
 	rel, err := filepath.Rel(parent, child)
-	return err == nil && (rel == "." || (rel != ".." && !filepath.IsAbs(rel) &&
-		!strings.HasPrefix(rel, ".."+string(filepath.Separator))))
+	if err == nil && (rel == "." || (rel != ".." && !filepath.IsAbs(rel) &&
+		!strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
+		return true
+	}
+	parentVolume, parentParts := pathParts(parent)
+	childVolume, childParts := pathParts(child)
+	if !strings.EqualFold(parentVolume, childVolume) || len(parentParts) > len(childParts) {
+		return false
+	}
+	for i, part := range parentParts {
+		if !strings.EqualFold(part, childParts[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func pathParts(value string) (string, []string) {
+	clean := filepath.Clean(value)
+	volume := filepath.VolumeName(clean)
+	remainder := strings.Trim(strings.TrimPrefix(clean, volume), string(filepath.Separator))
+	if remainder == "" {
+		return volume, []string{}
+	}
+	return volume, strings.Split(remainder, string(filepath.Separator))
 }
 
 func (a *Adapter) Stat(ctx context.Context, virtualPath string) (Node, error) {

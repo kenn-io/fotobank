@@ -505,7 +505,7 @@ func (s *SharedReadService) OpenOriginal(
 	if err != nil {
 		return nil, media.Media{}, err
 	}
-	rc, err := openExactVersion(ctx, s.content, m, offset, length)
+	rc, err := openExactVersion(ctx, s.content, m.CurrentVersionID, offset, length)
 	if err != nil {
 		return nil, media.Media{}, fmt.Errorf("read shared original: %w", err)
 	}

@@ -6,18 +6,17 @@ import (
 	"io"
 
 	"go.kenn.io/fotobank/internal/content"
-	"go.kenn.io/fotobank/internal/media"
 )
 
-func openExactVersion(ctx context.Context, store *content.Adapter, item media.Media, offset, length int64) (io.ReadCloser, error) {
+func openExactVersion(ctx context.Context, store *content.Adapter, versionID string, offset, length int64) (io.ReadCloser, error) {
 	if offset == 0 && length < 0 {
-		opened, err := store.OpenVersion(ctx, item.CurrentVersionID)
+		opened, err := store.OpenVersion(ctx, versionID)
 		if err != nil {
 			return nil, err
 		}
 		return &verifyOnEOF{reader: opened.Reader}, nil
 	}
-	opened, err := store.OpenVersionRange(ctx, item.CurrentVersionID, offset, length)
+	opened, err := store.OpenVersionRange(ctx, versionID, offset, length)
 	if err != nil {
 		return nil, err
 	}

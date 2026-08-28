@@ -399,6 +399,21 @@ func (r *AssetRepo) FinalizeReady(ctx context.Context, assetID string) error {
 		return fmt.Errorf("finalize ready asset: rows affected: %w", err)
 	}
 	if n != 1 {
+		var state string
+		var incomplete bool
+		checkErr := r.ro.QueryRowContext(ctx, `
+			SELECT state, EXISTS (
+				SELECT 1 FROM content_operations
+				WHERE asset_id = assets.id AND status <> 'applied'
+			)
+			FROM assets WHERE id = ?`, assetID,
+		).Scan(&state, &incomplete)
+		if checkErr == nil && AssetState(state) == AssetReady && !incomplete {
+			return nil
+		}
+		if checkErr != nil && !errors.Is(checkErr, sql.ErrNoRows) {
+			return fmt.Errorf("finalize ready asset: inspect current state: %w", checkErr)
+		}
 		return fmt.Errorf("finalize ready asset: %w: incomplete or terminal asset %s", errs.ErrContentConflict, assetID)
 	}
 	return nil
@@ -478,21 +493,60 @@ func (r *AssetRepo) GetPrimaryFile(ctx context.Context, assetID string) (File, e
 	return file, nil
 }
 
-// HasOwnerSHA256 reports whether an owner already has a mapped file with the
-// same immutable content identity.
-func (r *AssetRepo) HasOwnerSHA256(ctx context.Context, owner owners.Principal, digest string) (bool, error) {
-	var exists int
+// FindContentReservation returns the durable operation that owns an expected
+// content identity for one owner. The reservation survives an interrupted
+// Docbank create so the importer can retry the same virtual path and IDs.
+func (r *AssetRepo) FindContentReservation(
+	ctx context.Context,
+	owner owners.Principal,
+	digest string,
+) (ContentReservation, error) {
+	if !validSHA256(digest) {
+		return ContentReservation{}, fmt.Errorf("find content reservation: %w: invalid SHA-256", errs.ErrInvalidArgument)
+	}
+	var (
+		reservation ContentReservation
+		assetState  string
+		role        string
+		nodeID      sql.NullInt64
+		path        sql.NullString
+		versionID   sql.NullString
+		sha         sql.NullString
+	)
 	err := r.ro.QueryRowContext(ctx, `
-		SELECT 1 FROM media_files
-		WHERE owner_hub = ? AND owner_user_id = ? AND sha256 = ?
-		LIMIT 1`, owner.Hub, owner.UserID, digest).Scan(&exists)
+		SELECT co.id, co.status, co.expected_sha256, co.expected_size,
+		       co.docbank_virtual_path, a.state,
+		       f.id, f.asset_id, f.owner_hub, f.owner_user_id, f.role,
+		       f.mime_type, f.original_filename, f.import_source_path, f.size,
+		       f.docbank_node_id, f.docbank_virtual_path,
+		       f.current_version_id, f.sha256
+		FROM content_operations AS co
+		JOIN assets AS a ON a.id = co.asset_id
+		JOIN media_files AS f ON f.id = co.file_id
+		WHERE co.owner_hub = ? AND co.owner_user_id = ?
+		  AND co.expected_sha256 = ?`, owner.Hub, owner.UserID, digest,
+	).Scan(
+		&reservation.OperationID, &reservation.Status, &reservation.SHA256,
+		&reservation.Size, &reservation.VirtualPath, &assetState,
+		&reservation.File.ID, &reservation.File.AssetID,
+		&reservation.File.Owner.Hub, &reservation.File.Owner.UserID, &role,
+		&reservation.File.MimeType, &reservation.File.OriginalFilename,
+		&reservation.File.ImportSourcePath, &reservation.File.Size, &nodeID,
+		&path, &versionID, &sha,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return ContentReservation{}, fmt.Errorf("find content reservation: %w: SHA-256 %s", errs.ErrNotFound, digest)
 	}
 	if err != nil {
-		return false, fmt.Errorf("find owner SHA-256: %w", err)
+		return ContentReservation{}, fmt.Errorf("find content reservation: %w", err)
 	}
-	return true, nil
+	reservation.AssetState = AssetState(assetState)
+	reservation.File.Role = FileRole(role)
+	reservation.File.DocbankNodeID = int64FromNull(nodeID)
+	reservation.File.DocbankVirtualPath = path.String
+	reservation.File.CurrentVersionID = versionID.String
+	reservation.File.SHA256 = sha.String
+	return reservation, nil
 }
 
 func scanAsset(scanner rowScanner) (Asset, error) {

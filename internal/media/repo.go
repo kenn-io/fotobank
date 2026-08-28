@@ -696,6 +696,11 @@ func (r *Repo) ListFiles(ctx context.Context, assetID string) ([]File, error) {
 	return NewAssetRepo(r.rw, r.ro).ListFiles(ctx, assetID)
 }
 
+// GetFile returns one file by its opaque ID.
+func (r *Repo) GetFile(ctx context.Context, fileID string) (File, error) {
+	return NewAssetRepo(r.rw, r.ro).GetFile(ctx, fileID)
+}
+
 // inPlaceholders returns a string of n comma-separated "?" placeholders.
 func inPlaceholders(n int) string {
 	if n == 0 {

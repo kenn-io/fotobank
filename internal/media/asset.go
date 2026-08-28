@@ -102,6 +102,18 @@ type ContentReceipt struct {
 	Size        int64
 }
 
+// ContentReservation is the durable import state for one expected file. It is
+// used to resume a Docbank create after an interrupted import.
+type ContentReservation struct {
+	OperationID string
+	Status      string
+	AssetState  AssetState
+	File        File
+	SHA256      string
+	Size        int64
+	VirtualPath string
+}
+
 func ValidateAssetState(state AssetState) error {
 	switch state {
 	case AssetPending, AssetReady, AssetConflict:

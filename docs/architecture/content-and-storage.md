@@ -22,6 +22,11 @@ stable IDs and durable operations, creates each file in Docbank, records exact
 receipts, and makes the asset ready only after every operation is applied.
 Thumbnail, metadata, full-text, and AI work starts after that ready transition.
 
+An owner can reserve a SHA-256 identity only once. Concurrent imports either
+create that reservation or resume the committed winner. Re-running an import
+after interruption reuses its asset, file, operation, and virtual-path IDs;
+Docbank's idempotent create then returns the original receipt.
+
 Docbank SHA-256 is the content identity. Fotobank decides separately whether
 equal bytes mean a duplicate import, another file in an asset, or a distinct
 product item. Content deduplication does not decide product identity.
@@ -70,9 +75,14 @@ uses this durable operation protocol:
 Repeating the same create with the same path and identity is idempotent.
 Different content at the reserved path marks the asset and all sibling
 operations as a durable conflict. Receipts are rejected after conflict and the
-asset cannot become ready. Pending-operation recovery and orphan reporting are
-separate operational capabilities; pending rows remain durable until that
-recovery path processes them.
+asset cannot become ready. A later import of the same source identities resumes
+pending operations. Standalone orphan reporting remains a separate operational
+capability.
+
+The owner routes serve the primary through `/api/v1/media/{asset}/original`
+and attached RAW/XMP content through
+`/api/v1/media/{asset}/files/{file}/content`. Both authorize through the asset
+and read the recorded immutable Docbank version.
 
 ## Artifact storage
 

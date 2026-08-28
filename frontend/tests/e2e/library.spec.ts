@@ -168,5 +168,10 @@ test("MediaDetail shows the files in an asset", async ({ page }) => {
   await (await detailResponse).finished();
   await expect(page.getByText("Files")).toBeVisible();
   await expect(page.getByRole("link", { name: "IMG_1.JPG" })).toBeVisible();
-  await expect(page.getByText(/IMG_1\.DNG \(original,/)).toBeVisible();
+  const rawFile = page.getByRole("link", { name: "IMG_1.DNG" });
+  await expect(rawFile).toBeVisible();
+  await expect(rawFile).toHaveAttribute(
+    "href",
+    /\/api\/v1\/media\/pair-fixture-primary\/files\/.+\/content/,
+  );
 });

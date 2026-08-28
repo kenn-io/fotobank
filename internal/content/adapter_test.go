@@ -26,6 +26,26 @@ func TestAdapterLifecycle(t *testing.T) {
 	require.ErrorIs(err, errs.ErrContentUnavailable)
 }
 
+func TestAdapterResolveImportRootReturnsSymlinkTarget(t *testing.T) {
+	r := require.New(t)
+	adapter, err := content.Open(t.Context(), content.Config{Root: t.TempDir()})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "import-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	resolved, err := adapter.ResolveImportRoot(link)
+	r.NoError(err)
+	want, err := filepath.EvalSymlinks(target)
+	r.NoError(err)
+	want, err = filepath.Abs(want)
+	r.NoError(err)
+	r.Equal(filepath.Clean(want), resolved)
+}
+
 func TestAdapterCreate(t *testing.T) {
 	require := require.New(t)
 	adapter, err := content.Open(t.Context(), content.Config{Root: t.TempDir()})

@@ -153,11 +153,58 @@ func (s *MediaService) OpenOriginal(
 	if err != nil {
 		return nil, media.Media{}, err
 	}
-	rc, err := openExactVersion(ctx, s.store, m, offset, length)
+	rc, err := openExactVersion(ctx, s.store, m.CurrentVersionID, offset, length)
 	if err != nil {
 		return nil, media.Media{}, fmt.Errorf("read original: %w", err)
 	}
 	return rc, m, nil
+}
+
+// GetFile enforces asset ownership and visibility and returns one file only
+// when it belongs to that asset.
+func (s *MediaService) GetFile(
+	ctx context.Context,
+	assetID string,
+	fileID string,
+	caller owners.Principal,
+	includeHidden ...bool,
+) (media.File, media.Media, error) {
+	item, err := s.Get(ctx, assetID, caller, includeHidden...)
+	if err != nil {
+		return media.File{}, media.Media{}, err
+	}
+	file, err := s.repo.GetFile(ctx, fileID)
+	if err != nil {
+		if errors.Is(err, errs.ErrNotFound) {
+			return media.File{}, media.Media{}, fmt.Errorf("get asset file: %w", errs.ErrNotFound)
+		}
+		return media.File{}, media.Media{}, err
+	}
+	if file.AssetID != assetID || file.Owner != caller || file.CurrentVersionID == "" {
+		return media.File{}, media.Media{}, fmt.Errorf("get asset file: %w", errs.ErrNotFound)
+	}
+	return file, item, nil
+}
+
+// OpenFile opens one authorized asset file at its exact immutable Docbank
+// version.
+func (s *MediaService) OpenFile(
+	ctx context.Context,
+	assetID string,
+	fileID string,
+	caller owners.Principal,
+	offset, length int64,
+	includeHidden ...bool,
+) (io.ReadCloser, media.File, media.Media, error) {
+	file, item, err := s.GetFile(ctx, assetID, fileID, caller, includeHidden...)
+	if err != nil {
+		return nil, media.File{}, media.Media{}, err
+	}
+	rc, err := openExactVersion(ctx, s.store, file.CurrentVersionID, offset, length)
+	if err != nil {
+		return nil, media.File{}, media.Media{}, fmt.Errorf("read asset file: %w", err)
+	}
+	return rc, file, item, nil
 }
 
 // Hide marks the given asset IDs as hidden. IDs not owned by caller (or

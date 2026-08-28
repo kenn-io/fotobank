@@ -98,7 +98,11 @@
         </a>
         {#each media.files as file (file.id)}
           <br />
-          <span>{file.original_filename} ({file.role}, {formatBytes(file.size)})</span>
+          <a
+            href={`/api/v1/media/${media.id}/files/${file.id}/content`}
+            download={file.original_filename}
+          >{file.original_filename}</a>
+          <span> ({file.role}, {formatBytes(file.size)})</span>
         {/each}
       </dd>
     {:else}

@@ -130,6 +130,33 @@ describe("DirectMediaDetail", () => {
     expect(queryByText("Location")).toBeNull();
   });
 
+  it("links attached files to their authorized content route", () => {
+    const store = storeWith({
+      ...baseRaw,
+      files: [{
+        id: "file-raw",
+        role: "original",
+        mime_type: "image/x-adobe-dng",
+        original_filename: "IMG_001.DNG",
+        size: 4096,
+        sha256: "a".repeat(64),
+      }],
+    });
+    const { getByRole } = render(DirectMediaDetail, {
+      props: {
+        id: "abc-123",
+        mediaStore: store,
+        albumsStore: makeAlbumsStore(),
+        hiddenStore: makeHiddenStore(),
+        toastStore: makeToastStore(),
+        appConfig: defaultAppConfig(),
+      },
+    });
+    const link = getByRole("link", { name: "IMG_001.DNG" });
+    expect(link.getAttribute("href")).toBe("/api/v1/media/abc-123/files/file-raw/content");
+    expect(link.getAttribute("download")).toBe("IMG_001.DNG");
+  });
+
   it("re-fetches when id prop changes", async () => {
     // App.svelte mounts MediaDetail without a {#key} wrapper, so
     // navigating from one /media/:id to another reuses this component

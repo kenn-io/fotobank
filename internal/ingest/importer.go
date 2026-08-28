@@ -93,12 +93,22 @@ type fileObservation struct {
 }
 
 type preparedFile struct {
-	candidate   Candidate
-	file        media.File
-	operationID string
-	virtualPath string
-	observation fileObservation
+	candidate       Candidate
+	file            media.File
+	operationID     string
+	operationStatus string
+	virtualPath     string
+	observation     fileObservation
 }
+
+type reservationDisposition int
+
+const (
+	reservationNone reservationDisposition = iota
+	reservationPending
+	reservationDuplicate
+	reservationConflict
+)
 
 type groupOutcome struct {
 	imported  bool
@@ -114,12 +124,9 @@ func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Opti
 	if root == "" {
 		return Result{}, fmt.Errorf("import root is empty")
 	}
-	if err := imp.content.ValidateImportRoot(root); err != nil {
-		return Result{}, err
-	}
-	sourceRoot, err := filepath.Abs(root)
+	sourceRoot, err := imp.content.ResolveImportRoot(root)
 	if err != nil {
-		return Result{}, fmt.Errorf("resolve import root: %w", err)
+		return Result{}, err
 	}
 	var candidates []Candidate
 	if err := Discover(sourceRoot, func(candidate Candidate) error {
@@ -263,41 +270,66 @@ func (imp *Importer) processGroup(ctx context.Context, sourceRoot string, group 
 		return out
 	}
 
-	existing := 0
-	for _, item := range prepared {
-		found, findErr := imp.assets.HasOwnerSHA256(ctx, owner, item.observation.sha256)
-		if findErr != nil {
-			out.err = fmt.Errorf("deduplicate %s: %w", item.candidate.Path, findErr)
-			return out
-		}
-		if found {
-			existing++
-		}
-	}
-	if existing == len(prepared) {
-		out.duplicate = true
-		return out
-	}
-	if existing != 0 {
-		out.conflict = true
-		out.err = fmt.Errorf("%w: only part of source group was already imported", errs.ErrContentConflict)
-		return out
-	}
-
-	pending := make([]media.PendingContent, len(prepared))
-	for i := range prepared {
-		pending[i] = media.PendingContent{
-			OperationID: prepared[i].operationID, File: prepared[i].file,
-			SHA256: prepared[i].observation.sha256, Size: prepared[i].observation.size,
-			VirtualPath: prepared[i].virtualPath,
-		}
-	}
-	if err := imp.assets.ReserveImport(ctx, asset, pending, relationships); err != nil {
+	prepared, reservedAsset, disposition, err := imp.resolveReservations(ctx, prepared, owner)
+	if err != nil {
+		out.conflict = disposition == reservationConflict
 		out.err = err
 		return out
 	}
+	if disposition == reservationDuplicate {
+		out.duplicate = true
+		return out
+	}
+	if disposition == reservationConflict {
+		out.conflict = true
+		out.err = fmt.Errorf("%w: source group conflicts with an existing reservation", errs.ErrContentConflict)
+		return out
+	}
+	if disposition == reservationPending {
+		asset = reservedAsset
+	}
+
+	if disposition == reservationNone {
+		pending := make([]media.PendingContent, len(prepared))
+		for i := range prepared {
+			pending[i] = media.PendingContent{
+				OperationID: prepared[i].operationID, File: prepared[i].file,
+				SHA256: prepared[i].observation.sha256, Size: prepared[i].observation.size,
+				VirtualPath: prepared[i].virtualPath,
+			}
+		}
+		if reserveErr := imp.assets.ReserveImport(ctx, asset, pending, relationships); reserveErr != nil {
+			// Another importer can win the unique content reservation while
+			// this transaction waits for SQLite's writer lock. Resolve the
+			// committed winner and resume its IDs instead of creating another
+			// Docbank path.
+			prepared, reservedAsset, disposition, err = imp.resolveReservations(ctx, prepared, owner)
+			if err != nil {
+				out.conflict = disposition == reservationConflict
+				out.err = err
+				return out
+			}
+			switch disposition {
+			case reservationPending:
+				asset = reservedAsset
+			case reservationDuplicate:
+				out.duplicate = true
+				return out
+			case reservationConflict:
+				out.conflict = true
+				out.err = fmt.Errorf("%w: source group conflicts with an existing reservation", errs.ErrContentConflict)
+				return out
+			default:
+				out.err = reserveErr
+				return out
+			}
+		}
+	}
 
 	for _, item := range prepared {
+		if item.operationStatus == "applied" {
+			continue
+		}
 		if err := revalidateObservation(item.candidate.Path, item.observation); err != nil {
 			_ = imp.assets.MarkContentConflict(ctx, asset.ID, err)
 			out.conflict, out.err = true, err
@@ -353,6 +385,73 @@ func (imp *Importer) processGroup(ctx context.Context, sourceRoot string, group 
 	}
 	out.imported = true
 	return out
+}
+
+func (imp *Importer) resolveReservations(
+	ctx context.Context,
+	prepared []preparedFile,
+	owner owners.Principal,
+) ([]preparedFile, media.Asset, reservationDisposition, error) {
+	reservations := make([]media.ContentReservation, len(prepared))
+	seenDigests := make(map[string]struct{}, len(prepared))
+	found := 0
+	for i := range prepared {
+		digest := prepared[i].observation.sha256
+		if _, exists := seenDigests[digest]; exists {
+			return prepared, media.Asset{}, reservationConflict,
+				fmt.Errorf("%w: source group contains duplicate file content", errs.ErrContentConflict)
+		}
+		seenDigests[digest] = struct{}{}
+		reservation, err := imp.assets.FindContentReservation(ctx, owner, digest)
+		if errors.Is(err, errs.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return prepared, media.Asset{}, reservationNone, err
+		}
+		reservations[i] = reservation
+		found++
+	}
+	if found == 0 {
+		return prepared, media.Asset{}, reservationNone, nil
+	}
+	if found != len(prepared) {
+		return prepared, media.Asset{}, reservationConflict,
+			fmt.Errorf("%w: only part of source group was already reserved", errs.ErrContentConflict)
+	}
+
+	assetID := reservations[0].File.AssetID
+	for _, reservation := range reservations {
+		if reservation.File.AssetID != assetID || reservation.Status == "conflict" {
+			return prepared, media.Asset{}, reservationConflict,
+				fmt.Errorf("%w: source group belongs to incompatible reservations", errs.ErrContentConflict)
+		}
+	}
+	asset, err := imp.assets.GetAsset(ctx, assetID)
+	if err != nil {
+		return prepared, media.Asset{}, reservationNone, err
+	}
+	switch asset.State {
+	case media.AssetReady:
+		return prepared, asset, reservationDuplicate, nil
+	case media.AssetConflict:
+		return prepared, asset, reservationConflict, nil
+	case media.AssetPending:
+		for i, reservation := range reservations {
+			if reservation.Status != "pending" && reservation.Status != "applied" {
+				return prepared, asset, reservationConflict,
+					fmt.Errorf("%w: import operation is terminal", errs.ErrContentConflict)
+			}
+			prepared[i].file = reservation.File
+			prepared[i].operationID = reservation.OperationID
+			prepared[i].operationStatus = reservation.Status
+			prepared[i].virtualPath = reservation.VirtualPath
+		}
+		return prepared, asset, reservationPending, nil
+	default:
+		return prepared, asset, reservationConflict,
+			fmt.Errorf("%w: invalid reserved asset state", errs.ErrContentConflict)
+	}
 }
 
 func (imp *Importer) prepareGroup(ctx context.Context, sourceRoot string, group candidateGroup, owner owners.Principal, settleInterval time.Duration) ([]preparedFile, media.Asset, []media.FileRelationship, error) {
