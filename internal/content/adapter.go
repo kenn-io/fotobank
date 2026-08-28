@@ -119,7 +119,19 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 			_ = vault.Close()
 			return nil, fmt.Errorf("%w: managed root must be absolute", errs.ErrBadConfiguration)
 		}
-		managedRoots[i] = filepath.Clean(managedRoot)
+		resolvedManagedRoot := managedRoot
+		if evaluated, evalErr := filepath.EvalSymlinks(managedRoot); evalErr == nil {
+			resolvedManagedRoot = evaluated
+		} else if !os.IsNotExist(evalErr) {
+			_ = vault.Close()
+			return nil, fmt.Errorf("resolve managed root: %w", evalErr)
+		}
+		resolvedManagedRoot, err := filepath.Abs(resolvedManagedRoot)
+		if err != nil {
+			_ = vault.Close()
+			return nil, fmt.Errorf("make managed root absolute: %w", err)
+		}
+		managedRoots[i] = filepath.Clean(resolvedManagedRoot)
 	}
 	return &Adapter{
 		vault: vault, root: filepath.Clean(root), managedRoots: managedRoots,
