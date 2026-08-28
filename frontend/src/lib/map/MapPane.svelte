@@ -269,7 +269,7 @@
 
     buildMarkers();
 
-    // Initial view priority (per spec §3.1):
+    // Initial view priority:
     //   1. focusId       → zoom 14 at that photo (regardless of z=)
     //   2. z + c         → use those
     //   3. otherwise     → fitBounds to all markers

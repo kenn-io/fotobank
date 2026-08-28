@@ -301,8 +301,7 @@ func scanGenerationRow(s interface {
 
 // SQLEmbeddingGenerationsLister is the production-side adapter that
 // reads embedding_generations rows directly from the read-only pool.
-// Constructed in cmd/fotobank/server.go (Plan S1); satisfies
-// EmbeddingGenerationsLister.
+// Server composition constructs it to satisfy EmbeddingGenerationsLister.
 type SQLEmbeddingGenerationsLister struct {
 	RO *sql.DB
 }

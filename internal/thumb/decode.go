@@ -14,14 +14,14 @@ import (
 )
 
 // ErrNoPreview indicates the source format is one we intentionally do
-// not decode in Plan C (HEIC in particular). Callers translate this
+// not decode (HEIC in particular). Callers translate this
 // to thumb_status='no_preview' without retrying.
 var ErrNoPreview = errors.New("thumb: no preview available")
 
 // Decode returns an image.Image from src, applying EXIF orientation so
 // downstream resize/encode produces display-correct pixels. Dispatch
 // is by MIME type. PNG has no EXIF orientation by spec so we decode
-// it as-is. HEIC requires CGO and is deferred to a future plan
+// it as-is. HEIC requires a decoder that is not currently included.
 // (returns ErrNoPreview here).
 func Decode(mime string, src io.Reader) (image.Image, error) {
 	switch mime {

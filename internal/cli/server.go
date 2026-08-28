@@ -1177,8 +1177,7 @@ func buildIdentityProvider(
 // loadStorageKeys reads every registered owner and returns the map that
 // the storage layer uses to resolve per-owner filesystem prefixes. The
 // map is a snapshot: owners added after server start are not visible
-// until the server is restarted (Plan B accepts this; dynamic refresh
-// lands in Plan D).
+// until the server is restarted.
 func loadStorageKeys(ctx context.Context, ownerSvc *service.OwnerService) (map[owners.Principal]string, error) {
 	list, err := ownerSvc.List(ctx)
 	if err != nil {

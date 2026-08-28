@@ -131,6 +131,6 @@ func newOwnersRemoveCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&hub, "hub", "", "identity hub (required)")
 	cmd.Flags().StringVar(&userID, "user-id", "", "user ID within the hub (required)")
-	cmd.Flags().BoolVar(&purge, "purge", false, "also remove media rows (Plan B+)")
+	cmd.Flags().BoolVar(&purge, "purge", false, "also remove owned media (not implemented)")
 	return cmd
 }

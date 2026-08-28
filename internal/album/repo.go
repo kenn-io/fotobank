@@ -373,7 +373,8 @@ SELECT oa.id, oa.owner_hub, oa.owner_user_id, oa.name, oa.created_at, oa.updated
 // enforces the 1..500 bound. Empty input → (0, 0, nil) without touching
 // the DB. Uses a batched INSERT ... VALUES (?,?,?),... ON CONFLICT
 // DO NOTHING; reports added = RowsAffected, alreadyPresent = len - added.
-// Does NOT bump albums.updated_at; that is a non-goal for Plan D.
+// Does not bump albums.updated_at; membership changes are independent of
+// album metadata edits.
 func (r *Repo) AddMedia(
 	ctx context.Context,
 	albumID string,

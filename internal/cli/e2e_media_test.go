@@ -188,7 +188,7 @@ admin_listen = "127.0.0.1:0"
 
 	// 7. Wait for the thumbnail worker to drain each imported row to a
 	// terminal state. Photos should become "ready"; the video should
-	// settle on "no_preview" (Plan C defers video posters to Plan E).
+	// settle on "no_preview" because video posters are not implemented.
 	waitAllTerminal := func() []mediaItem {
 		deadline := time.Now().Add(15 * time.Second)
 		for time.Now().Before(deadline) {
