@@ -157,6 +157,24 @@ func TestImporterGroupsCompoundJPEGSidecarName(t *testing.T) {
 	r.Equal("photo.jpg.xmp", sidecar.OriginalFilename)
 }
 
+func TestImporterKeepsSameStemVideosSeparate(t *testing.T) {
+	r := require.New(t)
+	imp, _, repo, _, owner, _ := newImporterFixture(t)
+	source := t.TempDir()
+	writeSource(t, source, "clip.mp4", []byte("mp4 bytes"))
+	writeSource(t, source, "clip.mov", []byte("mov bytes"))
+
+	result, err := imp.ImportDirectory(t.Context(), source, ingest.Options{
+		Owner: owner, ConcurrentWorkers: 1, SettleInterval: time.Millisecond,
+	})
+	r.NoError(err)
+	r.Equal(2, result.Imported, "result: %+v", result)
+	r.Empty(result.Failures)
+	items, err := repo.List(t.Context(), media.ListFilter{Owner: owner})
+	r.NoError(err)
+	r.Len(items, 2)
+}
+
 func TestImporterDiscoversFilesThroughSymlinkRoot(t *testing.T) {
 	r := require.New(t)
 	imp, _, _, _, owner, _ := newImporterFixture(t)

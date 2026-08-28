@@ -219,6 +219,9 @@ func groupCandidates(candidates []Candidate) ([]candidateGroup, []error) {
 }
 
 func candidateGroupKey(candidate Candidate) string {
+	if candidate.Kind == CandidateVideo {
+		return "video\x00" + norm.NFC.String(candidate.Path)
+	}
 	dir := norm.NFC.String(filepath.Dir(candidate.Path))
 	base := strings.TrimSuffix(filepath.Base(candidate.Path), filepath.Ext(candidate.Path))
 	if candidate.Kind == CandidateSidecar {
@@ -227,9 +230,6 @@ func candidateGroupKey(candidate Candidate) string {
 		}
 	}
 	base = strings.ToLower(norm.NFC.String(base))
-	if candidate.Kind == CandidateVideo {
-		return "video\x00" + dir + "\x00" + base
-	}
 	return "photo\x00" + dir + "\x00" + base
 }
 

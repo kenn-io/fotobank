@@ -304,6 +304,13 @@
             <span> ({file.role}, {formatBytes(file.size)})</span>
           {/each}
         </dd>
+      {:else}
+        <dt>Download</dt>
+        <dd>
+          <a href="/api/v1/media/{effectiveMedia.id}/original" download={effectiveMedia.original_filename ?? effectiveMedia.id}>
+            {effectiveMedia.original_filename ?? effectiveMedia.id}
+          </a>
+        </dd>
       {/if}
     </dl>
   {/if}
