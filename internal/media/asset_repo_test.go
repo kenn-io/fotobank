@@ -53,7 +53,9 @@ func TestContentConflictTerminalizesWholeAssetGraph(t *testing.T) {
 		OperationID: primary.OperationID, NodeID: 1, VersionID: uuid.NewString(),
 		SHA256: primary.SHA256, Size: primary.Size,
 	}))
-	r.NoError(repo.MarkContentConflict(t.Context(), assetID, errs.ErrContentConflict))
+	conflicted, err := repo.MarkContentConflict(t.Context(), assetID, errs.ErrContentConflict)
+	r.NoError(err)
+	r.True(conflicted)
 
 	asset, err := repo.GetAsset(t.Context(), assetID)
 	r.NoError(err)
@@ -77,6 +79,51 @@ func TestContentConflictTerminalizesWholeAssetGraph(t *testing.T) {
 	})
 	r.ErrorIs(err, errs.ErrInvalidArgument)
 	r.ErrorIs(repo.FinalizeReady(t.Context(), assetID), errs.ErrContentConflict)
+}
+
+func TestContentConflictLeavesReadyWinnerUnchanged(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	var storageKey string
+	r.NoError(d.ReadDB().QueryRowContext(t.Context(),
+		`SELECT storage_key FROM owners WHERE hub=? AND user_id=?`, owner.Hub, owner.UserID,
+	).Scan(&storageKey))
+
+	assetID, fileID := uuid.NewString(), uuid.NewString()
+	path, err := content.VirtualPath(storageKey, fileID, "photo.jpg")
+	r.NoError(err)
+	digest := sha256.Sum256([]byte("photo"))
+	pending := media.PendingContent{
+		OperationID: uuid.NewString(),
+		File: media.File{
+			ID: fileID, AssetID: assetID, Owner: owner, Role: media.RolePrimary,
+			MimeType: "image/jpeg", OriginalFilename: "photo.jpg", Size: 5,
+		},
+		SHA256: hex.EncodeToString(digest[:]), Size: 5, VirtualPath: path,
+	}
+	repo := media.NewAssetRepo(d.WriteDB(), d.ReadDB())
+	r.NoError(repo.ReserveImport(t.Context(), media.Asset{
+		ID: assetID, Owner: owner, Type: media.TypePhoto,
+		ImportedAt: time.Now().UTC(), ThumbStatus: "pending",
+	}, []media.PendingContent{pending}, nil))
+	r.NoError(repo.ApplyContentReceipt(t.Context(), media.ContentReceipt{
+		OperationID: pending.OperationID, NodeID: 1, VersionID: uuid.NewString(),
+		SHA256: pending.SHA256, Size: pending.Size,
+	}))
+	r.NoError(repo.FinalizeReady(t.Context(), assetID))
+
+	conflicted, err := repo.MarkContentConflict(t.Context(), assetID, errs.ErrContentIdentityMismatch)
+	r.NoError(err)
+	r.False(conflicted)
+	asset, err := repo.GetAsset(t.Context(), assetID)
+	r.NoError(err)
+	r.Equal(media.AssetReady, asset.State)
+	var operationStatus string
+	r.NoError(d.ReadDB().QueryRowContext(t.Context(),
+		`SELECT status FROM content_operations WHERE id=?`, pending.OperationID,
+	).Scan(&operationStatus))
+	r.Equal("applied", operationStatus)
 }
 
 func TestApplyContentReceiptIsIdempotent(t *testing.T) {

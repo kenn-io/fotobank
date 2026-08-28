@@ -327,7 +327,15 @@ func (imp *Importer) processGroup(ctx context.Context, sourceRoot string, group 
 			continue
 		}
 		if err := revalidateObservation(item.candidate.Path, item.observation); err != nil {
-			_ = imp.assets.MarkContentConflict(ctx, asset.ID, err)
+			conflicted, markErr := imp.assets.MarkContentConflict(ctx, asset.ID, err)
+			if markErr != nil {
+				out.err = errors.Join(err, markErr)
+				return out
+			}
+			if !conflicted {
+				out.duplicate = true
+				return out
+			}
 			out.conflict, out.err = true, err
 			return out
 		}
@@ -348,7 +356,15 @@ func (imp *Importer) processGroup(ctx context.Context, sourceRoot string, group 
 		closeErr := file.Close()
 		if createErr != nil {
 			if errors.Is(createErr, errs.ErrContentConflict) || errors.Is(createErr, errs.ErrContentIdentityMismatch) {
-				_ = imp.assets.MarkContentConflict(ctx, asset.ID, createErr)
+				conflicted, markErr := imp.assets.MarkContentConflict(ctx, asset.ID, createErr)
+				if markErr != nil {
+					out.err = errors.Join(createErr, markErr)
+					return out
+				}
+				if !conflicted {
+					out.duplicate = true
+					return out
+				}
 				out.conflict = true
 			}
 			out.err = fmt.Errorf("create Docbank content for %s: %w", item.candidate.Path, createErr)

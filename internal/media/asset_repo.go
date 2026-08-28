@@ -349,12 +349,13 @@ func (r *AssetRepo) ApplyContentReceipt(ctx context.Context, receipt ContentRece
 	return nil
 }
 
-// MarkContentConflict terminalizes an asset and all of its operations. A
-// conflicted graph can never become ready without an explicit future resolver.
-func (r *AssetRepo) MarkContentConflict(ctx context.Context, assetID string, cause error) error {
+// MarkContentConflict terminalizes a pending asset and all of its operations.
+// It returns false when another importer has already finalized the asset as
+// ready, leaving that winner unchanged.
+func (r *AssetRepo) MarkContentConflict(ctx context.Context, assetID string, cause error) (bool, error) {
 	tx, err := r.rw.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("mark content conflict: begin transaction: %w", err)
+		return false, fmt.Errorf("mark content conflict: begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	message := "content conflict"
@@ -362,23 +363,42 @@ func (r *AssetRepo) MarkContentConflict(ctx context.Context, assetID string, cau
 		message = cause.Error()
 	}
 	now := time.Now().UTC()
+	res, err := tx.ExecContext(ctx, `
+		UPDATE assets SET state = 'conflict' WHERE id = ? AND state = 'pending'`, assetID)
+	if err != nil {
+		return false, fmt.Errorf("mark content conflict: update asset: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("mark content conflict: rows affected: %w", err)
+	}
+	if n == 0 {
+		var state string
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM assets WHERE id = ?`, assetID).Scan(&state); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return false, fmt.Errorf("mark content conflict: %w: asset %s", errs.ErrNotFound, assetID)
+			}
+			return false, fmt.Errorf("mark content conflict: inspect asset: %w", err)
+		}
+		switch AssetState(state) {
+		case AssetReady:
+			return false, nil
+		case AssetConflict:
+			return true, nil
+		default:
+			return false, fmt.Errorf("mark content conflict: %w: invalid asset state %q", errs.ErrContentConflict, state)
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE content_operations SET status = 'conflict', last_error = ?, updated_at = ?
 		WHERE asset_id = ? AND status <> 'conflict'`, message, now, assetID,
 	); err != nil {
-		return fmt.Errorf("mark content conflict: terminalize operations: %w", err)
+		return false, fmt.Errorf("mark content conflict: terminalize operations: %w", err)
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE assets SET state = 'conflict' WHERE id = ?`, assetID)
-	if err != nil {
-		return fmt.Errorf("mark content conflict: update asset: %w", err)
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("mark content conflict: commit: %w", err)
 	}
-	if n, err := res.RowsAffected(); err != nil || n != 1 {
-		if err != nil {
-			return fmt.Errorf("mark content conflict: rows affected: %w", err)
-		}
-		return fmt.Errorf("mark content conflict: %w: asset %s", errs.ErrNotFound, assetID)
-	}
-	return tx.Commit()
+	return true, nil
 }
 
 // FinalizeReady makes an asset visible only after every reserved operation is
