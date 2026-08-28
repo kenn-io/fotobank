@@ -74,7 +74,11 @@ func Discover(root string, visit func(Candidate) error) error {
 		if !ok {
 			return nil
 		}
-		if d.Type()&os.ModeSymlink != 0 {
+		info, err := os.Lstat(p)
+		if err != nil {
+			return fmt.Errorf("inspect source %s: %w", p, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("%w: symbolic-link source file is not supported: %s", errs.ErrInvalidArgument, p)
 		}
 		return visit(Candidate{Path: p, Type: t, MimeType: mime, Kind: kind})
