@@ -71,8 +71,14 @@ not disable the CLI or backend sharing data plane.
 ## Hidden media
 
 Hidden media is excluded by default from library lists, maps, facets, search,
-albums, shares, thumbnails, and full-size byte routes. Owner actions can unlock
-hidden access with a short-lived cookie after passcode verification.
+albums, shares, thumbnail-serving routes, and full-size byte routes. Owner
+actions can unlock hidden access with a short-lived cookie after passcode
+verification.
+
+The background thumbnail queue does not filter `hidden_at`. It may generate a
+disposable local thumbnail for hidden media, but the service checks hidden
+access again before serving that artifact. Hiding an item does not delete
+existing thumbnails or cancel other queued projection work.
 
 Passcodes are hashed. Failed attempts and lockout state are persisted.
 Production cookies use the `__Host-` prefix, `Secure`, `HttpOnly`, and

@@ -40,9 +40,11 @@ Temporary design notes and execution checklists are not committed.
    versions. Fotobank accesses it only through `internal/content`.
 6. Thumbnails, full-text indexes, vectors, and extracted metadata are
    rebuildable projections. They never become media-byte authority.
-7. Hidden-media controls are application privacy, not encryption. Every list,
-   search, share, thumbnail, and byte-read path enforces the same visibility
-   policy.
+7. Hidden-media controls are application privacy, not encryption. User-facing
+   lists, search, shares, thumbnail serving, and byte reads enforce hidden
+   visibility. Hiding does not delete local projections or cancel work already
+   queued for background processing; those current limits are documented with
+   the relevant subsystem.
 8. The active importer has no cross-database operation record because it still
    writes full-size media to NAS. Once imports write to Docbank, every
    cross-database mutation must use durable operation records and idempotent

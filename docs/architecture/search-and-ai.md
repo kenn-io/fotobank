@@ -83,5 +83,11 @@ search lifecycle.
   bytes, prompts containing private content, or local source paths.
 - Disabled or unreachable AI does not prevent ordinary import, browsing,
   albums, shares, or metadata search.
-- Hidden media is not queued, returned, counted, or suggested unless the
-  owner-specific unlocked surface explicitly permits it.
+- Search, autocomplete, facets, and completeness calculations exclude hidden
+  media unless a valid owner unlock explicitly includes it.
+- Gap scans exclude hidden media by default. Import queues AI work while a new
+  media row is visible, and queued jobs do not uniformly re-check `hidden_at`
+  before sending a preview to the configured provider. Tag and caption workers
+  require the owner's hidden-processing acknowledgement; the embedding worker
+  currently does not. Media hidden after it is queued can therefore still be
+  processed. Hiding is not a queue-cancellation boundary in the active system.

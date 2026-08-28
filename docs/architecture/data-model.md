@@ -69,7 +69,8 @@ download permission at read time.
 
 `hidden_at` is product visibility state. Hidden credentials, sessions,
 failures, and lockouts live in separate `auth_hidden_*` tables. Hiding an item
-removes it from ordinary list, search, sharing, thumbnail, and byte-read paths.
+removes it from ordinary list, search, sharing, thumbnail-serving, and
+byte-read paths.
 An unlock cookie permits owner access for a bounded session.
 
 This is not encryption. Media bytes remain readable to an operator with direct

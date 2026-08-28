@@ -107,8 +107,12 @@ old source projection.
 The Docbank root must not overlap NAS or flash-managed trees in either
 direction. Configuration canonicalizes existing symlinks, rejects unresolved
 symlink ancestors and symlink-plus-`..` aliases, and compares case-insensitively
-for portable safety. Runtime import also rejects a source root that overlaps
-the vault before discovery begins.
+for portable safety.
+
+The active import command accepts an arbitrary source root and does not compare
+it with the Docbank root. The Docbank cutover must add a canonical,
+symlink-aware overlap check before discovery so the vault cannot become its
+own import source.
 
 Writable checkouts for Lightroom are not implemented yet. Their architectural
 boundary is already fixed: a checkout is a materialized working copy, never
