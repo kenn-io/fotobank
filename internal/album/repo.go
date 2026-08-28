@@ -138,7 +138,7 @@ SELECT a.id, a.owner_hub, a.owner_user_id, a.name, a.created_at, a.updated_at,
            COUNT(CASE WHEN m.hidden_at IS NULL     THEN 1 END) AS item_count,
            COUNT(CASE WHEN m.hidden_at IS NOT NULL THEN 1 END) AS hidden_count
       FROM album_media am
-      JOIN media m ON m.id = am.media_id
+      JOIN assets m ON m.id = am.media_id AND m.state = 'ready'
      WHERE am.album_id = ?
      GROUP BY am.album_id
   ) cnt ON cnt.album_id = a.id
@@ -149,7 +149,7 @@ SELECT a.id, a.owner_hub, a.owner_user_id, a.name, a.created_at, a.updated_at,
              ORDER BY am.added_at DESC, am.media_id ASC
            ) AS rn
       FROM album_media am
-      JOIN media m ON m.id = am.media_id
+      JOIN assets m ON m.id = am.media_id AND m.state = 'ready'
      WHERE am.album_id = ?
        AND m.thumb_status = 'ready'
        AND m.hidden_at IS NULL
@@ -209,10 +209,10 @@ func (r *Repo) GetDetailsByIDs(ctx context.Context, ids []string) ([]AlbumListIt
 WITH ord(id, pos) AS (VALUES ` + strings.Join(valRows, ",") + `)
 SELECT a.id, a.owner_hub, a.owner_user_id, a.name, a.created_at, a.updated_at,
        (SELECT COUNT(*) FROM album_media am
-          JOIN media m ON m.id = am.media_id
+          JOIN assets m ON m.id = am.media_id AND m.state = 'ready'
          WHERE am.album_id = a.id AND m.hidden_at IS NULL)     AS item_count,
        (SELECT COUNT(*) FROM album_media am
-          JOIN media m ON m.id = am.media_id
+          JOIN assets m ON m.id = am.media_id AND m.state = 'ready'
          WHERE am.album_id = a.id AND m.hidden_at IS NOT NULL) AS hidden_count,
        cv.media_id, cv.thumb_version
   FROM ord
@@ -224,7 +224,7 @@ SELECT a.id, a.owner_hub, a.owner_user_id, a.name, a.created_at, a.updated_at,
              ORDER BY am.added_at DESC, am.media_id ASC
            ) AS rn
       FROM album_media am
-      JOIN media m ON m.id = am.media_id
+      JOIN assets m ON m.id = am.media_id AND m.state = 'ready'
      WHERE m.thumb_status = 'ready'
        AND m.hidden_at IS NULL
   ) cv ON cv.album_id = a.id AND cv.rn = 1
@@ -331,7 +331,7 @@ SELECT oa.id, oa.owner_hub, oa.owner_user_id, oa.name, oa.created_at, oa.updated
            COUNT(CASE WHEN m.hidden_at IS NULL     THEN 1 END) AS item_count,
            COUNT(CASE WHEN m.hidden_at IS NOT NULL THEN 1 END) AS hidden_count
       FROM album_media am
-      JOIN media m ON m.id = am.media_id
+      JOIN assets m ON m.id = am.media_id AND m.state = 'ready'
      WHERE am.album_id IN (SELECT id FROM owner_albums)
      GROUP BY am.album_id
   ) cnt ON cnt.album_id = oa.id
@@ -342,7 +342,7 @@ SELECT oa.id, oa.owner_hub, oa.owner_user_id, oa.name, oa.created_at, oa.updated
              ORDER BY am.added_at DESC, am.media_id ASC
            ) AS rn
       FROM album_media am
-      JOIN media m ON m.id = am.media_id
+      JOIN assets m ON m.id = am.media_id AND m.state = 'ready'
      WHERE am.album_id IN (SELECT id FROM owner_albums)
        AND m.thumb_status = 'ready'
        AND m.hidden_at IS NULL
@@ -453,15 +453,16 @@ func (r *Repo) RemoveMedia(ctx context.Context, albumID, mediaID string) error {
 // media.mediaInsert (four-way sync applies on any schema column
 // add/remove).
 const albumMediaMediaSelect = `SELECT
-    m.id, m.owner_hub, m.owner_user_id, m.media_type, m.mime_type, m.path, m.original_filename,
-    m.imported_at, m.timestamp, m.size, m.checksum,
+    m.id, m.owner_hub, m.owner_user_id, m.media_type,
+    f.id, f.mime_type, f.original_filename, m.imported_at, m.timestamp,
+    f.size, f.sha256, f.current_version_id, f.docbank_virtual_path,
     m.make, m.model, m.lens_model, m.focal_length, m.shutter, m.width, m.height, m.iso, m.aperture,
     m.duration_ms,
     m.latitude, m.longitude, m.gps_at, m.location_label,
-    m.thumb_status, m.thumb_version, m.thumb_updated_at,
-    m.import_source_path, m.paired_with_id,
-    m.hidden_at
-FROM album_media am JOIN media m ON m.id = am.media_id`
+    m.thumb_status, m.thumb_version, m.thumb_updated_at, m.hidden_at
+FROM album_media am
+JOIN assets m ON m.id = am.media_id AND m.state = 'ready'
+JOIN media_files f ON f.asset_id = m.id AND f.role = 'primary'`
 
 // ListMedia returns paginated media rows that belong to albumID. The
 // SortBy / SortAsc fields must be validated by the caller (service);

@@ -2,7 +2,9 @@ package backup
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"net/url"
 	"os"
@@ -14,8 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil"
 )
@@ -312,7 +316,7 @@ func TestSnapshot_DuringConcurrentWrites(t *testing.T) {
 	r.NoError(err)
 	defer snapDB.Close()
 	var snapRows int
-	r.NoError(snapDB.QueryRow(`SELECT COUNT(*) FROM media`).Scan(&snapRows))
+	r.NoError(snapDB.QueryRow(`SELECT COUNT(*) FROM assets`).Scan(&snapRows))
 	r.GreaterOrEqual(snapRows, preSeed,
 		"snapshot must contain at least the pre-seeded rows; got %d", snapRows)
 	r.LessOrEqual(int64(snapRows), int64(preSeed)+finalInsertCount,
@@ -336,15 +340,46 @@ func TestSnapshot_DuringConcurrentWrites(t *testing.T) {
 // because callers need to tolerate the occasional busy_timeout
 // exhaustion under contention without aborting the parent test.
 func insertOnePhoto(rw *sql.DB, p owners.Principal) (string, error) {
-	id := "stress-" + strconv.FormatInt(stressCounter.Add(1), 10)
-	_, err := rw.Exec(`INSERT INTO media (
-		id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-		imported_at, size, checksum, thumb_status, thumb_version
-	) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, ?, ?, ?, ?, 'pending', 0)`,
-		id, p.Hub, p.UserID, "stress/"+id+".jpg", id+".jpg",
-		time.Now().UTC(), int64(1024), "cs-"+id,
-	)
-	return id, err
+	seq := stressCounter.Add(1)
+	id := uuid.NewString()
+	fileID := uuid.NewString()
+	versionID := uuid.NewString()
+	var storageKey string
+	if err := rw.QueryRow(`SELECT storage_key FROM owners WHERE hub=? AND user_id=?`,
+		p.Hub, p.UserID).Scan(&storageKey); err != nil {
+		return "", err
+	}
+	virtualPath, err := content.VirtualPath(storageKey, fileID,
+		"stress-"+strconv.FormatInt(seq, 10)+".jpg")
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256([]byte(id))
+	tx, err := rw.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`INSERT INTO assets (
+		id, owner_hub, owner_user_id, state, media_type, imported_at,
+		thumb_status, thumb_version
+	) VALUES (?, ?, ?, 'pending', 'photo', ?, 'pending', 0)`,
+		id, p.Hub, p.UserID, time.Now().UTC()); err != nil {
+		return "", err
+	}
+	if _, err = tx.Exec(`INSERT INTO media_files (
+		id, asset_id, owner_hub, owner_user_id, role, mime_type,
+		original_filename, size, docbank_node_id, docbank_virtual_path,
+		current_version_id, sha256
+	) VALUES (?, ?, ?, ?, 'primary', 'image/jpeg', ?, 1024, ?, ?, ?, ?)`,
+		fileID, id, p.Hub, p.UserID, "stress.jpg", seq, virtualPath,
+		versionID, hex.EncodeToString(digest[:])); err != nil {
+		return "", err
+	}
+	if _, err = tx.Exec(`UPDATE assets SET state='ready' WHERE id=?`, id); err != nil {
+		return "", err
+	}
+	return id, tx.Commit()
 }
 
 // stressCounter generates unique stress-test IDs without colliding
@@ -387,7 +422,7 @@ func TestSnapshotPragmas_AfterRestore_RoundTrip(t *testing.T) {
 	// Confirm the seeded media row arrived intact.
 	var got string
 	r.NoError(conn.QueryRow(
-		`SELECT id FROM media WHERE id = ?`, mediaID,
+		`SELECT id FROM assets WHERE id = ?`, mediaID,
 	).Scan(&got))
 	r.Equal(mediaID, got)
 

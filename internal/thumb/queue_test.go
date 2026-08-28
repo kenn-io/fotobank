@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 	"go.kenn.io/fotobank/internal/thumb"
 )
 
@@ -39,19 +40,19 @@ func newQueueFixture(t *testing.T, nRows int) queueFixture {
 	ids := make([]string, nRows)
 	for i := range nRows {
 		m := media.Media{
-			ID:               uuid.NewString(),
-			Owner:            p,
-			Type:             media.TypePhoto,
-			MimeType:         "image/jpeg",
-			Path:             "2024/a.jpg",
-			OriginalFilename: "a.jpg",
-			ImportedAt:       time.Now().UTC().Add(time.Duration(i) * time.Second),
-			Size:             100,
-			Checksum:         uuid.NewString(),
-			ThumbStatus:      "pending",
+			ID:                 uuid.NewString(),
+			Owner:              p,
+			Type:               media.TypePhoto,
+			MimeType:           "image/jpeg",
+			DocbankVirtualPath: "2024/a.jpg",
+			OriginalFilename:   "a.jpg",
+			ImportedAt:         time.Now().UTC().Add(time.Duration(i) * time.Second),
+			Size:               100,
+			SHA256:             uuid.NewString(),
+			ThumbStatus:        "pending",
 		}
-		m.Path = "2024/" + m.ID + ".jpg"
-		require.NoError(t, repo.Insert(context.Background(), m))
+		m.DocbankVirtualPath = "2024/" + m.ID + ".jpg"
+		assetfixture.Insert(t, repo, m)
 		ids[i] = m.ID
 	}
 	return queueFixture{q: q, rw: d.WriteDB(), owner: p, ids: ids}
@@ -224,7 +225,7 @@ func readThumbStatus(t *testing.T, rw *sql.DB, id string) string {
 	t.Helper()
 	var status string
 	err := rw.QueryRowContext(context.Background(),
-		`SELECT thumb_status FROM media WHERE id = ?`, id).Scan(&status)
+		`SELECT thumb_status FROM assets WHERE id = ?`, id).Scan(&status)
 	require.NoError(t, err)
 	return status
 }
@@ -271,14 +272,14 @@ func TestClaimBatchOrdersNewestFirst(t *testing.T) {
 		m := media.Media{
 			ID: row.id, Owner: p,
 			Type: media.TypePhoto, MimeType: "image/jpeg",
-			Path:             "2024/" + row.id + ".jpg",
-			OriginalFilename: row.id + ".jpg",
-			ImportedAt:       row.imported,
-			Timestamp:        row.timestamp,
-			Size:             100, Checksum: row.id,
+			DocbankVirtualPath: "2024/" + row.id + ".jpg",
+			OriginalFilename:   row.id + ".jpg",
+			ImportedAt:         row.imported,
+			Timestamp:          row.timestamp,
+			Size:               100, SHA256: row.id,
 			ThumbStatus: "pending",
 		}
-		r.NoError(repo.Insert(context.Background(), m))
+		assetfixture.Insert(t, repo, m)
 	}
 
 	claims, err := q.ClaimBatch(context.Background(), 3)

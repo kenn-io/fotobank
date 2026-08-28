@@ -1,25 +1,23 @@
 package ingest
 
 import (
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 )
 
-// Checksum returns the hex-encoded MD5 of the file at path. Deliberately
-// MD5 (not SHA-256) — master spec's dedup key is MD5, matching the
-// Python tool's legacy archive keys.
-func Checksum(path string) (string, error) {
+// SHA256 returns the lowercase SHA-256 content identity of path.
+func SHA256(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	h := md5.New()
+	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return "", fmt.Errorf("md5: %w", err)
+		return "", fmt.Errorf("sha256: %w", err)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

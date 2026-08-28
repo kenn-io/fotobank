@@ -710,7 +710,7 @@ func TestRoute_SearchAutocomplete(t *testing.T) {
 	seedAutocompleteTag(t, fx.rw, mid1, "dog", "Dog")
 	seedAutocompleteTag(t, fx.rw, mid2, "doggo", "Doggo")
 	_, err := fx.rw.ExecContext(context.Background(),
-		`UPDATE media SET location_label = ? WHERE id = ?`, "Paris, France", mid1)
+		`UPDATE assets SET location_label = ? WHERE id = ?`, "Paris, France", mid1)
 	r.NoError(err)
 
 	// Tags surface.

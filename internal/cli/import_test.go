@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
@@ -91,7 +92,7 @@ file_lock_path = %q
 
 	r.Contains(out.String(), "imported=3")
 	r.Contains(out.String(), "duplicates=0")
-	r.Contains(out.String(), "path_collisions=0")
+	r.Contains(out.String(), "conflicts=0")
 	r.Contains(out.String(), "failures=0")
 	r.Empty(eout.String())
 
@@ -102,11 +103,24 @@ file_lock_path = %q
 	r.NoError(err)
 	_, err = uuid.Parse(storedOwner.StorageKey)
 	r.NoError(err)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	rows, err := repo.List(context.Background(), media.ListFilter{Owner: storedOwner.Principal})
+	r.NoError(err)
+	r.Len(rows, 3)
+	contentStore, err := content.Open(context.Background(), content.Config{
+		Root: filepath.Join(tmp, "flash", "docbank"),
+	})
+	r.NoError(err)
+	for _, row := range rows {
+		opened, err := contentStore.OpenVersion(context.Background(), row.CurrentVersionID)
+		r.NoError(err)
+		_, err = io.Copy(io.Discard, opened.Reader)
+		r.NoError(err)
+		r.NoError(opened.Reader.Verify())
+		r.NoError(opened.Reader.Close())
+	}
+	r.NoError(contentStore.Close())
 	r.NoError(d.Close())
-
-	// Bytes landed on the NAS under the generated, persisted storage key.
-	r.FileExists(filepath.Join(nasRoot, storedOwner.StorageKey, "2024", "20240615_143022_0.jpg"))
-	r.FileExists(filepath.Join(nasRoot, storedOwner.StorageKey, "unknown_date", "photo-no-exif_0.jpg"))
 
 	// Second run of the same source should see three duplicates.
 	out.Reset()
@@ -281,14 +295,12 @@ storage_key = "550e8400-e29b-41d4-a716-446655440000"
 	// past the user. The startup banner is part of the contract.
 	canonicalHome, err := filepath.EvalSymlinks(home)
 	r.NoError(err)
-	r.Contains(out.String(), filepath.Join(canonicalHome, "fotobank"))
+	r.Contains(out.String(), filepath.Join(canonicalHome, ".fotobank", "docbank"))
 	r.Contains(out.String(), filepath.Join(canonicalHome, ".fotobank", "fotobank.sqlite"))
 
-	// Photos landed under $HOME/fotobank/<storage_key>/...
-	r.FileExists(filepath.Join(home, "fotobank", "550e8400-e29b-41d4-a716-446655440000", "2024", "20240615_143022_0.jpg"))
-	r.FileExists(filepath.Join(home, "fotobank", "550e8400-e29b-41d4-a716-446655440000", "unknown_date", "photo-no-exif_0.jpg"))
-
-	// DB landed under $HOME/.fotobank, not in CWD or under a literal "~".
+	// The vault and DB landed under $HOME/.fotobank, not in CWD or under a literal "~".
+	_, err = os.Stat(filepath.Join(home, ".fotobank", "docbank"))
+	r.NoError(err)
 	_, err = os.Stat(filepath.Join(home, ".fotobank", "fotobank.sqlite"))
 	r.NoError(err)
 

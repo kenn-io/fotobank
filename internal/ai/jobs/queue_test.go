@@ -300,7 +300,7 @@ func TestPromoteThumbReadyBlocked(t *testing.T) {
 
 	// Force the source media into a non-ready thumb_status; SeedPhoto
 	// inserts 'ready' so we override it.
-	_, err := rw.ExecContext(ctx, `UPDATE media SET thumb_status='pending' WHERE id=?`, mids[0])
+	_, err := rw.ExecContext(ctx, `UPDATE assets SET thumb_status='pending' WHERE id=?`, mids[0])
 	r.NoError(err)
 
 	r.NoError(q.Enqueue(ctx, mids[0], ai.TaskTag, fp))
@@ -315,7 +315,7 @@ func TestPromoteThumbReadyBlocked(t *testing.T) {
 	r.NoError(err)
 	r.Equal(0, n)
 
-	_, err = rw.ExecContext(ctx, `UPDATE media SET thumb_status='ready' WHERE id=?`, mids[0])
+	_, err = rw.ExecContext(ctx, `UPDATE assets SET thumb_status='ready' WHERE id=?`, mids[0])
 	r.NoError(err)
 	n, err = q.PromoteThumbReadyBlocked(ctx, ai.TaskTag)
 	r.NoError(err)

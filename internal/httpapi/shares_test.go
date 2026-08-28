@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/fotobank/internal/service"
 	"go.kenn.io/fotobank/internal/share"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
 
 type sharesHTTPFixture struct {
@@ -31,6 +32,15 @@ type sharesHTTPFixture struct {
 	media   *media.Repo
 	display *share.PrincipalDisplayRepo
 	db      *db.DB
+}
+
+func (fx *sharesHTTPFixture) seedMedia(t *testing.T, filename string) media.Media {
+	t.Helper()
+	return assetfixture.Insert(t, fx.media, media.Media{
+		ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
+		MimeType: "image/jpeg", OriginalFilename: filename,
+		ImportedAt: time.Now().UTC().Truncate(time.Second), ThumbStatus: "pending",
+	})
 }
 
 func newSharesHTTPFixture(t *testing.T) *sharesHTTPFixture {
@@ -68,13 +78,7 @@ func (fx *sharesHTTPFixture) seedAlbumWithMedia(t *testing.T) string {
 	ctx := context.Background()
 	a, err := fx.albums.Create(ctx, fx.owner, "T")
 	require.NoError(t, err)
-	m := media.Media{
-		ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
-		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
-		Size: 100, Checksum: "cs" + uuid.NewString(), ThumbStatus: "pending",
-	}
-	require.NoError(t, fx.media.Insert(ctx, m))
+	m := fx.seedMedia(t, "x.jpg")
 	_, _, err = fx.albums.AddMedia(ctx, a.ID, []string{m.ID}, fx.owner)
 	require.NoError(t, err)
 	return a.ID
@@ -192,13 +196,7 @@ func TestSharesGetMediaSetReturnsMediaIDs(t *testing.T) {
 	ctx := context.Background()
 	fx := newSharesHTTPFixture(t)
 	// Seed one media owned by fx.owner so the scope has something to point at.
-	m := media.Media{
-		ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
-		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
-		Size: 100, Checksum: "cs" + uuid.NewString(), ThumbStatus: "pending",
-	}
-	r.NoError(fx.media.Insert(ctx, m))
+	m := fx.seedMedia(t, "x.jpg")
 
 	s, err := fx.shares.Create(ctx, service.CreateShareRequest{
 		Grantee: owners.Principal{Hub: "h", UserID: "alice"}, TargetType: share.TargetMediaSet,
@@ -357,18 +355,8 @@ func TestSharesPreviewMediaSetExposesFrozenMediaIDs(t *testing.T) {
 	r := require.New(t)
 	fx := newSharesHTTPFixture(t)
 	// Seed two media rows so we can build a media_set scope over them.
-	m1 := media.Media{
-		ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
-		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
-		Size: 100, Checksum: "cs1-" + uuid.NewString(), ThumbStatus: "pending",
-	}
-	m2 := m1
-	m2.ID = uuid.NewString()
-	m2.Path = "2024/" + uuid.NewString() + ".jpg"
-	m2.Checksum = "cs2-" + uuid.NewString()
-	r.NoError(fx.media.Insert(context.Background(), m1))
-	r.NoError(fx.media.Insert(context.Background(), m2))
+	m1 := fx.seedMedia(t, "x.jpg")
+	m2 := fx.seedMedia(t, "y.jpg")
 
 	s, err := fx.shares.Create(context.Background(), service.CreateShareRequest{
 		Grantee: owners.Principal{Hub: "h", UserID: "alice"}, TargetType: share.TargetMediaSet,
@@ -514,20 +502,8 @@ func TestSharesListIncludesTargetSummaryForBothTypes(t *testing.T) {
 	r.NoError(err)
 
 	// media_set with two frozen members.
-	m1 := media.Media{
-		ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
-		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
-		Size: 100, Checksum: "cs" + uuid.NewString(), ThumbStatus: "pending",
-	}
-	r.NoError(fx.media.Insert(ctx, m1))
-	m2 := media.Media{
-		ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
-		OriginalFilename: "y.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
-		Size: 100, Checksum: "cs" + uuid.NewString(), ThumbStatus: "pending",
-	}
-	r.NoError(fx.media.Insert(ctx, m2))
+	m1 := fx.seedMedia(t, "x.jpg")
+	m2 := fx.seedMedia(t, "y.jpg")
 	setScope, err := fx.shares.Create(ctx, service.CreateShareRequest{
 		Grantee:    owners.Principal{Hub: "h", UserID: "alice"},
 		TargetType: share.TargetMediaSet, MediaIDs: []string{m1.ID, m2.ID},
@@ -598,13 +574,7 @@ func TestSharesGetMediaSetIncludesTargetSummary(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	fx := newSharesHTTPFixture(t)
-	m := media.Media{
-		ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
-		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
-		Size: 100, Checksum: "cs" + uuid.NewString(), ThumbStatus: "pending",
-	}
-	r.NoError(fx.media.Insert(ctx, m))
+	m := fx.seedMedia(t, "x.jpg")
 	s, err := fx.shares.Create(ctx, service.CreateShareRequest{
 		Grantee:    owners.Principal{Hub: "h", UserID: "alice"},
 		TargetType: share.TargetMediaSet, MediaIDs: []string{m.ID},
@@ -637,13 +607,7 @@ func TestSharesListNextOffsetPaginates(t *testing.T) {
 	// Seed five media rows owned by fx.owner and mint one media_set
 	// scope per row so List has five scopes to paginate over.
 	for range 5 {
-		m := media.Media{
-			ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
-			MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
-			OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
-			Size: 100, Checksum: "cs" + uuid.NewString(), ThumbStatus: "pending",
-		}
-		r.NoError(fx.media.Insert(ctx, m))
+		m := fx.seedMedia(t, "x.jpg")
 		_, err := fx.shares.Create(ctx, service.CreateShareRequest{
 			Grantee: owners.Principal{Hub: "h", UserID: "alice"}, TargetType: share.TargetMediaSet,
 			MediaIDs: []string{m.ID},

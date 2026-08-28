@@ -2,11 +2,17 @@ package content
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"go.kenn.io/docbank"
+
+	"go.kenn.io/fotobank/internal/errs"
 )
 
 type Config struct {
@@ -72,9 +78,22 @@ type Read struct {
 	Reader    VerifiedReadCloser
 }
 
+type RangeRead struct {
+	VersionID string
+	SHA256    string
+	MediaType string
+	Size      int64
+	Offset    int64
+	Length    int64
+	Reader    io.ReadCloser
+}
+
 type Adapter struct {
-	vault    *docbank.Vault
-	mutation sync.Mutex
+	vault     *docbank.Vault
+	mutation  sync.Mutex
+	root      string
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func Open(ctx context.Context, cfg Config) (*Adapter, error) {
@@ -82,14 +101,65 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 	if err != nil {
 		return nil, translateError(err)
 	}
-	return &Adapter{vault: vault}, nil
+	root, err := filepath.EvalSymlinks(cfg.Root)
+	if err != nil {
+		_ = vault.Close()
+		return nil, fmt.Errorf("resolve opened Docbank root: %w", err)
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		_ = vault.Close()
+		return nil, fmt.Errorf("make Docbank root absolute: %w", err)
+	}
+	return &Adapter{vault: vault, root: filepath.Clean(root)}, nil
 }
 
 func (a *Adapter) Close() error {
 	if a == nil || a.vault == nil {
 		return nil
 	}
-	return translateError(a.vault.Close())
+	a.closeOnce.Do(func() {
+		a.closeErr = translateError(a.vault.Close())
+	})
+	return a.closeErr
+}
+
+// ValidateImportRoot rejects an import tree that is equal to, contains, or is
+// contained by the opened Docbank vault. Both paths must exist and are checked
+// after symlink resolution before discovery starts.
+func (a *Adapter) ValidateImportRoot(sourceRoot string) error {
+	if a == nil || a.vault == nil {
+		return fmt.Errorf("%w: Docbank vault is not open", errs.ErrContentUnavailable)
+	}
+	resolved, err := filepath.EvalSymlinks(sourceRoot)
+	if err != nil {
+		return fmt.Errorf("resolve import root: %w", err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return fmt.Errorf("make import root absolute: %w", err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return fmt.Errorf("stat import root: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%w: import root is not a directory", errs.ErrInvalidArgument)
+	}
+	if pathsOverlap(filepath.Clean(resolved), a.root) {
+		return fmt.Errorf("%w: import root overlaps Docbank vault", errs.ErrBadConfiguration)
+	}
+	return nil
+}
+
+func pathsOverlap(left, right string) bool {
+	return pathContains(left, right) || pathContains(right, left)
+}
+
+func pathContains(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && (rel == "." || (rel != ".." && !filepath.IsAbs(rel) &&
+		!strings.HasPrefix(rel, ".."+string(filepath.Separator))))
 }
 
 func (a *Adapter) Stat(ctx context.Context, virtualPath string) (Node, error) {
@@ -130,8 +200,45 @@ func (a *Adapter) OpenVersion(ctx context.Context, versionID string) (*Read, err
 	}, nil
 }
 
+func (a *Adapter) OpenVersionRange(
+	ctx context.Context,
+	versionID string,
+	offset int64,
+	length int64,
+) (*RangeRead, error) {
+	opened, err := a.vault.OpenVersionContentRange(ctx, versionID, docbank.ContentRangeOptions{
+		Offset: offset,
+		Length: length,
+	})
+	if err != nil {
+		return nil, translateError(err)
+	}
+	return &RangeRead{
+		VersionID: opened.Version.ID,
+		SHA256:    opened.Version.BlobHash,
+		MediaType: opened.Version.MediaType,
+		Size:      opened.Version.Size,
+		Offset:    opened.Offset,
+		Length:    opened.Length,
+		Reader:    &translatedReadCloser{ReadCloser: opened.Reader},
+	}, nil
+}
+
 type translatedReader struct {
 	docbank.VerifiedReadCloser
+}
+
+type translatedReadCloser struct {
+	io.ReadCloser
+}
+
+func (r *translatedReadCloser) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	return n, translateReaderError(err)
+}
+
+func (r *translatedReadCloser) Close() error {
+	return translateReaderError(r.ReadCloser.Close())
 }
 
 func translateReader(reader docbank.VerifiedReadCloser) VerifiedReadCloser {

@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
 
 func writeBasicConfig(t *testing.T, tmp string) string {
@@ -51,11 +52,10 @@ func seedReadyRow(t *testing.T, dbPath string) media.Media {
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	m := media.Media{
 		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "x-" + uuid.NewString() + ".jpg", ImportedAt: time.Now().UTC(),
-		Size: 1, Checksum: uuid.NewString(), ThumbStatus: "ready", ThumbVersion: 2,
+		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC(),
+		ThumbStatus: "ready", ThumbVersion: 2,
 	}
-	require.NoError(t, repo.Insert(context.Background(), m))
-	return m
+	return assetfixture.Insert(t, repo, m)
 }
 
 func TestThumbsRegenerateAllBumpsVersion(t *testing.T) {
@@ -174,11 +174,10 @@ func seedRowForOwner(t *testing.T, dbPath string, p owners.Principal) media.Medi
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	m := media.Media{
 		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "x-" + uuid.NewString() + ".jpg", ImportedAt: time.Now().UTC(),
-		Size: 1, Checksum: uuid.NewString(), ThumbStatus: "ready", ThumbVersion: 2,
+		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC(),
+		ThumbStatus: "ready", ThumbVersion: 2,
 	}
-	require.NoError(t, repo.Insert(context.Background(), m))
-	return m
+	return assetfixture.Insert(t, repo, m)
 }
 
 func TestThumbsRegenerateOwnerScopeOnlyTouchesThatOwner(t *testing.T) {

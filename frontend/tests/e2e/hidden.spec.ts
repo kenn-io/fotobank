@@ -234,39 +234,6 @@ test.describe("F2.4 hidden privacy", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Scenario 11: Sidecar cascade
-  //
-  // Uses hidden-cascade-primary / hidden-cascade-sidecar (seeded separately
-  // so hiding them doesn't contaminate pair-fixture-* fixtures used by
-  // library.spec.ts and albums.spec.ts).
-  // -------------------------------------------------------------------------
-  test("hiding a primary hides its sidecar (cascade)", async ({ page }) => {
-    page.on("dialog", (d) => d.accept());
-
-    // Verify sidecar is currently accessible (visible = no hidden_at).
-    const sidecarBefore = await page.request.get(
-      "/api/v1/media/hidden-cascade-sidecar",
-    );
-    expect(sidecarBefore.status()).toBe(200);
-
-    // Hide the primary via the Library UI.
-    await page.goto("/library");
-    await expect(page.getByLabel("Photo hidden-cascade-primary")).toBeVisible();
-    await page
-      .getByLabel("Photo hidden-cascade-primary")
-      .click({ modifiers: ["Meta"] });
-    await page.getByRole("button", { name: "Hide" }).click();
-    await expect(page.getByLabel("Photo hidden-cascade-primary")).toHaveCount(0);
-
-    // Sidecar must now be inaccessible: hidden_at cascaded from primary.
-    // GET /media/:id on a hidden sidecar without unlock cookie → 404 (anti-enum).
-    const sidecarAfter = await page.request.get(
-      "/api/v1/media/hidden-cascade-sidecar",
-    );
-    expect(sidecarAfter.status()).toBe(404);
-  });
-
-  // -------------------------------------------------------------------------
   // Scenario 12: Album hidden_count chip
   //
   // Uses hidden-album-target-1 (seeded visible, member of E2E Italy 2025)

@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 	"go.kenn.io/fotobank/internal/thumb"
 )
 
@@ -246,24 +247,22 @@ func TestExtractPreviewHandlesNEF(t *testing.T) {
 	path := "2024/n-" + uuid.NewString() + ".nef"
 	id := uuid.NewString()
 	m := media.Media{
-		ID:               id,
-		Owner:            fx.owner,
-		Type:             media.TypePhoto,
-		MimeType:         "image/x-nikon-nef",
-		Path:             path,
-		OriginalFilename: "x.nef",
-		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             int64(len(raw)),
-		Checksum:         uuid.NewString(),
-		ThumbStatus:      "pending",
+		ID:                 id,
+		Owner:              fx.owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/x-nikon-nef",
+		DocbankVirtualPath: path,
+		OriginalFilename:   "x.nef",
+		ImportedAt:         time.Now().UTC().Truncate(time.Second),
+		Size:               int64(len(raw)),
+		SHA256:             uuid.NewString(),
+		ThumbStatus:        "pending",
 	}
-	r.NoError(fx.repo.Insert(context.Background(), m))
-	_, err := fx.store.Write(context.Background(), fx.owner, path, bytes.NewReader(raw))
-	r.NoError(err)
+	assetfixture.InsertContent(t, fx.repo, fx.content, raw, m)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
 		WorkerConcurrency: 1,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,

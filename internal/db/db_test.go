@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil"
 )
 
@@ -123,13 +124,7 @@ func TestSchema_AIJobsAcceptsEmbedTask(t *testing.T) {
 	)
 	r.NoError(err)
 
-	mediaID := uuid.NewString()
-	_, err = rw.Exec(
-		`INSERT INTO media (id,owner_hub,owner_user_id,media_type,mime_type,path,imported_at,size,checksum,thumb_status,thumb_version,thumb_updated_at)
-		 VALUES (?, 'h1','u1','photo','image/jpeg','a.jpg',datetime('now'),1,'cs','pending',1,datetime('now'))`,
-		mediaID,
-	)
-	r.NoError(err)
+	mediaID := testutil.SeedPhoto(t, rw, owners.Principal{Hub: "h1", UserID: "u1"}, "a")
 
 	// Accepts 'embed'.
 	_, err = rw.Exec(
@@ -205,16 +200,9 @@ func TestSchema_MediaEmbeddingIDsUniqueVecID(t *testing.T) {
 	)
 	r.NoError(err)
 
-	m1 := uuid.NewString()
-	m2 := uuid.NewString()
-	for _, mid := range []string{m1, m2} {
-		_, err = rw.Exec(
-			`INSERT INTO media (id,owner_hub,owner_user_id,media_type,mime_type,path,imported_at,size,checksum,thumb_status,thumb_version,thumb_updated_at)
-			 VALUES (?, 'h1','u1','photo','image/jpeg',?,datetime('now'),1,?,'pending',1,datetime('now'))`,
-			mid, "p-"+mid, "cs-"+mid,
-		)
-		r.NoError(err)
-	}
+	p := owners.Principal{Hub: "h1", UserID: "u1"}
+	m1 := testutil.SeedPhoto(t, rw, p, "p1")
+	m2 := testutil.SeedPhoto(t, rw, p, "p2")
 
 	// Insert a generation row.
 	res, err := rw.Exec(
@@ -256,13 +244,7 @@ func TestSchema_MediaFTSPresentAndDeletable(t *testing.T) {
 	)
 	r.NoError(err)
 
-	mediaID := uuid.NewString()
-	_, err = rw.Exec(
-		`INSERT INTO media (id,owner_hub,owner_user_id,media_type,mime_type,path,imported_at,size,checksum,thumb_status,thumb_version,thumb_updated_at)
-		 VALUES (?, 'h1','u1','photo','image/jpeg','a.jpg',datetime('now'),1,'cs','pending',1,datetime('now'))`,
-		mediaID,
-	)
-	r.NoError(err)
+	mediaID := testutil.SeedPhoto(t, rw, owners.Principal{Hub: "h1", UserID: "u1"}, "a")
 
 	_, err = rw.Exec(
 		`INSERT INTO media_fts (media_id, caption_text, tag_label, filename, camera, lens, location_label)
@@ -278,8 +260,8 @@ func TestSchema_MediaFTSPresentAndDeletable(t *testing.T) {
 	).Scan(&got))
 	r.Equal(1, got)
 
-	// Delete cascade via media trigger.
-	_, err = rw.Exec(`DELETE FROM media WHERE id = ?`, mediaID)
+	// Delete cascade via the asset trigger.
+	_, err = rw.Exec(`DELETE FROM assets WHERE id = ?`, mediaID)
 	r.NoError(err)
 
 	r.NoError(d.ReadDB().QueryRow(
@@ -306,13 +288,7 @@ func TestSchema_FullMigrationSmoke(t *testing.T) {
 	)
 	r.NoError(err)
 
-	mediaID := uuid.NewString()
-	_, err = rw.Exec(
-		`INSERT INTO media (id,owner_hub,owner_user_id,media_type,mime_type,path,imported_at,size,checksum,thumb_status,thumb_version,thumb_updated_at)
-		 VALUES (?, 'h1','u1','photo','image/jpeg','a.jpg',datetime('now'),1,'cs','pending',1,datetime('now'))`,
-		mediaID,
-	)
-	r.NoError(err)
+	mediaID := testutil.SeedPhoto(t, rw, owners.Principal{Hub: "h1", UserID: "u1"}, "a")
 
 	tx, err := rw.Begin()
 	r.NoError(err)

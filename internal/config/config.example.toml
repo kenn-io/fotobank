@@ -63,7 +63,8 @@ dev_insecure_cookies = false         # dev/e2e only: allow non-Secure Hidden unl
 
 [imports]
 concurrent_workers = 2               # goroutines doing EXIF + hash inside a single 'fotobank import' invocation
-file_lock_path = ""                  # default: {nas.root}/.fotobank/import.lock
+settle_interval = "2s"               # size and mtime must remain unchanged across two observations
+file_lock_path = ""                  # default: {flash.root}/.fotobank/import.lock
 
 [thumbs]
 worker_concurrency = 4               # goroutines generating thumbnails per server process

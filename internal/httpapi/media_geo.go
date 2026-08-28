@@ -33,7 +33,7 @@ type listMediaGeoOutput struct {
 }
 
 // registerMediaGeo wires GET /api/v1/media/geo. Returns the full owner-
-// scoped set of geotagged primaries (sidecars excluded). When the
+// scoped set of geotagged ready assets. When the
 // caller passes ?include_hidden=true, the handler validates the
 // hidden-unlock cookie before delegating to the service.
 //

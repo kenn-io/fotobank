@@ -390,109 +390,23 @@ describe("MediaStore", () => {
   });
 });
 
-describe("toMedia for paired rows", () => {
-  it("populates paired_with_id, paired_with, and sidecars", () => {
-    const raw = {
-      id: "p",
-      owner_hub: "h",
-      owner_user_id: "u",
-      type: "photo",
-      mime_type: "image/jpeg",
-      original_filename: "IMG_1.JPG",
-      timestamp: null,
-      imported_at: "2024-06-15T14:30:00Z",
-      thumb_status: "ready",
-      thumb_version: 1,
-      sidecars: [
-        {
-          id: "s",
-          owner_hub: "h",
-          owner_user_id: "u",
-          type: "photo",
-          mime_type: "image/x-adobe-dng",
-          original_filename: "IMG_1.DNG",
-          timestamp: null,
-          imported_at: "2024-06-15T14:30:00Z",
-          thumb_status: "ready",
-          thumb_version: 1,
-          paired_with_id: "p",
-          paired_with: { id: "p", original_filename: "IMG_1.JPG" },
-        },
-      ],
-    };
-    const m = toMedia(raw);
-    expect(m).not.toBeNull();
-    expect(m?.sidecars).toBeDefined();
-    expect(m?.sidecars).toHaveLength(1);
-    expect(m?.sidecars?.[0]?.paired_with_id).toBe("p");
-    expect(m?.sidecars?.[0]?.paired_with?.id).toBe("p");
-  });
-
-  it("filters out hidden sidecars from media.sidecars", () => {
-    // Finding #3: a hidden sidecar must not appear in the primary's
-    // sidecars list — it belongs only in HiddenMediaStore.
-    const raw = {
-      id: "p",
+describe("toMedia asset files", () => {
+  it("maps the file graph from a detail response", () => {
+    const m = toMedia({
+      id: "asset",
       timestamp: "2024-06-15T14:30:00Z",
       width: 1,
       height: 1,
-      sidecars: [
-        {
-          id: "visible-sidecar",
-          timestamp: "2024-06-15T14:30:00Z",
-          width: 1,
-          height: 1,
-          paired_with_id: "p",
-          // no hidden_at — visible
-        },
-        {
-          id: "hidden-sidecar",
-          timestamp: "2024-06-15T14:30:00Z",
-          width: 1,
-          height: 1,
-          paired_with_id: "p",
-          hidden_at: "2024-06-20T10:00:00Z",
-        },
-      ],
-    };
-    const m = toMedia(raw);
-    expect(m?.sidecars).toHaveLength(1);
-    expect(m?.sidecars?.[0]?.id).toBe("visible-sidecar");
-  });
-
-  it("strips nested sidecars on the recursive call so a future backend leak can't hide deltas", () => {
-    // The backend contract is sidecars are exactly one level deep:
-    // a primary embeds sidecars, but each sidecar's own Sidecars is
-    // nil. sidecarsShallowEqual only inspects the top-level array, so a
-    // nested array on a sidecar would silently bypass dirty-tracking.
-    // The recursive toMedia call must drop the inner field so the
-    // mapped sidecar.sidecars is undefined regardless of input.
-    const raw = {
-      id: "p",
-      timestamp: "2024-06-15T14:30:00Z",
-      width: 1,
-      height: 1,
-      sidecars: [
-        {
-          id: "s",
-          timestamp: "2024-06-15T14:30:00Z",
-          width: 1,
-          height: 1,
-          paired_with_id: "p",
-          // Should never appear in real responses, but if a future
-          // backend bug leaks it the strip in toMedia keeps the
-          // merge guard's id-list comparison honest.
-          sidecars: [
-            { id: "leaked", timestamp: "2024-06-15T14:30:00Z", width: 1, height: 1 },
-          ],
-        },
-      ],
-    };
-    const m = toMedia(raw);
-    expect(m?.sidecars).toHaveLength(1);
-    expect(m?.sidecars?.[0]?.id).toBe("s");
-    expect(m?.sidecars?.[0]?.paired_with_id).toBe("p");
-    expect(m?.sidecars?.[0]?.sidecars).toBeUndefined();
+      files: [{
+        id: "raw",
+        role: "original",
+        mime_type: "image/x-adobe-dng",
+        original_filename: "IMG_1.DNG",
+        size: 1024,
+        sha256: "a".repeat(64),
+      }],
+    });
+    expect(m?.files).toEqual([expect.objectContaining({ id: "raw", role: "original" })]);
   });
 });
 
@@ -600,30 +514,15 @@ describe("MediaStore hidden invariant", () => {
   });
 });
 
-describe("MediaStore merge with sidecars", () => {
-  it("does not dirty the bucket when merging identical primary+sidecar input twice", async () => {
-    // The merge contract observable: month object refs are stable
-    // across an identical re-merge. If sidecarsShallowEqual returns
-    // true for the same input, the bucket isn't marked dirty and the same
-    // Month object is reused. This is the same hook the existing
-    // "leaves every month object ref stable" test uses for primaries.
+describe("MediaStore merge with asset files", () => {
+  it("does not dirty the bucket when file metadata is unchanged", async () => {
     const item = {
       id: "p",
       timestamp: "2024-06-15T14:30:00Z",
       width: 1,
       height: 1,
       thumb_version: 1,
-      sidecars: [
-        {
-          id: "s",
-          timestamp: "2024-06-15T14:30:00Z",
-          width: 1,
-          height: 1,
-          thumb_version: 1,
-          paired_with_id: "p",
-          paired_with: { id: "p", original_filename: "IMG_1.JPG" },
-        },
-      ],
+      files: [{ id: "s", role: "original", mime_type: "image/x-adobe-dng", original_filename: "IMG_1.DNG", size: 1, sha256: "a".repeat(64) }],
     };
     const fakeClient = {
       GET: vi.fn()
@@ -633,45 +532,27 @@ describe("MediaStore merge with sidecars", () => {
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     const before = store.months.find((m) => m.key === "2024-06");
-    expect(before?.items[0]?.sidecars).toHaveLength(1);
+    expect(before?.items[0]?.files).toHaveLength(1);
 
     await store.loadMore();
     const after = store.months.find((m) => m.key === "2024-06");
     expect(after).toBe(before);
   });
 
-  it("dirties the bucket when a sidecar's original_filename changes", async () => {
-    // A rename on the sidecar must propagate to the UI: MediaDetail's
-    // Files row reads sidecar.original_filename, so if the merge guard
-    // only compared ids the bucket would not be marked dirty and the
-    // stored Media would still carry the old filename. The visible
-    // hook is the same one the existing identical-input test uses:
-    // when the bucket is dirtied the month object ref is rebuilt, so
-    // we assert the new ref is NOT the previous one.
+  it("dirties the bucket when a file name changes", async () => {
     const page1Item = {
       id: "p",
       timestamp: "2024-06-15T14:30:00Z",
       width: 1,
       height: 1,
       thumb_version: 1,
-      sidecars: [
-        {
-          id: "s",
-          timestamp: "2024-06-15T14:30:00Z",
-          width: 1,
-          height: 1,
-          thumb_version: 1,
-          original_filename: "IMG_1.DNG",
-          paired_with_id: "p",
-          paired_with: { id: "p", original_filename: "IMG_1.JPG" },
-        },
-      ],
+      files: [{ id: "s", role: "original", mime_type: "image/x-adobe-dng", original_filename: "IMG_1.DNG", size: 1, sha256: "a".repeat(64) }],
     };
     const page2Item = {
       ...page1Item,
-      sidecars: [
+      files: [
         {
-          ...page1Item.sidecars[0],
+          ...page1Item.files[0],
           original_filename: "IMG_1_renamed.DNG",
         },
       ],
@@ -684,12 +565,12 @@ describe("MediaStore merge with sidecars", () => {
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     const before = store.months.find((m) => m.key === "2024-06");
-    expect(before?.items[0]?.sidecars?.[0]?.original_filename).toBe("IMG_1.DNG");
+    expect(before?.items[0]?.files?.[0]?.original_filename).toBe("IMG_1.DNG");
 
     await store.loadMore();
     const after = store.months.find((m) => m.key === "2024-06");
     expect(after).not.toBe(before);
-    expect(after?.items[0]?.sidecars?.[0]?.original_filename).toBe("IMG_1_renamed.DNG");
+    expect(after?.items[0]?.files?.[0]?.original_filename).toBe("IMG_1_renamed.DNG");
   });
 });
 

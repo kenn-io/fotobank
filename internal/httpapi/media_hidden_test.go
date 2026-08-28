@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
 	"go.kenn.io/fotobank/internal/media"
@@ -23,6 +24,7 @@ import (
 	"go.kenn.io/fotobank/internal/service"
 	"go.kenn.io/fotobank/internal/storage"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 	"go.kenn.io/fotobank/internal/thumb"
 )
 
@@ -34,6 +36,7 @@ type hiddenMediaFixture struct {
 	repo       *media.Repo
 	rw         *sql.DB
 	store      *storage.NASOnly
+	content    *content.Adapter
 	hiddenSvc  *hidden.Service
 	hiddenRepo *hidden.Repo
 	mediaSvc   *service.MediaService
@@ -52,7 +55,10 @@ func newHiddenMediaFixture(t *testing.T) hiddenMediaFixture {
 
 	store := storage.NewNASOnly(t.TempDir(), map[owners.Principal]string{p: "550e8400-e29b-41d4-a716-446655440000"})
 	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
-	mediaSvc := service.NewMediaService(mediaRepo, store)
+	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, contentStore.Close()) })
+	mediaSvc := service.NewMediaService(mediaRepo, contentStore)
 
 	thumbQ := thumb.NewQueue(d.WriteDB(), d.ReadDB())
 	thumbSvc := service.NewThumbService(mediaRepo, thumbQ, store)
@@ -80,6 +86,7 @@ func newHiddenMediaFixture(t *testing.T) hiddenMediaFixture {
 		repo:       mediaRepo,
 		rw:         d.WriteDB(),
 		store:      store,
+		content:    contentStore,
 		hiddenSvc:  hiddenSvc,
 		hiddenRepo: hiddenRepo,
 		mediaSvc:   mediaSvc,
@@ -111,7 +118,7 @@ func TestGetMediaHiddenReturns404WithoutCookie(t *testing.T) {
 	ctx := context.Background()
 
 	m := seedMedia(t, fx.repo, fx.owner, "2024/h.jpg", "cs-h1", media.TypePhoto)
-	r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
+	r.NoError(fx.repo.SetHidden(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
 
 	resp, err := http.Get(fx.srv.URL + "/api/v1/media/" + m.ID)
 	r.NoError(err)
@@ -125,7 +132,7 @@ func TestGetMediaHiddenReturns200WithCookie(t *testing.T) {
 	ctx := context.Background()
 
 	m := seedMedia(t, fx.repo, fx.owner, "2024/h2.jpg", "cs-h2", media.TypePhoto)
-	r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
+	r.NoError(fx.repo.SetHidden(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
 
 	cookie := setupHiddenAndUnlock(t, fx)
 
@@ -150,7 +157,7 @@ func TestGetMediaOriginalHiddenReturns404WithoutCookie(t *testing.T) {
 	// The auth check happens before any bytes are read, so we don't
 	// need to write actual bytes — the 404 fires at the Get step.
 	m := seedMedia(t, fx.repo, fx.owner, "2024/oh.jpg", "cs-oh", media.TypePhoto)
-	r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
+	r.NoError(fx.repo.SetHidden(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
 
 	resp, err := http.Get(fx.srv.URL + "/api/v1/media/" + m.ID + "/original")
 	r.NoError(err)
@@ -169,21 +176,19 @@ func TestGetMediaOriginalHiddenReturns200WithCookie(t *testing.T) {
 	// We need access to the underlying db to use seedOriginal, so we
 	// use mediaOriginalFixture helper pattern directly.
 	m := media.Media{
-		ID:               uuid.NewString(),
-		Owner:            fx.owner,
-		Type:             media.TypePhoto,
-		MimeType:         "image/jpeg",
-		Path:             "2024/oh2.jpg",
-		OriginalFilename: "oh2.jpg",
-		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             int64(len(payload)),
-		Checksum:         "cs-oh2",
-		ThumbStatus:      "pending",
+		ID:                 uuid.NewString(),
+		Owner:              fx.owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: "2024/oh2.jpg",
+		OriginalFilename:   "oh2.jpg",
+		ImportedAt:         time.Now().UTC().Truncate(time.Second),
+		Size:               int64(len(payload)),
+		SHA256:             "cs-oh2",
+		ThumbStatus:        "pending",
 	}
-	require.NoError(t, fx.repo.Insert(ctx, m))
-	_, err := fx.store.Write(ctx, fx.owner, "2024/oh2.jpg", bytes.NewReader(payload))
-	r.NoError(err)
-	r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
+	m = assetfixture.InsertContent(t, fx.repo, fx.content, payload, m)
+	r.NoError(fx.repo.SetHidden(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
 
 	cookie := setupHiddenAndUnlock(t, fx)
 
@@ -209,7 +214,10 @@ func newHiddenThumbFixture(t *testing.T) (hiddenMediaFixture, *thumb.Queue) {
 
 	store := storage.NewNASOnly(t.TempDir(), map[owners.Principal]string{p: "550e8400-e29b-41d4-a716-446655440000"})
 	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
-	mediaSvc := service.NewMediaService(mediaRepo, store)
+	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, contentStore.Close()) })
+	mediaSvc := service.NewMediaService(mediaRepo, contentStore)
 
 	thumbQ := thumb.NewQueue(d.WriteDB(), d.ReadDB())
 	thumbSvc := service.NewThumbService(mediaRepo, thumbQ, store)
@@ -235,6 +243,7 @@ func newHiddenThumbFixture(t *testing.T) (hiddenMediaFixture, *thumb.Queue) {
 		owner:      p,
 		repo:       mediaRepo,
 		store:      store,
+		content:    contentStore,
 		hiddenSvc:  hiddenSvc,
 		hiddenRepo: hiddenRepo,
 		mediaSvc:   mediaSvc,
@@ -251,21 +260,21 @@ func TestGetMediaThumbHiddenReturns404WithoutCookie(t *testing.T) {
 	// Seed a "ready" thumb row.
 	id := uuid.NewString()
 	m := media.Media{
-		ID:          id,
-		Owner:       fx.owner,
-		Type:        media.TypePhoto,
-		MimeType:    "image/jpeg",
-		Path:        "2024/" + id + ".jpg",
-		ImportedAt:  time.Now().UTC(),
-		Size:        1,
-		Checksum:    id,
-		ThumbStatus: "ready", ThumbVersion: 1,
+		ID:                 id,
+		Owner:              fx.owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: "2024/" + id + ".jpg",
+		ImportedAt:         time.Now().UTC(),
+		Size:               1,
+		SHA256:             id,
+		ThumbStatus:        "ready", ThumbVersion: 1,
 	}
-	require.NoError(t, fx.repo.Insert(ctx, m))
+	assetfixture.Insert(t, fx.repo, m)
 	key := thumb.ThumbKey(id, 1, thumb.SizeGrid)
 	_, err := fx.store.Write(ctx, fx.owner, key, strings.NewReader("thumb-bytes"))
 	r.NoError(err)
-	r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{id}, time.Now().UTC()))
+	r.NoError(fx.repo.SetHidden(ctx, fx.owner, []string{id}, time.Now().UTC()))
 
 	resp, err := http.Get(fx.srv.URL + "/api/v1/media/" + id + "/thumb?v=1&size=grid")
 	r.NoError(err)
@@ -280,22 +289,22 @@ func TestGetMediaThumbHiddenReturns200WithCookie(t *testing.T) {
 
 	id := uuid.NewString()
 	m := media.Media{
-		ID:          id,
-		Owner:       fx.owner,
-		Type:        media.TypePhoto,
-		MimeType:    "image/jpeg",
-		Path:        "2024/" + id + ".jpg",
-		ImportedAt:  time.Now().UTC(),
-		Size:        1,
-		Checksum:    id,
-		ThumbStatus: "ready", ThumbVersion: 1,
+		ID:                 id,
+		Owner:              fx.owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: "2024/" + id + ".jpg",
+		ImportedAt:         time.Now().UTC(),
+		Size:               1,
+		SHA256:             id,
+		ThumbStatus:        "ready", ThumbVersion: 1,
 	}
-	require.NoError(t, fx.repo.Insert(ctx, m))
+	assetfixture.Insert(t, fx.repo, m)
 	key := thumb.ThumbKey(id, 1, thumb.SizeGrid)
 	payload := []byte("hidden-thumb")
 	_, err := fx.store.Write(ctx, fx.owner, key, bytes.NewReader(payload))
 	r.NoError(err)
-	r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{id}, time.Now().UTC()))
+	r.NoError(fx.repo.SetHidden(ctx, fx.owner, []string{id}, time.Now().UTC()))
 
 	cookie := setupHiddenAndUnlock(t, fx)
 
@@ -327,7 +336,7 @@ func TestListHiddenMediaReturnsItemsWithCookie(t *testing.T) {
 
 	m1 := seedMedia(t, fx.repo, fx.owner, "2024/lh1.jpg", "cs-lh1", media.TypePhoto)
 	m2 := seedMedia(t, fx.repo, fx.owner, "2024/lh2.jpg", "cs-lh2", media.TypePhoto)
-	r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{m1.ID, m2.ID}, time.Now().UTC()))
+	r.NoError(fx.repo.SetHidden(ctx, fx.owner, []string{m1.ID, m2.ID}, time.Now().UTC()))
 
 	cookie := setupHiddenAndUnlock(t, fx)
 
@@ -354,7 +363,7 @@ func TestListHiddenMediaNextOffset(t *testing.T) {
 			"cs-lhno"+string(rune('0'+i)),
 			media.TypePhoto,
 		)
-		r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
+		r.NoError(fx.repo.SetHidden(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
 	}
 
 	cookie := setupHiddenAndUnlock(t, fx)
@@ -393,46 +402,6 @@ func TestHideMediaReturns409WhenNotConfigured(t *testing.T) {
 	r.Equal(http.StatusConflict, resp.StatusCode)
 }
 
-func TestHideMediaHidesPrimaryAndSidecar(t *testing.T) {
-	r := require.New(t)
-	fx := newHiddenMediaFixture(t)
-	ctx := context.Background()
-
-	primary := seedMedia(t, fx.repo, fx.owner, "2024/hp.jpg", "cs-hp", media.TypePhoto)
-	sidecar := seedMedia(t, fx.repo, fx.owner, "2024/hp.dng", "cs-hs", media.TypePhoto)
-	r.NoError(fx.repo.UpdatePairedWithID(ctx, sidecar.ID, &primary.ID))
-
-	// Hide does NOT require unlock cookie — just a configured credential.
-	r.NoError(fx.hiddenSvc.Setup(ctx, fx.owner, "pass"))
-
-	body, _ := json.Marshal(map[string]any{"media_ids": []string{primary.ID}})
-	resp, err := http.Post(
-		fx.srv.URL+"/api/v1/media/hidden:bulk",
-		"application/json",
-		bytes.NewReader(body),
-	)
-	r.NoError(err)
-	defer resp.Body.Close()
-	r.Equal(http.StatusOK, resp.StatusCode)
-
-	var out map[string]any
-	r.NoError(json.NewDecoder(resp.Body).Decode(&out))
-	succeeded := out["succeeded"].([]any)
-	r.Len(succeeded, 1)
-	r.Equal(primary.ID, succeeded[0])
-	failed, ok := out["failed"]
-	r.True(ok)
-	r.Empty(failed.([]any))
-
-	// Primary and sidecar both hidden.
-	gotPrimary, err := fx.repo.GetByID(ctx, primary.ID)
-	r.NoError(err)
-	r.NotNil(gotPrimary.HiddenAt)
-	gotSidecar, err := fx.repo.GetByID(ctx, sidecar.ID)
-	r.NoError(err)
-	r.NotNil(gotSidecar.HiddenAt)
-}
-
 // --- POST /api/v1/media/unhide:bulk (Unhide) ---
 
 func TestUnhideMediaReturns403WithoutCookie(t *testing.T) {
@@ -441,7 +410,7 @@ func TestUnhideMediaReturns403WithoutCookie(t *testing.T) {
 	ctx := context.Background()
 
 	m := seedMedia(t, fx.repo, fx.owner, "2024/un403.jpg", "cs-un403", media.TypePhoto)
-	r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
+	r.NoError(fx.repo.SetHidden(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
 	r.NoError(fx.hiddenSvc.Setup(ctx, fx.owner, "pass"))
 
 	body, _ := json.Marshal(map[string]any{"media_ids": []string{m.ID}})
@@ -461,7 +430,7 @@ func TestUnhideMediaSucceedsWithCookie(t *testing.T) {
 	ctx := context.Background()
 
 	m := seedMedia(t, fx.repo, fx.owner, "2024/un200.jpg", "cs-un200", media.TypePhoto)
-	r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
+	r.NoError(fx.repo.SetHidden(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
 
 	cookie := setupHiddenAndUnlock(t, fx)
 
@@ -498,7 +467,7 @@ func TestMediaDTOHiddenAtPresentForHiddenRow(t *testing.T) {
 	ctx := context.Background()
 
 	m := seedMedia(t, fx.repo, fx.owner, "2024/dto-h.jpg", "cs-dto-h", media.TypePhoto)
-	r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
+	r.NoError(fx.repo.SetHidden(ctx, fx.owner, []string{m.ID}, time.Now().UTC()))
 
 	cookie := setupHiddenAndUnlock(t, fx)
 	resp := getWithCookie(t, fx.srv.URL+"/api/v1/media/"+m.ID, cookie)
@@ -539,7 +508,7 @@ func TestListMediaNeverReturnsHiddenEvenWithUnlockCookie(t *testing.T) {
 
 	visible := seedMedia(t, fx.repo, fx.owner, "2024/vis.jpg", "cs-vis", media.TypePhoto)
 	hidden := seedMedia(t, fx.repo, fx.owner, "2024/hid.jpg", "cs-hid", media.TypePhoto)
-	r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{hidden.ID}, time.Now().UTC()))
+	r.NoError(fx.repo.SetHidden(ctx, fx.owner, []string{hidden.ID}, time.Now().UTC()))
 
 	cookie := setupHiddenAndUnlock(t, fx)
 
@@ -582,7 +551,10 @@ func TestHideMediaBulkBubbles5xxOnDBError(t *testing.T) {
 
 	store := storage.NewNASOnly(t.TempDir(), map[owners.Principal]string{p: "550e8400-e29b-41d4-a716-446655440000"})
 	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
-	mediaSvc := service.NewMediaService(mediaRepo, store)
+	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
+	r.NoError(err)
+	defer contentStore.Close()
+	mediaSvc := service.NewMediaService(mediaRepo, contentStore)
 	thumbQ := thumb.NewQueue(d.WriteDB(), d.ReadDB())
 	thumbSvc := service.NewThumbService(mediaRepo, thumbQ, store)
 	hiddenRepo := hidden.NewRepo(d.WriteDB(), d.ReadDB())

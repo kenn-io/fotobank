@@ -2,13 +2,16 @@ package testutil
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/owners"
 )
 
@@ -35,11 +38,30 @@ func SeedOwner(t *testing.T, rw *sql.DB, hub, user string) owners.Principal {
 func SeedPhoto(t *testing.T, rw *sql.DB, p owners.Principal, label string) string {
 	t.Helper()
 	id := uuid.NewString()
-	_, err := rw.ExecContext(context.Background(),
-		`INSERT INTO media(id, owner_hub, owner_user_id, media_type, mime_type, path,
-		 imported_at, size, checksum, thumb_status, thumb_version, import_source_path)
-		 VALUES (?,?,?, 'photo','image/jpeg', ?, ?, 0, ?, 'ready', 1, ?)`,
-		id, p.Hub, p.UserID, "/photos/"+label+".jpg", time.Now().UTC(), label+"-checksum", label)
+	ctx := context.Background()
+	_, err := rw.ExecContext(ctx,
+		`INSERT INTO assets(id, owner_hub, owner_user_id, state, media_type,
+		 imported_at, thumb_status, thumb_version)
+		 VALUES (?,?,?, 'pending','photo', ?, 'ready', 1)`,
+		id, p.Hub, p.UserID, time.Now().UTC())
+	require.NoError(t, err)
+	var storageKey string
+	require.NoError(t, rw.QueryRowContext(ctx,
+		`SELECT storage_key FROM owners WHERE hub=? AND user_id=?`, p.Hub, p.UserID,
+	).Scan(&storageKey))
+	fileID := uuid.NewString()
+	virtualPath, err := content.VirtualPath(storageKey, fileID, label+".jpg")
+	require.NoError(t, err)
+	digest := sha256.Sum256([]byte(label))
+	_, err = rw.ExecContext(ctx,
+		`INSERT INTO media_files(id, asset_id, owner_hub, owner_user_id, role,
+		 mime_type, original_filename, size, docbank_node_id, docbank_virtual_path,
+		 current_version_id, sha256)
+		 VALUES (?,?,?,?, 'primary','image/jpeg', ?, 0, ?, ?, ?, ?)`,
+		fileID, id, p.Hub, p.UserID, label+".jpg", time.Now().UnixNano(), virtualPath,
+		uuid.NewString(), hex.EncodeToString(digest[:]))
+	require.NoError(t, err)
+	_, err = rw.ExecContext(ctx, `UPDATE assets SET state='ready' WHERE id=?`, id)
 	require.NoError(t, err)
 	return id
 }

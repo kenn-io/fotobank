@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/fotobank/internal/service"
 	"go.kenn.io/fotobank/internal/share"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
 
 type shareFixture struct {
@@ -73,11 +74,11 @@ func (fx *shareFixture) seedMediaRow(t *testing.T) string {
 	t.Helper()
 	m := media.Media{
 		ID: uuid.NewString(), Owner: fx.owner, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/" + uuid.NewString() + ".jpg",
+		MimeType:         "image/jpeg",
 		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
-		Size: 100, Checksum: "cs" + uuid.NewString(), ThumbStatus: "pending",
+		ThumbStatus: "pending",
 	}
-	require.NoError(t, fx.media.Insert(context.Background(), m))
+	m = assetfixture.Insert(t, fx.media, m)
 	return m.ID
 }
 
@@ -192,11 +193,11 @@ func TestShareCreateRejectsCrossOwnerMediaSet(t *testing.T) {
 	r.NoError(err)
 	otherM := media.Media{
 		ID: uuid.NewString(), Owner: otherOwner, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/other.jpg",
+		MimeType:         "image/jpeg",
 		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
-		Size: 100, Checksum: "cso", ThumbStatus: "pending",
+		ThumbStatus: "pending",
 	}
-	r.NoError(fx.media.Insert(context.Background(), otherM))
+	otherM = assetfixture.Insert(t, fx.media, otherM)
 
 	_, err = fx.svc.Create(context.Background(), service.CreateShareRequest{
 		Grantee:    owners.Principal{Hub: "h", UserID: "a"},
@@ -630,30 +631,4 @@ func TestShareServicePopulateTargetSummaryEmptyInput(t *testing.T) {
 	summaries, err := fx.svc.PopulateTargetSummary(context.Background(), nil)
 	require.NoError(t, err)
 	require.Empty(t, summaries)
-}
-
-func TestShareServiceCreateRejectsSidecarInMediaSet(t *testing.T) {
-	r := require.New(t)
-	fx := newShareFixture(t)
-	ctx := context.Background()
-
-	primary := insertTestMedia(t, fx.media, fx.owner, "2024/p.jpg", "cs-pri")
-	sidecar := insertTestMedia(t, fx.media, fx.owner, "2024/p.dng", "cs-sid")
-	r.NoError(fx.media.UpdatePairedWithID(ctx, sidecar.ID, &primary.ID))
-
-	// Primary alone — fine.
-	_, err := fx.svc.Create(ctx, service.CreateShareRequest{
-		Grantee:    owners.Principal{Hub: "h", UserID: "g"},
-		TargetType: share.TargetMediaSet,
-		MediaIDs:   []string{primary.ID},
-	}, fx.owner)
-	r.NoError(err)
-
-	// Sidecar — rejected.
-	_, err = fx.svc.Create(ctx, service.CreateShareRequest{
-		Grantee:    owners.Principal{Hub: "h", UserID: "g"},
-		TargetType: share.TargetMediaSet,
-		MediaIDs:   []string{sidecar.ID},
-	}, fx.owner)
-	r.ErrorIs(err, errs.ErrInvalidArgument)
 }

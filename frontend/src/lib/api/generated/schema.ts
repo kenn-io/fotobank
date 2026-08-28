@@ -809,6 +809,15 @@ export interface components {
             admin_settings_enabled: boolean;
             sharing_enabled: boolean;
         };
+        FileDTO: {
+            id: string;
+            mime_type: string;
+            original_filename: string;
+            role: string;
+            sha256: string;
+            /** Format: int64 */
+            size: number;
+        };
         HealthzOutputBody: {
             /**
              * Format: uri
@@ -960,9 +969,9 @@ export interface components {
             readonly $schema?: string;
             /** Format: double */
             aperture?: number;
-            checksum: string;
             /** Format: int64 */
             duration_ms?: number;
+            files?: components["schemas"]["FileDTO"][];
             focal_length?: string;
             /** Format: date-time */
             gps_at?: string;
@@ -984,11 +993,8 @@ export interface components {
             mime_type: string;
             model?: string;
             original_filename?: string;
-            paired_with?: components["schemas"]["PairSummaryDTO"];
-            paired_with_id?: string;
-            path: string;
+            sha256: string;
             shutter?: string;
-            sidecars?: components["schemas"]["MediaDTO"][] | null;
             /** Format: int64 */
             size: number;
             thumb_status: string;
@@ -1005,10 +1011,6 @@ export interface components {
             updated_at: string;
             updated_by: components["schemas"]["PrincipalRef"];
             value: unknown;
-        };
-        PairSummaryDTO: {
-            id: string;
-            original_filename: string;
         };
         PatchAlbumInputBody: {
             /**

@@ -1,6 +1,4 @@
-// Package media defines the in-memory media types and a SQLite-backed
-// repository for the `media` table. A row represents a single photo or
-// video that an owner has imported into this deployment.
+// Package media defines Fotobank's product assets and their files.
 package media
 
 import (
@@ -17,18 +15,22 @@ const (
 	TypeVideo Type = "video"
 )
 
-// Media is the in-memory representation of a media row.
+// Media is the product-facing projection of a ready asset and its primary
+// file. The public product still calls these items media; byte authority and
+// file relationships live in Docbank and media_files respectively.
 type Media struct {
-	ID               string
-	Owner            owners.Principal
-	Type             Type
-	MimeType         string
-	Path             string
-	OriginalFilename string
-	ImportedAt       time.Time
-	Timestamp        *time.Time
-	Size             int64
-	Checksum         string
+	ID                 string
+	Owner              owners.Principal
+	Type               Type
+	PrimaryFileID      string
+	MimeType           string
+	OriginalFilename   string
+	ImportedAt         time.Time
+	Timestamp          *time.Time
+	Size               int64
+	SHA256             string
+	CurrentVersionID   string
+	DocbankVirtualPath string
 
 	Make        string
 	Model       string
@@ -50,37 +52,12 @@ type Media struct {
 	GPSAt         *time.Time
 	LocationLabel string
 
-	// F2.2 RAW+JPEG pairing.
-	// Root-relative original path captured at import time. Substrate
-	// for pair detection. Empty for pre-F2.2 dev rows.
-	ImportSourcePath string
-	// FK to the JPEG primary when this row is a sidecar. NULL on
-	// primaries and standalones.
-	PairedWithID *string
-
 	ThumbStatus    string
 	ThumbVersion   int
 	ThumbUpdatedAt *time.Time
 
-	// F2.4 Hidden privacy. NULL = visible; non-NULL = hidden, set when
-	// the owner runs Hide. Cascades to sidecars via repo cascade methods;
-	// service-layer Hide/Unhide rejects sidecar input ids directly.
+	// Hidden privacy. NULL = visible; non-NULL = hidden.
 	HiddenAt *time.Time
-}
-
-// ReconcileRow is the slim media projection reconcile uses. Repo.List/
-// scanMedia walks 30-column rows and allocates ~22 sql.Null* boxes per
-// scan; reconcile only needs ID/Path/Size/Type/LensModel and pays the
-// rest of the alloc cost for nothing. ListAllForReconcile scans into
-// this struct directly so a 10k-row pass drops from ~65MB to a fraction
-// of that. Public so both internal/reconcile and any future bulk pass
-// (export, integrity audit) can adopt the same slim shape.
-type ReconcileRow struct {
-	ID        string
-	Path      string
-	Size      int64
-	Type      Type
-	LensModel string
 }
 
 // ListFilter narrows the List query.
@@ -93,12 +70,6 @@ type ListFilter struct {
 	Offset   int
 	// SortDesc sorts by timestamp desc when true; otherwise timestamp asc.
 	SortDesc bool
-	// F2.2 RAW+JPEG pairing. False at the service layer by default;
-	// service.MediaService.List clamps caller-supplied true values
-	// back to false so no HTTP route can surface sidecars in lists.
-	// Internal callers (pairing pass, backfill, reconcile) may set
-	// true.
-	IncludeSidecars bool
 	// F2.4 Hidden privacy. When false (default), List appends
 	// hidden_at IS NULL to the WHERE clause. Set true only by
 	// internal callers that explicitly need hidden rows (e.g.

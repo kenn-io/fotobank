@@ -14,8 +14,10 @@ import (
 
 	"go.kenn.io/fotobank/internal/auth/hidden"
 	"go.kenn.io/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
 
 // runHiddenCLI runs the CLI with background context, no stdin, returns
@@ -78,13 +80,12 @@ func seedHiddenMedia(t *testing.T, dbPath, hub, userID string) string {
 	defer func() { _ = d.Close() }()
 	id := uuid.NewString()
 	now := time.Now().UTC()
-	_, err := d.WriteDB().ExecContext(context.Background(),
-		`INSERT INTO media (id, owner_hub, owner_user_id, media_type, mime_type, path,
-		   imported_at, size, checksum, thumb_status, hidden_at)
-		 VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, ?, 1, ?, 'pending', ?)`,
-		id, hub, userID, "test/"+id+".jpg", now, "cksum-"+id, now,
-	)
-	require.NoError(t, err)
+	p := owners.Principal{Hub: hub, UserID: userID}
+	assetfixture.Insert(t, media.NewRepo(d.WriteDB(), d.ReadDB()), media.Media{
+		ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		OriginalFilename: id + ".jpg", ImportedAt: now, ThumbStatus: "pending",
+		HiddenAt: &now,
+	})
 	return id
 }
 
@@ -95,7 +96,7 @@ func hiddenAtIsSet(t *testing.T, dbPath, mediaID string) bool {
 	defer func() { _ = d.Close() }()
 	var hiddenAt sql.NullTime
 	err := d.ReadDB().QueryRowContext(context.Background(),
-		`SELECT hidden_at FROM media WHERE id = ?`, mediaID,
+		`SELECT hidden_at FROM assets WHERE id = ?`, mediaID,
 	).Scan(&hiddenAt)
 	require.NoError(t, err)
 	return hiddenAt.Valid

@@ -187,7 +187,7 @@ func (r *Repo) ListForFingerprintByOwner(ctx context.Context, task ai.Task, fp a
 	q := `
 		SELECT f.media_id, f.last_error, f.last_error_kind, f.attempt_count, f.failed_at
 		  FROM ai_failures f
-		  JOIN media m ON m.id = f.media_id
+		  JOIN assets m ON m.id = f.media_id AND m.state = 'ready'
 		 WHERE f.task=? AND f.model_id=? AND f.prompt_version=? AND f.input_profile=?
 		   AND m.owner_hub=? AND m.owner_user_id=?`
 	args := []any{string(task), fp.ModelID, fp.PromptVersion, fp.InputProfile, hub, userID}
@@ -278,7 +278,7 @@ func (r *Repo) CountForFingerprint(ctx context.Context, task ai.Task, fp ai.Fing
 func (r *Repo) CountForFingerprintByOwner(ctx context.Context, task ai.Task, fp ai.Fingerprint, hub, userID string) (int, error) {
 	row := r.ro.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM ai_failures f
-		  JOIN media m ON m.id = f.media_id
+		  JOIN assets m ON m.id = f.media_id AND m.state = 'ready'
 		 WHERE f.task=? AND f.model_id=? AND f.prompt_version=? AND f.input_profile=?
 		   AND m.owner_hub=? AND m.owner_user_id=?`,
 		string(task), fp.ModelID, fp.PromptVersion, fp.InputProfile, hub, userID)

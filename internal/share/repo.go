@@ -94,7 +94,7 @@ func (r *Repo) GetByUUID(ctx context.Context, uuidStr string) (ScopeDetail, erro
 		// after scope creation is not exposed to the grantee.
 		rows, qerr := r.ro.QueryContext(ctx,
 			`SELECT sm.media_id FROM scope_media sm
-			   JOIN media m ON m.id = sm.media_id
+			   JOIN assets m ON m.id = sm.media_id AND m.state = 'ready'
 			  WHERE sm.scope_uuid = ? AND m.hidden_at IS NULL
 			  ORDER BY sm.media_id`,
 			uuidStr)
@@ -587,13 +587,8 @@ func (r *Repo) ValidateHeaderScopes(
 // owner_user_id is a belt-and-braces guard so a bug in the Go-side
 // degradation cannot leak a dropped-owner scope through the DB layer.
 //
-// Sidecar transitive coverage (F2.2 §8.2): a request for a sidecar's
-// id is also authorised when the sidecar's paired primary is itself
-// covered. The query expresses this by matching scope_media.media_id /
-// album_media.media_id against either the requested mediaID directly
-// or its primary (looked up via media.paired_with_id). Listing-side
-// queries (ListSharedMediaIDs) deliberately keep their primary-only
-// behavior — sidecars are downloadable attachments, not grid rows.
+// The requested ID is an asset ID. Files inside that asset inherit the
+// asset's access decision and are never independent sharing targets.
 func (r *Repo) CoverMediaByScopes(
 	ctx context.Context,
 	validated []Scope,
@@ -604,7 +599,7 @@ func (r *Repo) CoverMediaByScopes(
 		return AccessDecision{}, nil
 	}
 	valRows := make([]string, 0, len(validated))
-	args := make([]any, 0, len(validated)*4+7)
+	args := make([]any, 0, len(validated)*4+4)
 	for _, s := range validated {
 		valRows = append(valRows, "(?, ?, ?, ?)")
 		var albumID any
@@ -613,28 +608,17 @@ func (r *Repo) CoverMediaByScopes(
 		}
 		args = append(args, s.UUID, string(s.TargetType), albumID, boolToInt(s.AllowDownload))
 	}
-	// Seven placeholders: owner.Hub, owner.UserID, mediaID for the
-	// top-level hidden_at IS NULL guard, then mediaID twice in the
-	// media_set EXISTS (direct id + paired_with_id lookup), then
-	// mediaID twice again in the album_live EXISTS.
+	// Five placeholders: owner, the requested ready asset, and both membership branches.
 	args = append(args,
 		owner.Hub, owner.UserID,
 		mediaID,
-		mediaID, mediaID,
-		mediaID, mediaID,
+		mediaID,
+		mediaID,
 	)
 
-	// The OR-paired_with_id branch is wrapped together with the direct
-	// id match inside each EXISTS so the surrounding AND-joined
-	// predicates (owner filter, target_type/target_album_id pinning)
-	// continue to bind. SQL precedence makes AND tighter than OR; the
-	// inner parentheses prevent the sidecar branch from short-circuiting
-	// the outer guards.
-	//
 	// hidden_at IS NULL guard: the EXISTS clauses still hold for
 	// scope_media / album_media membership. The top-level AND on the
-	// media row for the requested id ensures a hidden photo (or a sidecar
-	// whose primary is hidden) cannot pass through to the grantee.
+	// asset ensures a hidden photo cannot pass through to the grantee.
 	// Grantee reads have no IncludeHidden escape hatch.
 	q := `
 WITH validated(uuid, target_type, target_album_id, allow_download) AS (
@@ -644,19 +628,17 @@ SELECT v.uuid, v.target_album_id, v.allow_download
   FROM validated v
   JOIN scopes s ON s.uuid = v.uuid
  WHERE s.owner_hub = ? AND s.owner_user_id = ?
-   AND EXISTS (SELECT 1 FROM media WHERE id = ? AND hidden_at IS NULL)
+   AND EXISTS (SELECT 1 FROM assets WHERE id = ? AND state = 'ready' AND hidden_at IS NULL)
    AND (
          (v.target_type = 'media_set' AND EXISTS (
              SELECT 1 FROM scope_media sm
               WHERE sm.scope_uuid = v.uuid
-                AND (sm.media_id = ?
-                     OR sm.media_id = (SELECT paired_with_id FROM media WHERE id = ?))
+                AND sm.media_id = ?
          ))
       OR (v.target_type = 'album_live' AND EXISTS (
              SELECT 1 FROM album_media am
               WHERE am.album_id = v.target_album_id
-                AND (am.media_id = ?
-                     OR am.media_id = (SELECT paired_with_id FROM media WHERE id = ?))
+                AND am.media_id = ?
          ))
        )
 `
@@ -832,7 +814,7 @@ WITH validated(uuid, target_type, target_album_id, allow_download) AS (
 SELECT m.id,
        COALESCE(m.timestamp, m.imported_at) AS display_time,
        MAX(covers.allow_download) AS can_download
-  FROM media m
+  FROM assets m
   JOIN (
       SELECT sm.media_id AS media_id, v.allow_download
         FROM scope_media sm
@@ -995,7 +977,7 @@ func (r *Repo) CountSharedMediaByScope(ctx context.Context, scopeUUID string) (i
 		var n int
 		if err := r.ro.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM scope_media sm
-			   JOIN media m ON m.id = sm.media_id
+			   JOIN assets m ON m.id = sm.media_id AND m.state = 'ready'
 			  WHERE sm.scope_uuid = ? AND m.hidden_at IS NULL`, scopeUUID,
 		).Scan(&n); err != nil {
 			return 0, fmt.Errorf("count scope_media: %w", err)
@@ -1008,7 +990,7 @@ func (r *Repo) CountSharedMediaByScope(ctx context.Context, scopeUUID string) (i
 		var n int
 		if err := r.ro.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM album_media am
-			  JOIN media m ON m.id = am.media_id
+			  JOIN assets m ON m.id = am.media_id AND m.state = 'ready'
 			 WHERE am.album_id = ? AND m.hidden_at IS NULL`, albumID.String,
 		).Scan(&n); err != nil {
 			return 0, fmt.Errorf("count album_media: %w", err)
@@ -1178,7 +1160,7 @@ func (r *Repo) ExpandScope(ctx context.Context, scopeUUID string) (ExpandedScope
 func (r *Repo) listAlbumMediaIDs(ctx context.Context, albumID string) ([]string, error) {
 	rows, err := r.ro.QueryContext(ctx,
 		`SELECT am.media_id FROM album_media am
-		   JOIN media m ON m.id = am.media_id
+		   JOIN assets m ON m.id = am.media_id AND m.state = 'ready'
           WHERE am.album_id = ? AND m.hidden_at IS NULL
           ORDER BY am.added_at DESC, am.media_id DESC`, albumID)
 	if err != nil {
@@ -1206,7 +1188,7 @@ func (r *Repo) albumSummary(ctx context.Context, albumID string) (AlbumSummary, 
 	err := r.ro.QueryRowContext(ctx,
 		`SELECT a.id, a.name, a.updated_at,
                 (SELECT COUNT(*) FROM album_media am
-                   JOIN media m ON m.id = am.media_id
+		           JOIN assets m ON m.id = am.media_id AND m.state = 'ready'
                   WHERE am.album_id = a.id AND m.hidden_at IS NULL)
            FROM albums a WHERE a.id = ?`, albumID,
 	).Scan(&s.ID, &s.Name, &s.UpdatedAt, &s.ItemCount)

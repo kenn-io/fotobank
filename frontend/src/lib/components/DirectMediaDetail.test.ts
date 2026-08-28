@@ -17,7 +17,7 @@ function defaultAppConfig(): AppConfigStore {
 
 function storeWith(raw: Record<string, unknown>): MediaStore {
   const s = new MediaStore({ GET: vi.fn() } as never);
-  s.mergeRaw([raw]);
+  s.mergeRaw([{ files: [], ...raw }]);
   return s;
 }
 

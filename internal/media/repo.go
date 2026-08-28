@@ -5,30 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
-
-	"golang.org/x/text/unicode/norm"
 
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/owners"
 )
 
-// ErrDuplicateChecksum wraps errs.ErrAlreadyExists and indicates that
-// the (owner, checksum) UNIQUE constraint fired on Insert. Callers that
-// already treat this as a dedup race can keep using errors.Is against
-// errs.ErrAlreadyExists; callers that need to distinguish it from a
-// path collision should use errors.Is against ErrDuplicateChecksum.
-var ErrDuplicateChecksum = fmt.Errorf("%w: duplicate checksum", errs.ErrAlreadyExists)
-
-// ErrDuplicatePath wraps errs.ErrAlreadyExists and indicates that the
-// (owner, path) UNIQUE constraint fired on Insert. The importer treats
-// this as a phantom-row collision (DB has a row claiming the path but
-// the NAS bytes are for different content).
-var ErrDuplicatePath = fmt.Errorf("%w: duplicate path", errs.ErrAlreadyExists)
-
-// Repo is a SQLite-backed store of media rows. It uses a split
+// Repo is a SQLite-backed store of ready asset projections. It uses a split
 // read/write pool: writes go through rw and reads through ro.
 type Repo struct {
 	rw *sql.DB
@@ -39,15 +23,15 @@ type Repo struct {
 func NewRepo(rw, ro *sql.DB) *Repo { return &Repo{rw: rw, ro: ro} }
 
 const mediaSelect = `SELECT
-	id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-	imported_at, timestamp, size, checksum,
-	make, model, lens_model, focal_length, shutter, width, height, iso, aperture,
-	duration_ms,
-	latitude, longitude, gps_at, location_label,
-	thumb_status, thumb_version, thumb_updated_at,
-	import_source_path, paired_with_id,
-	hidden_at
-FROM media`
+	a.id, a.owner_hub, a.owner_user_id, a.media_type,
+	f.id, f.mime_type, f.original_filename, a.imported_at, a.timestamp,
+	f.size, f.sha256, f.current_version_id, f.docbank_virtual_path,
+	a.make, a.model, a.lens_model, a.focal_length, a.shutter,
+	a.width, a.height, a.iso, a.aperture, a.duration_ms,
+	a.latitude, a.longitude, a.gps_at, a.location_label,
+	a.thumb_status, a.thumb_version, a.thumb_updated_at, a.hidden_at
+FROM assets a
+JOIN media_files f ON f.asset_id = a.id AND f.role = 'primary'`
 
 // mediaColumnsQualified is the m-prefixed projection used when the
 // query joins a CTE that also has an `id` column. Keep column order
@@ -56,25 +40,13 @@ FROM media`
 // in internal/album/repo.go as albumMediaMediaSelect; schema changes
 // must sync all four.
 const mediaColumnsQualified = `
-    m.id, m.owner_hub, m.owner_user_id, m.media_type, m.mime_type, m.path, m.original_filename,
-    m.imported_at, m.timestamp, m.size, m.checksum,
-    m.make, m.model, m.lens_model, m.focal_length, m.shutter, m.width, m.height, m.iso, m.aperture,
-    m.duration_ms,
-    m.latitude, m.longitude, m.gps_at, m.location_label,
-    m.thumb_status, m.thumb_version, m.thumb_updated_at,
-    m.import_source_path, m.paired_with_id,
-    m.hidden_at`
-
-const mediaInsert = `INSERT INTO media (
-	id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-	imported_at, timestamp, size, checksum,
-	make, model, lens_model, focal_length, shutter, width, height, iso, aperture,
-	duration_ms,
-	latitude, longitude, gps_at, location_label,
-	thumb_status, thumb_version, thumb_updated_at,
-	import_source_path, paired_with_id,
-	hidden_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    a.id, a.owner_hub, a.owner_user_id, a.media_type,
+    f.id, f.mime_type, f.original_filename, a.imported_at, a.timestamp,
+    f.size, f.sha256, f.current_version_id, f.docbank_virtual_path,
+    a.make, a.model, a.lens_model, a.focal_length, a.shutter,
+    a.width, a.height, a.iso, a.aperture, a.duration_ms,
+    a.latitude, a.longitude, a.gps_at, a.location_label,
+    a.thumb_status, a.thumb_version, a.thumb_updated_at, a.hidden_at`
 
 // WithWriteTx runs fn inside a transaction on the writer pool. The
 // closure can call any of the repo's *Tx methods (Insert is not yet
@@ -100,62 +72,10 @@ func (r *Repo) WithWriteTx(ctx context.Context, fn func(tx *sql.Tx) error) error
 	return nil
 }
 
-// Insert stores a new media row. Returns errs.ErrAlreadyExists (wrapped)
-// if a row already exists with the same (owner, checksum) or (owner, path).
-// Returns errs.ErrInvalidArgument if Latitude and Longitude are not both
-// set or both nil — the GPS coordinate pair is documented as atomic on
-// the Media struct.
-func (r *Repo) Insert(ctx context.Context, m Media) error {
-	if err := validateGPSPair(m.Latitude, m.Longitude); err != nil {
-		return fmt.Errorf("insert media: %w", err)
-	}
-	_, err := r.rw.ExecContext(ctx, mediaInsert,
-		m.ID,
-		m.Owner.Hub,
-		m.Owner.UserID,
-		string(m.Type),
-		m.MimeType,
-		m.Path,
-		nullStr(m.OriginalFilename),
-		m.ImportedAt,
-		nullTime(m.Timestamp),
-		m.Size,
-		m.Checksum,
-		nullStr(m.Make),
-		nullStr(m.Model),
-		nullStr(m.LensModel),
-		nullStr(m.FocalLength),
-		nullStr(m.Shutter),
-		nullInt(m.Width),
-		nullInt(m.Height),
-		nullInt(m.ISO),
-		nullFloat(m.Aperture),
-		nullInt64(m.DurationMs),
-		nullFloat(m.Latitude),
-		nullFloat(m.Longitude),
-		nullTime(m.GPSAt),
-		nullStr(m.LocationLabel),
-		m.ThumbStatus,
-		m.ThumbVersion,
-		nullTime(m.ThumbUpdatedAt),
-		m.ImportSourcePath,
-		pairedWithIDArg(m.PairedWithID),
-		nullTime(m.HiddenAt),
-	)
-	if err != nil {
-		if kind := uniqueViolationKind(err); kind != nil {
-			return fmt.Errorf("%w: media (owner=%s, checksum=%s, path=%s)",
-				kind, m.Owner, m.Checksum, m.Path)
-		}
-		return fmt.Errorf("insert media: %w", err)
-	}
-	return nil
-}
-
 // GetByID returns the media row with the given id. Returns errs.ErrNotFound
 // if no such row exists.
 func (r *Repo) GetByID(ctx context.Context, id string) (Media, error) {
-	row := r.ro.QueryRowContext(ctx, mediaSelect+" WHERE id = ?", id)
+	row := r.ro.QueryRowContext(ctx, mediaSelect+" WHERE a.id = ? AND a.state = 'ready'", id)
 	m, err := scanMedia(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Media{}, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, id)
@@ -166,36 +86,20 @@ func (r *Repo) GetByID(ctx context.Context, id string) (Media, error) {
 	return m, nil
 }
 
-// GetByOwnerChecksum returns the media row for (owner, checksum). Returns
+// GetByOwnerSHA256 returns the ready asset whose primary file has the given
+// content identity. Returns
 // errs.ErrNotFound if no such row exists.
-func (r *Repo) GetByOwnerChecksum(ctx context.Context, p owners.Principal, checksum string) (Media, error) {
+func (r *Repo) GetByOwnerSHA256(ctx context.Context, p owners.Principal, sha256 string) (Media, error) {
 	row := r.ro.QueryRowContext(ctx,
-		mediaSelect+" WHERE owner_hub = ? AND owner_user_id = ? AND checksum = ?",
-		p.Hub, p.UserID, checksum,
+		mediaSelect+" WHERE a.owner_hub = ? AND a.owner_user_id = ? AND f.sha256 = ? AND a.state = 'ready'",
+		p.Hub, p.UserID, sha256,
 	)
 	m, err := scanMedia(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Media{}, fmt.Errorf("%w: media owner=%s checksum=%s", errs.ErrNotFound, p, checksum)
+		return Media{}, fmt.Errorf("%w: media owner=%s sha256=%s", errs.ErrNotFound, p, sha256)
 	}
 	if err != nil {
-		return Media{}, fmt.Errorf("get media by checksum: %w", err)
-	}
-	return m, nil
-}
-
-// GetByOwnerPath returns the media row for (owner, path). Returns
-// errs.ErrNotFound if no such row exists.
-func (r *Repo) GetByOwnerPath(ctx context.Context, p owners.Principal, path string) (Media, error) {
-	row := r.ro.QueryRowContext(ctx,
-		mediaSelect+" WHERE owner_hub = ? AND owner_user_id = ? AND path = ?",
-		p.Hub, p.UserID, path,
-	)
-	m, err := scanMedia(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Media{}, fmt.Errorf("%w: media owner=%s path=%s", errs.ErrNotFound, p, path)
-	}
-	if err != nil {
-		return Media{}, fmt.Errorf("get media by path: %w", err)
+		return Media{}, fmt.Errorf("get media by SHA-256: %w", err)
 	}
 	return m, nil
 }
@@ -230,8 +134,10 @@ func (r *Repo) GetByIDs(ctx context.Context, ids []string) ([]Media, error) {
 		q := `
 WITH ord(id, pos) AS (VALUES ` + strings.Join(valRows, ",") + `)
 SELECT ` + mediaColumnsQualified + `
-  FROM media m
-  JOIN ord ON ord.id = m.id
+  FROM assets a
+  JOIN media_files f ON f.asset_id = a.id AND f.role = 'primary'
+  JOIN ord ON ord.id = a.id
+ WHERE a.state = 'ready'
  ORDER BY ord.pos
 `
 		rows, err := r.ro.QueryContext(ctx, q, args...)
@@ -278,28 +184,25 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Media, error) {
 		conds []string
 		args  []any
 	)
-	conds = append(conds, "owner_hub = ?", "owner_user_id = ?")
+	conds = append(conds, "a.owner_hub = ?", "a.owner_user_id = ?", "a.state = 'ready'")
 	args = append(args, f.Owner.Hub, f.Owner.UserID)
-	if !f.IncludeSidecars {
-		conds = append(conds, "paired_with_id IS NULL")
-	}
 	if !f.IncludeHidden {
-		conds = append(conds, "hidden_at IS NULL")
+		conds = append(conds, "a.hidden_at IS NULL")
 	}
 	if f.DateFrom != nil {
-		conds = append(conds, "timestamp >= ?")
+		conds = append(conds, "a.timestamp >= ?")
 		args = append(args, *f.DateFrom)
 	}
 	if f.DateTo != nil {
-		conds = append(conds, "timestamp < ?")
+		conds = append(conds, "a.timestamp < ?")
 		args = append(args, *f.DateTo)
 	}
 	appendFacetConds(&conds, &args, f.Type, f.Cameras, f.Lenses, f.AnyTagKeys)
 	if f.HasGPS != nil {
 		if *f.HasGPS {
-			conds = append(conds, "latitude IS NOT NULL AND longitude IS NOT NULL")
+			conds = append(conds, "a.latitude IS NOT NULL AND a.longitude IS NOT NULL")
 		} else {
-			conds = append(conds, "(latitude IS NULL OR longitude IS NULL)")
+			conds = append(conds, "(a.latitude IS NULL OR a.longitude IS NULL)")
 		}
 	}
 
@@ -316,7 +219,7 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Media, error) {
 
 	query := mediaSelect +
 		" WHERE " + strings.Join(conds, " AND ") +
-		" ORDER BY timestamp " + direction + " NULLS LAST, imported_at " + direction + ", id " + direction +
+		" ORDER BY a.timestamp " + direction + " NULLS LAST, a.imported_at " + direction + ", a.id " + direction +
 		" LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 
@@ -340,21 +243,18 @@ func (r *Repo) List(ctx context.Context, f ListFilter) ([]Media, error) {
 	return out, nil
 }
 
-// ListAll returns every media row for owner, paging through the database
-// in batches of defaultListLimit. It is intended for bulk operations such
-// as reconcile; user-facing queries should use List with an explicit Limit.
-// IncludeSidecars and IncludeHidden are both set so reconcile and pairing
-// backfill callers see every row regardless of pair or hidden status.
+// ListAll returns every ready asset for an owner, including hidden assets,
+// in pages of defaultListLimit. User-facing queries should use List with an
+// explicit limit.
 func (r *Repo) ListAll(ctx context.Context, owner owners.Principal) ([]Media, error) {
 	var out []Media
 	offset := 0
 	for {
 		page, err := r.List(ctx, ListFilter{
-			Owner:           owner,
-			Limit:           defaultListLimit,
-			Offset:          offset,
-			IncludeSidecars: true, // reconcile + bulk callers see every row
-			IncludeHidden:   true, // hidden rows must not be invisible to bulk ops
+			Owner:         owner,
+			Limit:         defaultListLimit,
+			Offset:        offset,
+			IncludeHidden: true,
 		})
 		if err != nil {
 			return nil, err
@@ -367,59 +267,10 @@ func (r *Repo) ListAll(ctx context.Context, owner owners.Principal) ([]Media, er
 	}
 }
 
-// ListAllForReconcile streams every media row for owner as a slim
-// ReconcileRow projection. Five columns (id, path, size, media_type,
-// lens_model) replace the 30-column Media scan, which drops the per-row
-// alloc cost (~22 sql.Null* boxes per row in scanMedia) and the cost of
-// growing the slice — we COUNT(*) up front and preallocate so there are
-// no resizes. IncludeSidecars/IncludeHidden are implicit true, matching
-// ListAll's bulk-pass contract.
-//
-// At 10k rows this saves ~50MB / 500k allocs vs ListAll. The query and
-// scan are intentionally kept here (not factored into a shared helper)
-// because the row shape is small enough that a generic interface would
-// add an alloc per row via interface{}.
-func (r *Repo) ListAllForReconcile(ctx context.Context, owner owners.Principal) ([]ReconcileRow, error) {
-	var n int
-	if err := r.ro.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM media WHERE owner_hub = ? AND owner_user_id = ?`,
-		owner.Hub, owner.UserID,
-	).Scan(&n); err != nil {
-		return nil, fmt.Errorf("count media for reconcile: %w", err)
-	}
-
-	rows, err := r.ro.QueryContext(ctx, `
-		SELECT id, path, size, media_type, lens_model
-		  FROM media
-		 WHERE owner_hub = ? AND owner_user_id = ?`,
-		owner.Hub, owner.UserID)
-	if err != nil {
-		return nil, fmt.Errorf("list media for reconcile: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	out := make([]ReconcileRow, 0, n)
-	var lensModel sql.NullString
-	for rows.Next() {
-		var rr ReconcileRow
-		var mediaType string
-		if err := rows.Scan(&rr.ID, &rr.Path, &rr.Size, &mediaType, &lensModel); err != nil {
-			return nil, fmt.Errorf("scan reconcile row: %w", err)
-		}
-		rr.Type = Type(mediaType)
-		rr.LensModel = lensModel.String
-		out = append(out, rr)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate reconcile rows: %w", err)
-	}
-	return out, nil
-}
-
 // Delete removes the media row with the given id. Returns errs.ErrNotFound
 // if no such row exists.
 func (r *Repo) Delete(ctx context.Context, id string) error {
-	res, err := r.rw.ExecContext(ctx, `DELETE FROM media WHERE id = ?`, id)
+	res, err := r.rw.ExecContext(ctx, `DELETE FROM assets WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete media: %w", err)
 	}
@@ -513,7 +364,7 @@ func (r *Repo) UpdateGPSTx(
 		return fmt.Errorf("update media gps: %w", err)
 	}
 	res, err := tx.ExecContext(ctx,
-		`UPDATE media
+		`UPDATE assets
 		    SET latitude = ?, longitude = ?, gps_at = ?, location_label = ?
 		  WHERE id = ?`,
 		nullFloat(lat),
@@ -554,9 +405,10 @@ func (r *Repo) ListGPSBackfillCandidates(
 	limit int,
 ) ([]Media, error) {
 	conds := []string{
-		"owner_hub = ?",
-		"owner_user_id = ?",
-		"media_type = ?",
+		"a.owner_hub = ?",
+		"a.owner_user_id = ?",
+		"a.media_type = ?",
+		"a.state = 'ready'",
 	}
 	args := []any{owner.Hub, owner.UserID, string(TypePhoto)}
 
@@ -564,18 +416,18 @@ func (r *Repo) ListGPSBackfillCandidates(
 	case GPSBackfillModeFull:
 		// no GPS predicate
 	case GPSBackfillModeFillMissing:
-		conds = append(conds, "latitude IS NULL AND longitude IS NULL")
+		conds = append(conds, "a.latitude IS NULL AND a.longitude IS NULL")
 	case GPSBackfillModeRelabel:
-		conds = append(conds, "latitude IS NOT NULL AND longitude IS NOT NULL")
+		conds = append(conds, "a.latitude IS NOT NULL AND a.longitude IS NOT NULL")
 	default:
 		return nil, fmt.Errorf("%w: unknown GPSBackfillMode %d", errs.ErrInvalidArgument, mode)
 	}
 	if since != nil {
-		conds = append(conds, "imported_at >= ?")
+		conds = append(conds, "a.imported_at >= ?")
 		args = append(args, *since)
 	}
 	if afterID != "" {
-		conds = append(conds, "id > ?")
+		conds = append(conds, "a.id > ?")
 		args = append(args, afterID)
 	}
 
@@ -585,7 +437,7 @@ func (r *Repo) ListGPSBackfillCandidates(
 
 	query := mediaSelect +
 		" WHERE " + strings.Join(conds, " AND ") +
-		" ORDER BY id LIMIT ?"
+		" ORDER BY a.id LIMIT ?"
 	args = append(args, limit)
 
 	rows, err := r.ro.QueryContext(ctx, query, args...)
@@ -615,41 +467,40 @@ type rowScanner interface {
 
 func scanMedia(s rowScanner) (Media, error) {
 	var (
-		m                Media
-		mediaType        string
-		originalFilename sql.NullString
-		timestamp        sql.NullTime
-		makeN            sql.NullString
-		modelN           sql.NullString
-		lensModel        sql.NullString
-		focalLength      sql.NullString
-		shutter          sql.NullString
-		width            sql.NullInt64
-		height           sql.NullInt64
-		iso              sql.NullInt64
-		aperture         sql.NullFloat64
-		durationMs       sql.NullInt64
-		latitude         sql.NullFloat64
-		longitude        sql.NullFloat64
-		gpsAt            sql.NullTime
-		locationLabel    sql.NullString
-		thumbUpdatedAt   sql.NullTime
-		importSourcePath sql.NullString
-		pairedWithID     sql.NullString
-		hiddenAt         sql.NullTime
+		m              Media
+		mediaType      string
+		timestamp      sql.NullTime
+		makeN          sql.NullString
+		modelN         sql.NullString
+		lensModel      sql.NullString
+		focalLength    sql.NullString
+		shutter        sql.NullString
+		width          sql.NullInt64
+		height         sql.NullInt64
+		iso            sql.NullInt64
+		aperture       sql.NullFloat64
+		durationMs     sql.NullInt64
+		latitude       sql.NullFloat64
+		longitude      sql.NullFloat64
+		gpsAt          sql.NullTime
+		locationLabel  sql.NullString
+		thumbUpdatedAt sql.NullTime
+		hiddenAt       sql.NullTime
 	)
 	if err := s.Scan(
 		&m.ID,
 		&m.Owner.Hub,
 		&m.Owner.UserID,
 		&mediaType,
+		&m.PrimaryFileID,
 		&m.MimeType,
-		&m.Path,
-		&originalFilename,
+		&m.OriginalFilename,
 		&m.ImportedAt,
 		&timestamp,
 		&m.Size,
-		&m.Checksum,
+		&m.SHA256,
+		&m.CurrentVersionID,
+		&m.DocbankVirtualPath,
 		&makeN,
 		&modelN,
 		&lensModel,
@@ -667,15 +518,12 @@ func scanMedia(s rowScanner) (Media, error) {
 		&m.ThumbStatus,
 		&m.ThumbVersion,
 		&thumbUpdatedAt,
-		&importSourcePath,
-		&pairedWithID,
 		&hiddenAt,
 	); err != nil {
 		return Media{}, err
 	}
 
 	m.Type = Type(mediaType)
-	m.OriginalFilename = originalFilename.String
 	if timestamp.Valid {
 		t := timestamp.Time
 		m.Timestamp = &t
@@ -721,11 +569,6 @@ func scanMedia(s rowScanner) (Media, error) {
 	if thumbUpdatedAt.Valid {
 		t := thumbUpdatedAt.Time
 		m.ThumbUpdatedAt = &t
-	}
-	m.ImportSourcePath = importSourcePath.String
-	if pairedWithID.Valid {
-		v := pairedWithID.String
-		m.PairedWithID = &v
 	}
 	if hiddenAt.Valid {
 		t := hiddenAt.Time
@@ -778,68 +621,8 @@ func nullTime(p *time.Time) sql.NullTime {
 	return sql.NullTime{Time: *p, Valid: true}
 }
 
-// pairedWithIDArg yields a driver-friendly NULL for a nil pointer and
-// the dereferenced string otherwise. paired_with_id is a nullable FK
-// to media.id; the empty-string-as-NULL coercion that nullStr applies
-// is wrong here because "" is not a valid id but is a meaningful empty
-// value for other text columns.
-func pairedWithIDArg(p *string) any {
-	if p == nil {
-		return nil
-	}
-	return *p
-}
-
-// ListByOwnerDirectories returns rows for owner whose
-// dir(import_source_path) is in dirs. Used by the F2.2 pairing pass
-// to fetch existing rows in directories touched by the just-imported
-// batch. Empty dirs returns nil. Rows with empty import_source_path
-// are excluded.
-//
-// Directory keys are NFC-normalized on both sides of the comparison
-// so a caller passing NFC dirs matches rows stored as NFD (e.g. macOS
-// filesystem-sourced paths) and vice versa.
-func (r *Repo) ListByOwnerDirectories(
-	ctx context.Context,
-	owner owners.Principal,
-	dirs []string,
-) ([]Media, error) {
-	if len(dirs) == 0 {
-		return nil, nil
-	}
-	dirSet := make(map[string]struct{}, len(dirs))
-	for _, d := range dirs {
-		dirSet[norm.NFC.String(d)] = struct{}{}
-	}
-	q := mediaSelect + `
-WHERE owner_hub = ? AND owner_user_id = ?
-  AND import_source_path != ''`
-	rows, err := r.ro.QueryContext(ctx, q, owner.Hub, owner.UserID)
-	if err != nil {
-		return nil, fmt.Errorf("list by owner directories: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	out := make([]Media, 0)
-	for rows.Next() {
-		m, err := scanMedia(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan media: %w", err)
-		}
-		if _, ok := dirSet[norm.NFC.String(filepath.Dir(m.ImportSourcePath))]; !ok {
-			continue
-		}
-		out = append(out, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate media: %w", err)
-	}
-	return out, nil
-}
-
-// UpdateLensModelIfNull writes lens_model for the given media row,
-// but only when the existing column is NULL. The reconcile backfill
-// uses this to fill in lens_model for rows imported before the column
-// existed without overwriting any value already present. Returns
+// UpdateLensModelIfNull writes lens_model for the given asset,
+// but only when the existing column is NULL. Returns
 // (true, nil) when the row was updated, (false, nil) when no row
 // changed (either the id was unknown or lens_model was already set),
 // and a wrapped error on any DB failure.
@@ -880,7 +663,7 @@ func (r *Repo) UpdateLensModelIfNullTx(
 		return false, nil
 	}
 	res, err := tx.ExecContext(ctx,
-		`UPDATE media SET lens_model = ? WHERE id = ? AND lens_model IS NULL`,
+		`UPDATE assets SET lens_model = ? WHERE id = ? AND lens_model IS NULL`,
 		lensModel, id,
 	)
 	if err != nil {
@@ -891,76 +674,6 @@ func (r *Repo) UpdateLensModelIfNullTx(
 		return false, fmt.Errorf("update lens_model rows affected: %w", err)
 	}
 	return n == 1, nil
-}
-
-// UpdatePairedWithID writes the paired_with_id column for a single
-// row. nil clears the FK to NULL; non-nil sets it to the primary's
-// id. The owner-consistency triggers in
-// internal/db/migrations/000001_initial_schema.up.sql RAISE if the
-// caller tries to point a sidecar at a primary owned by a different
-// principal — this is defence in depth; the service-layer pairing
-// pass already restricts candidates to one owner per (owner,
-// directory) group. Returns errs.ErrNotFound if no row matches id.
-func (r *Repo) UpdatePairedWithID(
-	ctx context.Context,
-	id string,
-	primaryID *string,
-) error {
-	res, err := r.rw.ExecContext(ctx,
-		`UPDATE media SET paired_with_id = ? WHERE id = ?`,
-		pairedWithIDArg(primaryID), id,
-	)
-	if err != nil {
-		return fmt.Errorf("update paired_with_id: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("update paired_with_id rows affected: %w", err)
-	}
-	if n == 0 {
-		return fmt.Errorf("%w: media id=%s", errs.ErrNotFound, id)
-	}
-	return nil
-}
-
-// GetSidecars returns rows whose paired_with_id == primaryID, sorted
-// by original_filename ascending with id ASC as a deterministic
-// tiebreaker. Used by the HTTP detail handler to embed sidecars in
-// a primary's DTO. Returns an empty slice when the primary has no
-// sidecars; never returns errs.ErrNotFound for that case (an empty
-// list is the legitimate result, not an error).
-//
-// When includeHidden is false, rows whose hidden_at IS NOT NULL are
-// excluded — a hidden sidecar under a visible primary must not leak.
-func (r *Repo) GetSidecars(
-	ctx context.Context,
-	primaryID string,
-	includeHidden bool,
-) ([]Media, error) {
-	q := mediaSelect + `
-WHERE paired_with_id = ?`
-	if !includeHidden {
-		q += ` AND hidden_at IS NULL`
-	}
-	q += `
-ORDER BY COALESCE(original_filename, '') ASC, id ASC`
-	rows, err := r.ro.QueryContext(ctx, q, primaryID)
-	if err != nil {
-		return nil, fmt.Errorf("get sidecars: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	out := make([]Media, 0)
-	for rows.Next() {
-		m, err := scanMedia(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan media: %w", err)
-		}
-		out = append(out, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate media: %w", err)
-	}
-	return out, nil
 }
 
 // GetByIDVisible returns the media row with the given id. If
@@ -976,6 +689,11 @@ func (r *Repo) GetByIDVisible(ctx context.Context, id string, includeHidden bool
 		return Media{}, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, id)
 	}
 	return m, nil
+}
+
+// ListFiles returns every file in an asset graph, ordered by role and ID.
+func (r *Repo) ListFiles(ctx context.Context, assetID string) ([]File, error) {
+	return NewAssetRepo(r.rw, r.ro).ListFiles(ctx, assetID)
 }
 
 // inPlaceholders returns a string of n comma-separated "?" placeholders.
@@ -1008,18 +726,18 @@ func appendFacetConds(
 	mediaType *Type, cameras, lenses, anyTagKeys []string,
 ) {
 	if mediaType != nil {
-		*conds = append(*conds, "media_type = ?")
+		*conds = append(*conds, "a.media_type = ?")
 		*args = append(*args, string(*mediaType))
 	}
 	if len(cameras) > 0 {
 		*conds = append(*conds,
-			"(make || ' ' || model) IN ("+placeholders(len(cameras))+")")
+			"(a.make || ' ' || a.model) IN ("+placeholders(len(cameras))+")")
 		for _, v := range cameras {
 			*args = append(*args, v)
 		}
 	}
 	if len(lenses) > 0 {
-		*conds = append(*conds, "lens_model IN ("+placeholders(len(lenses))+")")
+		*conds = append(*conds, "a.lens_model IN ("+placeholders(len(lenses))+")")
 		for _, v := range lenses {
 			*args = append(*args, v)
 		}
@@ -1028,7 +746,7 @@ func appendFacetConds(
 		*conds = append(*conds,
 			`EXISTS (SELECT 1 FROM media_tags mt
                       JOIN ai_results r ON mt.result_id = r.id
-                     WHERE r.media_id = media.id AND r.task = 'tag' AND r.status = 'active'
+                     WHERE r.media_id = a.id AND r.task = 'tag' AND r.status = 'active'
                        AND mt.tag_key IN (`+placeholders(len(anyTagKeys))+`))`)
 		for _, v := range anyTagKeys {
 			*args = append(*args, v)
@@ -1036,12 +754,11 @@ func appendFacetConds(
 	}
 }
 
-// SetHiddenCascade sets hidden_at = at on every owned row whose id IS in
-// ids OR paired_with_id IS in ids. Sidecars cascade with their primary.
+// SetHidden sets hidden_at on each owned asset ID.
 // Large id slices are chunked transparently to stay under the SQLite
 // parameter limit. All chunks run inside a single transaction so a
 // mid-chunk failure leaves no partial state.
-func (r *Repo) SetHiddenCascade(
+func (r *Repo) SetHidden(
 	ctx context.Context,
 	owner owners.Principal,
 	ids []string,
@@ -1052,7 +769,7 @@ func (r *Repo) SetHiddenCascade(
 	}
 	tx, err := r.rw.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("set hidden cascade: begin tx: %w", err)
+		return fmt.Errorf("set hidden: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -1061,31 +778,27 @@ func (r *Repo) SetHiddenCascade(
 		end := min(start+chunkSize, len(ids))
 		chunk := ids[start:end]
 		ph := inPlaceholders(len(chunk))
-		args := make([]any, 0, 3+len(chunk)*2)
+		args := make([]any, 0, 3+len(chunk))
 		args = append(args, at, owner.Hub, owner.UserID)
 		for _, id := range chunk {
 			args = append(args, id)
 		}
-		for _, id := range chunk {
-			args = append(args, id)
-		}
-		q := `UPDATE media
+		q := `UPDATE assets
 		   SET hidden_at = ?
 		 WHERE owner_hub = ? AND owner_user_id = ?
-		   AND (id IN (` + ph + `) OR paired_with_id IN (` + ph + `))`
+		   AND id IN (` + ph + `)`
 		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
-			return fmt.Errorf("set hidden cascade: %w", err)
+			return fmt.Errorf("set hidden: %w", err)
 		}
 	}
 	return tx.Commit()
 }
 
-// ClearHiddenCascade clears hidden_at on every owned row whose id IS in
-// ids OR paired_with_id IS in ids. Sidecars cascade with their primary.
+// ClearHidden clears hidden_at on each owned asset ID.
 // Large id slices are chunked transparently to stay under the SQLite
 // parameter limit. All chunks run inside a single transaction so a
 // mid-chunk failure leaves no partial state.
-func (r *Repo) ClearHiddenCascade(
+func (r *Repo) ClearHidden(
 	ctx context.Context,
 	owner owners.Principal,
 	ids []string,
@@ -1095,7 +808,7 @@ func (r *Repo) ClearHiddenCascade(
 	}
 	tx, err := r.rw.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("clear hidden cascade: begin tx: %w", err)
+		return fmt.Errorf("clear hidden: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -1104,20 +817,17 @@ func (r *Repo) ClearHiddenCascade(
 		end := min(start+chunkSize, len(ids))
 		chunk := ids[start:end]
 		ph := inPlaceholders(len(chunk))
-		args := make([]any, 0, 2+len(chunk)*2)
+		args := make([]any, 0, 2+len(chunk))
 		args = append(args, owner.Hub, owner.UserID)
 		for _, id := range chunk {
 			args = append(args, id)
 		}
-		for _, id := range chunk {
-			args = append(args, id)
-		}
-		q := `UPDATE media
+		q := `UPDATE assets
 		   SET hidden_at = NULL
 		 WHERE owner_hub = ? AND owner_user_id = ?
-		   AND (id IN (` + ph + `) OR paired_with_id IN (` + ph + `))`
+		   AND id IN (` + ph + `)`
 		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
-			return fmt.Errorf("clear hidden cascade: %w", err)
+			return fmt.Errorf("clear hidden: %w", err)
 		}
 	}
 	return tx.Commit()
@@ -1127,7 +837,7 @@ func (r *Repo) ClearHiddenCascade(
 // owns where hidden_at IS NOT NULL. Used by hidden.Service.Disable to
 // make all media visible again after the hidden feature is disabled.
 func (r *Repo) ClearAllHiddenForOwner(ctx context.Context, owner owners.Principal) error {
-	q := `UPDATE media
+	q := `UPDATE assets
 	   SET hidden_at = NULL
 	 WHERE owner_hub = ? AND owner_user_id = ?
 	   AND hidden_at IS NOT NULL`
@@ -1137,10 +847,7 @@ func (r *Repo) ClearAllHiddenForOwner(ctx context.Context, owner owners.Principa
 	return nil
 }
 
-// ListHidden returns primary and standalone hidden rows for owner,
-// paginated by limit/offset. Sidecars (paired_with_id IS NOT NULL) are
-// suppressed — they cascade with their primary so surfacing them
-// separately would be redundant.
+// ListHidden returns hidden ready assets for owner, paginated by limit/offset.
 //
 // Sort order: timestamp IS NULL ASC, timestamp DESC, imported_at DESC,
 // id DESC. Rows with a timestamp sort before null-timestamp rows;
@@ -1157,10 +864,9 @@ func (r *Repo) ListHidden(
 		offset = 0
 	}
 	q := mediaSelect + `
- WHERE owner_hub = ? AND owner_user_id = ?
-   AND hidden_at IS NOT NULL
-   AND paired_with_id IS NULL
- ORDER BY timestamp IS NULL ASC, timestamp DESC, imported_at DESC, id DESC
+ WHERE a.owner_hub = ? AND a.owner_user_id = ?
+   AND a.state = 'ready' AND a.hidden_at IS NOT NULL
+ ORDER BY a.timestamp IS NULL ASC, a.timestamp DESC, a.imported_at DESC, a.id DESC
  LIMIT ? OFFSET ?`
 	rows, err := r.ro.QueryContext(ctx, q, owner.Hub, owner.UserID, limit, offset)
 	if err != nil {
@@ -1181,9 +887,8 @@ func (r *Repo) ListHidden(
 	return out, nil
 }
 
-// ListGeo returns primary and standalone rows for owner that have GPS
-// coordinates. Sidecars (paired_with_id IS NOT NULL) and rows missing
-// either latitude or longitude are excluded. When IncludeHidden is
+// ListGeo returns ready assets for owner that have GPS coordinates. Rows
+// missing either latitude or longitude are excluded. When IncludeHidden is
 // false (default), hidden rows are also excluded; when true, all rows
 // — visible and hidden — are returned (the handler is expected to
 // have validated an unlock claim before calling).
@@ -1194,19 +899,18 @@ func (r *Repo) ListHidden(
 // before NULL-timestamp rows.
 func (r *Repo) ListGeo(ctx context.Context, f ListGeoFilter) ([]Media, error) {
 	conds := []string{
-		"owner_hub = ?", "owner_user_id = ?",
-		"latitude IS NOT NULL", "longitude IS NOT NULL",
-		"paired_with_id IS NULL",
+		"a.owner_hub = ?", "a.owner_user_id = ?", "a.state = 'ready'",
+		"a.latitude IS NOT NULL", "a.longitude IS NOT NULL",
 	}
 	args := []any{f.Owner.Hub, f.Owner.UserID}
 
 	if !f.IncludeHidden {
-		conds = append(conds, "hidden_at IS NULL")
+		conds = append(conds, "a.hidden_at IS NULL")
 	}
 	appendFacetConds(&conds, &args, f.Type, f.Cameras, f.Lenses, f.AnyTagKeys)
 
 	q := mediaSelect + " WHERE " + strings.Join(conds, " AND ") +
-		" ORDER BY timestamp IS NULL ASC, timestamp DESC, imported_at DESC, id DESC"
+		" ORDER BY a.timestamp IS NULL ASC, a.timestamp DESC, a.imported_at DESC, a.id DESC"
 	rows, err := r.ro.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list geo: %w", err)
@@ -1225,28 +929,4 @@ func (r *Repo) ListGeo(ctx context.Context, f ListGeoFilter) ([]Media, error) {
 		return nil, fmt.Errorf("iterate geo: %w", err)
 	}
 	return out, nil
-}
-
-// uniqueViolationKind inspects a SQLite error and returns the matching
-// sentinel (ErrDuplicateChecksum or ErrDuplicatePath) when the error is
-// a UNIQUE constraint violation on the media table. It returns nil for
-// any other error so the caller can distinguish a real SQL failure.
-func uniqueViolationKind(err error) error {
-	if err == nil {
-		return nil
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, "UNIQUE constraint failed") {
-		return nil
-	}
-	switch {
-	case strings.Contains(msg, "media.checksum"):
-		return ErrDuplicateChecksum
-	case strings.Contains(msg, "media.path"):
-		return ErrDuplicatePath
-	default:
-		// Unknown UNIQUE violation — fall back to the generic sentinel so
-		// callers using errors.Is(errs.ErrAlreadyExists) still match.
-		return errs.ErrAlreadyExists
-	}
 }

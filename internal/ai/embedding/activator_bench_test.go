@@ -222,8 +222,9 @@ func directEligibleCount(b *testing.B, d *db.DB) int {
 	b.Helper()
 	var n int
 	err := d.ReadDB().QueryRowContext(context.Background(), `
-		SELECT COUNT(*) FROM media m
+		SELECT COUNT(*) FROM assets m
 		 WHERE m.owner_hub = ? AND m.owner_user_id = ?
+		   AND m.state = 'ready'
 		   AND m.thumb_status = 'ready'
 		   AND m.hidden_at IS NULL
 		   AND NOT EXISTS (
@@ -244,9 +245,10 @@ func directEmbeddedCount(b *testing.B, d *db.DB, genID int64) int {
 	var n int
 	err := d.ReadDB().QueryRowContext(context.Background(), `
 		SELECT COUNT(*) FROM media_embedding_ids x
-		  JOIN media m ON m.id = x.media_id
+		  JOIN assets m ON m.id = x.media_id
 		 WHERE x.generation_id = ?
 		   AND m.owner_hub = ? AND m.owner_user_id = ?
+		   AND m.state = 'ready'
 		   AND m.thumb_status = 'ready'
 		   AND m.hidden_at IS NULL
 		   AND NOT EXISTS (

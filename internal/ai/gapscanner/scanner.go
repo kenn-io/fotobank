@@ -173,7 +173,7 @@ func (s *Scanner) candidates(ctx context.Context, req ScanRequest) ([]candidate,
 		for _, id := range req.MediaIDs {
 			var (
 				mt   string
-				stmt = `SELECT media_type FROM media WHERE id=?`
+				stmt = `SELECT media_type FROM assets WHERE id=? AND state='ready'`
 				args = []any{id}
 			)
 			if scoped {
@@ -191,9 +191,9 @@ func (s *Scanner) candidates(ctx context.Context, req ScanRequest) ([]candidate,
 		}
 		return out, nil
 	}
-	q := `SELECT m.id, m.media_type FROM media m`
+	q := `SELECT m.id, m.media_type FROM assets m`
 	args := []any{}
-	conds := []string{}
+	conds := []string{`m.state = 'ready'`}
 	if scoped {
 		conds = append(conds, `m.owner_hub=? AND m.owner_user_id=?`)
 		args = append(args, req.Owner.Hub, req.Owner.UserID)
@@ -340,8 +340,9 @@ func (req EmbedScanRequest) claimFingerprint() string {
 func (s *Scanner) embedCandidates(ctx context.Context, req EmbedScanRequest) ([]string, error) {
 	resultFP := req.resultFingerprint()
 	claimFP := req.claimFingerprint()
-	q := `SELECT m.id FROM media m
+	q := `SELECT m.id FROM assets m
 	 WHERE m.owner_hub = ? AND m.owner_user_id = ?
+	   AND m.state = 'ready'
 	   AND m.thumb_status = 'ready'
 	   AND (m.hidden_at IS NULL OR ?)
 	   AND NOT EXISTS (SELECT 1 FROM media_embedding_ids x

@@ -42,12 +42,12 @@ database file without its WAL state. Publication uses a temporary file,
 durability sync, and rename. Retention never treats an unparseable file as a
 valid managed snapshot.
 
-Current backup covers Fotobank metadata. Once Docbank is media authority, a
-coordinated backup must guarantee that every Docbank version referenced by the
-Fotobank snapshot exists in the published Docbank backup. It can take the short
-Fotobank snapshot first, fence destructive Docbank operations, then stream the
-append-only content backup without blocking ordinary appends for the full
-archive duration.
+Current backup covers Fotobank metadata only and is therefore not a complete
+media recovery mechanism. A coordinated backup must guarantee that every
+Docbank version referenced by the Fotobank snapshot exists in the published
+Docbank backup. It can take the short Fotobank snapshot first, fence destructive
+Docbank operations, then stream the append-only content backup without
+blocking ordinary appends for the full archive duration.
 
 Restore drills verify referenced blob content through bounded embedded
 Docbank verification. Whole-catalog metadata validation is a separate Docbank
@@ -67,11 +67,11 @@ do not become labels.
 
 ## Maintenance
 
-The active NAS authority still has `reconcile` for filesystem/database drift
-and `pair` for legacy RAW/JPEG rows. These commands disappear when the asset
-and Docbank cutover removes their underlying model. Docbank recovery and orphan
-reporting then operate from durable content operations instead of scanning NAS
-paths.
+The durable content-operation ledger, rather than a scan of NAS paths, is the
+source for Docbank recovery and orphan reporting. A pending operation means the
+cross-database import has not yet recorded a receipt; a conflict is terminal
+until an explicit resolution workflow is invoked. The importer persists those
+states today; an operator-facing recovery command has not been added yet.
 
 Garbage collection and destructive pruning are deliberate maintenance actions,
 not side effects of ordinary reads or cache eviction. Rebuildable caches may be

@@ -74,7 +74,7 @@ func (s *Service) AutocompleteTags(
 SELECT mt.tag_key, mt.tag_label, COUNT(*) AS cnt
 FROM media_tags mt
 JOIN ai_results r ON mt.result_id = r.id
-JOIN media m ON m.id = r.media_id
+JOIN assets m ON m.id = r.media_id AND m.state = 'ready'
 WHERE r.task = 'tag' AND r.status = 'active'
   AND m.owner_hub = ? AND m.owner_user_id = ?
   AND (m.hidden_at IS NULL OR ?)
@@ -131,8 +131,8 @@ func (s *Service) AutocompleteLocations(
 
 	const q = `
 SELECT m.location_label, COUNT(*) AS cnt
-FROM media m
-WHERE m.owner_hub = ? AND m.owner_user_id = ?
+FROM assets m
+WHERE m.state = 'ready' AND m.owner_hub = ? AND m.owner_user_id = ?
   AND (m.hidden_at IS NULL OR ?)
   AND m.location_label IS NOT NULL
   AND m.location_label LIKE ? ESCAPE '\'

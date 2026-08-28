@@ -20,22 +20,25 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/obs"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/storage"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 	"go.kenn.io/fotobank/internal/thumb"
 )
 
 // workerFixture wires a real SQLite DB, a NAS-backed Store, a Queue, and
 // an owner so tests can seed rows + bytes and observe worker transitions.
 type workerFixture struct {
-	rw    *sql.DB
-	repo  *media.Repo
-	queue *thumb.Queue
-	store storage.Store
-	owner owners.Principal
+	rw      *sql.DB
+	repo    *media.Repo
+	queue   *thumb.Queue
+	store   storage.Store
+	content *content.Adapter
+	owner   owners.Principal
 }
 
 func newWorkerFixture(t *testing.T) workerFixture {
@@ -50,7 +53,10 @@ func newWorkerFixture(t *testing.T) workerFixture {
 	)
 	require.NoError(t, err)
 	store := storage.NewNASOnly(t.TempDir(), map[owners.Principal]string{p: "550e8400-e29b-41d4-a716-446655440000"})
-	return workerFixture{rw: d.WriteDB(), repo: repo, queue: q, store: store, owner: p}
+	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, contentStore.Close()) })
+	return workerFixture{rw: d.WriteDB(), repo: repo, queue: q, store: store, content: contentStore, owner: p}
 }
 
 // seedPhotoRow inserts a pending photo row and writes real JPEG bytes to
@@ -60,21 +66,20 @@ func seedPhotoRow(t *testing.T, fx workerFixture, path string) string {
 	bs, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "photo-with-timestamp.jpg"))
 	require.NoError(t, err)
 	id := uuid.NewString()
+	bs = append(bs, id...)
 	m := media.Media{
-		ID:               id,
-		Owner:            fx.owner,
-		Type:             media.TypePhoto,
-		MimeType:         "image/jpeg",
-		Path:             path,
-		OriginalFilename: "x.jpg",
-		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             int64(len(bs)),
-		Checksum:         uuid.NewString(),
-		ThumbStatus:      "pending",
+		ID:                 id,
+		Owner:              fx.owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: path,
+		OriginalFilename:   "x.jpg",
+		ImportedAt:         time.Now().UTC().Truncate(time.Second),
+		Size:               int64(len(bs)),
+		SHA256:             uuid.NewString(),
+		ThumbStatus:        "pending",
 	}
-	require.NoError(t, fx.repo.Insert(context.Background(), m))
-	_, err = fx.store.Write(context.Background(), fx.owner, path, bytes.NewReader(bs))
-	require.NoError(t, err)
+	assetfixture.InsertContent(t, fx.repo, fx.content, bs, m)
 	return id
 }
 
@@ -84,18 +89,18 @@ func seedVideoRow(t *testing.T, fx workerFixture) string {
 	t.Helper()
 	id := uuid.NewString()
 	m := media.Media{
-		ID:               id,
-		Owner:            fx.owner,
-		Type:             media.TypeVideo,
-		MimeType:         "video/mp4",
-		Path:             "2024/v-" + id + ".mp4",
-		OriginalFilename: "v.mp4",
-		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             0,
-		Checksum:         uuid.NewString(),
-		ThumbStatus:      "pending",
+		ID:                 id,
+		Owner:              fx.owner,
+		Type:               media.TypeVideo,
+		MimeType:           "video/mp4",
+		DocbankVirtualPath: "2024/v-" + id + ".mp4",
+		OriginalFilename:   "v.mp4",
+		ImportedAt:         time.Now().UTC().Truncate(time.Second),
+		Size:               0,
+		SHA256:             uuid.NewString(),
+		ThumbStatus:        "pending",
 	}
-	require.NoError(t, fx.repo.Insert(context.Background(), m))
+	assetfixture.InsertContent(t, fx.repo, fx.content, nil, m)
 	return id
 }
 
@@ -111,20 +116,18 @@ func seedPNGPhotoRow(t *testing.T, fx workerFixture, path string) string {
 	require.NoError(t, png.Encode(&buf, src))
 	id := uuid.NewString()
 	m := media.Media{
-		ID:               id,
-		Owner:            fx.owner,
-		Type:             media.TypePhoto,
-		MimeType:         "image/png",
-		Path:             path,
-		OriginalFilename: "x.png",
-		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             int64(buf.Len()),
-		Checksum:         uuid.NewString(),
-		ThumbStatus:      "pending",
+		ID:                 id,
+		Owner:              fx.owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/png",
+		DocbankVirtualPath: path,
+		OriginalFilename:   "x.png",
+		ImportedAt:         time.Now().UTC().Truncate(time.Second),
+		Size:               int64(buf.Len()),
+		SHA256:             uuid.NewString(),
+		ThumbStatus:        "pending",
 	}
-	require.NoError(t, fx.repo.Insert(context.Background(), m))
-	_, err := fx.store.Write(context.Background(), fx.owner, path, bytes.NewReader(buf.Bytes()))
-	require.NoError(t, err)
+	assetfixture.InsertContent(t, fx.repo, fx.content, buf.Bytes(), m)
 	return id
 }
 
@@ -132,7 +135,7 @@ func readThumbStatusFor(t *testing.T, rw *sql.DB, id string) string {
 	t.Helper()
 	var status string
 	err := rw.QueryRowContext(context.Background(),
-		`SELECT thumb_status FROM media WHERE id = ?`, id).Scan(&status)
+		`SELECT thumb_status FROM assets WHERE id = ?`, id).Scan(&status)
 	require.NoError(t, err)
 	return status
 }
@@ -141,7 +144,7 @@ func readThumbVersionFor(t *testing.T, rw *sql.DB, id string) int {
 	t.Helper()
 	var v int
 	err := rw.QueryRowContext(context.Background(),
-		`SELECT thumb_version FROM media WHERE id = ?`, id).Scan(&v)
+		`SELECT thumb_version FROM assets WHERE id = ?`, id).Scan(&v)
 	require.NoError(t, err)
 	return v
 }
@@ -167,7 +170,7 @@ func TestWorkerDrainsPendingRowToReady(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
 		WorkerConcurrency: 2,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,
@@ -197,7 +200,7 @@ func TestWorkerSkipsVideoAsNoPreview(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
 		WorkerConcurrency: 1,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,
@@ -223,7 +226,7 @@ func TestWorkerDrainsPNGPhotoToReady(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
 		WorkerConcurrency: 1,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,
@@ -280,7 +283,7 @@ func TestWorkerStaleWriteDoesNotCorruptReclaim(t *testing.T) {
 	// tripping over the pre-existing v0 bytes.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
 		WorkerConcurrency: 1,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,
@@ -337,7 +340,7 @@ func TestWorkerRunReturnsOnlyAfterDrainGoroutinesExit(t *testing.T) {
 	// parks on the semaphore before the whole batch is launched,
 	// giving cancel() a chance to trigger the early-return path.
 	ctx, cancel := context.WithCancel(context.Background())
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
 		WorkerConcurrency: 2,
 		PollInterval:      10 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,
@@ -390,22 +393,22 @@ func TestWorkerEmitsResultMetricsAndLeaseSweep(t *testing.T) {
 	staleID := uuid.NewString()
 	staleM := media.Media{
 		ID: staleID, Owner: fx.owner, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/stale-" + staleID + ".jpg",
+		MimeType: "image/jpeg", DocbankVirtualPath: "2024/stale-" + staleID + ".jpg",
 		OriginalFilename: "stale.jpg",
 		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             1, Checksum: uuid.NewString(),
+		Size:             1, SHA256: uuid.NewString(),
 		ThumbStatus: "working",
 	}
-	r.NoError(fx.repo.Insert(context.Background(), staleM))
+	assetfixture.InsertContent(t, fx.repo, fx.content, []byte("x"), staleM)
 	_, err := fx.rw.ExecContext(context.Background(),
-		`UPDATE media SET thumb_claimed_at = ? WHERE id = ?`,
+		`UPDATE assets SET thumb_claimed_at = ? WHERE id = ?`,
 		time.Now().Add(-time.Hour).UTC(), staleID)
 	r.NoError(err)
 
 	m := obs.NewTestMetrics()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
 		WorkerConcurrency: 1,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      time.Minute,
@@ -443,7 +446,7 @@ func TestWorkerEmitsAllSizesPerClaim(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
 		WorkerConcurrency: 2,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,
@@ -495,7 +498,7 @@ func TestThumbWorkerLogsCarryComponent(t *testing.T) {
 	base := slog.New(slog.NewJSONHandler(&logBuf, nil))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
 		WorkerConcurrency: 1,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      time.Minute,

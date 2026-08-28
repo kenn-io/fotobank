@@ -114,7 +114,7 @@ func TestGapScannerSkipsVideoAndRecordsSkip(t *testing.T) {
 	owner := testutil.SeedOwner(t, rw, "local", "alice")
 	mid := testutil.SeedPhoto(t, rw, owner, "p1")
 	_, err := rw.ExecContext(context.Background(),
-		`UPDATE media SET media_type='video' WHERE id=?`, mid)
+		`UPDATE assets SET media_type='video' WHERE id=?`, mid)
 	r.NoError(err)
 
 	q := jobs.NewQueue(rw, ro)
@@ -428,7 +428,7 @@ func TestScanEmbed_HiddenMediaExcludedWithoutAck(t *testing.T) {
 	gen := seedEmbedGen(t, rw, ro)
 
 	// Hide the media: scanner without ack must exclude it.
-	_, err := rw.ExecContext(ctx, `UPDATE media SET hidden_at=? WHERE id=?`,
+	_, err := rw.ExecContext(ctx, `UPDATE assets SET hidden_at=? WHERE id=?`,
 		time.Now().UTC(), mid)
 	r.NoError(err)
 
@@ -456,7 +456,7 @@ func TestScanEmbed_HiddenMediaIncludedWithAck(t *testing.T) {
 	mid := testutil.SeedPhoto(t, rw, owner, "p1")
 	gen := seedEmbedGen(t, rw, ro)
 
-	_, err := rw.ExecContext(ctx, `UPDATE media SET hidden_at=? WHERE id=?`,
+	_, err := rw.ExecContext(ctx, `UPDATE assets SET hidden_at=? WHERE id=?`,
 		time.Now().UTC(), mid)
 	r.NoError(err)
 

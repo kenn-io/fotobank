@@ -55,7 +55,9 @@ file.
 
 RAW files normally display a generated JPEG preview. Camera source files and
 XMP sidecars are product relationships, not independent navigation identities
-in the replacement asset model.
+in the asset model.
+
+![Media detail showing one asset with its JPEG primary and DNG original](images/asset-files.png)
 
 The visual system is implemented in `frontend/src/app.css` and the route
 components. Architecture docs record interaction and data boundaries, not old

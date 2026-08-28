@@ -90,17 +90,15 @@
 <div class="meta-section">
   <div class="meta-label">Files</div>
   <dl class="lb-meta">
-    {#if media.sidecars && media.sidecars.length > 0}
+    {#if media.files && media.files.length > 0}
       <dt>Files</dt>
       <dd class="files">
         <a href={`/api/v1/media/${media.id}/original`} download={media.original_filename ?? media.id}>
           {media.original_filename ?? media.id}
         </a>
-        {#each media.sidecars as sc (sc.id)}
+        {#each media.files as file (file.id)}
           <br />
-          <a href={`/api/v1/media/${sc.id}/original`} download={sc.original_filename ?? sc.id}>
-            {sc.original_filename ?? sc.id}
-          </a>
+          <span>{file.original_filename} ({file.role}, {formatBytes(file.size)})</span>
         {/each}
       </dd>
     {:else}

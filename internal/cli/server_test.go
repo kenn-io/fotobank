@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
 
 // jsonUnmarshal is a thin alias used by newTestEmbedEndpoint so we
@@ -184,11 +185,8 @@ func TestServerDrainsPendingThumbRow(t *testing.T) {
 	tmp := t.TempDir()
 	nasRoot := filepath.Join(tmp, "nas")
 	r.NoError(os.MkdirAll(filepath.Join(nasRoot, "550e8400-e29b-41d4-a716-446655440000", "2024"), 0o700))
-	// Place a source JPEG where NASOnly expects it.
 	fixture, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "photo-with-timestamp.jpg"))
 	r.NoError(err)
-	srcPath := filepath.Join(nasRoot, "550e8400-e29b-41d4-a716-446655440000", "2024", "a.jpg")
-	r.NoError(os.WriteFile(srcPath, fixture, 0o600))
 
 	cfgPath := filepath.Join(tmp, "c.toml")
 	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
@@ -225,11 +223,13 @@ admin_listen = "127.0.0.1:0"
 	r.NoError(err)
 	mediaID := uuid.NewString()
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
-	r.NoError(repo.Insert(context.Background(), media.Media{
+	contentStore, err := content.Open(context.Background(), content.Config{Root: filepath.Join(tmp, "flash", "docbank")})
+	r.NoError(err)
+	assetfixture.InsertContent(t, repo, contentStore, fixture, media.Media{
 		ID: mediaID, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "2024/a.jpg", ImportedAt: time.Now().UTC(),
-		Size: int64(len(fixture)), Checksum: mediaID, ThumbStatus: "pending",
-	}))
+		OriginalFilename: "a.jpg", ImportedAt: time.Now().UTC(), ThumbStatus: "pending",
+	})
+	r.NoError(contentStore.Close())
 	_ = d.Close()
 
 	addrFile := filepath.Join(tmp, "addr")
@@ -336,17 +336,18 @@ admin_listen = "127.0.0.1:0"
 	)
 	r.NoError(err)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	contentStore, err := content.Open(context.Background(), content.Config{Root: filepath.Join(tmp, "flash", "docbank")})
+	r.NoError(err)
 	for i := range nRows {
 		id := uuid.NewString()
-		rel := fmt.Sprintf("2024/row-%03d.jpg", i)
-		srcPath := filepath.Join(nasRoot, "550e8400-e29b-41d4-a716-446655440000", rel)
-		r.NoError(os.WriteFile(srcPath, fixture, 0o600))
-		r.NoError(repo.Insert(context.Background(), media.Media{
+		body := append(append([]byte(nil), fixture...), byte(i))
+		assetfixture.InsertContent(t, repo, contentStore, body, media.Media{
 			ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
-			Path: rel, ImportedAt: time.Now().UTC(),
-			Size: int64(len(fixture)), Checksum: id, ThumbStatus: "pending",
-		}))
+			OriginalFilename: fmt.Sprintf("row-%03d.jpg", i),
+			ImportedAt:       time.Now().UTC(), ThumbStatus: "pending",
+		})
 	}
+	r.NoError(contentStore.Close())
 	_ = d.Close()
 
 	addrFile := filepath.Join(tmp, "addr")
@@ -820,11 +821,10 @@ admin_listen = "127.0.0.1:0"
 	r.NoError(err)
 	mid := uuid.NewString()
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
-	r.NoError(repo.Insert(context.Background(), media.Media{
+	assetfixture.Insert(t, repo, media.Media{
 		ID: mid, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "h/u/" + mid + ".jpg", ImportedAt: time.Now().UTC(),
-		Size: 1, Checksum: mid, ThumbStatus: "ready",
-	}))
+		OriginalFilename: mid + ".jpg", ImportedAt: time.Now().UTC(), ThumbStatus: "ready",
+	})
 	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
 	settingsRepo := appsettingsstore.NewRepo(d.WriteDB(), d.ReadDB())
 	provider, err := airuntime.NewProvider(context.Background(), airuntime.Source{
@@ -954,11 +954,10 @@ admin_listen = "127.0.0.1:0"
 	r.NoError(err)
 	mid := uuid.NewString()
 	repoM := media.NewRepo(d.WriteDB(), d.ReadDB())
-	r.NoError(repoM.Insert(context.Background(), media.Media{
+	assetfixture.Insert(t, repoM, media.Media{
 		ID: mid, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "h/u/" + mid + ".jpg", ImportedAt: time.Now().UTC(),
-		Size: 1, Checksum: mid, ThumbStatus: "ready",
-	}))
+		OriginalFilename: mid + ".jpg", ImportedAt: time.Now().UTC(), ThumbStatus: "ready",
+	})
 	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
 	settingsRepo := appsettingsstore.NewRepo(d.WriteDB(), d.ReadDB())
 	provider, err := airuntime.NewProvider(context.Background(), airuntime.Source{

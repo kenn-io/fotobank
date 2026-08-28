@@ -333,7 +333,7 @@ func (q *Queue) PromoteAckedBlocked(ctx context.Context, task ai.Task, settingKe
 		  WHERE task=? AND status='blocked' AND last_error=?
 		    AND id IN (
 		      SELECT j.id FROM ai_jobs j
-		        JOIN media m ON m.id = j.media_id
+		        JOIN assets m ON m.id = j.media_id AND m.state = 'ready'
 		        JOIN user_settings s
 		          ON s.principal_hub = m.owner_hub
 		         AND s.principal_user_id = m.owner_user_id
@@ -360,7 +360,7 @@ func (q *Queue) PromoteThumbReadyBlocked(ctx context.Context, task ai.Task) (int
 		    SET status='pending', last_error=NULL, last_error_kind=NULL
 		  WHERE task=? AND status='blocked'
 		    AND last_error IN (?, ?, ?)
-		    AND media_id IN (SELECT id FROM media WHERE thumb_status='ready')`,
+		    AND media_id IN (SELECT id FROM assets WHERE state='ready' AND thumb_status='ready')`,
 		string(task), ThumbBlockedPending, ThumbBlockedWorking, ThumbBlockedFailed)
 	if err != nil {
 		return 0, fmt.Errorf("promote thumb-ready: %w", err)
@@ -417,7 +417,7 @@ func (q *Queue) Counters(ctx context.Context, task ai.Task) (Counters, error) {
 func (q *Queue) CountersByOwner(ctx context.Context, task ai.Task, hub, userID string) (Counters, error) {
 	rows, err := q.ro.QueryContext(ctx,
 		`SELECT j.status, COUNT(*) FROM ai_jobs j
-		   JOIN media m ON m.id = j.media_id
+		   JOIN assets m ON m.id = j.media_id AND m.state = 'ready'
 		  WHERE j.task=? AND j.status IN ('pending','working','blocked')
 		    AND m.owner_hub=? AND m.owner_user_id=?
 		  GROUP BY j.status`, string(task), hub, userID)
