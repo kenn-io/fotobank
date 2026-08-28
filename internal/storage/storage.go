@@ -86,7 +86,7 @@ func validateKey(key string) error {
 // subdirectory escape its parent root. Storage keys are registered at
 // owner-creation time and are expected to be a single opaque filesystem
 // name (empty, ".", "..", or any path separator is refused). Exported
-// so sibling packages (reconcile, cli) can apply the same check before
+// so sibling packages can apply the same check before
 // joining storage keys into filesystem paths.
 func ValidateStorageKey(sk string) error {
 	switch sk {

@@ -193,7 +193,7 @@ func TestActivator_PausedOnAckRequired(t *testing.T) {
 }
 
 // TestActivator_AssertiveCount_IgnoresOrphanedMappings verifies that
-// the activator recounts via JOIN media rather than trusting the
+// the activator recounts via JOIN assets rather than trusting the
 // cached embedding_generations.embedded_count field. Setup:
 //
 //   - 20 thumb-ready media, 19 mapped → real ratio 19/20 = 95%.
@@ -236,7 +236,7 @@ func TestActivator_AssertiveCount_IgnoresOrphanedMappings(t *testing.T) {
 	// activator's recount is honest.
 	hiddenMID := testutil.SeedPhoto(t, d.WriteDB(), owner, "p-hidden")
 	_, err = d.WriteDB().ExecContext(ctx,
-		`UPDATE media SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), hiddenMID)
+		`UPDATE assets SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), hiddenMID)
 	r.NoError(err)
 	insertMappingRaw(t, d.WriteDB(), building.ID, hiddenMID, 100)
 

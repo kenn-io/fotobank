@@ -197,7 +197,7 @@ func TestMapping_VecIDAllocatorAvoidsOrphanedVec0Rows(t *testing.T) {
 	// Delete media[2] (the highest-vec_id mapping, vec_id=3). The FK
 	// cascade removes its row from media_embedding_ids but leaves vec0
 	// row 3 in place — the orphan the allocator must not collide with.
-	_, err := d.WriteDB().ExecContext(ctx, `DELETE FROM media WHERE id = ?`, mids[2])
+	_, err := d.WriteDB().ExecContext(ctx, `DELETE FROM assets WHERE id = ?`, mids[2])
 	r.NoError(err)
 
 	// Confirm the orphan exists in vec0 and the mapping is gone.

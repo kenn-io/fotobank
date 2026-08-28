@@ -22,12 +22,11 @@ type mediaDTO struct {
 	ID               string     `json:"id"`
 	Type             string     `json:"type"`
 	MimeType         string     `json:"mime_type"`
-	Path             string     `json:"path"`
 	OriginalFilename string     `json:"original_filename,omitempty"`
 	ImportedAt       time.Time  `json:"imported_at"`
 	Timestamp        *time.Time `json:"timestamp,omitempty"`
 	Size             int64      `json:"size"`
-	Checksum         string     `json:"checksum"`
+	SHA256           string     `json:"sha256"`
 	ThumbStatus      string     `json:"thumb_status"`
 	ThumbVersion     int        `json:"thumb_version"`
 	Make             string     `json:"make,omitempty"`
@@ -44,27 +43,20 @@ type mediaDTO struct {
 	GPSAt            *time.Time `json:"gps_at,omitempty"`
 	LocationLabel    string     `json:"location_label,omitempty"`
 
-	// F2.2 RAW + JPEG pairing. PairedWithID is set on every response
-	// where the row is a sidecar. PairedWith is populated only by the
-	// detail handler when the row is a sidecar; Sidecars is populated
-	// only by the detail handler when the row is a primary. None of
-	// the three are populated by the list endpoint or by toMediaDTO
-	// directly — see the get-media handler.
-	PairedWithID *string         `json:"paired_with_id,omitempty"`
-	PairedWith   *pairSummaryDTO `json:"paired_with,omitempty"`
-	Sidecars     []mediaDTO      `json:"sidecars,omitempty"`
+	Files *[]fileDTO `json:"files,omitempty"`
 
 	// F2.4 Hidden privacy. Omitted (omitempty) when nil so the field is
 	// absent from visible-media responses — minimises client-side noise.
 	HiddenAt *time.Time `json:"hidden_at,omitempty"`
 }
 
-// pairSummaryDTO is the slim primary-side projection embedded under a
-// sidecar's `paired_with` field. Carries just enough for the frontend
-// to render a "View JPEG" link without round-tripping again.
-type pairSummaryDTO struct {
+type fileDTO struct {
 	ID               string `json:"id"`
+	Role             string `json:"role"`
+	MimeType         string `json:"mime_type"`
 	OriginalFilename string `json:"original_filename"`
+	Size             int64  `json:"size"`
+	SHA256           string `json:"sha256"`
 }
 
 func toMediaDTO(m media.Media) mediaDTO {
@@ -72,12 +64,11 @@ func toMediaDTO(m media.Media) mediaDTO {
 		ID:               m.ID,
 		Type:             string(m.Type),
 		MimeType:         m.MimeType,
-		Path:             m.Path,
 		OriginalFilename: m.OriginalFilename,
 		ImportedAt:       m.ImportedAt,
 		Timestamp:        m.Timestamp,
 		Size:             m.Size,
-		Checksum:         m.Checksum,
+		SHA256:           m.SHA256,
 		ThumbStatus:      m.ThumbStatus,
 		ThumbVersion:     m.ThumbVersion,
 		Make:             m.Make,
@@ -94,7 +85,6 @@ func toMediaDTO(m media.Media) mediaDTO {
 		GPSAt:            m.GPSAt,
 		LocationLabel:    m.LocationLabel,
 	}
-	dto.PairedWithID = m.PairedWithID
 	dto.HiddenAt = m.HiddenAt
 	return dto
 }
@@ -232,49 +222,18 @@ func registerMedia(api huma.API, svc *service.MediaService) {
 			return nil, err
 		}
 		dto := toMediaDTO(m)
-		if dto.PairedWithID == nil {
-			// Primary path: embed any sidecars on the response so the
-			// frontend can render a "Files" row without an extra trip.
-			sidecars, err := svc.GetSidecars(ctx, m.ID, caller, includeHidden)
-			if err != nil {
-				return nil, err
-			}
-			// Leave Sidecars nil when the primary has none so omitempty
-			// drops the field from the wire instead of emitting "[]".
-			if len(sidecars) > 0 {
-				dto.Sidecars = make([]mediaDTO, 0, len(sidecars))
-				for _, s := range sidecars {
-					child := toMediaDTO(s)
-					child.PairedWith = &pairSummaryDTO{
-						ID:               m.ID,
-						OriginalFilename: m.OriginalFilename,
-					}
-					dto.Sidecars = append(dto.Sidecars, child)
-				}
-			}
-		} else {
-			// Sidecar path: surface a primary summary so the frontend
-			// can offer a "View JPEG" affordance. The schema's
-			// media_paired_with_owner_consistency_* triggers guarantee
-			// the primary stays visible to the caller; the only
-			// legitimate miss is an ON DELETE SET NULL race where the
-			// primary was deleted between the sidecar fetch and this
-			// follow-up. Treat that as PairedWith nil; surface every
-			// other error.
-			primary, err := svc.Get(ctx, *m.PairedWithID, caller, includeHidden)
-			switch {
-			case err == nil:
-				dto.PairedWith = &pairSummaryDTO{
-					ID:               primary.ID,
-					OriginalFilename: primary.OriginalFilename,
-				}
-			case errors.Is(err, errs.ErrNotFound):
-				// Stale FK after ON DELETE SET NULL race — leave
-				// PairedWith nil.
-			default:
-				return nil, err
-			}
+		filesDTO := make([]fileDTO, 0)
+		files, err := svc.ListFiles(ctx, m.ID, caller, includeHidden)
+		if err != nil {
+			return nil, err
 		}
+		for _, file := range files {
+			filesDTO = append(filesDTO, fileDTO{
+				ID: file.ID, Role: string(file.Role), MimeType: file.MimeType,
+				OriginalFilename: file.OriginalFilename, Size: file.Size, SHA256: file.SHA256,
+			})
+		}
+		dto.Files = &filesDTO
 		return &getMediaOutput{Body: dto}, nil
 	})
 }

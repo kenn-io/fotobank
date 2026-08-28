@@ -56,7 +56,7 @@ func seedTagsForMedia(t *testing.T, rw *sql.DB, mediaID string, tags map[string]
 func setLocation(t *testing.T, rw *sql.DB, mediaID, label string) {
 	t.Helper()
 	_, err := rw.ExecContext(context.Background(),
-		`UPDATE media SET location_label = ? WHERE id = ?`, label, mediaID)
+		`UPDATE assets SET location_label = ? WHERE id = ?`, label, mediaID)
 	require.NoError(t, err)
 }
 
@@ -66,7 +66,7 @@ func setLocation(t *testing.T, rw *sql.DB, mediaID, label string) {
 func hideMediaID(t *testing.T, rw *sql.DB, mediaID string) {
 	t.Helper()
 	_, err := rw.ExecContext(context.Background(),
-		`UPDATE media SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), mediaID)
+		`UPDATE assets SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), mediaID)
 	require.NoError(t, err)
 }
 

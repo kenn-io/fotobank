@@ -188,6 +188,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerMediaGeo(api, deps.MediaService, deps.HiddenAuth)
 	registerMedia(api, deps.MediaService)
 	registerMediaOriginal(mux, deps.MediaService)
+	registerMediaFile(mux, deps.MediaService)
 	registerMediaThumb(mux, deps.ThumbService)
 	registerAlbums(api, deps.AlbumService)
 	registerShares(api, deps.ShareService, deps.PrincipalDisplay)

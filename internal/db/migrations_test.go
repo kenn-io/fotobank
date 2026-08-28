@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 type schemaFileMapping struct {
@@ -96,7 +98,7 @@ func TestSchemaOwnerStorageKey(t *testing.T) {
 	insertSchemaOwner(t, d.WriteDB(), "hub", "owner", "550e8400-e29b-41d4-a716-446655440000")
 }
 
-func TestSchemaAssetTablesAreAdditive(t *testing.T) {
+func TestSchemaUsesAssetGraphWithoutLegacyMediaTable(t *testing.T) {
 	r := require.New(t)
 	d, err := db.Open(filepath.Join(t.TempDir(), "asset-schema.sqlite"))
 	r.NoError(err)
@@ -119,7 +121,7 @@ func TestSchemaAssetTablesAreAdditive(t *testing.T) {
 		tables = append(tables, name)
 	}
 	r.NoError(rows.Err())
-	r.Equal([]string{"assets", "media", "media_file_relationships", "media_files"}, tables)
+	r.Equal([]string{"assets", "media_file_relationships", "media_files"}, tables)
 
 	columns, err := d.ReadDB().Query(`PRAGMA table_info(media_files)`)
 	r.NoError(err)
@@ -427,7 +429,7 @@ func TestInitialSchemaCreatesAllTables(t *testing.T) {
 	defer d.Close()
 
 	tables := []string{
-		"owners", "principal_display", "media",
+		"owners", "principal_display", "assets", "media_files", "media_file_relationships",
 		"albums", "album_media",
 		"scopes", "scope_media",
 	}
@@ -466,11 +468,10 @@ func TestAlbumMediaOwnerConsistencyTrigger(t *testing.T) {
 	mustExec(`INSERT INTO owners VALUES('h2','u2','660e8400-e29b-41d4-a716-446655440000','u2',datetime('now'))`)
 	mustExec(`INSERT INTO albums (id,owner_hub,owner_user_id,name,created_at,updated_at)
 	          VALUES('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','h1','u1','a',datetime('now'),datetime('now'))`)
-	mustExec(`INSERT INTO media (id,owner_hub,owner_user_id,media_type,mime_type,path,imported_at,size,checksum,thumb_status,thumb_version,thumb_updated_at)
-	          VALUES('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','h2','u2','photo','image/jpeg','a.jpg',datetime('now'),1,'cs','pending',1,datetime('now'))`)
+	mediaID := testutil.SeedPhoto(t, rw, owners.Principal{Hub: "h2", UserID: "u2"}, "a")
 
 	_, err = rw.Exec(
-		`INSERT INTO album_media VALUES('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',datetime('now'),NULL)`,
+		`INSERT INTO album_media VALUES('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',?,datetime('now'),NULL)`, mediaID,
 	)
 	r.Error(err)
 	r.Contains(err.Error(), "album and media must share owner")

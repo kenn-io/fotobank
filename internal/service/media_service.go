@@ -8,11 +8,11 @@ import (
 	"io"
 	"time"
 
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/search/index"
-	"go.kenn.io/fotobank/internal/storage"
 )
 
 // HiddenBulkFailure describes a single per-id failure from a bulk Hide
@@ -38,11 +38,11 @@ type HiddenBulkResult struct {
 // media.
 type MediaService struct {
 	repo  *media.Repo
-	store storage.Store
+	store *content.Adapter
 }
 
 // NewMediaService constructs a MediaService backed by repo and store.
-func NewMediaService(repo *media.Repo, store storage.Store) *MediaService {
+func NewMediaService(repo *media.Repo, store *content.Adapter) *MediaService {
 	return &MediaService{repo: repo, store: store}
 }
 
@@ -73,13 +73,10 @@ func (s *MediaService) Get(
 
 // List returns media rows visible to caller. The filter's Owner is
 // clamped to caller before delegating to the repo so a handler cannot
-// request another owner's rows. IncludeSidecars and IncludeHidden are
-// both clamped to false so no HTTP route can surface sidecars or hidden
-// rows in list responses; those flags are reserved for internal repo-
-// layer callers (pairing pass, backfill CLI, reconcile, hidden list).
+// request another owner's rows. Hidden rows are excluded from ordinary
+// product lists.
 func (s *MediaService) List(ctx context.Context, f media.ListFilter, caller owners.Principal) ([]media.Media, error) {
 	f.Owner = caller
-	f.IncludeSidecars = false
 	f.IncludeHidden = false
 	return s.repo.List(ctx, f)
 }
@@ -87,7 +84,7 @@ func (s *MediaService) List(ctx context.Context, f media.ListFilter, caller owne
 // UpdateGPS persists the four GPS columns on a row owned by caller.
 // The owner check goes through Get, which returns errs.ErrNotFound on
 // caller mismatch — preserving the anti-probing convention. The CLI
-// orchestrates "open NAS bytes, run exifread, resolve label" itself;
+// orchestrates "open the exact content version, run exifread, resolve label";
 // the service layer stays simple and auth-scoped. Returns
 // errs.ErrInvalidArgument (from the repo) if exactly one of lat/lon is
 // set — the GPS coordinate pair is atomic.
@@ -114,26 +111,28 @@ func (s *MediaService) UpdateGPS(
 	})
 }
 
-// GetSidecars returns the sidecars of the primary identified by
-// primaryID. The owner check goes through Get, which returns
-// errs.ErrNotFound on caller mismatch — so a caller that does not own
-// the primary cannot enumerate its sidecars. The optional includeHidden
-// variadic matches Get's convention so callers with the unlock claim can
-// retrieve sidecars of hidden primaries. Hidden sidecars are only
-// returned when includeHidden is true, matching the primary's visibility
-// gate. Returns an empty slice (not an error) when the primary has no
-// sidecars.
-func (s *MediaService) GetSidecars(
+// ListFiles returns the non-primary files belonging to an asset after
+// enforcing ownership and visibility through the product media item.
+func (s *MediaService) ListFiles(
 	ctx context.Context,
 	primaryID string,
 	caller owners.Principal,
 	includeHidden ...bool,
-) ([]media.Media, error) {
-	wantHidden := len(includeHidden) > 0 && includeHidden[0]
+) ([]media.File, error) {
 	if _, err := s.Get(ctx, primaryID, caller, includeHidden...); err != nil {
 		return nil, err
 	}
-	return s.repo.GetSidecars(ctx, primaryID, wantHidden)
+	files, err := s.repo.ListFiles(ctx, primaryID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.File, 0)
+	for _, file := range files {
+		if file.Role == media.RoleSidecar || file.Role == media.RoleOriginal {
+			out = append(out, file)
+		}
+	}
+	return out, nil
 }
 
 // OpenOriginal resolves the media row, enforces the owner check, and
@@ -154,18 +153,63 @@ func (s *MediaService) OpenOriginal(
 	if err != nil {
 		return nil, media.Media{}, err
 	}
-	rc, err := s.store.ReadRange(ctx, caller, m.Path, offset, length)
+	rc, err := openExactVersion(ctx, s.store, m.CurrentVersionID, offset, length)
 	if err != nil {
 		return nil, media.Media{}, fmt.Errorf("read original: %w", err)
 	}
 	return rc, m, nil
 }
 
-// Hide marks the given primary/standalone ids as hidden, cascading to
-// sidecars. Input ids that are sidecars themselves are rejected with
-// code "invalid_sidecar"; ids not owned by caller (or not found) are
-// rejected with code "not_found". Returns a partial result; the error
-// return is only non-nil for unexpected failures.
+// GetFile enforces asset ownership and visibility and returns one file only
+// when it belongs to that asset.
+func (s *MediaService) GetFile(
+	ctx context.Context,
+	assetID string,
+	fileID string,
+	caller owners.Principal,
+	includeHidden ...bool,
+) (media.File, media.Media, error) {
+	item, err := s.Get(ctx, assetID, caller, includeHidden...)
+	if err != nil {
+		return media.File{}, media.Media{}, err
+	}
+	file, err := s.repo.GetFile(ctx, fileID)
+	if err != nil {
+		if errors.Is(err, errs.ErrNotFound) {
+			return media.File{}, media.Media{}, fmt.Errorf("get asset file: %w", errs.ErrNotFound)
+		}
+		return media.File{}, media.Media{}, err
+	}
+	if file.AssetID != assetID || file.Owner != caller || file.CurrentVersionID == "" {
+		return media.File{}, media.Media{}, fmt.Errorf("get asset file: %w", errs.ErrNotFound)
+	}
+	return file, item, nil
+}
+
+// OpenFile opens one authorized asset file at its exact immutable Docbank
+// version.
+func (s *MediaService) OpenFile(
+	ctx context.Context,
+	assetID string,
+	fileID string,
+	caller owners.Principal,
+	offset, length int64,
+	includeHidden ...bool,
+) (io.ReadCloser, media.File, media.Media, error) {
+	file, item, err := s.GetFile(ctx, assetID, fileID, caller, includeHidden...)
+	if err != nil {
+		return nil, media.File{}, media.Media{}, err
+	}
+	rc, err := openExactVersion(ctx, s.store, file.CurrentVersionID, offset, length)
+	if err != nil {
+		return nil, media.File{}, media.Media{}, fmt.Errorf("read asset file: %w", err)
+	}
+	return rc, file, item, nil
+}
+
+// Hide marks the given asset IDs as hidden. IDs not owned by caller (or
+// not found) are rejected with code "not_found". Returns a partial result;
+// the error return is only non-nil for unexpected failures.
 func (s *MediaService) Hide(
 	ctx context.Context,
 	caller owners.Principal,
@@ -174,8 +218,7 @@ func (s *MediaService) Hide(
 	return s.bulkHideOp(ctx, caller, ids, true)
 }
 
-// Unhide clears the hidden flag on the given ids, cascading to sidecars.
-// Same validation rules as Hide apply. Returns a partial result.
+// Unhide clears the hidden flag on the given asset IDs.
 func (s *MediaService) Unhide(
 	ctx context.Context,
 	caller owners.Principal,
@@ -219,19 +262,15 @@ func (s *MediaService) bulkHideOp(
 			result.Failed = append(result.Failed, HiddenBulkFailure{ID: id, Code: "not_found"})
 			continue
 		}
-		if m.PairedWithID != nil {
-			result.Failed = append(result.Failed, HiddenBulkFailure{ID: id, Code: "invalid_sidecar"})
-			continue
-		}
 		valid = append(valid, id)
 	}
 
 	if len(valid) > 0 {
 		var opErr error
 		if hide {
-			opErr = s.repo.SetHiddenCascade(ctx, caller, valid, time.Now().UTC())
+			opErr = s.repo.SetHidden(ctx, caller, valid, time.Now().UTC())
 		} else {
-			opErr = s.repo.ClearHiddenCascade(ctx, caller, valid)
+			opErr = s.repo.ClearHidden(ctx, caller, valid)
 		}
 		if opErr != nil {
 			return result, opErr

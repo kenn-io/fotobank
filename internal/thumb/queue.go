@@ -69,17 +69,21 @@ func NewQueue(rw, ro *sql.DB) *Queue {
 // thumbs last — which manifested as a "broken" library on first
 // open even though the worker was making steady progress.
 const claimBatchSQL = `
-UPDATE media
+UPDATE assets
    SET thumb_status     = 'working',
        thumb_claimed_at = ?
  WHERE id IN (
-     SELECT id FROM media
-      WHERE thumb_status = 'pending'
+     SELECT id FROM assets
+      WHERE state = 'ready' AND hidden_at IS NULL AND thumb_status = 'pending'
       ORDER BY COALESCE(timestamp, imported_at) DESC, id ASC
       LIMIT ?
  )
-RETURNING id, owner_hub, owner_user_id, media_type, mime_type, path,
-          thumb_version, checksum, thumb_claimed_at,
+RETURNING id, owner_hub, owner_user_id, media_type,
+          (SELECT mime_type FROM media_files WHERE asset_id = assets.id AND role = 'primary'),
+          (SELECT current_version_id FROM media_files WHERE asset_id = assets.id AND role = 'primary'),
+          thumb_version,
+          (SELECT sha256 FROM media_files WHERE asset_id = assets.id AND role = 'primary'),
+          thumb_claimed_at,
           COALESCE(timestamp, imported_at) AS priority_key
 `
 
@@ -134,9 +138,9 @@ func scanClaim(rows *sql.Rows) (Claim, error) {
 		&c.Media.Owner.UserID,
 		&mediaType,
 		&c.Media.MimeType,
-		&c.Media.Path,
+		&c.Media.CurrentVersionID,
 		&c.Media.ThumbVersion,
-		&c.Media.Checksum,
+		&c.Media.SHA256,
 		&claimedAt,
 		&priorityKeyRaw,
 	); err != nil {
@@ -144,21 +148,27 @@ func scanClaim(rows *sql.Rows) (Claim, error) {
 	}
 	c.Media.Type = media.Type(mediaType)
 	c.ClaimedAt = claimedAt
-	// COALESCE through sqlite returns a TEXT, not a typed timestamp,
-	// so the mattn driver's automatic time.Time materialization
-	// doesn't kick in. Parse the RFC3339 form the schema writes.
-	// A bad parse falls back to imported_at — never zero, never
-	// nil — so SortStable below still has a valid ordering key.
-	if t, err := time.Parse(time.RFC3339Nano, priorityKeyRaw); err == nil {
-		c.priorityKey = t
-	} else if t, err := time.Parse(time.RFC3339, priorityKeyRaw); err == nil {
-		c.priorityKey = t
+	priorityKey, err := parsePriorityKey(priorityKeyRaw)
+	if err != nil {
+		return Claim{}, fmt.Errorf("parse thumbnail priority key %q: %w", priorityKeyRaw, err)
 	}
+	c.priorityKey = priorityKey
 	return c, nil
 }
 
+func parsePriorityKey(raw string) (time.Time, error) {
+	if value, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return value, nil
+	}
+	return time.ParseInLocation(
+		"2006-01-02 15:04:05.999999999-07:00",
+		strings.TrimSuffix(raw, "Z"),
+		time.UTC,
+	)
+}
+
 const sweepLeasesSQL = `
-UPDATE media
+UPDATE assets
    SET thumb_status     = 'pending',
        thumb_claimed_at = NULL,
        thumb_version    = thumb_version + 1,
@@ -186,7 +196,7 @@ func (q *Queue) SweepLeases(ctx context.Context, after time.Duration) (int, erro
 }
 
 const markReadySQL = `
-UPDATE media
+UPDATE assets
    SET thumb_status     = 'ready',
        thumb_updated_at = ?,
        thumb_claimed_at = NULL
@@ -260,7 +270,7 @@ func (q *Queue) MarkReadyWithHook(
 }
 
 const markNoPreviewSQL = `
-UPDATE media
+UPDATE assets
    SET thumb_status     = 'no_preview',
        thumb_updated_at = ?,
        thumb_claimed_at = NULL
@@ -275,7 +285,7 @@ func (q *Queue) MarkNoPreview(ctx context.Context, id string, version int, token
 }
 
 const markFailedSQL = `
-UPDATE media
+UPDATE assets
    SET thumb_status     = 'failed',
        thumb_updated_at = ?,
        thumb_claimed_at = NULL
@@ -323,7 +333,7 @@ func (q *Queue) finalize(
 func (q *Queue) DepthByState(ctx context.Context, state string) (int64, error) {
 	var n int64
 	err := q.ro.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM media WHERE thumb_status = ?`, state).Scan(&n)
+		`SELECT COUNT(*) FROM assets WHERE state = 'ready' AND thumb_status = ?`, state).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("thumb queue depth %q: %w", state, err)
 	}
@@ -338,7 +348,7 @@ func (q *Queue) Enqueue(ctx context.Context, filter EnqueueFilter) (int, error) 
 		return 0, err
 	}
 	now := time.Now().UTC()
-	query := `UPDATE media
+	query := `UPDATE assets
 		  SET thumb_status     = 'pending',
 		      thumb_version    = thumb_version + 1,
 		      thumb_updated_at = ?,
@@ -360,7 +370,10 @@ func buildEnqueueWhere(filter EnqueueFilter) (string, []any, error) {
 	if (filter.Owner == owners.Principal{}) {
 		return "", nil, errors.New("thumb: Enqueue requires Owner")
 	}
-	parts := []string{"owner_hub = ?", "owner_user_id = ?"}
+	parts := []string{
+		"owner_hub = ?", "owner_user_id = ?",
+		"state = 'ready'", "hidden_at IS NULL",
+	}
 	args := []any{filter.Owner.Hub, filter.Owner.UserID}
 	specific := filter.All
 	if len(filter.IDs) > 0 {

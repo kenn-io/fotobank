@@ -1,7 +1,7 @@
 // Package index owns the application-managed FTS5 corpus that
 // fotobank's lexical search runs against. The package's primary export
 // is RefreshMediaFTS, called by every writer that mutates a media row's
-// searchable surface (importer, AI promotion, reconcile, media-update)
+// searchable surface (importer, AI promotion, metadata updates)
 // so the FTS row always reflects the same snapshot as the row that
 // caused the refresh. The FTS table itself is created in the schema
 // migration (see internal/db/migrations/000001_initial_schema.up.sql);
@@ -37,12 +37,14 @@ func RefreshMediaFTS(ctx context.Context, tx *sql.Tx, mediaID string) error {
 	// yields "Canon" rather than "Canon ".
 	const mediaQ = `
 SELECT
-  COALESCE(original_filename, ''),
+  COALESCE(f.original_filename, ''),
   COALESCE(make, '') || CASE WHEN make IS NOT NULL AND model IS NOT NULL THEN ' ' ELSE '' END
                      || COALESCE(model, ''),
   COALESCE(lens_model, ''),
   COALESCE(location_label, '')
-FROM media WHERE id = ?`
+FROM assets a
+JOIN media_files f ON f.asset_id = a.id AND f.role = 'primary'
+WHERE a.id = ? AND a.state = 'ready'`
 
 	var filename, camera, lens, locationLabel string
 	if err := tx.QueryRowContext(ctx, mediaQ, mediaID).Scan(

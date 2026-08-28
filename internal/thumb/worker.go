@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
 
 	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/obs"
 	"go.kenn.io/fotobank/internal/storage"
@@ -25,6 +27,8 @@ const defaultSweepInterval = time.Minute
 // "use a conservative default" so callers can leave unused fields blank.
 // Defaults match the production values in the thumbnail plan.
 type Config struct {
+	// Content opens the exact immutable source version recorded on the asset.
+	Content *content.Adapter
 	// WorkerConcurrency caps how many rows are decoded/encoded
 	// concurrently inside drain. Each claim runs in its own goroutine
 	// bounded by a semaphore. Defaults to 4.
@@ -307,15 +311,39 @@ func (w *Worker) logClaimFinalize(op, id string, err error) {
 // image. RAW files are dispatched to ExtractPreview; JPEG/GIF go through
 // Decode (which applies EXIF orientation).
 func (w *Worker) decodeSource(ctx context.Context, m media.Media) (image.Image, error) {
-	rc, err := w.store.ReadRange(ctx, m.Owner, m.Path, 0, -1)
+	if w.cfg.Content == nil {
+		return nil, fmt.Errorf("read source: content adapter is not configured")
+	}
+	opened, err := w.cfg.Content.OpenVersion(ctx, m.CurrentVersionID)
 	if err != nil {
 		return nil, fmt.Errorf("read source: %w", err)
 	}
+	rc := opened.Reader
 	defer func() { _ = rc.Close() }()
 	if isRAWMime(m.MimeType) {
-		return ExtractPreview(rc)
+		image, err := ExtractPreview(rc)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := io.Copy(io.Discard, rc); err != nil {
+			return nil, fmt.Errorf("drain source: %w", err)
+		}
+		if err := rc.Verify(); err != nil {
+			return nil, fmt.Errorf("verify source: %w", err)
+		}
+		return image, nil
 	}
-	return Decode(m.MimeType, rc)
+	image, err := Decode(m.MimeType, rc)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(io.Discard, rc); err != nil {
+		return nil, fmt.Errorf("drain source: %w", err)
+	}
+	if err := rc.Verify(); err != nil {
+		return nil, fmt.Errorf("verify source: %w", err)
+	}
+	return image, nil
 }
 
 // emitSizes encodes img to JPEG at quality 85 for every Size and writes

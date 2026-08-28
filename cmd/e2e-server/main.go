@@ -29,6 +29,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -46,6 +47,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"go.kenn.io/fotobank/internal/ai"
 	"go.kenn.io/fotobank/internal/ai/ack"
 	"go.kenn.io/fotobank/internal/ai/embedding"
@@ -57,6 +60,7 @@ import (
 	"go.kenn.io/fotobank/internal/album"
 	"go.kenn.io/fotobank/internal/auth/hidden"
 	"go.kenn.io/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
@@ -124,7 +128,8 @@ func run() error {
 	cfgPath := filepath.Join(tmp, "fotobank.toml")
 	nasRoot := filepath.Join(tmp, "nas")
 	flashRoot := filepath.Join(tmp, "flash")
-	for _, d := range []string{nasRoot, flashRoot} {
+	docbankRoot := filepath.Join(tmp, "docbank")
+	for _, d := range []string{nasRoot, flashRoot, docbankRoot} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return fmt.Errorf("creating %s: %w", d, err)
 		}
@@ -177,6 +182,8 @@ func run() error {
 
 	cfg := fmt.Sprintf(`
 [nas]
+root = "%s"
+[docbank]
 root = "%s"
 [flash]
 root = "%s"
@@ -234,7 +241,7 @@ batch_size = 8
 # the bar even when the activator picks up a building generation
 # mid-run (defense-in-depth — the seed inserts active directly).
 activation_threshold = 50
-`, nasRoot, flashRoot, e2eOwnerHub, e2eOwnerUserID, e2eOwnerStorageK,
+`, nasRoot, docbankRoot, flashRoot, e2eOwnerHub, e2eOwnerUserID, e2eOwnerStorageK,
 		sharingEnabled,
 		e2ePort(), filepath.Join(tmp, "import.lock"),
 		vlmURL, e2eVisionModelID, e2eVisionModelID,
@@ -259,7 +266,7 @@ activation_threshold = 50
 		if err := seedScaleFixtures(dbPath, nasRoot, scaleRows, realThumbs); err != nil {
 			return fmt.Errorf("seed scale fixtures: %w", err)
 		}
-	} else if err := seedFixtures(dbPath, nasRoot); err != nil {
+	} else if err := seedFixtures(dbPath, nasRoot, docbankRoot); err != nil {
 		return fmt.Errorf("seed fixtures: %w", err)
 	}
 
@@ -462,7 +469,7 @@ func deterministicVec(i, dim int) []float32 {
 //     (Argon2id-hashed). Skipped when FOTOBANK_E2E_HIDDEN_UNCONFIGURED=1.
 //   - hidden-prehidden-1: hidden_at = now (used by gate/grid tests)
 //   - hidden-target-1:    hidden_at = NULL (used by hide-flow test)
-func seedFixtures(dbPath, nasRoot string) error {
+func seedFixtures(dbPath, nasRoot, docbankRoot string) error {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		return fmt.Errorf("create db dir: %w", err)
 	}
@@ -483,23 +490,31 @@ func seedFixtures(dbPath, nasRoot string) error {
 	}
 
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	contentStore, err := content.Open(ctx, content.Config{Root: docbankRoot})
+	if err != nil {
+		return fmt.Errorf("open seed Docbank vault: %w", err)
+	}
+	defer contentStore.Close()
+	insert := func(row media.Media) error {
+		return insertFixtureAsset(ctx, d.WriteDB(), contentStore, "550e8400-e29b-41d4-a716-44665544000e", row)
+	}
 	lat, lon := 48.8566, 2.3522
 	now := time.Now().UTC()
 	gpsRow := media.Media{
-		ID:            "gps-fixture-1",
-		Owner:         owner,
-		Type:          media.TypePhoto,
-		MimeType:      "image/jpeg",
-		Path:          "gps-fixture-1.jpg",
-		ImportedAt:    now,
-		Size:          1,
-		Checksum:      "checksum-gps-fixture-1",
-		Latitude:      &lat,
-		Longitude:     &lon,
-		LocationLabel: "Paris, Île-de-France, France",
-		ThumbStatus:   "pending",
+		ID:                 "gps-fixture-1",
+		Owner:              owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: "gps-fixture-1.jpg",
+		ImportedAt:         now,
+		Size:               1,
+		SHA256:             "checksum-gps-fixture-1",
+		Latitude:           &lat,
+		Longitude:          &lon,
+		LocationLabel:      "Paris, Île-de-France, France",
+		ThumbStatus:        "pending",
 	}
-	if err := repo.Insert(ctx, gpsRow); err != nil {
+	if err := insert(gpsRow); err != nil {
 		return fmt.Errorf("seed gps fixture: %w", err)
 	}
 
@@ -522,77 +537,58 @@ func seedFixtures(dbPath, nasRoot string) error {
 	for _, g := range geoFixtures {
 		latP, lonP := g.lat, g.lon
 		row := media.Media{
-			ID:            g.id,
-			Owner:         owner,
-			Type:          media.TypePhoto,
-			MimeType:      "image/jpeg",
-			Path:          g.id + ".jpg",
-			ImportedAt:    now,
-			Size:          1,
-			Checksum:      "checksum-" + g.id,
-			Latitude:      &latP,
-			Longitude:     &lonP,
-			LocationLabel: g.label,
-			ThumbStatus:   "pending",
+			ID:                 g.id,
+			Owner:              owner,
+			Type:               media.TypePhoto,
+			MimeType:           "image/jpeg",
+			DocbankVirtualPath: g.id + ".jpg",
+			ImportedAt:         now,
+			Size:               1,
+			SHA256:             "checksum-" + g.id,
+			Latitude:           &latP,
+			Longitude:          &lonP,
+			LocationLabel:      g.label,
+			ThumbStatus:        "pending",
 		}
-		if err := repo.Insert(ctx, row); err != nil {
+		if err := insert(row); err != nil {
 			return fmt.Errorf("seed map cluster fixture %s: %w", g.id, err)
 		}
 	}
 	noGPSRow := media.Media{
-		ID:          "no-gps-fixture-1",
-		Owner:       owner,
-		Type:        media.TypePhoto,
-		MimeType:    "image/jpeg",
-		Path:        "no-gps-fixture-1.jpg",
-		ImportedAt:  now,
-		Size:        1,
-		Checksum:    "checksum-no-gps-fixture-1",
-		ThumbStatus: "pending",
+		ID:                 "no-gps-fixture-1",
+		Owner:              owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: "no-gps-fixture-1.jpg",
+		ImportedAt:         now,
+		Size:               1,
+		SHA256:             "checksum-no-gps-fixture-1",
+		ThumbStatus:        "pending",
 	}
-	if err := repo.Insert(ctx, noGPSRow); err != nil {
+	if err := insert(noGPSRow); err != nil {
 		return fmt.Errorf("seed no-gps fixture: %w", err)
 	}
 
-	// F2.2 RAW + JPEG pairing fixtures. The primary JPEG and a DNG
-	// sidecar pointing at it via paired_with_id; referenced by the
-	// Playwright tests that exercise the Files row, sidecar direct
-	// page, and library list filtering. Insert the primary first so
-	// the media_paired_with_owner_consistency_insert trigger can
-	// resolve the FK owner.
+	// Multi-file asset used by the detail-page Files row.
 	primaryRow := media.Media{
-		ID:               "pair-fixture-primary",
-		Owner:            owner,
-		Type:             media.TypePhoto,
-		MimeType:         "image/jpeg",
-		Path:             "pair-fixture-primary.jpg",
-		OriginalFilename: "IMG_1.JPG",
-		ImportedAt:       now,
-		Size:             1,
-		Checksum:         "checksum-pair-fixture-primary",
-		ImportSourcePath: "fixtures/IMG_1.JPG",
-		ThumbStatus:      "pending",
+		ID:                 "pair-fixture-primary",
+		Owner:              owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: "pair-fixture-primary.jpg",
+		OriginalFilename:   "IMG_1.JPG",
+		ImportedAt:         now,
+		Size:               1,
+		SHA256:             "checksum-pair-fixture-primary",
+		ThumbStatus:        "pending",
 	}
-	if err := repo.Insert(ctx, primaryRow); err != nil {
+	if err := insert(primaryRow); err != nil {
 		return fmt.Errorf("seed pair fixture primary: %w", err)
 	}
-	primaryID := primaryRow.ID
-	sidecarRow := media.Media{
-		ID:               "pair-fixture-sidecar",
-		Owner:            owner,
-		Type:             media.TypePhoto,
-		MimeType:         "image/x-adobe-dng",
-		Path:             "pair-fixture-sidecar.dng",
-		OriginalFilename: "IMG_1.DNG",
-		ImportedAt:       now,
-		Size:             1,
-		Checksum:         "checksum-pair-fixture-sidecar",
-		ImportSourcePath: "fixtures/IMG_1.DNG",
-		PairedWithID:     &primaryID,
-		ThumbStatus:      "pending",
-	}
-	if err := repo.Insert(ctx, sidecarRow); err != nil {
-		return fmt.Errorf("seed pair fixture sidecar: %w", err)
+	if err := insertFixtureFile(ctx, d.WriteDB(), contentStore,
+		"550e8400-e29b-41d4-a716-44665544000e", primaryRow.ID,
+		media.RoleOriginal, "image/x-adobe-dng", "IMG_1.DNG"); err != nil {
+		return fmt.Errorf("seed pair fixture original: %w", err)
 	}
 
 	// F2.3 album + share seeds. Albums and shares for the Playwright
@@ -646,21 +642,21 @@ func seedFixtures(dbPath, nasRoot string) error {
 	// hidden-prehidden-1: already hidden at seed time — used by gate-render
 	// and /hidden grid tests (the grid must show this row when unlocked).
 	prehidden := media.Media{
-		ID:          "hidden-prehidden-1",
-		Owner:       owner,
-		Type:        media.TypePhoto,
-		MimeType:    "image/jpeg",
-		Path:        "hidden-prehidden-1.jpg",
-		ImportedAt:  now,
-		Size:        1,
-		Checksum:    "checksum-hidden-prehidden-1",
-		ThumbStatus: "pending",
+		ID:                 "hidden-prehidden-1",
+		Owner:              owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: "hidden-prehidden-1.jpg",
+		ImportedAt:         now,
+		Size:               1,
+		SHA256:             "checksum-hidden-prehidden-1",
+		ThumbStatus:        "pending",
 	}
-	if err := repo.Insert(ctx, prehidden); err != nil {
+	if err := insert(prehidden); err != nil {
 		return fmt.Errorf("seed hidden-prehidden-1: %w", err)
 	}
 	if _, err := d.WriteDB().ExecContext(ctx,
-		`UPDATE media SET hidden_at = ? WHERE id = ?`, now, "hidden-prehidden-1",
+		`UPDATE assets SET hidden_at = ? WHERE id = ?`, now, "hidden-prehidden-1",
 	); err != nil {
 		return fmt.Errorf("seed hidden-prehidden-1 hidden_at: %w", err)
 	}
@@ -668,73 +664,35 @@ func seedFixtures(dbPath, nasRoot string) error {
 	// hidden-target-1: visible — used by the hide-flow test which triggers
 	// the hide action via the UI (exercising the cascade and store paths).
 	target := media.Media{
-		ID:          "hidden-target-1",
-		Owner:       owner,
-		Type:        media.TypePhoto,
-		MimeType:    "image/jpeg",
-		Path:        "hidden-target-1.jpg",
-		ImportedAt:  now,
-		Size:        1,
-		Checksum:    "checksum-hidden-target-1",
-		ThumbStatus: "pending",
+		ID:                 "hidden-target-1",
+		Owner:              owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: "hidden-target-1.jpg",
+		ImportedAt:         now,
+		Size:               1,
+		SHA256:             "checksum-hidden-target-1",
+		ThumbStatus:        "pending",
 	}
-	if err := repo.Insert(ctx, target); err != nil {
+	if err := insert(target); err != nil {
 		return fmt.Errorf("seed hidden-target-1: %w", err)
-	}
-
-	// hidden-cascade-primary + hidden-cascade-sidecar: a dedicated pair for
-	// the sidecar-cascade e2e test so hiding the primary doesn't contaminate
-	// the shared pair-fixture-primary/sidecar fixtures used by other tests.
-	cascadePrimary := media.Media{
-		ID:               "hidden-cascade-primary",
-		Owner:            owner,
-		Type:             media.TypePhoto,
-		MimeType:         "image/jpeg",
-		Path:             "hidden-cascade-primary.jpg",
-		OriginalFilename: "HIDDEN_C1.JPG",
-		ImportedAt:       now,
-		Size:             1,
-		Checksum:         "checksum-hidden-cascade-primary",
-		ImportSourcePath: "fixtures/HIDDEN_C1.JPG",
-		ThumbStatus:      "pending",
-	}
-	if err := repo.Insert(ctx, cascadePrimary); err != nil {
-		return fmt.Errorf("seed hidden-cascade-primary: %w", err)
-	}
-	cascadePrimaryID := cascadePrimary.ID
-	cascadeSidecar := media.Media{
-		ID:               "hidden-cascade-sidecar",
-		Owner:            owner,
-		Type:             media.TypePhoto,
-		MimeType:         "image/x-adobe-dng",
-		Path:             "hidden-cascade-sidecar.dng",
-		OriginalFilename: "HIDDEN_C1.DNG",
-		ImportedAt:       now,
-		Size:             1,
-		Checksum:         "checksum-hidden-cascade-sidecar",
-		ImportSourcePath: "fixtures/HIDDEN_C1.DNG",
-		PairedWithID:     &cascadePrimaryID,
-		ThumbStatus:      "pending",
-	}
-	if err := repo.Insert(ctx, cascadeSidecar); err != nil {
-		return fmt.Errorf("seed hidden-cascade-sidecar: %w", err)
 	}
 
 	// hidden-album-target-1: visible, added to the Italy album — used by the
 	// album hidden_count chip test so hiding this doesn't contaminate the
 	// gps-fixture-1 fixture that the shares test relies on.
 	albumTarget := media.Media{
-		ID:          "hidden-album-target-1",
-		Owner:       owner,
-		Type:        media.TypePhoto,
-		MimeType:    "image/jpeg",
-		Path:        "hidden-album-target-1.jpg",
-		ImportedAt:  now,
-		Size:        1,
-		Checksum:    "checksum-hidden-album-target-1",
-		ThumbStatus: "pending",
+		ID:                 "hidden-album-target-1",
+		Owner:              owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: "hidden-album-target-1.jpg",
+		ImportedAt:         now,
+		Size:               1,
+		SHA256:             "checksum-hidden-album-target-1",
+		ThumbStatus:        "pending",
 	}
-	if err := repo.Insert(ctx, albumTarget); err != nil {
+	if err := insert(albumTarget); err != nil {
 		return fmt.Errorf("seed hidden-album-target-1: %w", err)
 	}
 	// Add hidden-album-target-1 to the Italy album after inserting it.
@@ -748,17 +706,17 @@ func seedFixtures(dbPath, nasRoot string) error {
 	// ("Hidden grantee e2e share") so scenario 14 can hide it without
 	// contaminating gps-fixture-1 which is used by shares.spec.ts.
 	shareMember := media.Media{
-		ID:          "hidden-share-member-1",
-		Owner:       owner,
-		Type:        media.TypePhoto,
-		MimeType:    "image/jpeg",
-		Path:        "hidden-share-member-1.jpg",
-		ImportedAt:  now,
-		Size:        1,
-		Checksum:    "checksum-hidden-share-member-1",
-		ThumbStatus: "pending",
+		ID:                 "hidden-share-member-1",
+		Owner:              owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: "hidden-share-member-1.jpg",
+		ImportedAt:         now,
+		Size:               1,
+		SHA256:             "checksum-hidden-share-member-1",
+		ThumbStatus:        "pending",
 	}
-	if err := repo.Insert(ctx, shareMember); err != nil {
+	if err := insert(shareMember); err != nil {
 		return fmt.Errorf("seed hidden-share-member-1: %w", err)
 	}
 	if _, err := shareSvc.Create(ctx, service.CreateShareRequest{
@@ -784,23 +742,131 @@ func seedFixtures(dbPath, nasRoot string) error {
 		}
 	}
 
-	if err := seedF2_5Fixtures(ctx, d, repo, albumRepo, albumSvc, owner); err != nil {
+	if err := seedF2_5Fixtures(ctx, d, repo, albumRepo, albumSvc, owner, insert); err != nil {
 		return fmt.Errorf("seed f2.5 fixtures: %w", err)
 	}
 
-	if err := seedAIFixtures(ctx, d, repo, owner, nasRoot, "550e8400-e29b-41d4-a716-44665544000e"); err != nil {
+	if err := seedAIFixtures(ctx, d, repo, owner, nasRoot, "550e8400-e29b-41d4-a716-44665544000e", insert); err != nil {
 		return fmt.Errorf("seed ai fixtures: %w", err)
 	}
 
-	if err := seedSearchFixtures(ctx, d, repo, owner); err != nil {
+	if err := seedSearchFixtures(ctx, d, repo, owner, insert); err != nil {
 		return fmt.Errorf("seed search fixtures: %w", err)
 	}
 
-	if err := seedFacetFixtures(ctx, d, repo, owner); err != nil {
+	if err := seedFacetFixtures(ctx, d, repo, owner, insert); err != nil {
 		return fmt.Errorf("seed facet fixtures: %w", err)
 	}
 
 	return nil
+}
+
+func insertFixtureAsset(ctx context.Context, rw *sql.DB, store *content.Adapter, storageKey string, row media.Media) error {
+	filename := row.OriginalFilename
+	if filename == "" {
+		filename = row.ID + ".jpg"
+	}
+	fileID := uuid.NewString()
+	virtualPath, err := content.VirtualPath(storageKey, fileID, filename)
+	if err != nil {
+		return err
+	}
+	payload := []byte(row.ID)
+	if row.MimeType == "image/jpeg" {
+		payload, err = smallTestJPEG()
+		if err != nil {
+			return err
+		}
+		// JPEG decoders ignore bytes after the end marker. Appending the
+		// fixture ID keeps every authoritative object distinct while still
+		// exercising the real thumbnail decoder.
+		payload = append(payload, row.ID...)
+	}
+	digest := sha256.Sum256(payload)
+	identity := content.Identity{SHA256: hex.EncodeToString(digest[:]), Size: int64(len(payload))}
+	receipt, err := store.Create(ctx, content.CreateRequest{
+		VirtualPath: virtualPath, MediaType: row.MimeType, Expected: identity,
+		Reader: bytes.NewReader(payload),
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := rw.ExecContext(ctx, `
+		INSERT INTO assets (
+			id, owner_hub, owner_user_id, state, media_type, imported_at, timestamp,
+			make, model, lens_model, focal_length, shutter, width, height, iso, aperture,
+			duration_ms, latitude, longitude, gps_at, location_label,
+			thumb_status, thumb_version, thumb_updated_at, hidden_at
+		) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		row.ID, row.Owner.Hub, row.Owner.UserID, row.Type, row.ImportedAt, row.Timestamp,
+		row.Make, row.Model, row.LensModel, row.FocalLength, row.Shutter,
+		row.Width, row.Height, row.ISO, row.Aperture, row.DurationMs,
+		row.Latitude, row.Longitude, row.GPSAt, row.LocationLabel,
+		row.ThumbStatus, row.ThumbVersion, row.ThumbUpdatedAt, row.HiddenAt,
+	); err != nil {
+		return err
+	}
+	if _, err := rw.ExecContext(ctx, `
+		INSERT INTO media_files (
+			id, asset_id, owner_hub, owner_user_id, role, mime_type,
+			original_filename, size, docbank_node_id, docbank_virtual_path,
+			current_version_id, sha256
+		) VALUES (?, ?, ?, ?, 'primary', ?, ?, ?, ?, ?, ?, ?)`,
+		fileID, row.ID, row.Owner.Hub, row.Owner.UserID, row.MimeType, filename,
+		identity.Size, receipt.Node.ID, virtualPath, receipt.Version.ID, identity.SHA256,
+	); err != nil {
+		return err
+	}
+	_, err = rw.ExecContext(ctx, `UPDATE assets SET state = 'ready' WHERE id = ?`, row.ID)
+	return err
+}
+
+func insertFixtureFile(
+	ctx context.Context,
+	rw *sql.DB,
+	store *content.Adapter,
+	storageKey, assetID string,
+	role media.FileRole,
+	mimeType, filename string,
+) error {
+	fileID := uuid.NewString()
+	virtualPath, err := content.VirtualPath(storageKey, fileID, filename)
+	if err != nil {
+		return err
+	}
+	body := []byte(assetID + ":" + filename)
+	digest := sha256.Sum256(body)
+	identity := content.Identity{SHA256: hex.EncodeToString(digest[:]), Size: int64(len(body))}
+	receipt, err := store.Create(ctx, content.CreateRequest{
+		VirtualPath: virtualPath, MediaType: mimeType, Expected: identity,
+		Reader: strings.NewReader(string(body)),
+	})
+	if err != nil {
+		return err
+	}
+	var ownerHub, ownerUserID, primaryFileID string
+	if err := rw.QueryRowContext(ctx, `
+		SELECT a.owner_hub, a.owner_user_id, f.id
+		  FROM assets a
+		  JOIN media_files f ON f.asset_id = a.id AND f.role = 'primary'
+		 WHERE a.id = ?`, assetID).Scan(&ownerHub, &ownerUserID, &primaryFileID); err != nil {
+		return err
+	}
+	if _, err := rw.ExecContext(ctx, `
+		INSERT INTO media_files (
+			id, asset_id, owner_hub, owner_user_id, role, mime_type,
+			original_filename, size, docbank_node_id, docbank_virtual_path,
+			current_version_id, sha256
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		fileID, assetID, ownerHub, ownerUserID, role, mimeType, filename,
+		identity.Size, receipt.Node.ID, virtualPath, receipt.Version.ID, identity.SHA256,
+	); err != nil {
+		return err
+	}
+	_, err = rw.ExecContext(ctx, `
+		INSERT INTO media_file_relationships (source_file_id, target_file_id, kind)
+		VALUES (?, ?, 'paired_with')`, fileID, primaryFileID)
+	return err
 }
 
 // scaleModeRows reads FOTOBANK_E2E_SCALE_ROWS and returns (n, true) when
@@ -1016,6 +1082,7 @@ func seedF2_5Fixtures(
 	albumRepo *album.Repo,
 	albumSvc *service.AlbumService,
 	owner owners.Principal,
+	insert func(media.Media) error,
 ) error {
 	base := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
 
@@ -1027,17 +1094,17 @@ func seedF2_5Fixtures(
 	for i := 1; i <= albumCount; i++ {
 		id := fmt.Sprintf("lightbox-album-30-id-%03d", i)
 		row := media.Media{
-			ID:          id,
-			Owner:       owner,
-			Type:        media.TypePhoto,
-			MimeType:    "image/jpeg",
-			Path:        id + ".jpg",
-			ImportedAt:  base.Add(-time.Duration(i) * time.Hour),
-			Size:        1,
-			Checksum:    "checksum-" + id,
-			ThumbStatus: "pending",
+			ID:                 id,
+			Owner:              owner,
+			Type:               media.TypePhoto,
+			MimeType:           "image/jpeg",
+			DocbankVirtualPath: id + ".jpg",
+			ImportedAt:         base.Add(-time.Duration(i) * time.Hour),
+			Size:               1,
+			SHA256:             "checksum-" + id,
+			ThumbStatus:        "pending",
 		}
-		if err := mediaRepo.Insert(ctx, row); err != nil {
+		if err := insert(row); err != nil {
 			return fmt.Errorf("seed %s: %w", id, err)
 		}
 		albumIDs = append(albumIDs, id)
@@ -1062,21 +1129,21 @@ func seedF2_5Fixtures(
 	for i := 1; i <= hiddenCount; i++ {
 		id := fmt.Sprintf("lightbox-hidden-2-id-%03d", i)
 		row := media.Media{
-			ID:          id,
-			Owner:       owner,
-			Type:        media.TypePhoto,
-			MimeType:    "image/jpeg",
-			Path:        id + ".jpg",
-			ImportedAt:  base.Add(-time.Duration(albumCount+i) * time.Hour),
-			Size:        1,
-			Checksum:    "checksum-" + id,
-			ThumbStatus: "pending",
+			ID:                 id,
+			Owner:              owner,
+			Type:               media.TypePhoto,
+			MimeType:           "image/jpeg",
+			DocbankVirtualPath: id + ".jpg",
+			ImportedAt:         base.Add(-time.Duration(albumCount+i) * time.Hour),
+			Size:               1,
+			SHA256:             "checksum-" + id,
+			ThumbStatus:        "pending",
 		}
-		if err := mediaRepo.Insert(ctx, row); err != nil {
+		if err := insert(row); err != nil {
 			return fmt.Errorf("seed %s: %w", id, err)
 		}
 		if _, err := d.WriteDB().ExecContext(ctx,
-			`UPDATE media SET hidden_at = ? WHERE id = ?`,
+			`UPDATE assets SET hidden_at = ? WHERE id = ?`,
 			row.ImportedAt, id,
 		); err != nil {
 			return fmt.Errorf("seed %s hidden_at: %w", id, err)
@@ -1091,17 +1158,17 @@ func seedF2_5Fixtures(
 	for i := 1; i <= selectCount; i++ {
 		id := fmt.Sprintf("lightbox-select-5-id-%03d", i)
 		row := media.Media{
-			ID:          id,
-			Owner:       owner,
-			Type:        media.TypePhoto,
-			MimeType:    "image/jpeg",
-			Path:        id + ".jpg",
-			ImportedAt:  base.Add(-time.Duration(albumCount+hiddenCount+i) * time.Hour),
-			Size:        1,
-			Checksum:    "checksum-" + id,
-			ThumbStatus: "pending",
+			ID:                 id,
+			Owner:              owner,
+			Type:               media.TypePhoto,
+			MimeType:           "image/jpeg",
+			DocbankVirtualPath: id + ".jpg",
+			ImportedAt:         base.Add(-time.Duration(albumCount+hiddenCount+i) * time.Hour),
+			Size:               1,
+			SHA256:             "checksum-" + id,
+			ThumbStatus:        "pending",
 		}
-		if err := mediaRepo.Insert(ctx, row); err != nil {
+		if err := insert(row); err != nil {
 			return fmt.Errorf("seed %s: %w", id, err)
 		}
 	}
@@ -1138,6 +1205,7 @@ func seedAIFixtures(
 	mediaRepo *media.Repo,
 	owner owners.Principal,
 	nasRoot, storageKey string,
+	insert func(media.Media) error,
 ) error {
 	base := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
 
@@ -1167,16 +1235,16 @@ func seedAIFixtures(
 
 	// ai-fixture-tagged-1: full success.
 	taggedID := "ai-fixture-tagged-1"
-	if err := mediaRepo.Insert(ctx, media.Media{
-		ID:          taggedID,
-		Owner:       owner,
-		Type:        media.TypePhoto,
-		MimeType:    "image/jpeg",
-		Path:        taggedID + ".jpg",
-		ImportedAt:  base.Add(-time.Hour),
-		Size:        1,
-		Checksum:    "checksum-" + taggedID,
-		ThumbStatus: "ready",
+	if err := insert(media.Media{
+		ID:                 taggedID,
+		Owner:              owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: taggedID + ".jpg",
+		ImportedAt:         base.Add(-time.Hour),
+		Size:               1,
+		SHA256:             "checksum-" + taggedID,
+		ThumbStatus:        "ready",
 	}); err != nil {
 		return fmt.Errorf("seed %s: %w", taggedID, err)
 	}
@@ -1197,16 +1265,16 @@ func seedAIFixtures(
 
 	// ai-fixture-failed-1: tags succeed, caption fails (malformed).
 	failedID := "ai-fixture-failed-1"
-	if err := mediaRepo.Insert(ctx, media.Media{
-		ID:          failedID,
-		Owner:       owner,
-		Type:        media.TypePhoto,
-		MimeType:    "image/jpeg",
-		Path:        failedID + ".jpg",
-		ImportedAt:  base.Add(-2 * time.Hour),
-		Size:        1,
-		Checksum:    "checksum-" + failedID,
-		ThumbStatus: "ready",
+	if err := insert(media.Media{
+		ID:                 failedID,
+		Owner:              owner,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: failedID + ".jpg",
+		ImportedAt:         base.Add(-2 * time.Hour),
+		Size:               1,
+		SHA256:             "checksum-" + failedID,
+		ThumbStatus:        "ready",
 	}); err != nil {
 		return fmt.Errorf("seed %s: %w", failedID, err)
 	}
@@ -1288,6 +1356,7 @@ func seedSearchFixtures(
 	d *db.DB,
 	mediaRepo *media.Repo,
 	owner owners.Principal,
+	insert func(media.Media) error,
 ) error {
 	base := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
 
@@ -1306,16 +1375,16 @@ func seedSearchFixtures(
 	for i := 1; i <= e2eVisibleCount; i++ {
 		id := fmt.Sprintf("search-fixture-vis-%03d", i)
 		visibleIDs = append(visibleIDs, id)
-		if err := mediaRepo.Insert(ctx, media.Media{
-			ID:          id,
-			Owner:       owner,
-			Type:        media.TypePhoto,
-			MimeType:    "image/jpeg",
-			Path:        id + ".jpg",
-			ImportedAt:  base.Add(-time.Duration(i) * 2 * time.Minute),
-			Size:        1,
-			Checksum:    "checksum-" + id,
-			ThumbStatus: "ready",
+		if err := insert(media.Media{
+			ID:                 id,
+			Owner:              owner,
+			Type:               media.TypePhoto,
+			MimeType:           "image/jpeg",
+			DocbankVirtualPath: id + ".jpg",
+			ImportedAt:         base.Add(-time.Duration(i) * 2 * time.Minute),
+			Size:               1,
+			SHA256:             "checksum-" + id,
+			ThumbStatus:        "ready",
 		}); err != nil {
 			return fmt.Errorf("seed %s: %w", id, err)
 		}
@@ -1333,16 +1402,16 @@ func seedSearchFixtures(
 	// default.
 	for i := 1; i <= e2eHiddenCount; i++ {
 		id := fmt.Sprintf("search-fixture-hid-%03d", i)
-		if err := mediaRepo.Insert(ctx, media.Media{
-			ID:          id,
-			Owner:       owner,
-			Type:        media.TypePhoto,
-			MimeType:    "image/jpeg",
-			Path:        id + ".jpg",
-			ImportedAt:  base.Add(-time.Duration(e2eVisibleCount+i) * 2 * time.Minute),
-			Size:        1,
-			Checksum:    "checksum-" + id,
-			ThumbStatus: "ready",
+		if err := insert(media.Media{
+			ID:                 id,
+			Owner:              owner,
+			Type:               media.TypePhoto,
+			MimeType:           "image/jpeg",
+			DocbankVirtualPath: id + ".jpg",
+			ImportedAt:         base.Add(-time.Duration(e2eVisibleCount+i) * 2 * time.Minute),
+			Size:               1,
+			SHA256:             "checksum-" + id,
+			ThumbStatus:        "ready",
 		}); err != nil {
 			return fmt.Errorf("seed %s: %w", id, err)
 		}
@@ -1353,7 +1422,7 @@ func seedSearchFixtures(
 			return fmt.Errorf("seed ai results for %s: %w", id, err)
 		}
 		if _, err := d.WriteDB().ExecContext(ctx,
-			`UPDATE media SET hidden_at = ? WHERE id = ?`, base, id,
+			`UPDATE assets SET hidden_at = ? WHERE id = ?`, base, id,
 		); err != nil {
 			return fmt.Errorf("hide %s: %w", id, err)
 		}
@@ -1500,6 +1569,7 @@ func seedFacetFixtures(
 	d *db.DB,
 	mediaRepo *media.Repo,
 	owner owners.Principal,
+	insert func(media.Media) error,
 ) error {
 	base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	type facetSeed struct {
@@ -1555,17 +1625,17 @@ func seedFacetFixtures(
 	gpsIdx := 0
 	for i, fs := range rows {
 		row := media.Media{
-			ID:         fs.id,
-			Owner:      owner,
-			Type:       fs.mediaType,
-			MimeType:   mimeFor(fs.mediaType),
-			Path:       pathFor(fs.id, fs.mediaType),
-			ImportedAt: base.Add(-time.Duration(i) * time.Minute),
-			Size:       1,
-			Checksum:   "checksum-" + fs.id,
-			Make:       fs.make,
-			Model:      fs.model,
-			LensModel:  fs.lens,
+			ID:                 fs.id,
+			Owner:              owner,
+			Type:               fs.mediaType,
+			MimeType:           mimeFor(fs.mediaType),
+			DocbankVirtualPath: pathFor(fs.id, fs.mediaType),
+			ImportedAt:         base.Add(-time.Duration(i) * time.Minute),
+			Size:               1,
+			SHA256:             "checksum-" + fs.id,
+			Make:               fs.make,
+			Model:              fs.model,
+			LensModel:          fs.lens,
 			// thumb_status='pending' so these rows don't perturb the
 			// search-suite's embedding-completeness assertions, which
 			// pin against an exact (22 / 32) ratio assuming only the W1
@@ -1583,7 +1653,7 @@ func seedFacetFixtures(
 			row.LocationLabel = g.label
 			gpsIdx = (gpsIdx + 1) % len(gpsCoords)
 		}
-		if err := mediaRepo.Insert(ctx, row); err != nil {
+		if err := insert(row); err != nil {
 			return fmt.Errorf("seed %s: %w", fs.id, err)
 		}
 		if fs.tag != "" {

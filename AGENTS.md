@@ -31,7 +31,8 @@ internal/
 ├── album/                 — albums domain
 ├── broker/                — sharing broker interface and stub
 ├── cli/                   — cobra subcommands (serve, import, thumbs, …)
-├── config/                — YAML config loader + defaults
+├── config/                — TOML config loader + defaults
+├── content/               — embedded Docbank boundary
 ├── db/                    — sqlx wrapper + migrations
 │   └── migrations/        — golang-migrate SQL files (up/down pairs)
 ├── errs/                  — cross-cutting sentinel errors
@@ -42,7 +43,6 @@ internal/
 ├── media/                 — media domain + repo
 ├── migrate/               — runs db/migrations at boot
 ├── owners/                — owner principal type
-├── reconcile/             — active NAS-path drift reconciler
 ├── service/               — auth-scoped wrappers over repos
 ├── share/                 — sharing scopes domain
 ├── storage/               — NAS + flash cache
@@ -76,8 +76,7 @@ Background workers (e.g. `internal/thumb/worker.go`) follow the same rule: they'
 
 Living architecture documentation starts at
 [`docs/architecture/README.md`](docs/architecture/README.md). It describes the
-system that exists, including explicit transition states where old and new
-models temporarily coexist.
+system that exists.
 
 - Update the relevant architecture page in the same pull request that changes
   a system boundary, data flow, invariant, authority, or operational contract.
@@ -90,8 +89,8 @@ models temporarily coexist.
   checklists, brainstorming transcripts, or mockups. Temporary planning stays
   outside the repository.
 - Track proposed and incomplete work in kata. Put review-specific reasoning in
-  the pull request. Architecture docs may state an accepted boundary or an
-  explicit current transition, but they are not the implementation tracker.
+  the pull request. Architecture docs may state an accepted boundary or
+  current behavior, but they are not the implementation tracker.
 
 ## Task tracking
 

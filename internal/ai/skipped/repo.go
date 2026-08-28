@@ -67,7 +67,7 @@ func (r *Repo) Count(ctx context.Context, task ai.Task) (int, error) {
 func (r *Repo) CountByOwner(ctx context.Context, task ai.Task, hub, userID string) (int, error) {
 	row := r.ro.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM ai_skipped s
-		  JOIN media m ON m.id = s.media_id
+		  JOIN assets m ON m.id = s.media_id AND m.state = 'ready'
 		 WHERE s.task=? AND m.owner_hub=? AND m.owner_user_id=?`,
 		string(task), hub, userID)
 	var n int

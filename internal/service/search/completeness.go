@@ -69,8 +69,8 @@ func (s *Service) EmbeddingCompleteness(ctx context.Context, caller owners.Princ
 	}
 
 	const eligibleSQL = `
-SELECT COUNT(*) FROM media m
- WHERE m.owner_hub = ? AND m.owner_user_id = ?
+SELECT COUNT(*) FROM assets m
+ WHERE m.state = 'ready' AND m.owner_hub = ? AND m.owner_user_id = ?
    AND m.thumb_status = 'ready'
    AND (m.hidden_at IS NULL OR ?)
    AND NOT EXISTS (
@@ -78,7 +78,7 @@ SELECT COUNT(*) FROM media m
    )`
 	const embeddedSQL = `
 SELECT COUNT(*) FROM media_embedding_ids x
-  JOIN media m ON m.id = x.media_id
+  JOIN assets m ON m.id = x.media_id AND m.state = 'ready'
  WHERE x.generation_id = ?
    AND m.owner_hub = ? AND m.owner_user_id = ?
    AND m.thumb_status = 'ready'

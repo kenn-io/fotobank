@@ -171,14 +171,16 @@
   const isHidden = $derived(rawHidden !== undefined && rawHidden !== null);
 
   // ---- Fetch effect ----------------------------------------------
-  // On id change: clear stale state, then fetch only when the row is
-  // not already in the visible store. Cancellation flag prevents a
-  // late response from clobbering a newer one.
+  // On id change: clear stale state, then fetch unless the visible store
+  // already has a detail-shaped row. List responses omit `files`, so a
+  // cached library row still needs the detail request before attachments
+  // can be shown. Cancellation prevents a late response from clobbering a
+  // newer one.
   $effect(() => {
     const currentId = id;
     loadError = null;
     lastRaw = null;
-    if (mediaStore.get(currentId)) return;
+    if (mediaStore.get(currentId)?.files !== undefined) return;
     let cancelled = false;
     (async () => {
       try {

@@ -19,7 +19,9 @@ import (
 	"go.kenn.io/fotobank/internal/ai/failures"
 	"go.kenn.io/fotobank/internal/cli"
 	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
 
 // writeAIEmbedConfig writes a TOML config sufficient for the embed-task
@@ -96,13 +98,11 @@ func seedEmbedOwnerAndPhoto(t *testing.T, dbPath string) (owners.Principal, stri
 	require.NoError(t, err)
 
 	mid := uuid.NewString()
-	_, err = d.WriteDB().ExecContext(context.Background(),
-		`INSERT INTO media(id, owner_hub, owner_user_id, media_type, mime_type, path,
-		 imported_at, size, checksum, thumb_status, thumb_version, import_source_path)
-		 VALUES (?,?,?, 'photo','image/jpeg', ?, ?, 0, ?, 'ready', 1, ?)`,
-		mid, p.Hub, p.UserID, "/photos/p1.jpg", time.Now().UTC(),
-		"checksum-"+mid, "p1")
-	require.NoError(t, err)
+	assetfixture.Insert(t, media.NewRepo(d.WriteDB(), d.ReadDB()), media.Media{
+		ID: mid, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		OriginalFilename: "p1.jpg", ImportedAt: time.Now().UTC(),
+		ThumbStatus: "ready", ThumbVersion: 1,
+	})
 	return p, mid
 }
 

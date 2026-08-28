@@ -19,14 +19,14 @@ import (
 var testOwner = owners.Principal{Hub: "hub-a", UserID: "user-1"}
 
 // TestFilter_OwnerOnlyBaseline pins the minimum-shape contract: a
-// pure-owner Input projects (id, timestamp, imported_at) FROM media m
+// pure-owner Input projects (id, timestamp, imported_at) FROM assets m
 // with both owner predicates plus the default hidden-exclusion
 // clause. args is exactly [hub, userID] — no per-filter binds.
 func TestFilter_OwnerOnlyBaseline(t *testing.T) {
 	r := require.New(t)
 	cte, args := hybrid.Resolve(hybrid.Input{Owner: testOwner})
 
-	r.Contains(cte, "SELECT m.id, m.timestamp, m.imported_at FROM media m WHERE")
+	r.Contains(cte, "SELECT m.id, m.timestamp, m.imported_at FROM assets m WHERE")
 	r.Contains(cte, "m.owner_hub = ?")
 	r.Contains(cte, "m.owner_user_id = ?")
 	r.Contains(cte, "m.hidden_at IS NULL")

@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/fotobank/internal/service"
 	"go.kenn.io/fotobank/internal/share"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
 
 // albumSvcFixture bundles the service with the helpers tests need:
@@ -213,19 +214,11 @@ func TestAlbumServiceListIsolatesOwners(t *testing.T) {
 // seedMediaSvc inserts a minimal media row directly.
 func seedMediaSvc(t *testing.T, rw *sql.DB, p owners.Principal, id, checksum string) {
 	t.Helper()
-	_, err := rw.ExecContext(context.Background(), `
-INSERT INTO media (
-    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-    imported_at, timestamp, size, checksum,
-    make, model, focal_length, shutter, width, height, iso, aperture,
-    duration_ms,
-    thumb_status, thumb_version, thumb_updated_at
-) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          'ready', 1, NULL)`,
-		id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), checksum,
-	)
-	require.NoError(t, err)
+	assetfixture.Insert(t, media.NewRepo(rw, rw), media.Media{
+		ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		OriginalFilename: id + ".jpg", ImportedAt: time.Now().UTC(),
+		SHA256: checksum, ThumbStatus: "ready", ThumbVersion: 1,
+	})
 }
 
 func TestAlbumServiceAddMediaHappyPath(t *testing.T) {
@@ -360,29 +353,6 @@ func TestAlbumServiceAddMediaCrossOwnerAlbumNotFound(t *testing.T) {
 	r.ErrorIs(err, errs.ErrNotFound)
 }
 
-func TestAlbumServiceAddMediaRejectsSidecar(t *testing.T) {
-	r := require.New(t)
-	fx := newAlbumSvcFixture(t)
-	ctx := context.Background()
-
-	primaryID := uuid.NewString()
-	sidecarID := uuid.NewString()
-	seedMediaSvc(t, fx.rw, fx.caller, primaryID, "cs-pri")
-	seedMediaSvc(t, fx.rw, fx.caller, sidecarID, "cs-sid")
-	r.NoError(fx.media.UpdatePairedWithID(ctx, sidecarID, &primaryID))
-
-	a, err := fx.svc.Create(ctx, fx.caller, "Trip")
-	r.NoError(err)
-
-	// Primary alone is fine.
-	_, _, err = fx.svc.AddMedia(ctx, a.ID, []string{primaryID}, fx.caller)
-	r.NoError(err)
-
-	// Sidecar must be rejected with ErrInvalidArgument (HTTP 400).
-	_, _, err = fx.svc.AddMedia(ctx, a.ID, []string{sidecarID}, fx.caller)
-	r.ErrorIs(err, errs.ErrInvalidArgument)
-}
-
 func TestAlbumServiceRemoveMediaHappyPath(t *testing.T) {
 	r := require.New(t)
 	fx := newAlbumSvcFixture(t)
@@ -499,11 +469,11 @@ func TestAlbumDeleteBlocksWhenLiveScopes(t *testing.T) {
 	r.NoError(err)
 	m := media.Media{
 		ID: uuid.NewString(), Owner: owner, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/t.jpg",
+		MimeType: "image/jpeg", DocbankVirtualPath: "2024/t.jpg",
 		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
-		Size: 100, Checksum: "cs", ThumbStatus: "pending",
+		Size: 100, SHA256: "cs", ThumbStatus: "pending",
 	}
-	r.NoError(mediaRepo.Insert(ctx, m))
+	assetfixture.Insert(t, mediaRepo, m)
 	_, _, err = svc.AddMedia(ctx, a.ID, []string{m.ID}, owner)
 	r.NoError(err)
 
@@ -539,11 +509,11 @@ func TestAlbumDeletePurgesRevokedRemote(t *testing.T) {
 	r.NoError(err)
 	m := media.Media{
 		ID: uuid.NewString(), Owner: owner, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/t.jpg",
+		MimeType: "image/jpeg", DocbankVirtualPath: "2024/t.jpg",
 		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC().Truncate(time.Second),
-		Size: 100, Checksum: "cs", ThumbStatus: "pending",
+		Size: 100, SHA256: "cs", ThumbStatus: "pending",
 	}
-	r.NoError(mediaRepo.Insert(ctx, m))
+	assetfixture.Insert(t, mediaRepo, m)
 	_, _, err = svc.AddMedia(ctx, a.ID, []string{m.ID}, owner)
 	r.NoError(err)
 
@@ -568,19 +538,12 @@ func TestAlbumDeletePurgesRevokedRemote(t *testing.T) {
 func seedHiddenMediaSvc(t *testing.T, rw *sql.DB, p owners.Principal, id, checksum string) {
 	t.Helper()
 	hiddenAt := time.Now().UTC().Add(-time.Hour)
-	_, err := rw.ExecContext(context.Background(), `
-INSERT INTO media (
-    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-    imported_at, timestamp, size, checksum,
-    make, model, focal_length, shutter, width, height, iso, aperture,
-    duration_ms,
-    thumb_status, thumb_version, thumb_updated_at, hidden_at
-) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          'ready', 1, NULL, ?)`,
-		id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), checksum, hiddenAt,
-	)
-	require.NoError(t, err)
+	_ = checksum
+	assetfixture.Insert(t, media.NewRepo(rw, rw), media.Media{
+		ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		OriginalFilename: id + ".jpg", ImportedAt: time.Now().UTC(),
+		ThumbStatus: "ready", ThumbVersion: 1, HiddenAt: &hiddenAt,
+	})
 }
 
 // TestAlbumServiceAddMediaHiddenIDNotFoundByDefault verifies that a hidden

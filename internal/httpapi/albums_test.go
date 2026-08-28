@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/fotobank/internal/service"
 	"go.kenn.io/fotobank/internal/share"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
 
 func TestTranslateAlbumErrorOwnerMismatchMapsTo500(t *testing.T) {
@@ -228,19 +229,12 @@ func TestListAlbumsIsolatesOwner(t *testing.T) {
 // insert surface.
 func seedMediaRowAPI(t *testing.T, rw *sql.DB, p owners.Principal, id, checksum string) {
 	t.Helper()
-	_, err := rw.ExecContext(context.Background(), `
-INSERT INTO media (
-    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-    imported_at, timestamp, size, checksum,
-    make, model, focal_length, shutter, width, height, iso, aperture,
-    duration_ms,
-    thumb_status, thumb_version, thumb_updated_at
-) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          'ready', 1, NULL)`,
-		id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), checksum,
-	)
-	require.NoError(t, err)
+	_ = checksum
+	assetfixture.Insert(t, media.NewRepo(rw, rw), media.Media{
+		ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		OriginalFilename: id + ".jpg", ImportedAt: time.Now().UTC(),
+		ThumbStatus: "ready", ThumbVersion: 1,
+	})
 }
 
 func TestAddAlbumMediaBatchResponseShape(t *testing.T) {
@@ -389,19 +383,12 @@ func TestListAlbumMediaPagination(t *testing.T) {
 func seedHiddenMediaRowAPI(t *testing.T, rw *sql.DB, p owners.Principal, id, checksum string) {
 	t.Helper()
 	hiddenAt := time.Now().UTC().Add(-time.Hour)
-	_, err := rw.ExecContext(context.Background(), `
-INSERT INTO media (
-    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-    imported_at, timestamp, size, checksum,
-    make, model, focal_length, shutter, width, height, iso, aperture,
-    duration_ms,
-    thumb_status, thumb_version, thumb_updated_at, hidden_at
-) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          'ready', 1, NULL, ?)`,
-		id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), checksum, hiddenAt,
-	)
-	require.NoError(t, err)
+	_ = checksum
+	assetfixture.Insert(t, media.NewRepo(rw, rw), media.Media{
+		ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		OriginalFilename: id + ".jpg", ImportedAt: time.Now().UTC(),
+		ThumbStatus: "ready", ThumbVersion: 1, HiddenAt: &hiddenAt,
+	})
 }
 
 // albumsHiddenFixture extends albumsAPIFixture with a hidden.Service so

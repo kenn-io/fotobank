@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 	"go.kenn.io/fotobank/internal/thumb"
 )
 
@@ -39,19 +40,19 @@ func newQueueFixture(t *testing.T, nRows int) queueFixture {
 	ids := make([]string, nRows)
 	for i := range nRows {
 		m := media.Media{
-			ID:               uuid.NewString(),
-			Owner:            p,
-			Type:             media.TypePhoto,
-			MimeType:         "image/jpeg",
-			Path:             "2024/a.jpg",
-			OriginalFilename: "a.jpg",
-			ImportedAt:       time.Now().UTC().Add(time.Duration(i) * time.Second),
-			Size:             100,
-			Checksum:         uuid.NewString(),
-			ThumbStatus:      "pending",
+			ID:                 uuid.NewString(),
+			Owner:              p,
+			Type:               media.TypePhoto,
+			MimeType:           "image/jpeg",
+			DocbankVirtualPath: "2024/a.jpg",
+			OriginalFilename:   "a.jpg",
+			ImportedAt:         time.Now().UTC().Add(time.Duration(i) * time.Second),
+			Size:               100,
+			SHA256:             uuid.NewString(),
+			ThumbStatus:        "pending",
 		}
-		m.Path = "2024/" + m.ID + ".jpg"
-		require.NoError(t, repo.Insert(context.Background(), m))
+		m.DocbankVirtualPath = "2024/" + m.ID + ".jpg"
+		assetfixture.Insert(t, repo, m)
 		ids[i] = m.ID
 	}
 	return queueFixture{q: q, rw: d.WriteDB(), owner: p, ids: ids}
@@ -181,6 +182,32 @@ func TestEnqueueBumpsVersionForMatchingRows(t *testing.T) {
 	}
 }
 
+func TestEnqueueSkipsHiddenAndNonReadyAssets(t *testing.T) {
+	r := require.New(t)
+	fx := newQueueFixture(t, 3)
+	_, err := fx.rw.ExecContext(t.Context(),
+		`UPDATE assets SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), fx.ids[1])
+	r.NoError(err)
+	_, err = fx.rw.ExecContext(t.Context(),
+		`UPDATE assets SET state = 'pending' WHERE id = ?`, fx.ids[2])
+	r.NoError(err)
+
+	n, err := fx.q.Enqueue(t.Context(), thumb.EnqueueFilter{All: true, Owner: fx.owner})
+	r.NoError(err)
+	r.Equal(1, n)
+
+	for i, id := range fx.ids {
+		var version int
+		r.NoError(fx.rw.QueryRowContext(t.Context(),
+			`SELECT thumb_version FROM assets WHERE id = ?`, id).Scan(&version))
+		if i == 0 {
+			r.Equal(1, version)
+		} else {
+			r.Zero(version)
+		}
+	}
+}
+
 func TestRegenerateWhileWorkingLosesClaim(t *testing.T) {
 	r := require.New(t)
 	fx := newQueueFixture(t, 1)
@@ -224,7 +251,7 @@ func readThumbStatus(t *testing.T, rw *sql.DB, id string) string {
 	t.Helper()
 	var status string
 	err := rw.QueryRowContext(context.Background(),
-		`SELECT thumb_status FROM media WHERE id = ?`, id).Scan(&status)
+		`SELECT thumb_status FROM assets WHERE id = ?`, id).Scan(&status)
 	require.NoError(t, err)
 	return status
 }
@@ -263,22 +290,22 @@ func TestClaimBatchOrdersNewestFirst(t *testing.T) {
 		timestamp *time.Time
 		imported  time.Time
 	}{
-		{id: "old", timestamp: &old, imported: time.Now().UTC().Add(-3 * time.Hour)},
-		{id: "no-exif", timestamp: nil, imported: noExif},
-		{id: "new", timestamp: &new, imported: time.Now().UTC().Add(-1 * time.Hour)},
+		{id: "a-old", timestamp: &old, imported: time.Now().UTC().Add(-3 * time.Hour)},
+		{id: "b-no-exif", timestamp: nil, imported: noExif},
+		{id: "z-new", timestamp: &new, imported: time.Now().UTC().Add(-1 * time.Hour)},
 	}
 	for _, row := range rows {
 		m := media.Media{
 			ID: row.id, Owner: p,
 			Type: media.TypePhoto, MimeType: "image/jpeg",
-			Path:             "2024/" + row.id + ".jpg",
-			OriginalFilename: row.id + ".jpg",
-			ImportedAt:       row.imported,
-			Timestamp:        row.timestamp,
-			Size:             100, Checksum: row.id,
+			DocbankVirtualPath: "2024/" + row.id + ".jpg",
+			OriginalFilename:   row.id + ".jpg",
+			ImportedAt:         row.imported,
+			Timestamp:          row.timestamp,
+			Size:               100, SHA256: row.id,
 			ThumbStatus: "pending",
 		}
-		r.NoError(repo.Insert(context.Background(), m))
+		assetfixture.Insert(t, repo, m)
 	}
 
 	claims, err := q.ClaimBatch(context.Background(), 3)
@@ -293,6 +320,6 @@ func TestClaimBatchOrdersNewestFirst(t *testing.T) {
 	// recent than old's EXIF timestamp — newness the user perceives
 	// (when the row entered the system) matches what the worker
 	// drains, regardless of whether EXIF dates are present.
-	r.Equal([]string{"new", "no-exif", "old"}, got,
+	r.Equal([]string{"z-new", "b-no-exif", "a-old"}, got,
 		"claim order must be newest-first by COALESCE(timestamp, imported_at) DESC")
 }

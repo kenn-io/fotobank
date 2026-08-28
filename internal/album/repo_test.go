@@ -11,8 +11,10 @@ import (
 
 	"go.kenn.io/fotobank/internal/album"
 	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
 
 // seedOwner inserts a minimal owners row so album FK constraints resolve.
@@ -117,19 +119,12 @@ func TestRepoDeleteMissing(t *testing.T) {
 // package's insert surface, which requires many more fields.
 func seedMediaRow(t *testing.T, rw *sql.DB, p owners.Principal, id, checksum, thumbStatus string, thumbVersion int) {
 	t.Helper()
-	_, err := rw.ExecContext(context.Background(), `
-INSERT INTO media (
-    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-    imported_at, timestamp, size, checksum,
-    make, model, focal_length, shutter, width, height, iso, aperture,
-    duration_ms,
-    thumb_status, thumb_version, thumb_updated_at
-) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          ?, ?, NULL)`,
-		id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), checksum, thumbStatus, thumbVersion,
-	)
-	require.NoError(t, err)
+	_ = checksum
+	assetfixture.Insert(t, media.NewRepo(rw, rw), media.Media{
+		ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		OriginalFilename: id + ".jpg", ImportedAt: time.Now().UTC(),
+		ThumbStatus: thumbStatus, ThumbVersion: thumbVersion,
+	})
 }
 
 // seedAlbumMedia inserts directly into album_media (bypassing the service)
@@ -468,7 +463,7 @@ func TestRepoDeleteMediaCascadesAlbumMedia(t *testing.T) {
 	seedMediaRow(t, d.WriteDB(), p, m, "cs", "ready", 1)
 	seedAlbumMedia(t, d.WriteDB(), a.ID, m, time.Now().UTC())
 
-	_, err := d.WriteDB().ExecContext(context.Background(), `DELETE FROM media WHERE id = ?`, m)
+	_, err := d.WriteDB().ExecContext(context.Background(), `DELETE FROM assets WHERE id = ?`, m)
 	r.NoError(err)
 
 	var n int
@@ -703,25 +698,18 @@ func TestRepoListMediaImportedSort(t *testing.T) {
 // indicate NULL. Used by sort_by=taken tests.
 func seedMediaRowWithTimestamp(t *testing.T, rw *sql.DB, p owners.Principal, id, checksum, takenAt string) {
 	t.Helper()
-	var ts any
+	var ts *time.Time
 	if takenAt != "" {
 		parsed, err := time.Parse(time.RFC3339, takenAt)
 		require.NoError(t, err)
-		ts = parsed
+		ts = &parsed
 	}
-	_, err := rw.ExecContext(context.Background(), `
-INSERT INTO media (
-    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-    imported_at, timestamp, size, checksum,
-    make, model, focal_length, shutter, width, height, iso, aperture,
-    duration_ms,
-    thumb_status, thumb_version, thumb_updated_at
-) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, ?, 0, ?,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          'ready', 1, NULL)`,
-		id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), ts, checksum,
-	)
-	require.NoError(t, err)
+	_ = checksum
+	assetfixture.Insert(t, media.NewRepo(rw, rw), media.Media{
+		ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		OriginalFilename: id + ".jpg", ImportedAt: time.Now().UTC(), Timestamp: ts,
+		ThumbStatus: "ready", ThumbVersion: 1,
+	})
 }
 
 func TestRepoListMediaSortByTakenDescNullsLast(t *testing.T) {
@@ -791,19 +779,12 @@ func TestRepoListMediaSortByTakenAscNullsLast(t *testing.T) {
 func seedHiddenMediaRow(t *testing.T, rw *sql.DB, p owners.Principal, id, checksum string) {
 	t.Helper()
 	hiddenAt := time.Now().UTC().Add(-time.Hour)
-	_, err := rw.ExecContext(context.Background(), `
-INSERT INTO media (
-    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-    imported_at, timestamp, size, checksum,
-    make, model, focal_length, shutter, width, height, iso, aperture,
-    duration_ms,
-    thumb_status, thumb_version, thumb_updated_at, hidden_at
-) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          'ready', 1, NULL, ?)`,
-		id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), checksum, hiddenAt,
-	)
-	require.NoError(t, err)
+	_ = checksum
+	assetfixture.Insert(t, media.NewRepo(rw, rw), media.Media{
+		ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		OriginalFilename: id + ".jpg", ImportedAt: time.Now().UTC(),
+		ThumbStatus: "ready", ThumbVersion: 1, HiddenAt: &hiddenAt,
+	})
 }
 
 // TestRepoItemCountCountsVisibleOnly verifies that ListByOwner reports
@@ -929,22 +910,13 @@ func TestRepoListMediaPreservesGPS(t *testing.T) {
 	id := uuid.NewString()
 	lat, lon := 48.8566, 2.3522
 	gps := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
-	_, err := d.WriteDB().ExecContext(context.Background(), `
-INSERT INTO media (
-    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-    imported_at, timestamp, size, checksum,
-    make, model, focal_length, shutter, width, height, iso, aperture,
-    duration_ms,
-    latitude, longitude, gps_at, location_label,
-    thumb_status, thumb_version, thumb_updated_at
-) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          ?, ?, ?, ?,
-          'ready', 1, NULL)`,
-		id, p.Hub, p.UserID, "p/"+id, time.Now().UTC(), "cs-"+id,
-		lat, lon, gps, "Paris, Île-de-France, France",
-	)
-	r.NoError(err)
+	assetfixture.Insert(t, media.NewRepo(d.WriteDB(), d.ReadDB()), media.Media{
+		ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
+		OriginalFilename: id + ".jpg", ImportedAt: time.Now().UTC(),
+		Latitude: &lat, Longitude: &lon, GPSAt: &gps,
+		LocationLabel: "Paris, Île-de-France, France",
+		ThumbStatus:   "ready", ThumbVersion: 1,
+	})
 	seedAlbumMedia(t, d.WriteDB(), a.ID, id, time.Now().UTC())
 
 	got, err := repo.ListMedia(context.Background(), a.ID,
@@ -975,22 +947,7 @@ func TestRepoListMediaExcludesHiddenRows(t *testing.T) {
 	hiddenID := uuid.NewString()
 	seedMediaRow(t, d.WriteDB(), p, visibleID, "cs-vis-alb", "ready", 1)
 
-	// Insert the hidden media row directly with hidden_at set.
-	now := time.Now().UTC()
-	hiddenAt := now.Add(-time.Hour)
-	_, err := d.WriteDB().ExecContext(context.Background(), `
-INSERT INTO media (
-    id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-    imported_at, timestamp, size, checksum,
-    make, model, focal_length, shutter, width, height, iso, aperture,
-    duration_ms,
-    thumb_status, thumb_version, thumb_updated_at, hidden_at
-) VALUES (?, ?, ?, 'photo', 'image/jpeg', ?, NULL, ?, NULL, 0, ?,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          'ready', 1, NULL, ?)`,
-		hiddenID, p.Hub, p.UserID, "p/"+hiddenID, now, "cs-hid-alb", hiddenAt,
-	)
-	r.NoError(err)
+	seedHiddenMediaRow(t, d.WriteDB(), p, hiddenID, "cs-hid-alb")
 
 	base := time.Now().UTC()
 	seedAlbumMedia(t, d.WriteDB(), a.ID, visibleID, base)

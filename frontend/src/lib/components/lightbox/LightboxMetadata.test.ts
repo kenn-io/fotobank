@@ -41,6 +41,27 @@ describe("LightboxMetadata", () => {
     expect(getByText("Paris, France")).toBeTruthy();
   });
 
+  it("links attached files to their authorized content route", () => {
+    vi.mocked(client.getMediaAIView).mockResolvedValue({});
+    const media = {
+      ...baseMedia,
+      files: [{
+        id: "file-raw",
+        role: "original",
+        mime_type: "image/x-adobe-dng",
+        original_filename: "IMG_001.DNG",
+        size: 4096,
+        sha256: "a".repeat(64),
+      }],
+    };
+    const { getByRole } = render(LightboxMetadata, {
+      props: { media } as never,
+    });
+    const link = getByRole("link", { name: "IMG_001.DNG" });
+    expect(link.getAttribute("href")).toBe("/api/v1/media/m1/files/file-raw/content");
+    expect(link.getAttribute("download")).toBe("IMG_001.DNG");
+  });
+
   it("mounts the AI section after the metadata fields", async () => {
     vi.mocked(client.getMediaAIView).mockResolvedValueOnce({
       tags: [{ key: "dog", label: "Dog", rank: 1 }],

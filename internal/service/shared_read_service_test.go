@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/album"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/media"
@@ -20,6 +21,7 @@ import (
 	"go.kenn.io/fotobank/internal/share"
 	"go.kenn.io/fotobank/internal/storage"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 	"go.kenn.io/fotobank/internal/thumb"
 )
 
@@ -30,6 +32,7 @@ type sharedReadFixture struct {
 	mediaR   *media.Repo
 	albumsR  *album.Repo
 	store    storage.Store
+	content  *content.Adapter
 	resolver *share.ScopeResolver
 	svc      *service.SharedReadService
 	now      time.Time
@@ -51,11 +54,14 @@ func newSharedReadFixture(t *testing.T) sharedReadFixture {
 		{Hub: "h", UserID: "bob"}:     "00000000-0000-4000-8000-61db0d8bb01d",
 		{Hub: "h", UserID: "charlie"}: "00000000-0000-4000-8000-96616be8194d",
 	})
+	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, contentStore.Close()) })
 	resolver := share.NewScopeResolver(shares, func() time.Time { return now }, nil)
-	svc := service.NewSharedReadService(shares, mRepo, aRepo, store, resolver)
+	svc := service.NewSharedReadService(shares, mRepo, aRepo, store, contentStore, resolver)
 	return sharedReadFixture{
 		t: t, db: d, shares: shares, mediaR: mRepo, albumsR: aRepo,
-		store: store, resolver: resolver, svc: svc, now: now,
+		store: store, content: contentStore, resolver: resolver, svc: svc, now: now,
 	}
 }
 
@@ -72,16 +78,15 @@ func sharedSeedOwner(t *testing.T, rw *sql.DB, p owners.Principal, sk string) {
 
 func sharedSeedMedia(t *testing.T, rw *sql.DB, p owners.Principal) string {
 	t.Helper()
-	cs := uuid.NewString()
 	repo := media.NewRepo(rw, rw)
 	m := media.Media{
 		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/" + cs + ".jpg",
+		MimeType:         "image/jpeg",
 		OriginalFilename: "x.jpg",
 		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             100, Checksum: cs, ThumbStatus: "pending",
+		ThumbStatus:      "pending",
 	}
-	require.NoError(t, repo.Insert(context.Background(), m))
+	m = assetfixture.Insert(t, repo, m)
 	return m.ID
 }
 
@@ -114,17 +119,16 @@ func sharedMakeMediaSetScopeOver(
 // deterministic for ordering-sensitive tests.
 func sharedSeedMediaWithTimestamp(t *testing.T, rw *sql.DB, p owners.Principal, ts time.Time) string {
 	t.Helper()
-	cs := uuid.NewString()
 	repo := media.NewRepo(rw, rw)
 	m := media.Media{
 		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/" + cs + ".jpg",
+		MimeType:         "image/jpeg",
 		OriginalFilename: "x.jpg",
 		ImportedAt:       time.Now().UTC().Truncate(time.Second),
 		Timestamp:        &ts,
-		Size:             100, Checksum: cs, ThumbStatus: "pending",
+		ThumbStatus:      "pending",
 	}
-	require.NoError(t, repo.Insert(context.Background(), m))
+	m = assetfixture.Insert(t, repo, m)
 	return m.ID
 }
 
@@ -271,15 +275,14 @@ func sharedSeedAlbumWithMediaTimestamped(t *testing.T, rw *sql.DB, owner owners.
 	mediaIDs := make([]string, 0, n)
 	for i := range n {
 		ts := baseTime.Add(-time.Duration(i) * time.Minute) // newest first
-		cs := uuid.NewString()
 		id := uuid.NewString()
-		require.NoError(t, mRepo.Insert(context.Background(), media.Media{
+		assetfixture.Insert(t, mRepo, media.Media{
 			ID: id, Owner: owner, Type: media.TypePhoto,
-			MimeType: "image/jpeg", Path: "2024/" + cs + ".jpg",
+			MimeType:         "image/jpeg",
 			OriginalFilename: "x.jpg",
 			ImportedAt:       now, Timestamp: &ts,
-			Size: 100, Checksum: cs, ThumbStatus: "pending",
-		}))
+			ThumbStatus: "pending",
+		})
 		_, err := rw.ExecContext(context.Background(),
 			`INSERT INTO album_media(album_id, media_id, added_at) VALUES(?,?,?)`,
 			albumID, id, now)
@@ -478,18 +481,14 @@ func TestSharedReadGetMediaAuthorizedSetsCanDownload(t *testing.T) {
 // media ID and body for convenience.
 func sharedSeedStoredMedia(t *testing.T, fx sharedReadFixture, p owners.Principal, body string) (string, string) {
 	t.Helper()
-	cs := uuid.NewString()
-	path := "2024/" + cs + ".jpg"
 	m := media.Media{
 		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: path,
+		MimeType:         "image/jpeg",
 		OriginalFilename: "x.jpg",
 		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             int64(len(body)), Checksum: cs, ThumbStatus: "pending",
+		ThumbStatus:      "pending",
 	}
-	require.NoError(t, fx.mediaR.Insert(context.Background(), m))
-	_, err := fx.store.Write(context.Background(), p, path, bytes.NewReader([]byte(body)))
-	require.NoError(t, err)
+	m = assetfixture.InsertContent(t, fx.mediaR, fx.content, []byte(body), m)
 	return m.ID, body
 }
 
@@ -498,22 +497,20 @@ func sharedSeedStoredMedia(t *testing.T, fx sharedReadFixture, p owners.Principa
 // thumb.ThumbKey. Returns (mediaID, thumbVersion).
 func sharedSeedMediaWithReadyThumb(t *testing.T, fx sharedReadFixture, p owners.Principal, body string) (string, int) {
 	t.Helper()
-	cs := uuid.NewString()
 	version := 1
 	updatedAt := time.Now().UTC().Truncate(time.Second)
 	m := media.Media{
 		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/" + cs + ".jpg",
+		MimeType:         "image/jpeg",
 		OriginalFilename: "x.jpg",
 		ImportedAt:       updatedAt,
-		Size:             100, Checksum: cs,
-		ThumbStatus:    "pending",
-		ThumbVersion:   version,
-		ThumbUpdatedAt: nil,
+		ThumbStatus:      "pending",
+		ThumbVersion:     version,
+		ThumbUpdatedAt:   nil,
 	}
-	require.NoError(t, fx.mediaR.Insert(context.Background(), m))
+	m = assetfixture.Insert(t, fx.mediaR, m)
 	_, err := fx.db.WriteDB().ExecContext(context.Background(),
-		`UPDATE media SET thumb_status='ready', thumb_updated_at=? WHERE id=?`,
+		`UPDATE assets SET thumb_status='ready', thumb_updated_at=? WHERE id=?`,
 		updatedAt, m.ID)
 	require.NoError(t, err)
 	key := thumb.ThumbKey(m.ID, version, thumb.SizeGrid)
@@ -661,7 +658,7 @@ func TestSharedReadOpenThumbPendingReturnsNotFound(t *testing.T) {
 func sharedHideMedia(t *testing.T, rw *sql.DB, mediaID string) {
 	t.Helper()
 	_, err := rw.ExecContext(context.Background(),
-		`UPDATE media SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), mediaID)
+		`UPDATE assets SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), mediaID)
 	require.NoError(t, err)
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
 	"go.kenn.io/fotobank/internal/media"
@@ -20,6 +21,7 @@ import (
 	"go.kenn.io/fotobank/internal/service"
 	"go.kenn.io/fotobank/internal/storage"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 	"go.kenn.io/fotobank/internal/thumb"
 )
 
@@ -37,7 +39,10 @@ func newThumbAPITest(t *testing.T) (*httptest.Server, *media.Repo, owners.Princi
 	)
 	require.NoError(t, err)
 	store := storage.NewNASOnly(t.TempDir(), map[owners.Principal]string{p: "550e8400-e29b-41d4-a716-446655440000"})
-	mediaSvc := service.NewMediaService(repo, store)
+	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, contentStore.Close()) })
+	mediaSvc := service.NewMediaService(repo, contentStore)
 	thumbSvc := service.NewThumbService(repo, q, store)
 	h, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: identity.NewStub(p, "Test User"),
@@ -60,10 +65,10 @@ func seedReadyThumb(t *testing.T, repo *media.Repo, store storage.Store, p owner
 	id := uuid.NewString()
 	m := media.Media{
 		ID: id, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "x-" + id + ".jpg", ImportedAt: time.Now().UTC(),
-		Size: 1, Checksum: id, ThumbStatus: "ready", ThumbVersion: version,
+		ImportedAt:  time.Now().UTC(),
+		ThumbStatus: "ready", ThumbVersion: version,
 	}
-	require.NoError(t, repo.Insert(context.Background(), m))
+	m = assetfixture.Insert(t, repo, m)
 	for _, sz := range thumb.AllSizes() {
 		_, err := store.Write(context.Background(), p,
 			thumb.ThumbKey(id, version, sz),

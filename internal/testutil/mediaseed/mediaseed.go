@@ -8,15 +8,19 @@ package mediaseed
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 // InsertMedia inserts a primary photo for owner with fields from the
@@ -27,7 +31,6 @@ import (
 // list tests where only a few EXIF columns matter.
 func InsertMedia(t *testing.T, rw *sql.DB, p owners.Principal, id string, m media.Media) {
 	t.Helper()
-	repo := media.NewRepo(rw, rw)
 	row := baseMedia(id, p)
 	if m.Type != "" {
 		row.Type = m.Type
@@ -47,7 +50,35 @@ func InsertMedia(t *testing.T, rw *sql.DB, p owners.Principal, id string, m medi
 	if m.Longitude != nil {
 		row.Longitude = m.Longitude
 	}
-	require.NoError(t, repo.Insert(context.Background(), row))
+	ctx := context.Background()
+	var storageKey string
+	require.NoError(t, rw.QueryRowContext(ctx,
+		`SELECT storage_key FROM owners WHERE hub = ? AND user_id = ?`, p.Hub, p.UserID,
+	).Scan(&storageKey))
+	fileID := uuid.NewString()
+	virtualPath, err := content.VirtualPath(storageKey, fileID, row.OriginalFilename)
+	require.NoError(t, err)
+	digest := sha256.Sum256([]byte(id))
+	sha := hex.EncodeToString(digest[:])
+	_, err = rw.ExecContext(ctx, `
+		INSERT INTO assets (
+			id, owner_hub, owner_user_id, state, media_type, imported_at,
+			make, model, lens_model, latitude, longitude, thumb_status
+		) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+		row.ID, p.Hub, p.UserID, row.Type, row.ImportedAt, row.Make, row.Model,
+		row.LensModel, row.Latitude, row.Longitude)
+	require.NoError(t, err)
+	_, err = rw.ExecContext(ctx, `
+		INSERT INTO media_files (
+			id, asset_id, owner_hub, owner_user_id, role, mime_type,
+			original_filename, size, docbank_node_id, docbank_virtual_path,
+			current_version_id, sha256
+		) VALUES (?, ?, ?, ?, 'primary', ?, ?, ?, ?, ?, ?, ?)`,
+		fileID, row.ID, p.Hub, p.UserID, row.MimeType, row.OriginalFilename,
+		row.Size, testutil.NextSyntheticDocbankNodeID(), virtualPath, uuid.NewString(), sha)
+	require.NoError(t, err)
+	_, err = rw.ExecContext(ctx, `UPDATE assets SET state = 'ready' WHERE id = ?`, row.ID)
+	require.NoError(t, err)
 }
 
 // InsertTag inserts an active ai_results row for (owner, mediaID) plus
@@ -80,11 +111,9 @@ func baseMedia(id string, p owners.Principal) media.Media {
 		Owner:            p,
 		Type:             media.TypePhoto,
 		MimeType:         "image/jpeg",
-		Path:             "2024/" + id + ".jpg",
 		OriginalFilename: id + ".jpg",
 		ImportedAt:       time.Now().UTC().Truncate(time.Second),
 		Size:             100,
-		Checksum:         "cs-" + id,
 		ThumbStatus:      "pending",
 	}
 }

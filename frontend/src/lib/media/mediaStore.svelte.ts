@@ -18,6 +18,15 @@ export type ThumbStatus =
   | "failed"
   | "no_preview";
 
+export type MediaFile = {
+  id: string;
+  role: string;
+  mime_type: string;
+  original_filename: string;
+  size: number;
+  sha256: string;
+};
+
 export type Media = {
   id: string;
   timestamp: string;
@@ -30,14 +39,9 @@ export type Media = {
   longitude?: number;
   gps_at?: string;
   location_label?: string;
-  // F2.2 RAW + JPEG pairing. original_filename and size are surfaced
-  // in MediaDetail's primary Files row and sidecar direct page; both
-  // are populated by the backend MediaDTO on every response.
   original_filename?: string;
   size?: number;
-  paired_with_id?: string;
-  paired_with?: { id: string; original_filename: string };
-  sidecars?: Media[];
+  files?: MediaFile[];
   // F2.4 hidden privacy. Non-null means the row is hidden. Hidden rows
   // must NOT appear in visible MediaStore — they live only in
   // HiddenMediaStore (Task 12). This field is present on the type so
@@ -306,8 +310,7 @@ export class MediaStore {
       | "id" | "timestamp" | "taken" | "aspect" | "thumbUrl"
       | "thumbStatus" | "thumbVersion"
       | "latitude" | "longitude" | "gps_at" | "location_label"
-      | "original_filename" | "size"
-      | "paired_with_id" | "paired_with" | "sidecars"
+      | "original_filename" | "size" | "files"
       | "hidden_at"
     >;
     type _AssertNoUncoveredFields = _IdentityFieldsCovered extends never ? true : never;
@@ -322,7 +325,11 @@ export class MediaStore {
     // match, which is what lets the SSE-overlap and refetch paths run
     // without churning every chunk.
     const dirty = new Set<string>();
-    for (const it of items) {
+    for (const incoming of items) {
+      const known = this.byMediaId.get(incoming.id);
+      const it = incoming.files === undefined && known?.files !== undefined
+        ? { ...incoming, files: known.files }
+        : incoming;
       // Visible-only invariant (§3.14): hidden rows must not enter any
       // visible index. If a previously-cached row comes back hidden,
       // evict it. After eviction the caller must use HiddenMediaStore.
@@ -364,10 +371,7 @@ export class MediaStore {
         && existing.location_label === it.location_label
         && existing.original_filename === it.original_filename
         && existing.size === it.size
-        && (existing.paired_with_id ?? null) === (it.paired_with_id ?? null)
-        && (existing.paired_with?.id ?? null) === (it.paired_with?.id ?? null)
-        && (existing.paired_with?.original_filename ?? null) === (it.paired_with?.original_filename ?? null)
-        && sidecarsShallowEqual(existing.sidecars, it.sidecars)
+        && filesShallowEqual(existing.files, it.files)
         && (existing.hidden_at ?? null) === (it.hidden_at ?? null);
       if (!unchanged) {
         inner.set(it.id, it);
@@ -397,15 +401,7 @@ export class MediaStore {
   }
 }
 
-// sidecarsShallowEqual compares two sidecar lists as ordered sequences,
-// matching on the fields the UI actually consumes (id and
-// original_filename today). Backend returns sidecars sorted by
-// (original_filename, id) — see media.Repo.GetSidecars; reordering
-// across two responses for the same primary would falsely dirty the
-// bucket on every poll. If a future UI change starts rendering more
-// sidecar fields (thumb_status, thumb_version, …), extend this
-// comparison so renames/version-bumps still propagate.
-function sidecarsShallowEqual(a?: Media[], b?: Media[]): boolean {
+function filesShallowEqual(a?: MediaFile[], b?: MediaFile[]): boolean {
   if (!a && !b) return true;
   if (!a || !b) return false;
   if (a.length !== b.length) return false;
@@ -413,8 +409,14 @@ function sidecarsShallowEqual(a?: Media[], b?: Media[]): boolean {
     const x = a[i];
     const y = b[i];
     if (!x || !y) return false;
-    if (x.id !== y.id) return false;
-    if ((x.original_filename ?? null) !== (y.original_filename ?? null)) return false;
+    if (
+      x.id !== y.id
+      || x.role !== y.role
+      || x.mime_type !== y.mime_type
+      || x.original_filename !== y.original_filename
+      || x.size !== y.size
+      || x.sha256 !== y.sha256
+    ) return false;
   }
   return true;
 }
@@ -468,33 +470,32 @@ export function toMedia(raw: Record<string, unknown>): Media | null {
   if (typeof raw["location_label"] === "string") m.location_label = raw["location_label"];
   if (typeof raw["original_filename"] === "string") m.original_filename = raw["original_filename"];
   if (typeof raw["size"] === "number" && Number.isFinite(raw["size"])) m.size = raw["size"];
-  if (typeof raw["paired_with_id"] === "string") m.paired_with_id = raw["paired_with_id"];
-  const pw = raw["paired_with"];
-  if (pw !== null && typeof pw === "object") {
-    const pwObj = pw as Record<string, unknown>;
-    const pwId = pwObj["id"];
-    const pwName = pwObj["original_filename"];
-    if (typeof pwId === "string" && typeof pwName === "string") {
-      m.paired_with = { id: pwId, original_filename: pwName };
+  const rawFiles = raw["files"];
+  if (Array.isArray(rawFiles)) {
+    const files: MediaFile[] = [];
+    for (const rawFile of rawFiles) {
+      if (rawFile === null || typeof rawFile !== "object") continue;
+      const file = rawFile as Record<string, unknown>;
+      if (
+        typeof file["id"] === "string"
+        && typeof file["role"] === "string"
+        && typeof file["mime_type"] === "string"
+        && typeof file["original_filename"] === "string"
+        && typeof file["size"] === "number"
+        && Number.isFinite(file["size"])
+        && typeof file["sha256"] === "string"
+      ) {
+        files.push({
+          id: file["id"],
+          role: file["role"],
+          mime_type: file["mime_type"],
+          original_filename: file["original_filename"],
+          size: file["size"],
+          sha256: file["sha256"],
+        });
+      }
     }
-  }
-  const sc = raw["sidecars"];
-  if (Array.isArray(sc) && sc.length > 0) {
-    const mapped = sc
-      .filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null)
-      .map((r) => {
-        // Strip nested sidecars: backend contract guarantees a
-        // sidecar's own Sidecars is empty; stripping defensively
-        // ensures toMedia is self-correcting against a future leak
-        // since sidecarsShallowEqual only inspects the top-level array.
-        const { sidecars: _ignoredNestedSidecars, ...rest } = r;
-        return toMedia(rest);
-      })
-      .filter((x): x is Media => x !== null)
-      // Filter out hidden sidecars: a hidden sidecar must not appear in
-      // visible media's file list — it lives only in HiddenMediaStore.
-      .filter((x) => x.hidden_at == null);
-    if (mapped.length > 0) m.sidecars = mapped;
+    m.files = files;
   }
   // F2.4: hidden_at — string (ISO timestamp) or null from the backend.
   // null means "was hidden but is now visible again" (unhide flow).

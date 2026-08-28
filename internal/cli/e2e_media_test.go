@@ -3,7 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -107,9 +107,8 @@ admin_listen = "127.0.0.1:0"
 		ID           string `json:"id"`
 		Type         string `json:"type"`
 		MimeType     string `json:"mime_type"`
-		Path         string `json:"path"`
 		Size         int64  `json:"size"`
-		Checksum     string `json:"checksum"`
+		SHA256       string `json:"sha256"`
 		ThumbStatus  string `json:"thumb_status"`
 		ThumbVersion int    `json:"thumb_version"`
 	}
@@ -132,19 +131,18 @@ admin_listen = "127.0.0.1:0"
 	fixtureSums := map[string]string{}
 	fixtureDir := importFixtureDir(t)
 	for _, name := range []string{"photo-with-timestamp.jpg", "photo-no-exif.jpg", "video.mp4"} {
-		fixtureSums[md5OfFile(t, filepath.Join(fixtureDir, name))] = name
+		fixtureSums[sha256OfFile(t, filepath.Join(fixtureDir, name))] = name
 	}
 
 	gotSums := map[string]mediaItem{}
 	for _, it := range lb.Items {
 		r.NotEmpty(it.ID)
-		r.NotEmpty(it.Path)
-		r.NotEmpty(it.Checksum)
-		gotSums[it.Checksum] = it
+		r.NotEmpty(it.SHA256)
+		gotSums[it.SHA256] = it
 	}
 	for sum, name := range fixtureSums {
 		_, ok := gotSums[sum]
-		r.Truef(ok, "fixture %s (md5=%s) missing from /media listing", name, sum)
+		r.Truef(ok, "fixture %s (sha256=%s) missing from /media listing", name, sum)
 	}
 
 	// 4. Detail endpoint: fetch each item by ID.
@@ -156,8 +154,7 @@ admin_listen = "127.0.0.1:0"
 		r.NoError(json.NewDecoder(detailResp.Body).Decode(&detail))
 		r.NoError(detailResp.Body.Close())
 		r.Equal(it.ID, detail.ID)
-		r.Equal(it.Checksum, detail.Checksum)
-		r.Equal(it.Path, detail.Path)
+		r.Equal(it.SHA256, detail.SHA256)
 		r.Equal(it.Size, detail.Size)
 	}
 
@@ -166,8 +163,8 @@ admin_listen = "127.0.0.1:0"
 	// response (ETag is the quoted checksum; Content-Length matches
 	// the fixture size on-disk).
 	for _, it := range lb.Items {
-		fixtureName, ok := fixtureSums[it.Checksum]
-		r.Truef(ok, "unexpected checksum %q in /media", it.Checksum)
+		fixtureName, ok := fixtureSums[it.SHA256]
+		r.Truef(ok, "unexpected sha256 %q in /media", it.SHA256)
 		fixturePath := filepath.Join(fixtureDir, fixtureName)
 		fixtureInfo, err := os.Stat(fixturePath)
 		r.NoError(err)
@@ -175,15 +172,15 @@ admin_listen = "127.0.0.1:0"
 		origResp, err := client.Get(base + "/api/v1/media/" + it.ID + "/original")
 		r.NoError(err)
 		r.Equal(http.StatusOK, origResp.StatusCode)
-		r.Equal(`"`+it.Checksum+`"`, origResp.Header.Get("ETag"))
+		r.Equal(`"`+it.SHA256+`"`, origResp.Header.Get("ETag"))
 		r.Equal(fmt.Sprintf("%d", fixtureInfo.Size()), origResp.Header.Get("Content-Length"))
 		gotBody, err := io.ReadAll(origResp.Body)
 		closeErr := origResp.Body.Close()
 		r.NoError(err)
 		r.NoError(closeErr)
-		sum := md5.Sum(gotBody)
-		r.Equalf(it.Checksum, hex.EncodeToString(sum[:]),
-			"streamed body md5 mismatch for fixture %s", fixtureName)
+		sum := sha256.Sum256(gotBody)
+		r.Equalf(it.SHA256, hex.EncodeToString(sum[:]),
+			"streamed body sha256 mismatch for fixture %s", fixtureName)
 	}
 
 	// 7. Wait for the thumbnail worker to drain each imported row to a
@@ -432,15 +429,15 @@ admin_listen = "127.0.0.1:0"
 	}
 }
 
-// md5OfFile returns the hex MD5 of the given file's contents. Used to
+// sha256OfFile returns the hex SHA-256 of the given file's contents. Used to
 // compute expected checksums from on-disk fixtures so the test doesn't
 // rely on magic string literals.
-func md5OfFile(t *testing.T, path string) string {
+func sha256OfFile(t *testing.T, path string) string {
 	t.Helper()
 	f, err := os.Open(path)
 	require.NoError(t, err)
 	defer f.Close()
-	h := md5.New()
+	h := sha256.New()
 	_, err = io.Copy(h, f)
 	require.NoError(t, err)
 	return hex.EncodeToString(h.Sum(nil))

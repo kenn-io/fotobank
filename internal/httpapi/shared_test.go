@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/album"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
@@ -25,6 +26,7 @@ import (
 	"go.kenn.io/fotobank/internal/share"
 	"go.kenn.io/fotobank/internal/storage"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 	"go.kenn.io/fotobank/internal/thumb"
 )
 
@@ -40,6 +42,7 @@ type sharedFxInputs struct {
 	mediaR  *media.Repo
 	albumsR *album.Repo
 	store   storage.Store
+	content *content.Adapter
 	now     time.Time
 }
 
@@ -57,9 +60,12 @@ func setupSharedFxInputs(t *testing.T) sharedFxInputs {
 		{Hub: "h", UserID: "alice"}: "550e8400-e29b-41d4-a716-44665544000e",
 		{Hub: "h", UserID: "bob"}:   "00000000-0000-4000-8000-61db0d8bb01d",
 	})
+	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, contentStore.Close()) })
 	return sharedFxInputs{
 		t: t, d: d, shares: shares, mediaR: mRepo, albumsR: aRepo,
-		store: store, now: now,
+		store: store, content: contentStore, now: now,
 	}
 }
 
@@ -70,7 +76,7 @@ func setupSharedFxInputs(t *testing.T) sharedFxInputs {
 func buildSharedFx(in sharedFxInputs, grantee owners.Principal, scopes []string) http.Handler {
 	in.t.Helper()
 	resolver := share.NewScopeResolver(in.shares, func() time.Time { return in.now }, nil)
-	sharedSvc := service.NewSharedReadService(in.shares, in.mediaR, in.albumsR, in.store, resolver)
+	sharedSvc := service.NewSharedReadService(in.shares, in.mediaR, in.albumsR, in.store, in.content, resolver)
 	h, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: identity.NewStubWithScopes(grantee, "", scopes),
 		SharedRead:       sharedSvc,
@@ -91,16 +97,15 @@ func sharedHTTPSeedOwner(t *testing.T, rw *sql.DB, p owners.Principal, sk string
 
 func sharedHTTPSeedMedia(t *testing.T, rw *sql.DB, p owners.Principal) string {
 	t.Helper()
-	cs := uuid.NewString()
 	repo := media.NewRepo(rw, rw)
 	m := media.Media{
 		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/" + cs + ".jpg",
+		MimeType:         "image/jpeg",
 		OriginalFilename: "x.jpg",
 		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             100, Checksum: cs, ThumbStatus: "pending",
+		ThumbStatus:      "pending",
 	}
-	require.NoError(t, repo.Insert(context.Background(), m))
+	m = assetfixture.Insert(t, repo, m)
 	return m.ID
 }
 
@@ -159,15 +164,14 @@ func sharedHTTPSeedAlbum(t *testing.T, rw *sql.DB, owner owners.Principal, baseT
 	mediaIDs := make([]string, 0, n)
 	for i := range n {
 		ts := baseTime.Add(-time.Duration(i) * time.Minute)
-		cs := uuid.NewString()
 		id := uuid.NewString()
-		require.NoError(t, mRepo.Insert(context.Background(), media.Media{
+		assetfixture.Insert(t, mRepo, media.Media{
 			ID: id, Owner: owner, Type: media.TypePhoto,
-			MimeType: "image/jpeg", Path: "2024/" + cs + ".jpg",
+			MimeType:         "image/jpeg",
 			OriginalFilename: "x.jpg",
 			ImportedAt:       now, Timestamp: &ts,
-			Size: 100, Checksum: cs, ThumbStatus: "pending",
-		}))
+			ThumbStatus: "pending",
+		})
 		_, err := rw.ExecContext(context.Background(),
 			`INSERT INTO album_media(album_id, media_id, added_at) VALUES(?,?,?)`,
 			albumID, id, now)
@@ -336,17 +340,16 @@ func TestSharedHTTPListAlbumMediaPaginates(t *testing.T) {
 // for pagination tests that seed multiple rows in one hub/user.
 func sharedHTTPSeedMediaTS(t *testing.T, rw *sql.DB, p owners.Principal, ts time.Time) string {
 	t.Helper()
-	cs := uuid.NewString()
 	repo := media.NewRepo(rw, rw)
 	m := media.Media{
 		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/" + cs + ".jpg",
+		MimeType:         "image/jpeg",
 		OriginalFilename: "x.jpg",
 		ImportedAt:       time.Now().UTC().Truncate(time.Second),
 		Timestamp:        &ts,
-		Size:             100, Checksum: cs, ThumbStatus: "pending",
+		ThumbStatus:      "pending",
 	}
-	require.NoError(t, repo.Insert(context.Background(), m))
+	m = assetfixture.Insert(t, repo, m)
 	return m.ID
 }
 
@@ -483,23 +486,18 @@ func TestSharedHTTPGetMediaAuthorizedReturnsCanDownload(t *testing.T) {
 	r.Equal("alice", body["owner"].(map[string]any)["user_id"])
 }
 
-// sharedHTTPSeedStoredMedia inserts a media row and writes its bytes
-// into the fixture's storage at the row's path. Size is set to the
-// body length so Content-Length arithmetic in the handler lines up.
+// sharedHTTPSeedStoredMedia inserts a ready asset whose exact original
+// version exists in Docbank.
 func sharedHTTPSeedStoredMedia(t *testing.T, in sharedFxInputs, p owners.Principal, body string) string {
 	t.Helper()
-	cs := uuid.NewString()
-	path := "2024/" + cs + ".jpg"
 	m := media.Media{
 		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: path,
+		MimeType:         "image/jpeg",
 		OriginalFilename: "x.jpg",
 		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             int64(len(body)), Checksum: cs, ThumbStatus: "pending",
+		ThumbStatus:      "pending",
 	}
-	require.NoError(t, in.mediaR.Insert(context.Background(), m))
-	_, err := in.store.Write(context.Background(), p, path, bytes.NewReader([]byte(body)))
-	require.NoError(t, err)
+	m = assetfixture.InsertContent(t, in.mediaR, in.content, []byte(body), m)
 	return m.ID
 }
 
@@ -508,20 +506,18 @@ func sharedHTTPSeedStoredMedia(t *testing.T, in sharedFxInputs, p owners.Princip
 // storage at thumb.ThumbKey. Returns (id, version).
 func sharedHTTPSeedMediaWithReadyThumb(t *testing.T, in sharedFxInputs, p owners.Principal, body string) (string, int) {
 	t.Helper()
-	cs := uuid.NewString()
 	version := 1
 	updatedAt := time.Now().UTC().Truncate(time.Second)
 	m := media.Media{
 		ID: uuid.NewString(), Owner: p, Type: media.TypePhoto,
-		MimeType: "image/jpeg", Path: "2024/" + cs + ".jpg",
+		MimeType:         "image/jpeg",
 		OriginalFilename: "x.jpg",
 		ImportedAt:       updatedAt,
-		Size:             100, Checksum: cs,
-		ThumbStatus: "pending", ThumbVersion: version,
+		ThumbStatus:      "pending", ThumbVersion: version,
 	}
-	require.NoError(t, in.mediaR.Insert(context.Background(), m))
+	m = assetfixture.Insert(t, in.mediaR, m)
 	_, err := in.d.WriteDB().ExecContext(context.Background(),
-		`UPDATE media SET thumb_status='ready', thumb_updated_at=? WHERE id=?`,
+		`UPDATE assets SET thumb_status='ready', thumb_updated_at=? WHERE id=?`,
 		updatedAt, m.ID)
 	require.NoError(t, err)
 	key := thumb.ThumbKey(m.ID, version, thumb.SizeGrid)
@@ -658,7 +654,7 @@ func TestSharedHTTPOriginalUnsatisfiableRangeReturns416(t *testing.T) {
 func sharedHTTPHideMedia(t *testing.T, rw *sql.DB, mediaID string) {
 	t.Helper()
 	_, err := rw.ExecContext(context.Background(),
-		`UPDATE media SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), mediaID)
+		`UPDATE assets SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), mediaID)
 	require.NoError(t, err)
 }
 

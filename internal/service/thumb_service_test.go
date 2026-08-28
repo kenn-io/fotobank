@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/fotobank/internal/service"
 	"go.kenn.io/fotobank/internal/storage"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 	"go.kenn.io/fotobank/internal/thumb"
 )
 
@@ -69,15 +70,11 @@ func insertThumbMedia(
 		Owner:        p,
 		Type:         media.TypePhoto,
 		MimeType:     "image/jpeg",
-		Path:         "2024/" + id + ".jpg",
 		ImportedAt:   time.Now().UTC(),
-		Size:         1,
-		Checksum:     id,
 		ThumbStatus:  status,
 		ThumbVersion: version,
 	}
-	require.NoError(t, repo.Insert(context.Background(), m))
-	return m
+	return assetfixture.Insert(t, repo, m)
 }
 
 func TestThumbServiceGetReturnsBytesForOwnedReadyRow(t *testing.T) {
@@ -179,7 +176,7 @@ func TestThumbServiceGetReturnsNotFoundForHiddenRowWithoutFlag(t *testing.T) {
 	r.NoError(err)
 	// Mark hidden directly.
 	_, err = fx.rw.ExecContext(ctx,
-		`UPDATE media SET hidden_at = ? WHERE id = ?`,
+		`UPDATE assets SET hidden_at = ? WHERE id = ?`,
 		time.Now().UTC(), m.ID,
 	)
 	r.NoError(err)
@@ -201,7 +198,7 @@ func TestThumbServiceGetSucceedsForHiddenRowWithFlag(t *testing.T) {
 	r.NoError(err)
 	// Mark hidden.
 	_, err = fx.rw.ExecContext(ctx,
-		`UPDATE media SET hidden_at = ? WHERE id = ?`,
+		`UPDATE assets SET hidden_at = ? WHERE id = ?`,
 		time.Now().UTC(), m.ID,
 	)
 	r.NoError(err)

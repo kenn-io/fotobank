@@ -2,12 +2,12 @@
 
 ## Import and metadata
 
-`internal/ingest` discovers supported photos and videos, ignores common
-filesystem metadata, prevents concurrent import processes with a file lock,
-and bounds worker concurrency. The active importer computes its legacy
-checksum, extracts metadata, chooses a storage key, writes through
-`storage.Store`, inserts the media row, refreshes full-text search, and queues
-derived work.
+`internal/ingest` discovers supported photos, videos, RAW files, and XMP
+sidecars; ignores common filesystem metadata; prevents concurrent import
+processes with a file lock; and bounds worker concurrency. It waits for stable
+source observations, groups related files into assets, computes SHA-256, and
+uses durable operations to create exact versions in Docbank. Search and
+derived work are queued only after every file mapping is complete.
 
 `internal/exifread` extracts capture time, camera, lens, exposure, dimensions,
 duration, orientation, and GPS data without sending media to an external
@@ -15,7 +15,6 @@ service. `internal/geo` resolves coordinates to a coarse location label from
 embedded Natural Earth data. GPS relabeling can update place names without
 re-reading media; full backfill re-reads bytes when coordinates are missing.
 
-The replacement asset importer will group related files before content writes.
 One JPEG plus one camera RAW becomes one asset: JPEG is the primary display
 file and RAW is the camera source. XMP is a sidecar of the RAW when present,
 otherwise of the primary. Ambiguous same-basename groups are conflicts rather
@@ -28,7 +27,7 @@ the media ID, thumbnail version, and lease time. Completion succeeds only if
 the claim is still current; abandoned claims return to the queue after the
 lease timeout.
 
-The worker reads the source, extracts an embedded preview for supported RAW
+The worker reads the asset's exact Docbank version, extracts an embedded preview for supported RAW
 formats or decodes ordinary images with orientation, resizes to the fixed
 sizes, and writes versioned JPEG artifacts. Videos and formats without a
 supported decoder become `no_preview`. A regenerated thumbnail invalidates

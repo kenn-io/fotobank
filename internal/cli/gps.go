@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/exifread"
@@ -16,7 +17,6 @@ import (
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/service"
-	"go.kenn.io/fotobank/internal/storage"
 )
 
 // newGPSCmd wires the `fotobank gps` command group. Running `fotobank
@@ -148,6 +148,7 @@ func runGPSBackfill(ctx context.Context, opts *gpsBackfillOpts, stdout, stderr i
 	if err != nil {
 		return err
 	}
+	defer b.content.Close()
 	principals, err := selectPrincipals(ctx, d, cfg, opts)
 	if err != nil {
 		return err
@@ -246,14 +247,14 @@ func (t backfillTally) summary() string {
 // already-opened DB and reused per principal — keeps mode-specific
 // helpers under the 5-positional-param house limit.
 type backfiller struct {
-	svc    *service.MediaService
-	repo   *media.Repo
-	store  storage.Store
-	places *geo.NaturalEarth
-	mode   media.GPSBackfillMode
-	since  *time.Time
-	tally  *backfillTally
-	stderr io.Writer
+	svc     *service.MediaService
+	repo    *media.Repo
+	content *content.Adapter
+	places  *geo.NaturalEarth
+	mode    media.GPSBackfillMode
+	since   *time.Time
+	tally   *backfillTally
+	stderr  io.Writer
 }
 
 // newBackfiller wires the service / repo / store / gazetteer onto a
@@ -271,23 +272,21 @@ func newBackfiller(
 	if err != nil {
 		return nil, fmt.Errorf("load gazetteer: %w", err)
 	}
-	ownerSvc := service.NewOwnerService(owners.NewRepo(d.WriteDB(), d.ReadDB()))
-	keys, err := loadStorageKeys(ctx, ownerSvc)
+	contentStore, err := content.Open(ctx, content.Config{Root: cfg.Docbank.Root})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open Docbank vault: %w", err)
 	}
-	storeLayer, _ := buildStorageLayer(cfg, keys)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
-	svc := service.NewMediaService(repo, storeLayer)
+	svc := service.NewMediaService(repo, contentStore)
 	return &backfiller{
-		svc:    svc,
-		repo:   repo,
-		store:  storeLayer,
-		places: places,
-		mode:   opts.parsedMode,
-		since:  opts.sinceTime,
-		tally:  &backfillTally{},
-		stderr: stderr,
+		svc:     svc,
+		repo:    repo,
+		content: contentStore,
+		places:  places,
+		mode:    opts.parsedMode,
+		since:   opts.sinceTime,
+		tally:   &backfillTally{},
+		stderr:  stderr,
 	}, nil
 }
 
@@ -371,8 +370,8 @@ func relabelOne(ctx context.Context, b *backfiller, owner owners.Principal, row 
 	return nil
 }
 
-// reextractOne handles the Full and FillMissing modes: re-read NAS
-// bytes through exifread and reconcile the result with the row. Full is
+// reextractOne handles the Full and FillMissing modes: read the exact
+// Docbank version through exifread and reconcile the result with the row. Full is
 // authoritative — when EXIF has no GPS it clears any existing coords;
 // FillMissing leaves rows alone when EXIF has no GPS.
 func reextractOne(
@@ -381,14 +380,21 @@ func reextractOne(
 	owner owners.Principal,
 	row media.Media,
 ) error {
-	rc, err := b.store.ReadRange(ctx, owner, row.Path, 0, -1)
+	opened, err := b.content.OpenVersion(ctx, row.CurrentVersionID)
 	if err != nil {
-		return fmt.Errorf("read NAS bytes: %w", err)
+		return fmt.Errorf("read Docbank version: %w", err)
 	}
+	rc := opened.Reader
 	defer func() { _ = rc.Close() }()
 	meta, err := exifread.ExtractPhotoFromReader(rc)
 	if err != nil {
 		return fmt.Errorf("extract exif: %w", err)
+	}
+	if _, err := io.Copy(io.Discard, rc); err != nil {
+		return fmt.Errorf("drain original: %w", err)
+	}
+	if err := rc.Verify(); err != nil {
+		return fmt.Errorf("verify original: %w", err)
 	}
 	// ExtractPhotoFromReader returns Metadata{} (no error) when the
 	// file simply has no EXIF segment. Such rows naturally fall
