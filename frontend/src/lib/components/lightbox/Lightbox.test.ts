@@ -66,11 +66,11 @@ const fakeMedia = {
   thumbVersion: 0,
 };
 
-function fakeMediaStore() {
+function fakeMediaStore(mergeRaw = vi.fn()) {
   return {
     months: [{ key: "2026-04", items: [fakeMedia] }],
     get: (id: string) => (id === "m1" ? fakeMedia : undefined),
-    mergeRaw: vi.fn(),
+    mergeRaw,
     removeMany: vi.fn(),
   } as never;
 }
@@ -124,6 +124,55 @@ describe("Lightbox reconstruction", () => {
 });
 
 describe("Lightbox (snapshot path)", () => {
+  it("loads detail data when the cached library row has no files", async () => {
+    lightboxSession.open({
+      source: { kind: "library" },
+      navIds: ["m1"],
+      selected: false,
+      scrollY: 0,
+      returnFocusMediaId: "m1",
+      returnHref: "/library",
+    });
+    const detail = {
+      id: "m1",
+      thumb_version: 0,
+      width: 1,
+      height: 1,
+      timestamp: "2026-04-20T12:00:00Z",
+      files: [{
+        id: "raw-1",
+        role: "original",
+        mime_type: "image/x-adobe-dng",
+        original_filename: "IMG_0001.DNG",
+        size: 42,
+        sha256: "a".repeat(64),
+      }],
+    };
+    const fakeFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(detail),
+    });
+    vi.stubGlobal("fetch", fakeFetch);
+    const mergeRaw = vi.fn();
+    const store = fakeMediaStore(mergeRaw);
+
+    render(Lightbox, {
+      props: {
+        id: "m1",
+        from: "library",
+        mediaStore: store,
+        albumsStore: { markStale: vi.fn() } as never,
+        hiddenStore: { configured: true } as never,
+        toastStore: { push: vi.fn() } as never,
+        appConfig: defaultAppConfig(),
+      } as never,
+    });
+
+    await waitFor(() => expect(fakeFetch).toHaveBeenCalledWith("/api/v1/media/m1"));
+    await waitFor(() => expect(mergeRaw).toHaveBeenCalledWith([detail]));
+    vi.unstubAllGlobals();
+  });
+
   it("renders the terminal placeholder for thumbStatus=failed (no shimmer)", async () => {
     // Lightbox previously routed every non-ready thumb status into the
     // shimmer branch, which left rows with terminal failed/no_preview
