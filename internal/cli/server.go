@@ -1160,7 +1160,6 @@ func buildIdentityProvider(
 			TrustedProxyCIDRs: cfg.Identity.Header.TrustedProxyCIDRs,
 			ProxySecretHeader: cfg.Identity.Header.ProxySecretHeader,
 			ProxySecret:       cfg.Identity.Header.ProxySecret,
-			ProxyMTLSCAFile:   cfg.Identity.Header.ProxyMTLSCAFile,
 		})
 		return identity.NewHeader(identity.HeaderConfig{
 			UserIDHeader:    cfg.Identity.Header.UserIDHeader,

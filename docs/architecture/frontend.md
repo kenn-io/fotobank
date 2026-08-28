@@ -13,10 +13,16 @@ the normal full-product build.
 
 ## API contract
 
-The frontend calls `/api/v1`. Huma generates `openapi.json` from the same route
-registration used by the server. `make api-generate` updates the OpenAPI file
-and generated TypeScript schema. HTTP changes must regenerate both before
-commit.
+The frontend calls `/api/v1`. Huma generates `openapi.json` through the same
+route builder used by the server, but the generator supplies no runtime
+services. Registrations that require search, AI, or facets services therefore
+do not appear in the checked-in schema even though a configured server exposes
+them. Raw byte and event routes are also outside Huma's JSON schema. The
+checked-in OpenAPI file is a generated subset of the production API, not a
+complete route inventory.
+
+`make api-generate` updates the OpenAPI file and generated TypeScript schema.
+HTTP changes covered by that schema must regenerate both before commit.
 
 Full-size media and thumbnail endpoints are raw byte routes because they need
 range requests, streaming, cache validators, and content headers. JSON routes

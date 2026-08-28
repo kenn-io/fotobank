@@ -21,15 +21,16 @@ actual cutover. Do not describe planned authority as already active.
 
 ## Import semantics
 
-Import is copy semantics. Fotobank waits for a source file to settle, reads it,
-and leaves the source path and bytes untouched. A future move operation would
-be a separate, explicit feature.
+Import is copy semantics. The active importer discovers a source file, reads
+it, copies it to NAS, and leaves the source path and bytes untouched. It does
+not yet wait for repeated stable size and modification-time observations. A
+future move operation would be a separate, explicit feature.
 
-The stable import flow groups related source files into one asset, computes
-SHA-256 and byte size, reserves stable Fotobank IDs, writes each file to
-Docbank, records the returned version mapping, then enqueues derived work.
-Dependent thumbnail, metadata, full-text, and AI work starts only after the
-asset has complete mappings.
+The Docbank cutover will first wait for stable size and modification time, then
+group related source files into one asset, compute SHA-256 and byte size,
+reserve stable Fotobank IDs, write each file to Docbank, record the returned
+version mapping, and enqueue derived work. Dependent thumbnail, metadata,
+full-text, and AI work starts only after the asset has complete mappings.
 
 Docbank SHA-256 is the content identity. Fotobank decides separately whether
 equal bytes mean a duplicate import, another file in an asset, or a distinct
@@ -59,15 +60,18 @@ Virtual paths are internal stable names:
 The path is allocated before content creation. Public APIs expose the asset
 UUID, never this path or the sequential Docbank node ID.
 
-Full reads use verified readers. A caller must drain the stream and check
-verification before treating the read as successful. Exact-version byte ranges
-support video and HTTP range responses; a partial range proves catalog access
-and range bounds, not whole-object integrity.
+`internal/content` currently exposes sequential verified readers. A caller
+must drain a full stream and check verification before treating the read as
+successful. Active video and HTTP range responses still read slices through
+`storage.Store`. The Docbank cutover must add exact-version range reads to the
+content boundary; a partial range will prove catalog access and range bounds,
+not whole-object integrity.
 
-## Cross-database writes
+## Target cross-database writes
 
-Fotobank SQLite and Docbank cannot commit atomically. Content-changing code
-uses a durable operation protocol:
+The active importer does not yet create durable operation rows or write media
+to Docbank. At cutover, Fotobank SQLite and Docbank still cannot commit
+atomically, so content-changing code must use this durable operation protocol:
 
 1. Allocate asset, file, and operation UUIDs and record the expected identity.
 2. Call Docbank with the stable virtual path and expected content.

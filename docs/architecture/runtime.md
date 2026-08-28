@@ -69,8 +69,15 @@ Two identity modes exist:
 
 - `stub` supplies one configured principal for local development and
   single-user operation.
-- `header` trusts identity headers only from configured proxy networks and
-  validates the configured proxy secret or mutual-TLS boundary.
+- `header` accepts identity headers only after its direct-access guard accepts
+  the request. The guard accepts a loopback or Unix-socket listener, configured
+  proxy network ranges, or a configured shared proxy secret. Network ranges
+  and the secret are additive when both are configured.
+
+Fotobank does not terminate TLS or inspect client certificates. A deployment
+that uses mutual TLS must terminate it at the external proxy and must still
+restrict Fotobank access with one of the guards above. The application never
+treats a CA-file setting as evidence that a request passed mutual TLS.
 
 Knowing an asset UUID, file UUID, Docbank node ID, or virtual path grants no
 access. Services and share-capability checks make the authorization decision.

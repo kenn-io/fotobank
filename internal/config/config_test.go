@@ -283,6 +283,25 @@ func TestValidateHeaderModeRequiresGuard(t *testing.T) {
 	require.ErrorIs(t, err, errs.ErrBadConfiguration)
 }
 
+func TestValidateHeaderModeDoesNotTreatCAFileAsGuard(t *testing.T) {
+	t.Setenv("FOTOBANK_PROXY_SECRET", "")
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[identity]
+mode = "header"
+[identity.header]
+proxy_mtls_ca_file = "/etc/ca.pem"
+[http]
+listen_address = "0.0.0.0:8090"
+`), 0o600))
+
+	_, err := config.Load(p)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+}
+
 func TestValidateAcceptsLoopbackInHeaderMode(t *testing.T) {
 	// Loopback bind satisfies the guard on its own.
 	tmp := t.TempDir()
@@ -413,7 +432,7 @@ mode = "unknown"
 }
 
 func TestValidateHeaderModeGuardSatisfiers(t *testing.T) {
-	// Exercise each of the three non-loopback guard satisfiers with a
+	// Exercise both non-loopback guard satisfiers with a
 	// public bind address so only the guard can accept the config.
 	t.Setenv("FOTOBANK_PROXY_SECRET", "")
 
@@ -442,12 +461,6 @@ trusted_proxy_cidrs = ["10.0.0.0/8"]
 			name: "proxy_secret",
 			extra: `[identity.header]
 proxy_secret = "s3cret"
-`,
-		},
-		{
-			name: "mtls",
-			extra: `[identity.header]
-proxy_mtls_ca_file = "/etc/ca.pem"
 `,
 		},
 	}
@@ -888,7 +901,7 @@ root = "/tmp/nas"
 // process CWD because the documented "~ expanded" comment in the
 // example config was lying — Load never actually did the expansion.
 // Every filesystem-path config field gets the expansion: nas root,
-// flash root, the import lock path, and the optional mTLS CA file.
+// flash root, and the import lock path.
 func TestLoadExpandsTildeInPaths(t *testing.T) {
 	r := require.New(t)
 	home := t.TempDir()

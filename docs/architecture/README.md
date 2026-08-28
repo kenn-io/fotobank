@@ -43,9 +43,10 @@ Temporary design notes and execution checklists are not committed.
 7. Hidden-media controls are application privacy, not encryption. Every list,
    search, share, thumbnail, and byte-read path enforces the same visibility
    policy.
-8. Cross-database mutations use durable operation records and idempotent
-   content operations. Code must not pretend Fotobank SQLite and Docbank can
-   share a transaction.
+8. The active importer has no cross-database operation record because it still
+   writes full-size media to NAS. Once imports write to Docbank, every
+   cross-database mutation must use durable operation records and idempotent
+   content operations; Fotobank SQLite and Docbank cannot share a transaction.
 9. This pre-alpha repository edits the single initial migration in place.
    There is no compatibility layer for databases that have not shipped.
 
