@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/media"
 )
+
+var syntheticNodeSequence atomic.Int64
 
 // Insert adds a ready asset with a synthetic, structurally valid Docbank
 // mapping. Tests that read original bytes should use InsertContent instead.
@@ -57,7 +60,10 @@ func insert(t testing.TB, repo *media.Repo, store *content.Adapter, body []byte,
 	item.Size = int64(len(body))
 	fileID := uuid.NewString()
 	versionID := uuid.NewString()
-	var nodeID = time.Now().UnixNano()
+	// Keep synthetic mappings outside Docbank's ordinary low, sequential ID
+	// range. An atomic sequence is unique even on platforms whose wall clock
+	// returns the same nanosecond value to concurrent tests.
+	var nodeID = int64(1<<62) + syntheticNodeSequence.Add(1)
 
 	err := repo.WithWriteTx(context.Background(), func(tx *sql.Tx) error {
 		var storageKey string
