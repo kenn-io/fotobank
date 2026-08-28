@@ -100,6 +100,9 @@ func parseRangeHeader(raw string, size int64) (offset, length int64, partial boo
 	if raw == "" {
 		return 0, -1, false, nil
 	}
+	if size == 0 {
+		return 0, 0, false, errRangeUnsatisfiable
+	}
 	if !strings.HasPrefix(raw, "bytes=") {
 		return 0, 0, false, fmt.Errorf("unsupported range unit: %s", raw)
 	}

@@ -148,17 +148,23 @@ func scanClaim(rows *sql.Rows) (Claim, error) {
 	}
 	c.Media.Type = media.Type(mediaType)
 	c.ClaimedAt = claimedAt
-	// COALESCE through sqlite returns a TEXT, not a typed timestamp,
-	// so the mattn driver's automatic time.Time materialization
-	// doesn't kick in. Parse the RFC3339 form the schema writes.
-	// A bad parse falls back to imported_at — never zero, never
-	// nil — so SortStable below still has a valid ordering key.
-	if t, err := time.Parse(time.RFC3339Nano, priorityKeyRaw); err == nil {
-		c.priorityKey = t
-	} else if t, err := time.Parse(time.RFC3339, priorityKeyRaw); err == nil {
-		c.priorityKey = t
+	priorityKey, err := parsePriorityKey(priorityKeyRaw)
+	if err != nil {
+		return Claim{}, fmt.Errorf("parse thumbnail priority key %q: %w", priorityKeyRaw, err)
 	}
+	c.priorityKey = priorityKey
 	return c, nil
+}
+
+func parsePriorityKey(raw string) (time.Time, error) {
+	if value, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return value, nil
+	}
+	return time.ParseInLocation(
+		"2006-01-02 15:04:05.999999999-07:00",
+		strings.TrimSuffix(raw, "Z"),
+		time.UTC,
+	)
 }
 
 const sweepLeasesSQL = `

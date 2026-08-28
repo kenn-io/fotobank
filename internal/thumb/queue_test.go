@@ -264,9 +264,9 @@ func TestClaimBatchOrdersNewestFirst(t *testing.T) {
 		timestamp *time.Time
 		imported  time.Time
 	}{
-		{id: "old", timestamp: &old, imported: time.Now().UTC().Add(-3 * time.Hour)},
-		{id: "no-exif", timestamp: nil, imported: noExif},
-		{id: "new", timestamp: &new, imported: time.Now().UTC().Add(-1 * time.Hour)},
+		{id: "a-old", timestamp: &old, imported: time.Now().UTC().Add(-3 * time.Hour)},
+		{id: "b-no-exif", timestamp: nil, imported: noExif},
+		{id: "z-new", timestamp: &new, imported: time.Now().UTC().Add(-1 * time.Hour)},
 	}
 	for _, row := range rows {
 		m := media.Media{
@@ -294,6 +294,6 @@ func TestClaimBatchOrdersNewestFirst(t *testing.T) {
 	// recent than old's EXIF timestamp — newness the user perceives
 	// (when the row entered the system) matches what the worker
 	// drains, regardless of whether EXIF dates are present.
-	r.Equal([]string{"new", "no-exif", "old"}, got,
+	r.Equal([]string{"z-new", "b-no-exif", "a-old"}, got,
 		"claim order must be newest-first by COALESCE(timestamp, imported_at) DESC")
 }

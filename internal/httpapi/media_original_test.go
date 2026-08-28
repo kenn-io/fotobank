@@ -196,6 +196,22 @@ func TestGetMediaOriginalRangeOutOfBoundsReturns416(t *testing.T) {
 	r.Equal("bytes */10", resp.Header.Get("Content-Range"))
 }
 
+func TestGetEmptyMediaOriginalSuffixRangeReturns416(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaOriginalTest(t)
+	m := seedOriginal(t, fx, fx.owner, []byte{})
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, fx.srv.URL+"/api/v1/media/"+m.ID+"/original", nil)
+	r.NoError(err)
+	req.Header.Set("Range", "bytes=-3")
+	resp, err := http.DefaultClient.Do(req)
+	r.NoError(err)
+	defer resp.Body.Close()
+
+	r.Equal(http.StatusRequestedRangeNotSatisfiable, resp.StatusCode)
+	r.Equal("bytes */0", resp.Header.Get("Content-Range"))
+}
+
 func TestGetMediaOriginalMalformedRangeReturns416(t *testing.T) {
 	r := require.New(t)
 	fx := newMediaOriginalTest(t)
