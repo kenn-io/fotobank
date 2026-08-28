@@ -8,7 +8,7 @@ import (
 	"io"
 	"time"
 
-	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
@@ -37,13 +37,14 @@ type HiddenBulkResult struct {
 // surface cannot be used to probe for the existence of other owners'
 // media.
 type MediaService struct {
-	repo  *media.Repo
-	store *content.Adapter
+	repo     *media.Repo
+	resolver *contentresolver.Resolver
 }
 
-// NewMediaService constructs a MediaService backed by repo and store.
-func NewMediaService(repo *media.Repo, store *content.Adapter) *MediaService {
-	return &MediaService{repo: repo, store: store}
+// NewMediaService constructs a MediaService backed by the product repository
+// and exact-version resolver.
+func NewMediaService(repo *media.Repo, resolver *contentresolver.Resolver) *MediaService {
+	return &MediaService{repo: repo, resolver: resolver}
 }
 
 // Get returns the media row identified by id when caller is its owner.
@@ -149,15 +150,15 @@ func (s *MediaService) OpenOriginal(
 	offset, length int64,
 	includeHidden ...bool,
 ) (io.ReadCloser, media.Media, error) {
-	m, err := s.Get(ctx, id, caller, includeHidden...)
+	ref, err := s.resolveContent(ctx, id, "", caller, includeHidden...)
 	if err != nil {
 		return nil, media.Media{}, err
 	}
-	rc, err := openExactVersion(ctx, s.store, m.CurrentVersionID, offset, length)
+	opened, err := s.resolver.Open(ctx, ref, offset, length)
 	if err != nil {
 		return nil, media.Media{}, fmt.Errorf("read original: %w", err)
 	}
-	return rc, m, nil
+	return opened.Reader, ref.Asset, nil
 }
 
 // GetFile enforces asset ownership and visibility and returns one file only
@@ -169,21 +170,11 @@ func (s *MediaService) GetFile(
 	caller owners.Principal,
 	includeHidden ...bool,
 ) (media.File, media.Media, error) {
-	item, err := s.Get(ctx, assetID, caller, includeHidden...)
+	ref, err := s.resolveContent(ctx, assetID, fileID, caller, includeHidden...)
 	if err != nil {
 		return media.File{}, media.Media{}, err
 	}
-	file, err := s.repo.GetFile(ctx, fileID)
-	if err != nil {
-		if errors.Is(err, errs.ErrNotFound) {
-			return media.File{}, media.Media{}, fmt.Errorf("get asset file: %w", errs.ErrNotFound)
-		}
-		return media.File{}, media.Media{}, err
-	}
-	if file.AssetID != assetID || file.Owner != caller || file.CurrentVersionID == "" {
-		return media.File{}, media.Media{}, fmt.Errorf("get asset file: %w", errs.ErrNotFound)
-	}
-	return file, item, nil
+	return ref.File, ref.Asset, nil
 }
 
 // OpenFile opens one authorized asset file at its exact immutable Docbank
@@ -196,15 +187,32 @@ func (s *MediaService) OpenFile(
 	offset, length int64,
 	includeHidden ...bool,
 ) (io.ReadCloser, media.File, media.Media, error) {
-	file, item, err := s.GetFile(ctx, assetID, fileID, caller, includeHidden...)
+	ref, err := s.resolveContent(ctx, assetID, fileID, caller, includeHidden...)
 	if err != nil {
 		return nil, media.File{}, media.Media{}, err
 	}
-	rc, err := openExactVersion(ctx, s.store, file.CurrentVersionID, offset, length)
+	opened, err := s.resolver.Open(ctx, ref, offset, length)
 	if err != nil {
 		return nil, media.File{}, media.Media{}, fmt.Errorf("read asset file: %w", err)
 	}
-	return rc, file, item, nil
+	return opened.Reader, ref.File, ref.Asset, nil
+}
+
+func (s *MediaService) resolveContent(
+	ctx context.Context,
+	assetID, fileID string,
+	caller owners.Principal,
+	includeHidden ...bool,
+) (contentresolver.Reference, error) {
+	ref, err := s.resolver.ResolveCurrent(ctx, assetID, fileID)
+	if err != nil {
+		return contentresolver.Reference{}, err
+	}
+	wantHidden := len(includeHidden) > 0 && includeHidden[0]
+	if ref.Asset.Owner != caller || (ref.Asset.HiddenAt != nil && !wantHidden) {
+		return contentresolver.Reference{}, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, assetID)
+	}
+	return ref, nil
 }
 
 // Hide marks the given asset IDs as hidden. IDs not owned by caller (or

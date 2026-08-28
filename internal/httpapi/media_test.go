@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
 	"go.kenn.io/fotobank/internal/media"
@@ -48,7 +49,7 @@ func newMediaAPITest(t *testing.T) mediaAPIFixture {
 	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, contentStore.Close()) })
-	svc := service.NewMediaService(repo, contentStore)
+	svc := service.NewMediaService(repo, contentresolver.New(repo, contentStore))
 	idp := identity.NewStub(p, "Test User")
 	h, err := httpapi.New(httpapi.Deps{IdentityProvider: idp, MediaService: svc})
 	require.NoError(t, err)
