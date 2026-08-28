@@ -182,6 +182,32 @@ func TestEnqueueBumpsVersionForMatchingRows(t *testing.T) {
 	}
 }
 
+func TestEnqueueSkipsHiddenAndNonReadyAssets(t *testing.T) {
+	r := require.New(t)
+	fx := newQueueFixture(t, 3)
+	_, err := fx.rw.ExecContext(t.Context(),
+		`UPDATE assets SET hidden_at = ? WHERE id = ?`, time.Now().UTC(), fx.ids[1])
+	r.NoError(err)
+	_, err = fx.rw.ExecContext(t.Context(),
+		`UPDATE assets SET state = 'pending' WHERE id = ?`, fx.ids[2])
+	r.NoError(err)
+
+	n, err := fx.q.Enqueue(t.Context(), thumb.EnqueueFilter{All: true, Owner: fx.owner})
+	r.NoError(err)
+	r.Equal(1, n)
+
+	for i, id := range fx.ids {
+		var version int
+		r.NoError(fx.rw.QueryRowContext(t.Context(),
+			`SELECT thumb_version FROM assets WHERE id = ?`, id).Scan(&version))
+		if i == 0 {
+			r.Equal(1, version)
+		} else {
+			r.Zero(version)
+		}
+	}
+}
+
 func TestRegenerateWhileWorkingLosesClaim(t *testing.T) {
 	r := require.New(t)
 	fx := newQueueFixture(t, 1)

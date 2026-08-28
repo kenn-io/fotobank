@@ -16,7 +16,8 @@ import (
 )
 
 type Config struct {
-	Root string
+	Root         string
+	ManagedRoots []string
 }
 
 type Identity struct {
@@ -89,11 +90,12 @@ type RangeRead struct {
 }
 
 type Adapter struct {
-	vault     *docbank.Vault
-	mutation  sync.Mutex
-	root      string
-	closeOnce sync.Once
-	closeErr  error
+	vault        *docbank.Vault
+	mutation     sync.Mutex
+	root         string
+	managedRoots []string
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 func Open(ctx context.Context, cfg Config) (*Adapter, error) {
@@ -111,7 +113,17 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 		_ = vault.Close()
 		return nil, fmt.Errorf("make Docbank root absolute: %w", err)
 	}
-	return &Adapter{vault: vault, root: filepath.Clean(root)}, nil
+	managedRoots := make([]string, len(cfg.ManagedRoots))
+	for i, managedRoot := range cfg.ManagedRoots {
+		if !filepath.IsAbs(managedRoot) {
+			_ = vault.Close()
+			return nil, fmt.Errorf("%w: managed root must be absolute", errs.ErrBadConfiguration)
+		}
+		managedRoots[i] = filepath.Clean(managedRoot)
+	}
+	return &Adapter{
+		vault: vault, root: filepath.Clean(root), managedRoots: managedRoots,
+	}, nil
 }
 
 func (a *Adapter) Close() error {
@@ -150,6 +162,11 @@ func (a *Adapter) ResolveImportRoot(sourceRoot string) (string, error) {
 	}
 	if pathsOverlap(resolved, a.root) {
 		return "", fmt.Errorf("%w: import root overlaps Docbank vault", errs.ErrBadConfiguration)
+	}
+	for _, managedRoot := range a.managedRoots {
+		if pathsOverlap(resolved, managedRoot) {
+			return "", fmt.Errorf("%w: import root overlaps managed storage", errs.ErrBadConfiguration)
+		}
 	}
 	return resolved, nil
 }

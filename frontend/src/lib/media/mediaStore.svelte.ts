@@ -325,7 +325,11 @@ export class MediaStore {
     // match, which is what lets the SSE-overlap and refetch paths run
     // without churning every chunk.
     const dirty = new Set<string>();
-    for (const it of items) {
+    for (const incoming of items) {
+      const known = this.byMediaId.get(incoming.id);
+      const it = incoming.files === undefined && known?.files !== undefined
+        ? { ...incoming, files: known.files }
+        : incoming;
       // Visible-only invariant (§3.14): hidden rows must not enter any
       // visible index. If a previously-cached row comes back hidden,
       // evict it. After eviction the caller must use HiddenMediaStore.

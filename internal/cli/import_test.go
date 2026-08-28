@@ -142,6 +142,34 @@ func TestFotobankImportRejectsMissingSource(t *testing.T) {
 	r.Contains(eout.String(), "usage")
 }
 
+func TestFotobankImportRejectsManagedStorageSource(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	nasRoot := filepath.Join(tmp, "nas")
+	r.NoError(os.MkdirAll(nasRoot, 0o700))
+	cfgPath := filepath.Join(tmp, "c.toml")
+	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
+[nas]
+root = %q
+[flash]
+root = %q
+[identity]
+mode = "stub"
+[identity.stub]
+hub = "local"
+user_id = "alice"
+[imports]
+file_lock_path = %q
+`, nasRoot, filepath.Join(tmp, "flash"), filepath.Join(tmp, "import.lock")), 0o600))
+	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
+
+	var out, eout bytes.Buffer
+	code := cli.RunContext(t.Context(),
+		[]string{"import", "--config", cfgPath, nasRoot}, &out, &eout)
+	r.Equal(1, code)
+	r.Contains(eout.String(), "import root overlaps managed storage")
+}
+
 func TestFotobankImportRejectsHeaderIdentityMode(t *testing.T) {
 	r := require.New(t)
 

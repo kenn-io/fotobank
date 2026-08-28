@@ -124,7 +124,13 @@ func runImport(ctx context.Context, opts importOpts) error {
 
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	assetRepo := media.NewAssetRepo(d.WriteDB(), d.ReadDB())
-	contentStore, err := content.Open(ctx, content.Config{Root: cfg.Docbank.Root})
+	contentStore, err := content.Open(ctx, content.Config{
+		Root: cfg.Docbank.Root,
+		ManagedRoots: []string{
+			cfg.NAS.Root,
+			cfg.Flash.Root,
+		},
+	})
 	if err != nil {
 		return fmt.Errorf("open Docbank vault: %w", err)
 	}

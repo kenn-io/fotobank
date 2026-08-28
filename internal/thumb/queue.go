@@ -370,7 +370,10 @@ func buildEnqueueWhere(filter EnqueueFilter) (string, []any, error) {
 	if (filter.Owner == owners.Principal{}) {
 		return "", nil, errors.New("thumb: Enqueue requires Owner")
 	}
-	parts := []string{"owner_hub = ?", "owner_user_id = ?"}
+	parts := []string{
+		"owner_hub = ?", "owner_user_id = ?",
+		"state = 'ready'", "hidden_at IS NULL",
+	}
 	args := []any{filter.Owner.Hub, filter.Owner.UserID}
 	specific := filter.All
 	if len(filter.IDs) > 0 {

@@ -109,9 +109,11 @@ symlink ancestors and symlink-plus-`..` aliases, and compares case-insensitively
 for portable safety.
 
 The import command applies the same canonical, symlink-aware comparison to its
-source root before discovery so the vault cannot become its own import source.
-Discovery traverses that canonical root and rejects supported media paths that
-are symbolic links instead of following them beyond the validated tree.
+source root before discovery. The source cannot overlap the vault, NAS, or
+flash root, so authoritative content and managed artifacts cannot become an
+import source. Discovery traverses that canonical root and rejects supported
+media paths that are symbolic links instead of following them beyond the
+validated tree.
 
 Writable checkouts for Lightroom are not implemented yet. Their architectural
 boundary is already fixed: a checkout is a materialized working copy, never

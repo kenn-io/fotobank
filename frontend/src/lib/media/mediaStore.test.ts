@@ -515,6 +515,23 @@ describe("MediaStore hidden invariant", () => {
 });
 
 describe("MediaStore merge with asset files", () => {
+  it("preserves detailed files when a later list row omits them", () => {
+    const store = new MediaStore({ GET: vi.fn() } as never);
+    const detail = {
+      id: "p",
+      timestamp: "2024-06-15T14:30:00Z",
+      width: 1,
+      height: 1,
+      thumb_version: 1,
+      files: [{ id: "s", role: "original", mime_type: "image/x-adobe-dng", original_filename: "IMG_1.DNG", size: 1, sha256: "a".repeat(64) }],
+    };
+    store.mergeRaw([detail]);
+    store.mergeRaw([{ ...detail, thumb_version: 2, files: undefined }]);
+
+    expect(store.get("p")?.thumbVersion).toBe(2);
+    expect(store.get("p")?.files).toEqual(detail.files);
+  });
+
   it("does not dirty the bucket when file metadata is unchanged", async () => {
     const item = {
       id: "p",
