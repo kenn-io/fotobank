@@ -128,6 +128,35 @@ func TestImporterRejectsXMPOnlyGroupBeforeReservation(t *testing.T) {
 	r.Zero(operationsCount)
 }
 
+func TestImporterGroupsCompoundJPEGSidecarName(t *testing.T) {
+	r := require.New(t)
+	imp, _, repo, _, owner, _ := newImporterFixture(t)
+	source := t.TempDir()
+	writeSource(t, source, "photo.jpg", []byte("jpeg"))
+	writeSource(t, source, "photo.jpg.xmp", []byte("sidecar"))
+
+	result, err := imp.ImportDirectory(t.Context(), source, ingest.Options{
+		Owner: owner, ConcurrentWorkers: 1, SettleInterval: time.Millisecond,
+	})
+	r.NoError(err)
+	r.Equal(1, result.Imported, "result: %+v", result)
+	r.Empty(result.Failures)
+
+	items, err := repo.List(t.Context(), media.ListFilter{Owner: owner})
+	r.NoError(err)
+	r.Len(items, 1)
+	files, err := repo.ListFiles(t.Context(), items[0].ID)
+	r.NoError(err)
+	r.Len(files, 2)
+	var sidecar media.File
+	for _, file := range files {
+		if file.Role == media.RoleSidecar {
+			sidecar = file
+		}
+	}
+	r.Equal("photo.jpg.xmp", sidecar.OriginalFilename)
+}
+
 func TestImporterDiscoversFilesThroughSymlinkRoot(t *testing.T) {
 	r := require.New(t)
 	imp, _, _, _, owner, _ := newImporterFixture(t)

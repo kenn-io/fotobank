@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/ingest"
 	"go.kenn.io/fotobank/internal/media"
 )
@@ -43,6 +44,24 @@ func TestDiscoverClassifies(t *testing.T) {
 func TestDiscoverRejectsEmptyRoot(t *testing.T) {
 	err := ingest.Discover("", func(ingest.Candidate) error { return nil })
 	require.Error(t, err)
+}
+
+func TestDiscoverRejectsSupportedFileSymlink(t *testing.T) {
+	r := require.New(t)
+	root := t.TempDir()
+	target := filepath.Join(t.TempDir(), "outside.jpg")
+	r.NoError(os.WriteFile(target, []byte("outside"), 0o600))
+	link := filepath.Join(root, "linked.jpg")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	visited := false
+	err := ingest.Discover(root, func(ingest.Candidate) error {
+		visited = true
+		return nil
+	})
+	r.ErrorIs(err, errs.ErrInvalidArgument)
+	r.False(visited)
 }
 
 func TestDiscoverSkipsAppleDoubleAndSystemFiles(t *testing.T) {

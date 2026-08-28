@@ -222,7 +222,7 @@ func candidateGroupKey(candidate Candidate) string {
 	dir := norm.NFC.String(filepath.Dir(candidate.Path))
 	base := strings.TrimSuffix(filepath.Base(candidate.Path), filepath.Ext(candidate.Path))
 	if candidate.Kind == CandidateSidecar {
-		if ext := filepath.Ext(base); isRAWExtension(ext) {
+		if ext := filepath.Ext(base); isPhotoSourceExtension(ext) {
 			base = strings.TrimSuffix(base, ext)
 		}
 	}
@@ -233,13 +233,9 @@ func candidateGroupKey(candidate Candidate) string {
 	return "photo\x00" + dir + "\x00" + base
 }
 
-func isRAWExtension(ext string) bool {
-	switch strings.ToLower(ext) {
-	case ".arw", ".raf", ".dng", ".cr2", ".nef":
-		return true
-	default:
-		return false
-	}
+func isPhotoSourceExtension(ext string) bool {
+	_, _, kind, ok := classify(strings.ToLower(ext))
+	return ok && (kind == CandidateImage || kind == CandidateRAW)
 }
 
 func validateCandidateGroup(candidates []Candidate) error {
@@ -465,15 +461,20 @@ func (imp *Importer) prepareGroup(ctx context.Context, sourceRoot string, group 
 		}
 	}
 	primary := group.candidates[primaryIndex]
-	metadata := extractMetadata(primary)
-	asset := buildAsset(assetID, owner, primary.Type, metadata, imp.now(), imp.places)
-	prepared := make([]preparedFile, len(group.candidates))
-	fileIDs := make(map[CandidateKind]string)
+	observations := make([]fileObservation, len(group.candidates))
 	for i, candidate := range group.candidates {
 		observation, err := settleCandidate(ctx, candidate.Path, settleInterval)
 		if err != nil {
 			return nil, media.Asset{}, nil, err
 		}
+		observations[i] = observation
+	}
+	metadata := extractMetadata(primary)
+	asset := buildAsset(assetID, owner, primary.Type, metadata, imp.now(), imp.places)
+	prepared := make([]preparedFile, len(group.candidates))
+	fileIDs := make(map[CandidateKind]string)
+	for i, candidate := range group.candidates {
+		observation := observations[i]
 		fileID := uuid.NewString()
 		role := media.RoleAlternate
 		switch {
