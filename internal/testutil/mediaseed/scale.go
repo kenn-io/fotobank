@@ -2,13 +2,16 @@ package mediaseed
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/db"
@@ -31,7 +34,7 @@ var baseTime = time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 // both mediaInsertSQL and every embedded migration file — but a
 // logic-only change (e.g. a new RNG reseed point) needs a manual bump
 // here.
-const SeedVersion = "scale-2026-05-05-hotzone"
+const SeedVersion = "scale-2026-08-28-docbank-authority"
 
 // Fingerprint is the stable identifier for "what bytes this seed
 // would produce, for any opts". scalecache hashes the result into its
@@ -177,6 +180,11 @@ func SeedScaleLibraryToDB(rw *sql.DB, p owners.Principal, opts ScaleOpts) ([]str
 		return nil, fmt.Errorf("seed: prepare media: %w", err)
 	}
 	defer mediaStmt.Close()
+	fileStmt, err := tx.PrepareContext(ctx, mediaFileInsertSQL)
+	if err != nil {
+		return nil, fmt.Errorf("seed: prepare media file: %w", err)
+	}
+	defer fileStmt.Close()
 
 	resultsStmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO ai_results
@@ -232,18 +240,26 @@ func SeedScaleLibraryToDB(rw *sql.DB, p owners.Principal, opts ScaleOpts) ([]str
 		}
 
 		if _, err := mediaStmt.ExecContext(ctx,
-			id, p.Hub, p.UserID, "photo", "image/jpeg",
-			"scale/"+id+".jpg", id+".jpg",
-			base.Add(-time.Duration(i)*rowStride), nil, // imported_at, timestamp
-			int64(1000), "cs-"+id,
+			id, p.Hub, p.UserID, "pending", "photo",
+			base.Add(-time.Duration(i)*rowStride), nil,
 			c.Make, c.Model, l.Model, nil, nil, nil, nil, nil, nil, // EXIF detail nulled
 			nil,                // duration_ms
 			lat, lon, nil, nil, // gps_at, location_label nulled
-			"ready", 0, nil, // thumb_status, thumb_version, thumb_updated_at
-			"scale/"+id+".jpg", nil, // import_source_path, paired_with_id
+			"ready", 0, nil,
 			hiddenAt,
 		); err != nil {
 			return nil, fmt.Errorf("seed: insert media row %d: %w", i, err)
+		}
+		fileID := deterministicUUID("file:" + id)
+		versionID := deterministicUUID("version:" + id)
+		digest := sha256.Sum256([]byte(id))
+		sha := hex.EncodeToString(digest[:])
+		virtualPath := "/owners/550e8400-e29b-41d4-a716-446655440010/media/" + fileID + "/" + id + ".jpg"
+		if _, err := fileStmt.ExecContext(ctx,
+			fileID, id, p.Hub, p.UserID, "primary", "image/jpeg", id+".jpg",
+			"scale/"+id+".jpg", int64(1000), int64(i+1), virtualPath, versionID, sha,
+		); err != nil {
+			return nil, fmt.Errorf("seed: insert media file %d: %w", i, err)
 		}
 
 		// Tag fan-out: ~50% of rows get tags, those that do get 1-3.
@@ -275,6 +291,9 @@ func SeedScaleLibraryToDB(rw *sql.DB, p owners.Principal, opts ScaleOpts) ([]str
 				return nil, fmt.Errorf("seed: insert media_tags row %d/%d: %w", i, j, err)
 			}
 		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE assets SET state = 'ready' WHERE state = 'pending'`); err != nil {
+		return nil, fmt.Errorf("seed: finalize assets: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -347,16 +366,29 @@ func (o ScaleOpts) withDefaults() ScaleOpts {
 // duplication is intentional: keeping the seed independent of the
 // repo lets the seed run inside a single transaction (Repo.Insert is
 // not tx-aware) without forcing a public InsertTx surface.
-const mediaInsertSQL = `INSERT INTO media (
-	id, owner_hub, owner_user_id, media_type, mime_type, path, original_filename,
-	imported_at, timestamp, size, checksum,
+const mediaInsertSQL = `INSERT INTO assets (
+	id, owner_hub, owner_user_id, state, media_type, imported_at, timestamp,
 	make, model, lens_model, focal_length, shutter, width, height, iso, aperture,
 	duration_ms,
 	latitude, longitude, gps_at, location_label,
 	thumb_status, thumb_version, thumb_updated_at,
-	import_source_path, paired_with_id,
 	hidden_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+const mediaFileInsertSQL = `INSERT INTO media_files (
+	id, asset_id, owner_hub, owner_user_id, role, mime_type, original_filename,
+	import_source_path, size, docbank_node_id, docbank_virtual_path,
+	current_version_id, sha256
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+func deterministicUUID(seed string) string {
+	digest := sha256.Sum256([]byte(seed))
+	var id uuid.UUID
+	copy(id[:], digest[:16])
+	id[6] = (id[6] & 0x0f) | 0x40
+	id[8] = (id[8] & 0x3f) | 0x80
+	return id.String()
+}
 
 type cameraSeed struct {
 	Make, Model string
@@ -467,7 +499,7 @@ const captionWordsPerRow = 6
 // choices.
 //
 // The bulk INSERT projection mirrors the per-row index.RefreshMediaFTS
-// call the importer/reconcile/AI-promotion pipeline drives in
+// call the importer and AI-promotion pipeline drives in
 // production, modulo the GROUP_CONCAT-vs-rank-ordered loop the
 // production path uses. The tokenizer (porter unicode61) sees the
 // same text either way, so BM25 numbers transfer.
@@ -490,7 +522,7 @@ func SeedFTSCorpus(tb testing.TB, rw *sql.DB, p owners.Principal, opts FTSOpts) 
 	// would need a deterministic hash of m.id to avoid leaking
 	// SQLite's random() across runs.
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id FROM media WHERE owner_hub = ? AND owner_user_id = ? ORDER BY id`,
+		`SELECT id FROM assets WHERE owner_hub = ? AND owner_user_id = ? ORDER BY id`,
 		p.Hub, p.UserID,
 	)
 	require.NoError(tb, err, "fts seed: select media ids")
@@ -560,13 +592,14 @@ func SeedFTSCorpus(tb testing.TB, rw *sql.DB, p owners.Principal, opts FTSOpts) 
 			m.id,
 			COALESCE(cap.text, ''),
 			COALESCE(tags.labels, ''),
-			COALESCE(m.original_filename, ''),
+			COALESCE(f.original_filename, ''),
 			COALESCE(m.make, '')
 				|| CASE WHEN m.make IS NOT NULL AND m.model IS NOT NULL THEN ' ' ELSE '' END
 				|| COALESCE(m.model, ''),
 			COALESCE(m.lens_model, ''),
 			COALESCE(m.location_label, '')
-		 FROM media m
+		 FROM assets m
+		 JOIN media_files f ON f.asset_id = m.id AND f.role = 'primary'
 		 LEFT JOIN (
 			SELECT r.media_id, mc.text
 			  FROM ai_results r

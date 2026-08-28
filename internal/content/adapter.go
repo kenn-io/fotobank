@@ -2,15 +2,22 @@ package content
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"go.kenn.io/docbank"
+
+	"go.kenn.io/fotobank/internal/errs"
 )
 
 type Config struct {
-	Root string
+	Root         string
+	ManagedRoots []string
 }
 
 type Identity struct {
@@ -72,9 +79,23 @@ type Read struct {
 	Reader    VerifiedReadCloser
 }
 
+type RangeRead struct {
+	VersionID string
+	SHA256    string
+	MediaType string
+	Size      int64
+	Offset    int64
+	Length    int64
+	Reader    io.ReadCloser
+}
+
 type Adapter struct {
-	vault    *docbank.Vault
-	mutation sync.Mutex
+	vault        *docbank.Vault
+	mutation     sync.Mutex
+	root         string
+	managedRoots []string
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 func Open(ctx context.Context, cfg Config) (*Adapter, error) {
@@ -82,14 +103,117 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 	if err != nil {
 		return nil, translateError(err)
 	}
-	return &Adapter{vault: vault}, nil
+	root, err := filepath.EvalSymlinks(cfg.Root)
+	if err != nil {
+		_ = vault.Close()
+		return nil, fmt.Errorf("resolve opened Docbank root: %w", err)
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		_ = vault.Close()
+		return nil, fmt.Errorf("make Docbank root absolute: %w", err)
+	}
+	managedRoots := make([]string, len(cfg.ManagedRoots))
+	for i, managedRoot := range cfg.ManagedRoots {
+		if !filepath.IsAbs(managedRoot) {
+			_ = vault.Close()
+			return nil, fmt.Errorf("%w: managed root must be absolute", errs.ErrBadConfiguration)
+		}
+		resolvedManagedRoot := managedRoot
+		if evaluated, evalErr := filepath.EvalSymlinks(managedRoot); evalErr == nil {
+			resolvedManagedRoot = evaluated
+		} else if !os.IsNotExist(evalErr) {
+			_ = vault.Close()
+			return nil, fmt.Errorf("resolve managed root: %w", evalErr)
+		}
+		resolvedManagedRoot, err := filepath.Abs(resolvedManagedRoot)
+		if err != nil {
+			_ = vault.Close()
+			return nil, fmt.Errorf("make managed root absolute: %w", err)
+		}
+		managedRoots[i] = filepath.Clean(resolvedManagedRoot)
+	}
+	return &Adapter{
+		vault: vault, root: filepath.Clean(root), managedRoots: managedRoots,
+	}, nil
 }
 
 func (a *Adapter) Close() error {
 	if a == nil || a.vault == nil {
 		return nil
 	}
-	return translateError(a.vault.Close())
+	a.closeOnce.Do(func() {
+		a.closeErr = translateError(a.vault.Close())
+	})
+	return a.closeErr
+}
+
+// ResolveImportRoot returns the canonical import tree after rejecting a path
+// that is equal to, contains, or is contained by the opened Docbank vault.
+// Discovery must use the returned path so validation and traversal observe the
+// same directory when the configured root is a symlink.
+func (a *Adapter) ResolveImportRoot(sourceRoot string) (string, error) {
+	if a == nil || a.vault == nil {
+		return "", fmt.Errorf("%w: Docbank vault is not open", errs.ErrContentUnavailable)
+	}
+	resolved, err := filepath.EvalSymlinks(sourceRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve import root: %w", err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return "", fmt.Errorf("make import root absolute: %w", err)
+	}
+	resolved = filepath.Clean(resolved)
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("stat import root: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%w: import root is not a directory", errs.ErrInvalidArgument)
+	}
+	if pathsOverlap(resolved, a.root) {
+		return "", fmt.Errorf("%w: import root overlaps Docbank vault", errs.ErrBadConfiguration)
+	}
+	for _, managedRoot := range a.managedRoots {
+		if pathsOverlap(resolved, managedRoot) {
+			return "", fmt.Errorf("%w: import root overlaps managed storage", errs.ErrBadConfiguration)
+		}
+	}
+	return resolved, nil
+}
+
+func pathsOverlap(left, right string) bool {
+	return pathContains(left, right) || pathContains(right, left)
+}
+
+func pathContains(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err == nil && (rel == "." || (rel != ".." && !filepath.IsAbs(rel) &&
+		!strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
+		return true
+	}
+	parentVolume, parentParts := pathParts(parent)
+	childVolume, childParts := pathParts(child)
+	if !strings.EqualFold(parentVolume, childVolume) || len(parentParts) > len(childParts) {
+		return false
+	}
+	for i, part := range parentParts {
+		if !strings.EqualFold(part, childParts[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func pathParts(value string) (string, []string) {
+	clean := filepath.Clean(value)
+	volume := filepath.VolumeName(clean)
+	remainder := strings.Trim(strings.TrimPrefix(clean, volume), string(filepath.Separator))
+	if remainder == "" {
+		return volume, []string{}
+	}
+	return volume, strings.Split(remainder, string(filepath.Separator))
 }
 
 func (a *Adapter) Stat(ctx context.Context, virtualPath string) (Node, error) {
@@ -130,8 +254,45 @@ func (a *Adapter) OpenVersion(ctx context.Context, versionID string) (*Read, err
 	}, nil
 }
 
+func (a *Adapter) OpenVersionRange(
+	ctx context.Context,
+	versionID string,
+	offset int64,
+	length int64,
+) (*RangeRead, error) {
+	opened, err := a.vault.OpenVersionContentRange(ctx, versionID, docbank.ContentRangeOptions{
+		Offset: offset,
+		Length: length,
+	})
+	if err != nil {
+		return nil, translateError(err)
+	}
+	return &RangeRead{
+		VersionID: opened.Version.ID,
+		SHA256:    opened.Version.BlobHash,
+		MediaType: opened.Version.MediaType,
+		Size:      opened.Version.Size,
+		Offset:    opened.Offset,
+		Length:    opened.Length,
+		Reader:    &translatedReadCloser{ReadCloser: opened.Reader},
+	}, nil
+}
+
 type translatedReader struct {
 	docbank.VerifiedReadCloser
+}
+
+type translatedReadCloser struct {
+	io.ReadCloser
+}
+
+func (r *translatedReadCloser) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	return n, translateReaderError(err)
+}
+
+func (r *translatedReadCloser) Close() error {
+	return translateReaderError(r.ReadCloser.Close())
 }
 
 func translateReader(reader docbank.VerifiedReadCloser) VerifiedReadCloser {

@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // AssetRepo stores complete asset/file graphs. It uses a split read/write
@@ -41,6 +42,12 @@ const fileInsert = `INSERT INTO media_files (
 const relationshipInsert = `INSERT INTO media_file_relationships (
 	source_file_id, target_file_id, kind
 ) VALUES (?, ?, ?)`
+
+const operationInsert = `INSERT INTO content_operations (
+	id, asset_id, file_id, owner_hub, owner_user_id, status,
+	expected_sha256, expected_size, docbank_virtual_path,
+	created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`
 
 const assetSelect = `SELECT
 	id, owner_hub, owner_user_id, state, media_type, imported_at, timestamp,
@@ -181,6 +188,262 @@ func (r *AssetRepo) InsertGraph(
 	return nil
 }
 
+// ReserveImport atomically records a pending asset graph and one durable
+// Docbank operation per file. No Docbank call may happen before this succeeds.
+func (r *AssetRepo) ReserveImport(
+	ctx context.Context,
+	asset Asset,
+	pending []PendingContent,
+	relationships []FileRelationship,
+) error {
+	asset.State = AssetPending
+	files := make([]File, len(pending))
+	for i := range pending {
+		files[i] = pending[i].File
+		files[i].DocbankNodeID = nil
+		files[i].DocbankVirtualPath = ""
+		files[i].CurrentVersionID = ""
+		files[i].SHA256 = ""
+	}
+	if err := validateAssetGraphInput(asset, files, relationships); err != nil {
+		return fmt.Errorf("reserve import: %w", err)
+	}
+	if len(pending) == 0 {
+		return fmt.Errorf("reserve import: %w: asset has no files", errs.ErrInvalidArgument)
+	}
+
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("reserve import: begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var ownerStorageKey string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT storage_key FROM owners WHERE hub = ? AND user_id = ?`,
+		asset.Owner.Hub, asset.Owner.UserID,
+	).Scan(&ownerStorageKey); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("reserve import: %w: owner %s", errs.ErrNotFound, asset.Owner)
+		}
+		return fmt.Errorf("reserve import: read owner storage key: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, assetInsert,
+		asset.ID, asset.Owner.Hub, asset.Owner.UserID, string(AssetPending),
+		string(asset.Type), asset.ImportedAt, nullTime(asset.Timestamp),
+		nullStr(asset.Make), nullStr(asset.Model), nullStr(asset.LensModel),
+		nullStr(asset.FocalLength), nullStr(asset.Shutter), nullInt(asset.Width),
+		nullInt(asset.Height), nullInt(asset.ISO), nullFloat(asset.Aperture),
+		nullInt64(asset.DurationMs), nullFloat(asset.Latitude),
+		nullFloat(asset.Longitude), nullTime(asset.GPSAt), nullStr(asset.LocationLabel),
+		asset.ThumbStatus, asset.ThumbVersion, nullTime(asset.ThumbUpdatedAt),
+		nullTime(asset.HiddenAt),
+	); err != nil {
+		return fmt.Errorf("reserve import: insert asset: %w", err)
+	}
+
+	now := time.Now().UTC()
+	for i := range pending {
+		p := pending[i]
+		if err := validateOpaqueUUID(p.OperationID, "operation ID"); err != nil {
+			return fmt.Errorf("reserve import: %w", err)
+		}
+		if p.Size != p.File.Size || p.Size < 0 {
+			return fmt.Errorf("reserve import: %w: file size mismatch", errs.ErrInvalidArgument)
+		}
+		expectedPath, pathErr := content.VirtualPath(ownerStorageKey, p.File.ID, p.File.OriginalFilename)
+		if pathErr != nil || p.VirtualPath != expectedPath {
+			return fmt.Errorf("reserve import: %w: invalid virtual path", errs.ErrInvalidArgument)
+		}
+		if !validSHA256(p.SHA256) {
+			return fmt.Errorf("reserve import: %w: invalid SHA-256", errs.ErrInvalidArgument)
+		}
+		f := p.File
+		if _, err := tx.ExecContext(ctx, fileInsert,
+			f.ID, f.AssetID, f.Owner.Hub, f.Owner.UserID, string(f.Role),
+			f.MimeType, f.OriginalFilename, f.ImportSourcePath, f.Size,
+			nil, nil, nil, nil,
+		); err != nil {
+			return fmt.Errorf("reserve import: insert file %s: %w", f.ID, err)
+		}
+		if _, err := tx.ExecContext(ctx, operationInsert,
+			p.OperationID, asset.ID, f.ID, asset.Owner.Hub, asset.Owner.UserID,
+			p.SHA256, p.Size, p.VirtualPath, now, now,
+		); err != nil {
+			return fmt.Errorf("reserve import: insert operation %s: %w", p.OperationID, err)
+		}
+	}
+	for _, relationship := range relationships {
+		if _, err := tx.ExecContext(ctx, relationshipInsert,
+			relationship.SourceFileID, relationship.TargetFileID, string(relationship.Kind),
+		); err != nil {
+			return fmt.Errorf("reserve import: insert relationship: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("reserve import: commit: %w", err)
+	}
+	return nil
+}
+
+// ApplyContentReceipt atomically attaches a Docbank receipt to its file and
+// settles the durable operation. The receipt must match the reserved identity.
+func (r *AssetRepo) ApplyContentReceipt(ctx context.Context, receipt ContentReceipt) error {
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("apply content receipt: begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var fileID, expectedSHA string
+	var expectedSize int64
+	var status string
+	var existingNode sql.NullInt64
+	var existingVersion sql.NullString
+	if err := tx.QueryRowContext(ctx, `
+		SELECT file_id, expected_sha256, expected_size, status,
+		       docbank_node_id, docbank_version_id
+		FROM content_operations WHERE id = ?`, receipt.OperationID,
+	).Scan(&fileID, &expectedSHA, &expectedSize, &status, &existingNode, &existingVersion); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("apply content receipt: %w: operation %s", errs.ErrNotFound, receipt.OperationID)
+		}
+		return fmt.Errorf("apply content receipt: read operation: %w", err)
+	}
+	if receipt.NodeID <= 0 || uuid.Validate(receipt.VersionID) != nil ||
+		receipt.SHA256 != expectedSHA || receipt.Size != expectedSize {
+		return fmt.Errorf("apply content receipt: %w: receipt does not match reservation", errs.ErrInvalidArgument)
+	}
+	if status == "applied" {
+		if existingNode.Int64 == receipt.NodeID && existingVersion.String == receipt.VersionID {
+			return nil
+		}
+		return fmt.Errorf("apply content receipt: %w: operation already has another receipt", errs.ErrContentConflict)
+	}
+	if status != "pending" {
+		return fmt.Errorf("apply content receipt: %w: operation is terminal", errs.ErrInvalidArgument)
+	}
+	var virtualPath string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT docbank_virtual_path FROM content_operations WHERE id = ?`, receipt.OperationID,
+	).Scan(&virtualPath); err != nil {
+		return fmt.Errorf("apply content receipt: read virtual path: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE media_files
+		SET docbank_node_id = ?, docbank_virtual_path = ?, current_version_id = ?, sha256 = ?
+		WHERE id = ?`, receipt.NodeID, virtualPath, receipt.VersionID, receipt.SHA256, fileID,
+	); err != nil {
+		return fmt.Errorf("apply content receipt: update file: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE content_operations
+		SET status = 'applied', docbank_node_id = ?, docbank_version_id = ?, updated_at = ?
+		WHERE id = ?`, receipt.NodeID, receipt.VersionID, time.Now().UTC(), receipt.OperationID,
+	); err != nil {
+		return fmt.Errorf("apply content receipt: settle operation: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("apply content receipt: commit: %w", err)
+	}
+	return nil
+}
+
+// MarkContentConflict terminalizes a pending asset and all of its operations.
+// It returns false when another importer has already finalized the asset as
+// ready, leaving that winner unchanged.
+func (r *AssetRepo) MarkContentConflict(ctx context.Context, assetID string, cause error) (bool, error) {
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("mark content conflict: begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	message := "content conflict"
+	if cause != nil {
+		message = cause.Error()
+	}
+	now := time.Now().UTC()
+	res, err := tx.ExecContext(ctx, `
+		UPDATE assets SET state = 'conflict' WHERE id = ? AND state = 'pending'`, assetID)
+	if err != nil {
+		return false, fmt.Errorf("mark content conflict: update asset: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("mark content conflict: rows affected: %w", err)
+	}
+	if n == 0 {
+		var state string
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM assets WHERE id = ?`, assetID).Scan(&state); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return false, fmt.Errorf("mark content conflict: %w: asset %s", errs.ErrNotFound, assetID)
+			}
+			return false, fmt.Errorf("mark content conflict: inspect asset: %w", err)
+		}
+		switch AssetState(state) {
+		case AssetReady:
+			return false, nil
+		case AssetConflict:
+			return true, nil
+		default:
+			return false, fmt.Errorf("mark content conflict: %w: invalid asset state %q", errs.ErrContentConflict, state)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE content_operations SET status = 'conflict', last_error = ?, updated_at = ?
+		WHERE asset_id = ? AND status <> 'conflict'`, message, now, assetID,
+	); err != nil {
+		return false, fmt.Errorf("mark content conflict: terminalize operations: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("mark content conflict: commit: %w", err)
+	}
+	return true, nil
+}
+
+// FinalizeReady makes an asset visible only after every reserved operation is
+// applied. Database triggers independently enforce complete file mappings.
+func (r *AssetRepo) FinalizeReady(ctx context.Context, assetID string) error {
+	res, err := r.rw.ExecContext(ctx, `
+		UPDATE assets SET state = 'ready'
+		WHERE id = ? AND state = 'pending'
+		  AND NOT EXISTS (
+			SELECT 1 FROM content_operations
+			WHERE asset_id = assets.id AND status <> 'applied'
+		  )`, assetID)
+	if err != nil {
+		return fmt.Errorf("finalize ready asset: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("finalize ready asset: rows affected: %w", err)
+	}
+	if n != 1 {
+		var state string
+		var incomplete bool
+		checkErr := r.ro.QueryRowContext(ctx, `
+			SELECT state, EXISTS (
+				SELECT 1 FROM content_operations
+				WHERE asset_id = assets.id AND status <> 'applied'
+			)
+			FROM assets WHERE id = ?`, assetID,
+		).Scan(&state, &incomplete)
+		if checkErr == nil && AssetState(state) == AssetReady && !incomplete {
+			return nil
+		}
+		if checkErr != nil && !errors.Is(checkErr, sql.ErrNoRows) {
+			return fmt.Errorf("finalize ready asset: inspect current state: %w", checkErr)
+		}
+		return fmt.Errorf("finalize ready asset: %w: incomplete or terminal asset %s", errs.ErrContentConflict, assetID)
+	}
+	return nil
+}
+
+func validSHA256(value string) bool {
+	digest, err := hex.DecodeString(value)
+	return err == nil && len(digest) == sha256.Size && hex.EncodeToString(digest) == value
+}
+
 // GetAsset returns an asset by its opaque ID.
 func (r *AssetRepo) GetAsset(ctx context.Context, id string) (Asset, error) {
 	asset, err := scanAsset(r.ro.QueryRowContext(ctx, assetSelect+` WHERE id = ?`, id))
@@ -248,6 +511,62 @@ func (r *AssetRepo) GetPrimaryFile(ctx context.Context, assetID string) (File, e
 		return File{}, fmt.Errorf("get primary asset file: %w", err)
 	}
 	return file, nil
+}
+
+// FindContentReservation returns the durable operation that owns an expected
+// content identity for one owner. The reservation survives an interrupted
+// Docbank create so the importer can retry the same virtual path and IDs.
+func (r *AssetRepo) FindContentReservation(
+	ctx context.Context,
+	owner owners.Principal,
+	digest string,
+) (ContentReservation, error) {
+	if !validSHA256(digest) {
+		return ContentReservation{}, fmt.Errorf("find content reservation: %w: invalid SHA-256", errs.ErrInvalidArgument)
+	}
+	var (
+		reservation ContentReservation
+		assetState  string
+		role        string
+		nodeID      sql.NullInt64
+		path        sql.NullString
+		versionID   sql.NullString
+		sha         sql.NullString
+	)
+	err := r.ro.QueryRowContext(ctx, `
+		SELECT co.id, co.status, co.expected_sha256, co.expected_size,
+		       co.docbank_virtual_path, a.state,
+		       f.id, f.asset_id, f.owner_hub, f.owner_user_id, f.role,
+		       f.mime_type, f.original_filename, f.import_source_path, f.size,
+		       f.docbank_node_id, f.docbank_virtual_path,
+		       f.current_version_id, f.sha256
+		FROM content_operations AS co
+		JOIN assets AS a ON a.id = co.asset_id
+		JOIN media_files AS f ON f.id = co.file_id
+		WHERE co.owner_hub = ? AND co.owner_user_id = ?
+		  AND co.expected_sha256 = ?`, owner.Hub, owner.UserID, digest,
+	).Scan(
+		&reservation.OperationID, &reservation.Status, &reservation.SHA256,
+		&reservation.Size, &reservation.VirtualPath, &assetState,
+		&reservation.File.ID, &reservation.File.AssetID,
+		&reservation.File.Owner.Hub, &reservation.File.Owner.UserID, &role,
+		&reservation.File.MimeType, &reservation.File.OriginalFilename,
+		&reservation.File.ImportSourcePath, &reservation.File.Size, &nodeID,
+		&path, &versionID, &sha,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ContentReservation{}, fmt.Errorf("find content reservation: %w: SHA-256 %s", errs.ErrNotFound, digest)
+	}
+	if err != nil {
+		return ContentReservation{}, fmt.Errorf("find content reservation: %w", err)
+	}
+	reservation.AssetState = AssetState(assetState)
+	reservation.File.Role = FileRole(role)
+	reservation.File.DocbankNodeID = int64FromNull(nodeID)
+	reservation.File.DocbankVirtualPath = path.String
+	reservation.File.CurrentVersionID = versionID.String
+	reservation.File.SHA256 = sha.String
+	return reservation, nil
 }
 
 func scanAsset(scanner rowScanner) (Asset, error) {

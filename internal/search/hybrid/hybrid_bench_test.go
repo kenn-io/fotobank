@@ -246,16 +246,15 @@ func BenchmarkHybrid_BM25WithFilters_100k(b *testing.B) {
 }
 
 // mostUsedCamera/Lens/TagKey mirror the helpers in
-// internal/media/repo_bench_test.go. Inlined here rather than promoted
-// to a shared testutil because they're seven lines each and the shared
-// surface would still need to import sql + the bench testing.B type.
+// scale fixture queries. They stay local because the shared surface would
+// still need to import sql and testing.B.
 func mostUsedCamera(b *testing.B, ro *sql.DB) string {
 	b.Helper()
 	var camera string
 	err := ro.QueryRowContext(context.Background(), `
 		SELECT make || ' ' || model
-		  FROM media
-		 WHERE make IS NOT NULL AND model IS NOT NULL
+		  FROM assets
+		 WHERE state = 'ready' AND make IS NOT NULL AND model IS NOT NULL
 		 GROUP BY make, model
 		 ORDER BY COUNT(*) DESC
 		 LIMIT 1`).Scan(&camera)
@@ -268,8 +267,8 @@ func mostUsedLens(b *testing.B, ro *sql.DB) string {
 	var lens string
 	err := ro.QueryRowContext(context.Background(), `
 		SELECT lens_model
-		  FROM media
-		 WHERE lens_model IS NOT NULL
+		  FROM assets
+		 WHERE state = 'ready' AND lens_model IS NOT NULL
 		 GROUP BY lens_model
 		 ORDER BY COUNT(*) DESC
 		 LIMIT 1`).Scan(&lens)

@@ -17,7 +17,7 @@ function defaultAppConfig(): AppConfigStore {
 
 function storeWith(raw: Record<string, unknown>): MediaStore {
   const s = new MediaStore({ GET: vi.fn() } as never);
-  s.mergeRaw([raw]);
+  s.mergeRaw([{ files: [], ...raw }]);
   return s;
 }
 
@@ -128,6 +128,54 @@ describe("DirectMediaDetail", () => {
       },
     });
     expect(queryByText("Location")).toBeNull();
+  });
+
+  it("links attached files to their authorized content route", () => {
+    const store = storeWith({
+      ...baseRaw,
+      files: [{
+        id: "file-raw",
+        role: "original",
+        mime_type: "image/x-adobe-dng",
+        original_filename: "IMG_001.DNG",
+        size: 4096,
+        sha256: "a".repeat(64),
+      }],
+    });
+    const { getByRole } = render(DirectMediaDetail, {
+      props: {
+        id: "abc-123",
+        mediaStore: store,
+        albumsStore: makeAlbumsStore(),
+        hiddenStore: makeHiddenStore(),
+        toastStore: makeToastStore(),
+        appConfig: defaultAppConfig(),
+      },
+    });
+    const link = getByRole("link", { name: "IMG_001.DNG" });
+    expect(link.getAttribute("href")).toBe("/api/v1/media/abc-123/files/file-raw/content");
+    expect(link.getAttribute("download")).toBe("IMG_001.DNG");
+  });
+
+  it("links a single-file asset to its original", () => {
+    const store = storeWith({
+      ...baseRaw,
+      original_filename: "clip.mov",
+      files: [],
+    });
+    const { getByRole } = render(DirectMediaDetail, {
+      props: {
+        id: "abc-123",
+        mediaStore: store,
+        albumsStore: makeAlbumsStore(),
+        hiddenStore: makeHiddenStore(),
+        toastStore: makeToastStore(),
+        appConfig: defaultAppConfig(),
+      },
+    });
+    const link = getByRole("link", { name: "clip.mov" });
+    expect(link.getAttribute("href")).toBe("/api/v1/media/abc-123/original");
+    expect(link.getAttribute("download")).toBe("clip.mov");
   });
 
   it("re-fetches when id prop changes", async () => {

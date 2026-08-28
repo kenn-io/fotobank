@@ -191,7 +191,7 @@ func (r *Repo) DoneCount(ctx context.Context, task ai.Task, fp ai.Fingerprint) (
 func (r *Repo) DoneCountByOwner(ctx context.Context, task ai.Task, fp ai.Fingerprint, hub, userID string) (int, error) {
 	row := r.ro.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM ai_results r
-		  JOIN media m ON m.id = r.media_id
+		  JOIN assets m ON m.id = r.media_id AND m.state = 'ready'
 		 WHERE r.task=? AND r.status='active'
 		   AND r.model_id=? AND r.prompt_version=? AND r.input_profile=?
 		   AND m.owner_hub=? AND m.owner_user_id=?`,

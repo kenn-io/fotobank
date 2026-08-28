@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
 
 // seedMediaGPS inserts a minimal primary photo with the given GPS coords
@@ -26,21 +27,20 @@ func seedMediaGPS(
 ) media.Media {
 	t.Helper()
 	m := media.Media{
-		ID:               uuid.NewString(),
-		Owner:            p,
-		Type:             media.TypePhoto,
-		MimeType:         "image/jpeg",
-		Path:             path,
-		OriginalFilename: "x.jpg",
-		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             100,
-		Checksum:         checksum,
-		ThumbStatus:      "pending",
-		Latitude:         &lat,
-		Longitude:        &lon,
+		ID:                 uuid.NewString(),
+		Owner:              p,
+		Type:               media.TypePhoto,
+		MimeType:           "image/jpeg",
+		DocbankVirtualPath: path,
+		OriginalFilename:   "x.jpg",
+		ImportedAt:         time.Now().UTC().Truncate(time.Second),
+		Size:               100,
+		SHA256:             checksum,
+		ThumbStatus:        "pending",
+		Latitude:           &lat,
+		Longitude:          &lon,
 	}
-	require.NoError(t, repo.Insert(context.Background(), m))
-	return m
+	return assetfixture.Insert(t, repo, m)
 }
 
 // seedMediaGPSWithCamera inserts a GPS-tagged primary and immediately
@@ -57,7 +57,7 @@ func seedMediaGPSWithCamera(
 	t.Helper()
 	m := seedMediaGPS(t, fx.repo, fx.owner, path, checksum, lat, lon)
 	_, err := fx.rw.ExecContext(context.Background(),
-		`UPDATE media SET make = ?, model = ? WHERE id = ?`, make, model, m.ID)
+		`UPDATE assets SET make = ?, model = ? WHERE id = ?`, make, model, m.ID)
 	require.NoError(t, err)
 	return m
 }
@@ -76,7 +76,7 @@ func seedMediaGPSWithLens(
 	t.Helper()
 	m := seedMediaGPS(t, fx.repo, fx.owner, path, checksum, lat, lon)
 	_, err := fx.rw.ExecContext(context.Background(),
-		`UPDATE media SET lens_model = ? WHERE id = ?`, lens, m.ID)
+		`UPDATE assets SET lens_model = ? WHERE id = ?`, lens, m.ID)
 	require.NoError(t, err)
 	return m
 }
@@ -101,21 +101,20 @@ func seedMediaGPSTyped(
 		filename = "x.mp4"
 	}
 	m := media.Media{
-		ID:               uuid.NewString(),
-		Owner:            p,
-		Type:             typ,
-		MimeType:         mime,
-		Path:             path,
-		OriginalFilename: filename,
-		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             100,
-		Checksum:         checksum,
-		ThumbStatus:      "pending",
-		Latitude:         &lat,
-		Longitude:        &lon,
+		ID:                 uuid.NewString(),
+		Owner:              p,
+		Type:               typ,
+		MimeType:           mime,
+		DocbankVirtualPath: path,
+		OriginalFilename:   filename,
+		ImportedAt:         time.Now().UTC().Truncate(time.Second),
+		Size:               100,
+		SHA256:             checksum,
+		ThumbStatus:        "pending",
+		Latitude:           &lat,
+		Longitude:          &lon,
 	}
-	require.NoError(t, repo.Insert(context.Background(), m))
-	return m
+	return assetfixture.Insert(t, repo, m)
 }
 
 // seedTagForGPSMedia attaches a single tag to a media row via the
@@ -191,7 +190,7 @@ func TestGeoRoute_IncludeHiddenWithValidClaimReturnsHidden(t *testing.T) {
 
 	visible := seedMediaGPS(t, fx.repo, fx.owner, "v.jpg", "cs-v", 10.0, 20.0)
 	hidden := seedMediaGPS(t, fx.repo, fx.owner, "h.jpg", "cs-h", 30.0, 40.0)
-	r.NoError(fx.repo.SetHiddenCascade(ctx, fx.owner, []string{hidden.ID}, time.Now().UTC()))
+	r.NoError(fx.repo.SetHidden(ctx, fx.owner, []string{hidden.ID}, time.Now().UTC()))
 
 	cookie := setupHiddenAndUnlock(t, fx)
 	req, err := http.NewRequest(http.MethodGet, fx.srv.URL+"/api/v1/media/geo?include_hidden=true", nil)

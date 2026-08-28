@@ -77,16 +77,7 @@ func mustWriteFTSCorpus(t *testing.T, d *db.DB, mediaID string, c ftsCorpus) {
 // Returns the new id.
 func seedSearchMedia(t *testing.T, d *db.DB, p owners.Principal) string {
 	t.Helper()
-	id := uuid.NewString()
-	_, err := d.WriteDB().ExecContext(context.Background(),
-		`INSERT INTO media(
-			id, owner_hub, owner_user_id, media_type, mime_type, path,
-			imported_at, size, checksum,
-			thumb_status, thumb_version, import_source_path
-		) VALUES (?,?,?, 'photo','image/jpeg', ?, ?, 0, ?, 'ready', 1, ?)`,
-		id, p.Hub, p.UserID, "/photos/"+id+".jpg", time.Now().UTC(), id+"-checksum", id)
-	require.NoError(t, err)
-	return id
+	return testutil.SeedPhoto(t, d.WriteDB(), p, uuid.NewString())
 }
 
 // mustCreateActiveGenWithVectors creates a building generation, writes
@@ -125,7 +116,7 @@ func mustCreateActiveGenWithVectors(t *testing.T, d *db.DB, dim int, m map[strin
 // resolver.
 func noFilter(p owners.Principal) index.FilterCTE {
 	return index.FilterCTE{
-		SQL: `SELECT id, timestamp, imported_at FROM media
+		SQL: `SELECT id, timestamp, imported_at FROM assets
 		      WHERE owner_hub = ? AND owner_user_id = ?
 		        AND hidden_at IS NULL`,
 		Args: []any{p.Hub, p.UserID},
@@ -325,7 +316,7 @@ func TestSQLiteVec_FilterOnly_NoQueryNoVector(t *testing.T) {
 	}
 	for i, mid := range mids {
 		_, err := d.WriteDB().ExecContext(ctx,
-			`UPDATE media SET timestamp = ? WHERE id = ?`, timestamps[i], mid)
+			`UPDATE assets SET timestamp = ? WHERE id = ?`, timestamps[i], mid)
 		r.NoError(err)
 	}
 
@@ -498,7 +489,7 @@ func TestSQLiteVec_FusedSearchSortNewest(t *testing.T) {
 	}
 	for i, mid := range mids {
 		_, err := d.WriteDB().ExecContext(ctx,
-			`UPDATE media SET timestamp = ? WHERE id = ?`, timestamps[i], mid)
+			`UPDATE assets SET timestamp = ? WHERE id = ?`, timestamps[i], mid)
 		r.NoError(err)
 		mustWriteFTSCorpus(t, d, mid, ftsCorpus{
 			Caption: captions[i],
@@ -560,7 +551,7 @@ func TestSQLiteVec_BM25OnlySortNewest(t *testing.T) {
 	}
 	for i, mid := range mids {
 		_, err := d.WriteDB().ExecContext(ctx,
-			`UPDATE media SET timestamp = ? WHERE id = ?`, timestamps[i], mid)
+			`UPDATE assets SET timestamp = ? WHERE id = ?`, timestamps[i], mid)
 		r.NoError(err)
 		mustWriteFTSCorpus(t, d, mid, ftsCorpus{
 			Caption: captions[i],

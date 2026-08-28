@@ -14,9 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
 
 // runGPS invokes the gps subcommand and returns (exitCode, stdout, stderr).
@@ -39,12 +41,14 @@ root = %q
 root = %q
 [storage]
 mode = "nas_only"
+[docbank]
+root = %q
 [identity]
 mode = "stub"
 [identity.stub]
 hub = "h"
 user_id = "u"
-`, filepath.Join(tmp, "nas"), filepath.Join(tmp, "flash")), 0o600))
+`, filepath.Join(tmp, "nas"), filepath.Join(tmp, "flash"), filepath.Join(tmp, "docbank")), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "nas"), 0o700))
 	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "flash"), 0o700))
 	return cfgPath
@@ -144,16 +148,16 @@ func TestGPSBackfillRelabelOnlyTouchesRowsWithCoords(t *testing.T) {
 	lat, lon := 48.8566, 2.3522
 	rowWithGPS := uuid.NewString()
 	rowNoGPS := uuid.NewString()
-	r.NoError(repo.Insert(dbCtx, media.Media{
+	assetfixture.Insert(t, repo, media.Media{
 		ID: rowWithGPS, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + rowWithGPS,
-		Latitude: &lat, Longitude: &lon, ThumbStatus: "pending",
-	}))
-	r.NoError(repo.Insert(dbCtx, media.Media{
+		ImportedAt: time.Now().UTC(),
+		Latitude:   &lat, Longitude: &lon, ThumbStatus: "pending",
+	})
+	assetfixture.Insert(t, repo, media.Media{
 		ID: rowNoGPS, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "y.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + rowNoGPS,
+		ImportedAt:  time.Now().UTC(),
 		ThumbStatus: "pending",
-	}))
+	})
 	r.NoError(d.Close())
 
 	code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--mode", "relabel")
@@ -191,12 +195,12 @@ func TestGPSBackfillSkipsVideos(t *testing.T) {
 	r.NoError(err)
 	lat, lon := 48.8566, 2.3522
 	videoID := uuid.NewString()
-	r.NoError(repo.Insert(dbCtx, media.Media{
+	assetfixture.Insert(t, repo, media.Media{
 		ID: videoID, Owner: owner, Type: media.TypeVideo, MimeType: "video/mp4",
-		Path: "v.mp4", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + videoID,
-		Latitude: &lat, Longitude: &lon, LocationLabel: "Original Label",
+		ImportedAt: time.Now().UTC(),
+		Latitude:   &lat, Longitude: &lon, LocationLabel: "Original Label",
 		ThumbStatus: "pending",
-	}))
+	})
 	r.NoError(d.Close())
 
 	code, stdout, _ := runGPS(t, "backfill", "--config", cfgPath, "--mode", "relabel")
@@ -259,21 +263,17 @@ func TestGPSBackfillFullClearsCoordsWhenEXIFLacksGPS(t *testing.T) {
 	lat, lon := 48.8566, 2.3522
 	gpsAt := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
 	rowID := uuid.NewString()
-	r.NoError(repo.Insert(dbCtx, media.Media{
+	contentStore, err := content.Open(dbCtx, content.Config{Root: filepath.Join(tmp, "docbank")})
+	r.NoError(err)
+	assetfixture.InsertContent(t, repo, contentStore, []byte("not-an-image"), media.Media{
 		ID: rowID, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + rowID,
+		OriginalFilename: "x.jpg", ImportedAt: time.Now().UTC(),
 		Latitude: &lat, Longitude: &lon, GPSAt: &gpsAt,
 		LocationLabel: "Paris, France",
 		ThumbStatus:   "pending",
-	}))
+	})
+	r.NoError(contentStore.Close())
 	r.NoError(d.Close())
-
-	// Stage the NAS file at <nasRoot>/<storage_key>/<path>. Non-EXIF
-	// bytes — exifread treats this as Metadata{} with nil error, which
-	// drives the Full-mode authoritative clear branch.
-	nasFile := filepath.Join(tmp, "nas", "550e8400-e29b-41d4-a716-446655440000", "x.jpg")
-	r.NoError(os.MkdirAll(filepath.Dir(nasFile), 0o700))
-	r.NoError(os.WriteFile(nasFile, []byte("not-an-image"), 0o600))
 
 	code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--mode", "full")
 	r.Equal(0, code, "stderr=%s", stderr)
@@ -315,21 +315,21 @@ func TestGPSBackfillFillMissingTerminatesOnUnchangedBatch(t *testing.T) {
 		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	r.NoError(err)
-	// Seed 5 photo rows with both coords NULL and matching NAS files
+	contentStore, err := content.Open(dbCtx, content.Config{Root: filepath.Join(tmp, "docbank")})
+	r.NoError(err)
+	// Seed 5 photo rows with both coords NULL and exact Docbank versions
 	// that have no EXIF segment. fill-missing must visit every row,
 	// mark them unchanged, and terminate.
 	for i := range 5 {
 		id := uuid.NewString()
-		path := fmt.Sprintf("file-%d.jpg", i)
-		r.NoError(repo.Insert(dbCtx, media.Media{
-			ID: id, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
-			Path: path, ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
-			ThumbStatus: "pending",
-		}))
-		nasFile := filepath.Join(tmp, "nas", "550e8400-e29b-41d4-a716-446655440000", path)
-		r.NoError(os.MkdirAll(filepath.Dir(nasFile), 0o700))
-		r.NoError(os.WriteFile(nasFile, []byte("no-exif"), 0o600))
+		assetfixture.InsertContent(t, repo, contentStore,
+			[]byte(fmt.Sprintf("no-exif-%d", i)), media.Media{
+				ID: id, Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+				OriginalFilename: fmt.Sprintf("file-%d.jpg", i), ImportedAt: time.Now().UTC(),
+				ThumbStatus: "pending",
+			})
 	}
+	r.NoError(contentStore.Close())
 	r.NoError(d.Close())
 
 	code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--mode", "fill-missing")

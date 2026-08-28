@@ -91,7 +91,7 @@ func (in Input) WithHidden(v bool) Input {
 
 // Resolve returns the body of a `filter` CTE (without the leading
 // "WITH filter AS (...)") and its bind arguments. The CTE projects
-// (id, timestamp, imported_at) FROM media so the hybrid Engine can
+// (id, timestamp, imported_at) FROM assets so the hybrid Engine can
 // wrap it as a SELECT-only subquery. The arg order is deterministic
 // and load-bearing: hub, userID, then (date_after?, date_before?,
 // tag_keys..., location?, media_type?, cameras..., lenses...,
@@ -100,21 +100,21 @@ func (in Input) WithHidden(v bool) Input {
 func Resolve(in Input) (cte string, args []any) {
 	where, args := ResolveWhere(in)
 	cte = fmt.Sprintf(
-		`SELECT m.id, m.timestamp, m.imported_at FROM media m WHERE %s`,
+		`SELECT m.id, m.timestamp, m.imported_at FROM assets m WHERE %s`,
 		where,
 	)
 	return cte, args
 }
 
 // ResolveWhere returns the same predicate body as Resolve but without
-// the `SELECT m.id, m.timestamp, m.imported_at FROM media m WHERE`
+// the `SELECT m.id, m.timestamp, m.imported_at FROM assets m WHERE`
 // wrapper, so callers that already join `media m` directly (the facets
 // aggregations) can apply the predicates inline instead of materialising
 // a `filter` CTE and joining `media` back to it on PK. The conditions
 // are joined with " AND " and bind to columns on alias `m`. Argument
 // order matches Resolve.
 func ResolveWhere(in Input) (where string, args []any) {
-	conds := []string{"m.owner_hub = ?", "m.owner_user_id = ?"}
+	conds := []string{"m.state = 'ready'", "m.owner_hub = ?", "m.owner_user_id = ?"}
 	args = []any{in.Owner.Hub, in.Owner.UserID}
 
 	if in.DateAfter != nil {

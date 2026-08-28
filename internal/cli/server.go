@@ -232,7 +232,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	}
 	storeLayer, flashCache := buildStorageLayer(cfg, keys)
 
-	mediaSvc := service.NewMediaService(media.NewRepo(d.WriteDB(), d.ReadDB()), storeLayer)
+	mediaSvc := service.NewMediaService(media.NewRepo(d.WriteDB(), d.ReadDB()), contentStore)
 
 	// F2.4 Hidden privacy. hiddenRepo and hiddenSvc are wired after
 	// mediaSvc because hidden.NewService takes MediaPrivacy which is
@@ -380,6 +380,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		media.NewRepo(d.WriteDB(), d.ReadDB()),
 		album.NewRepo(d.WriteDB(), d.ReadDB()),
 		storeLayer,
+		contentStore,
 		resolver,
 	)
 
@@ -719,6 +720,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	})
 
 	thumbWorker := thumb.NewWorker(thumbQueue, storeLayer, thumb.Config{
+		Content:           contentStore,
 		WorkerConcurrency: cfg.Thumbs.WorkerConcurrency,
 		PollInterval:      cfg.Thumbs.PollInterval,
 		LeaseTimeout:      cfg.Thumbs.LeaseTimeout,
@@ -1563,7 +1565,7 @@ func (r tagLabelResolver) LabelsToKeys(ctx context.Context, caller owners.Princi
 		err := r.ro.QueryRowContext(ctx, `
 			SELECT mt.tag_key FROM media_tags mt
 			 JOIN ai_results ar ON ar.id = mt.result_id
-			 JOIN media m ON m.id = ar.media_id
+			 JOIN assets m ON m.id = ar.media_id AND m.state = 'ready'
 			 WHERE ar.task = 'tag' AND ar.status = 'active'
 			   AND m.owner_hub = ? AND m.owner_user_id = ?
 			   AND mt.tag_label = ?

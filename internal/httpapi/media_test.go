@@ -7,29 +7,32 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/service"
-	"go.kenn.io/fotobank/internal/storage"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
 
 // mediaAPIFixture bundles the server + collaborators a media HTTP test
 // needs: the running test server, the caller's principal, the repo for
 // seeding media rows, and the writable DB for seeding additional owners.
 type mediaAPIFixture struct {
-	srv   *httptest.Server
-	owner owners.Principal
-	repo  *media.Repo
-	rw    *sql.DB
+	srv     *httptest.Server
+	owner   owners.Principal
+	repo    *media.Repo
+	rw      *sql.DB
+	content *content.Adapter
 }
 
 func newMediaAPITest(t *testing.T) mediaAPIFixture {
@@ -42,14 +45,16 @@ func newMediaAPITest(t *testing.T) mediaAPIFixture {
 		p.Hub, p.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
 	)
 	require.NoError(t, err)
-	store := storage.NewNASOnly(t.TempDir(), map[owners.Principal]string{p: "550e8400-e29b-41d4-a716-446655440000"})
-	svc := service.NewMediaService(repo, store)
+	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, contentStore.Close()) })
+	svc := service.NewMediaService(repo, contentStore)
 	idp := identity.NewStub(p, "Test User")
 	h, err := httpapi.New(httpapi.Deps{IdentityProvider: idp, MediaService: svc})
 	require.NoError(t, err)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return mediaAPIFixture{srv: srv, owner: p, repo: repo, rw: d.WriteDB()}
+	return mediaAPIFixture{srv: srv, owner: p, repo: repo, rw: d.WriteDB(), content: contentStore}
 }
 
 // seedMedia inserts a minimal media row for p and returns it.
@@ -60,60 +65,25 @@ func seedMedia(t *testing.T, repo *media.Repo, p owners.Principal, path, checksu
 		mime = "video/mp4"
 	}
 	m := media.Media{
-		ID:               uuid.NewString(),
-		Owner:            p,
-		Type:             typ,
-		MimeType:         mime,
-		Path:             path,
-		OriginalFilename: "x.jpg",
-		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             100,
-		Checksum:         checksum,
-		ThumbStatus:      "pending",
+		ID:                 uuid.NewString(),
+		Owner:              p,
+		Type:               typ,
+		MimeType:           mime,
+		DocbankVirtualPath: path,
+		OriginalFilename:   "x.jpg",
+		ImportedAt:         time.Now().UTC().Truncate(time.Second),
+		Size:               100,
+		SHA256:             checksum,
+		ThumbStatus:        "pending",
 	}
-	require.NoError(t, repo.Insert(context.Background(), m))
-	return m
-}
-
-// seedPairedMedia inserts a media row whose original_filename and
-// mime_type are caller-supplied, then sets paired_with_id when
-// pairedWithID is non-nil. Used by RAW+JPEG pairing tests where the
-// filename and MIME need to look like a real sidecar (e.g. a.dng with
-// image/x-adobe-dng) and the row must FK to its primary.
-func seedPairedMedia(
-	t *testing.T,
-	repo *media.Repo,
-	p owners.Principal,
-	path, checksum, mimeType, originalFilename string,
-	pairedWithID *string,
-) media.Media {
-	t.Helper()
-	m := media.Media{
-		ID:               uuid.NewString(),
-		Owner:            p,
-		Type:             media.TypePhoto,
-		MimeType:         mimeType,
-		Path:             path,
-		OriginalFilename: originalFilename,
-		ImportedAt:       time.Now().UTC().Truncate(time.Second),
-		Size:             100,
-		Checksum:         checksum,
-		ThumbStatus:      "pending",
-	}
-	require.NoError(t, repo.Insert(context.Background(), m))
-	if pairedWithID != nil {
-		require.NoError(t, repo.UpdatePairedWithID(context.Background(), m.ID, pairedWithID))
-		m.PairedWithID = pairedWithID
-	}
-	return m
+	return assetfixture.Insert(t, repo, m)
 }
 
 type listMediaResponse struct {
 	Items []struct {
 		ID           string `json:"id"`
 		Type         string `json:"type"`
-		Path         string `json:"path"`
-		Checksum     string `json:"checksum"`
+		SHA256       string `json:"sha256"`
 		ThumbStatus  string `json:"thumb_status"`
 		ThumbVersion int    `json:"thumb_version"`
 	} `json:"items"`
@@ -178,16 +148,48 @@ func TestGetMediaReturnsDetail(t *testing.T) {
 	r.Equal(http.StatusOK, resp.StatusCode)
 
 	var body struct {
-		ID       string `json:"id"`
-		Type     string `json:"type"`
-		Path     string `json:"path"`
-		Checksum string `json:"checksum"`
+		ID     string `json:"id"`
+		Type   string `json:"type"`
+		SHA256 string `json:"sha256"`
 	}
 	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
 	r.Equal(m.ID, body.ID)
 	r.Equal("photo", body.Type)
-	r.Equal("2024/a.jpg", body.Path)
-	r.Equal("cs-a", body.Checksum)
+	r.Equal(m.SHA256, body.SHA256)
+}
+
+func TestGetMediaReturnsAttachedFiles(t *testing.T) {
+	r := require.New(t)
+	fx := newMediaAPITest(t)
+	m := seedMedia(t, fx.repo, fx.owner, "2024/a.jpg", "cs-a", media.TypePhoto)
+	fileID := uuid.NewString()
+	path, err := content.VirtualPath("550e8400-e29b-41d4-a716-446655440000", fileID, "IMG_1.DNG")
+	r.NoError(err)
+	_, err = fx.rw.ExecContext(t.Context(), `
+		INSERT INTO media_files (
+			id, asset_id, owner_hub, owner_user_id, role, mime_type,
+			original_filename, size, docbank_node_id, docbank_virtual_path,
+			current_version_id, sha256
+		) VALUES (?, ?, ?, ?, 'original', ?, ?, ?, ?, ?, ?, ?)`,
+		fileID, m.ID, fx.owner.Hub, fx.owner.UserID, "image/x-adobe-dng",
+		"IMG_1.DNG", 2048, 999, path, uuid.NewString(), "a"+strings.Repeat("0", 63))
+	r.NoError(err)
+
+	resp, err := http.Get(fx.srv.URL + "/api/v1/media/" + m.ID)
+	r.NoError(err)
+	defer resp.Body.Close()
+	r.Equal(http.StatusOK, resp.StatusCode)
+	var body struct {
+		Files []struct {
+			ID   string `json:"id"`
+			Role string `json:"role"`
+		} `json:"files"`
+	}
+	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
+	r.Equal([]struct {
+		ID   string `json:"id"`
+		Role string `json:"role"`
+	}{{ID: fileID, Role: "original"}}, body.Files)
 }
 
 func TestGetMediaNotFoundForOtherOwner(t *testing.T) {
@@ -250,10 +252,10 @@ func TestListMediaFiltersByCamera(t *testing.T) {
 	sony := seedMedia(t, fx.repo, fx.owner, "2024/sony.jpg", "cs-sony", media.TypePhoto)
 	canon := seedMedia(t, fx.repo, fx.owner, "2024/canon.jpg", "cs-canon", media.TypePhoto)
 	_, err := fx.rw.ExecContext(context.Background(),
-		`UPDATE media SET make = ?, model = ? WHERE id = ?`, "Sony", "A7R IV", sony.ID)
+		`UPDATE assets SET make = ?, model = ? WHERE id = ?`, "Sony", "A7R IV", sony.ID)
 	r.NoError(err)
 	_, err = fx.rw.ExecContext(context.Background(),
-		`UPDATE media SET make = ?, model = ? WHERE id = ?`, "Canon", "EOS R5", canon.ID)
+		`UPDATE assets SET make = ?, model = ? WHERE id = ?`, "Canon", "EOS R5", canon.ID)
 	r.NoError(err)
 
 	resp, err := http.Get(fx.srv.URL + "/api/v1/media?camera=Sony+A7R+IV")
@@ -282,7 +284,7 @@ func TestListMediaFiltersByCameraExplodeBindsRepeats(t *testing.T) {
 		{leica.ID, "Leica", "Q3"},
 	} {
 		_, err := fx.rw.ExecContext(context.Background(),
-			`UPDATE media SET make = ?, model = ? WHERE id = ?`, row.make, row.model, row.id)
+			`UPDATE assets SET make = ?, model = ? WHERE id = ?`, row.make, row.model, row.id)
 		r.NoError(err)
 	}
 
@@ -311,11 +313,11 @@ func TestListMediaFiltersByHasGPS(t *testing.T) {
 	noGPS := seedMedia(t, fx.repo, fx.owner, "2024/no-gps.jpg", "cs-no", media.TypePhoto)
 	withGPSID := uuid.NewString()
 	lat, lon := 48.8566, 2.3522
-	r.NoError(fx.repo.Insert(context.Background(), media.Media{
+	assetfixture.Insert(t, fx.repo, media.Media{
 		ID: withGPSID, Owner: fx.owner, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "2024/with-gps.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "cs-yes",
-		Latitude: &lat, Longitude: &lon, ThumbStatus: "pending",
-	}))
+		ImportedAt: time.Now().UTC(),
+		Latitude:   &lat, Longitude: &lon, ThumbStatus: "pending",
+	})
 
 	resp, err := http.Get(fx.srv.URL + "/api/v1/media?has_gps=true")
 	r.NoError(err)
@@ -370,13 +372,13 @@ func TestListMediaDTOIncludesGPSWhenPresent(t *testing.T) {
 	id := uuid.NewString()
 	lat, lon := 48.8566, 2.3522
 	gps := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
-	r.NoError(fx.repo.Insert(context.Background(), media.Media{
+	assetfixture.Insert(t, fx.repo, media.Media{
 		ID: id, Owner: fx.owner, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
-		Latitude: &lat, Longitude: &lon, GPSAt: &gps,
+		ImportedAt: time.Now().UTC(),
+		Latitude:   &lat, Longitude: &lon, GPSAt: &gps,
 		LocationLabel: "Paris, Île-de-France, France",
 		ThumbStatus:   "pending",
-	}))
+	})
 
 	resp, err := http.Get(fx.srv.URL + "/api/v1/media")
 	r.NoError(err)
@@ -396,11 +398,11 @@ func TestListMediaDTOOmitsGPSWhenAbsent(t *testing.T) {
 	fx := newMediaAPITest(t)
 
 	id := uuid.NewString()
-	r.NoError(fx.repo.Insert(context.Background(), media.Media{
+	assetfixture.Insert(t, fx.repo, media.Media{
 		ID: id, Owner: fx.owner, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
+		ImportedAt:  time.Now().UTC(),
 		ThumbStatus: "pending",
-	}))
+	})
 
 	resp, err := http.Get(fx.srv.URL + "/api/v1/media")
 	r.NoError(err)
@@ -420,12 +422,12 @@ func TestGetMediaDTOIncludesGPSWhenPresent(t *testing.T) {
 
 	id := uuid.NewString()
 	lat, lon := 48.8566, 2.3522
-	r.NoError(fx.repo.Insert(context.Background(), media.Media{
+	assetfixture.Insert(t, fx.repo, media.Media{
 		ID: id, Owner: fx.owner, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
-		Latitude: &lat, Longitude: &lon, LocationLabel: "Paris, France",
+		ImportedAt: time.Now().UTC(),
+		Latitude:   &lat, Longitude: &lon, LocationLabel: "Paris, France",
 		ThumbStatus: "pending",
-	}))
+	})
 
 	resp, err := http.Get(fx.srv.URL + "/api/v1/media/" + id)
 	r.NoError(err)
@@ -443,11 +445,11 @@ func TestGetMediaDTOOmitsGPSWhenAbsent(t *testing.T) {
 	fx := newMediaAPITest(t)
 
 	id := uuid.NewString()
-	r.NoError(fx.repo.Insert(context.Background(), media.Media{
+	assetfixture.Insert(t, fx.repo, media.Media{
 		ID: id, Owner: fx.owner, Type: media.TypePhoto, MimeType: "image/jpeg",
-		Path: "x.jpg", ImportedAt: time.Now().UTC(), Size: 1, Checksum: "c-" + id,
+		ImportedAt:  time.Now().UTC(),
 		ThumbStatus: "pending",
-	}))
+	})
 
 	resp, err := http.Get(fx.srv.URL + "/api/v1/media/" + id)
 	r.NoError(err)
@@ -457,96 +459,4 @@ func TestGetMediaDTOOmitsGPSWhenAbsent(t *testing.T) {
 	body := string(bs)
 	r.NotContains(body, "latitude")
 	r.NotContains(body, "location_label")
-}
-
-func TestMediaListHidesSidecars(t *testing.T) {
-	r := require.New(t)
-	fx := newMediaAPITest(t)
-
-	primary := seedPairedMedia(t, fx.repo, fx.owner,
-		"2024/primary.jpg", "cs-pri", "image/jpeg", "primary.jpg", nil)
-	pid := primary.ID
-	_ = seedPairedMedia(t, fx.repo, fx.owner,
-		"2024/primary.dng", "cs-sid", "image/x-adobe-dng", "primary.dng", &pid)
-
-	resp, err := http.Get(fx.srv.URL + "/api/v1/media")
-	r.NoError(err)
-	defer func() { _ = resp.Body.Close() }()
-	r.Equal(http.StatusOK, resp.StatusCode)
-
-	var body struct {
-		Items []struct {
-			ID string `json:"id"`
-		} `json:"items"`
-	}
-	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
-	ids := make([]string, 0, len(body.Items))
-	for _, it := range body.Items {
-		ids = append(ids, it.ID)
-	}
-	r.Equal([]string{primary.ID}, ids)
-}
-
-func TestMediaDetailPrimaryEmbedsSidecars(t *testing.T) {
-	r := require.New(t)
-	fx := newMediaAPITest(t)
-
-	primary := seedPairedMedia(t, fx.repo, fx.owner,
-		"2024/a.jpg", "cs-pri", "image/jpeg", "a.jpg", nil)
-	pid := primary.ID
-	dng := seedPairedMedia(t, fx.repo, fx.owner,
-		"2024/a.dng", "cs-sid", "image/x-adobe-dng", "a.dng", &pid)
-
-	resp, err := http.Get(fx.srv.URL + "/api/v1/media/" + primary.ID)
-	r.NoError(err)
-	defer func() { _ = resp.Body.Close() }()
-	r.Equal(http.StatusOK, resp.StatusCode)
-
-	var body struct {
-		ID       string `json:"id"`
-		Sidecars []struct {
-			ID           string `json:"id"`
-			PairedWithID string `json:"paired_with_id"`
-		} `json:"sidecars"`
-		PairedWithID *string `json:"paired_with_id,omitempty"`
-	}
-	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
-	r.Equal(primary.ID, body.ID)
-	r.Nil(body.PairedWithID)
-	r.Len(body.Sidecars, 1)
-	r.Equal(dng.ID, body.Sidecars[0].ID)
-	r.Equal(primary.ID, body.Sidecars[0].PairedWithID)
-}
-
-func TestMediaDetailSidecarReturnsPairedWithSummary(t *testing.T) {
-	r := require.New(t)
-	fx := newMediaAPITest(t)
-
-	primary := seedPairedMedia(t, fx.repo, fx.owner,
-		"2024/a.jpg", "cs-pri", "image/jpeg", "a.jpg", nil)
-	pid := primary.ID
-	dng := seedPairedMedia(t, fx.repo, fx.owner,
-		"2024/a.dng", "cs-sid", "image/x-adobe-dng", "a.dng", &pid)
-
-	resp, err := http.Get(fx.srv.URL + "/api/v1/media/" + dng.ID)
-	r.NoError(err)
-	defer func() { _ = resp.Body.Close() }()
-	r.Equal(http.StatusOK, resp.StatusCode)
-
-	var body struct {
-		ID           string `json:"id"`
-		PairedWithID string `json:"paired_with_id"`
-		PairedWith   *struct {
-			ID               string `json:"id"`
-			OriginalFilename string `json:"original_filename"`
-		} `json:"paired_with"`
-		Sidecars []any `json:"sidecars,omitempty"`
-	}
-	r.NoError(json.NewDecoder(resp.Body).Decode(&body))
-	r.Equal(dng.ID, body.ID)
-	r.Equal(primary.ID, body.PairedWithID)
-	r.NotNil(body.PairedWith)
-	r.Equal(primary.ID, body.PairedWith.ID)
-	r.Equal("a.jpg", body.PairedWith.OriginalFilename)
-	r.Empty(body.Sidecars, "sidecar's own DTO should not list further sidecars")
 }

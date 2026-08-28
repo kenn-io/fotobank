@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.kenn.io/fotobank/internal/album"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
@@ -28,6 +29,7 @@ type SharedReadService struct {
 	media    *media.Repo
 	albums   *album.Repo
 	storage  storage.Store
+	content  *content.Adapter
 	resolver *share.ScopeResolver
 	now      func() time.Time
 }
@@ -39,10 +41,11 @@ func NewSharedReadService(
 	m *media.Repo,
 	a *album.Repo,
 	s storage.Store,
+	c *content.Adapter,
 	r *share.ScopeResolver,
 ) *SharedReadService {
 	return &SharedReadService{
-		shares: shares, media: m, albums: a, storage: s, resolver: r,
+		shares: shares, media: m, albums: a, storage: s, content: c, resolver: r,
 		now: func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -502,7 +505,7 @@ func (s *SharedReadService) OpenOriginal(
 	if err != nil {
 		return nil, media.Media{}, err
 	}
-	rc, err := s.storage.ReadRange(ctx, m.Owner, m.Path, offset, length)
+	rc, err := openExactVersion(ctx, s.content, m.CurrentVersionID, offset, length)
 	if err != nil {
 		return nil, media.Media{}, fmt.Errorf("read shared original: %w", err)
 	}

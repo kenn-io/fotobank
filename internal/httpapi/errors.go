@@ -30,8 +30,6 @@ func Translate(err error) huma.StatusError {
 		return huma.Error409Conflict(errs.ErrAlreadyExists.Error())
 	case errors.Is(err, errs.ErrConcurrentImport):
 		return huma.Error409Conflict(errs.ErrConcurrentImport.Error())
-	case errors.Is(err, errs.ErrPairedSidecarsExist):
-		return huma.Error409Conflict(errs.ErrPairedSidecarsExist.Error())
 	case errors.Is(err, errs.ErrAcknowledgementRequired):
 		return huma.Error409Conflict(errs.ErrAcknowledgementRequired.Error())
 	case errors.Is(err, errs.ErrInvalidArgument):

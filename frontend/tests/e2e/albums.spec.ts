@@ -106,15 +106,4 @@ test.describe("F2.3 albums", () => {
     await expect(page.getByText(/\d+ selected/)).toBeVisible();
   });
 
-  test("MediaActions hidden on sidecar direct page", async ({ page }) => {
-    // pair-fixture-sidecar has paired_with_id set, so MediaDetail
-    // takes the sidecar branch and renders no MediaActions header
-    // (Add/Share buttons are gated on the primary branch).
-    await page.goto("/media/pair-fixture-sidecar");
-    await expect(page.getByText(/RAW sidecar for/)).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Add to album" }),
-    ).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Share" })).toHaveCount(0);
-  });
 });

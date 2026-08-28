@@ -31,4 +31,20 @@ current private phase as though that future transition has already happened.
 Focus security findings on a concrete capability gained across an actual trust
 boundary. Focus other review findings on correctness, data integrity,
 portability, and maintainability.
+
+## Local import trust boundary
+
+The operator who invokes an import is trusted, and the configured source tree
+and its parent directories must remain under that operator's control for the
+duration of the import. Fotobank rejects source roots that overlap managed
+storage and rejects supported media paths that are symlinks when discovered.
+Its settle checks, pre-write revalidation, and Docbank expected-content identity
+protect against ordinary concurrent copies and edits; they do not claim to
+isolate imports from a malicious local actor who can replace source paths or
+ancestor directories between filesystem operations.
+
+Do not require descriptor-relative traversal, no-follow opens, or defenses
+against adversarial source-tree replacement. Do flag direct symlink following,
+managed-storage overlap, or ordinary source changes that can bypass content
+identity validation under the stated trusted-local-source model.
 """

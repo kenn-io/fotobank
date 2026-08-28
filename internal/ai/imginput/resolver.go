@@ -44,7 +44,7 @@ func (r *Resolver) ResolvePreviewJPEG(ctx context.Context, mediaID string) ([]by
 	)
 	row := r.ro.QueryRowContext(ctx,
 		`SELECT owner_hub, owner_user_id, thumb_status, thumb_version
-		   FROM media WHERE id=?`, mediaID)
+		   FROM assets WHERE id=? AND state='ready'`, mediaID)
 	switch err := row.Scan(&hub, &userID, &status, &version); {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, "", fmt.Errorf("media %s not found", mediaID)

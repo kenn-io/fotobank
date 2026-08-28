@@ -23,17 +23,7 @@ Owner coordinates are copied into owner-scoped rows. Database triggers enforce
 that relationships do not cross owners even when a repository bug attempts an
 invalid insert.
 
-## Media and assets during the Docbank transition
-
-The current schema contains two models because the authority cutover is in
-progress:
-
-- `media` is still the active product table. One row represents one file and
-  includes the NAS path and legacy content checksum. Current services, search,
-  thumbnails, albums, and shares read it.
-- `assets`, `media_files`, and `media_file_relationships` are the replacement
-  domain already present in the schema and repository but not yet wired into
-  product reads and writes.
+## Assets and files
 
 An asset is the user-visible photo or video. A file is one physical
 representation within that asset: primary display media, camera source,
@@ -45,9 +35,8 @@ complete Docbank mapping: node ID, stable virtual path, current version ID, and
 SHA-256. Database triggers prevent later inserts, updates, deletions, or owner
 changes from breaking those invariants.
 
-The stable end state removes `media`; product columns named `media_id` remain
-where “media” is product language, but their values are asset UUIDs and their
-foreign keys target `assets`.
+Product columns named `media_id` use “media” as product language. Their values
+are asset UUIDs and their foreign keys target `assets`.
 
 ## Albums and sharing
 
@@ -91,7 +80,7 @@ projections that can be rebuilt from authoritative media and configuration.
   change in one SQLite write transaction.
 - Database triggers are the final guard for ownership, relationship, mapping,
   and ready-state invariants.
-- Content writes cannot share a transaction with Fotobank SQLite. The stable
-  design records an operation before the Docbank call, then records the receipt
+- Content writes cannot share a transaction with Fotobank SQLite. The importer
+  records an operation before the Docbank call, then records the receipt
   idempotently afterward. Pending and conflict states are durable product
   state, not log messages.

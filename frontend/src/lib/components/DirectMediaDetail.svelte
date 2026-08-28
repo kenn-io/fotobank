@@ -36,13 +36,15 @@
   });
   let loadError = $state<string | undefined>(undefined);
 
-  // Raw JSON from the on-miss fetch. Preserved even when the media is
+  // Raw JSON from the detail fetch. Preserved even when the media is
   // hidden (the visible MediaStore skips hidden rows, so `media` stays
   // undefined for hidden items). Used by the Unhide flow to clone the
   // raw payload with hidden_at=null before calling mergeRaw.
   let lastRaw = $state<Record<string, unknown> | undefined>(undefined);
 
-  // Re-run the on-miss fetch every time `id` changes — App.svelte mounts
+  // Fetch detail whenever the cached row came from a list response. Detail
+  // responses carry `files` (including an empty array), while lists use null.
+  // Re-run when `id` changes — App.svelte mounts
   // MediaDetail without a {#key} wrapper, so navigating from one
   // /media/:id to another reuses this component instance and onMount
   // would fire only on the first mount. Capture id into the closure and
@@ -52,7 +54,7 @@
     const currentId = id;
     loadError = undefined;
     lastRaw = undefined;
-    if (mediaStore.get(currentId)) return;
+    if (mediaStore.get(currentId)?.files !== undefined) return;
 
     let cancelled = false;
     (async () => {
@@ -247,47 +249,6 @@
     <p class="error">Could not load media: {loadError}</p>
   {:else if !effectiveMedia}
     <p>Loading…</p>
-  {:else if effectiveMedia.paired_with_id}
-    <h1 class="sidecar-heading">
-      RAW sidecar for
-      {#if effectiveMedia.paired_with}
-        {@const primary = effectiveMedia.paired_with}
-        <a
-          href="/media/{primary.id}"
-          onclick={(e) => handleInternalLinkClick(e, `/media/${primary.id}`)}
-        >
-          {primary.original_filename}
-        </a>
-      {:else}
-        <span style:opacity={0.7}>primary</span>
-      {/if}
-    </h1>
-    <dl class="info">
-      {#if effectiveMedia.original_filename}
-        <dt>File</dt>
-        <dd>{effectiveMedia.original_filename}</dd>
-      {/if}
-      {#if effectiveMedia.size}
-        <dt>Size</dt>
-        <dd>{formatBytes(effectiveMedia.size)}</dd>
-      {/if}
-      {#if effectiveMedia.timestamp}
-        <dt>Captured</dt>
-        <dd>{formatTimestamp(effectiveMedia.timestamp)}</dd>
-      {/if}
-      {#if effectiveMedia.location_label || (effectiveMedia.latitude != null && effectiveMedia.longitude != null)}
-        <dt>Location</dt>
-        <dd>
-          {#if effectiveMedia.location_label}{effectiveMedia.location_label}{/if}
-          {#if effectiveMedia.latitude != null && effectiveMedia.longitude != null}
-            <small class="coord">{formatCoord(effectiveMedia.latitude, effectiveMedia.longitude)}</small>
-          {/if}
-        </dd>
-      {/if}
-    </dl>
-    <a class="download" href="/api/v1/media/{effectiveMedia.id}/original" download={effectiveMedia.original_filename ?? effectiveMedia.id}>
-      Download {effectiveMedia.original_filename ?? "file"}
-    </a>
   {:else}
     <header class="media-actions-header">
       <MediaActions
@@ -328,18 +289,27 @@
           {/if}
         </dd>
       {/if}
-      {#if effectiveMedia.sidecars && effectiveMedia.sidecars.length > 0}
+      {#if effectiveMedia.files && effectiveMedia.files.length > 0}
         <dt>Files</dt>
         <dd class="files">
           <a href="/api/v1/media/{effectiveMedia.id}/original" download={effectiveMedia.original_filename ?? effectiveMedia.id}>
             {effectiveMedia.original_filename ?? effectiveMedia.id}
           </a>
-          {#each effectiveMedia.sidecars as sidecar (sidecar.id)}
+          {#each effectiveMedia.files as file (file.id)}
             <br />
-            <a href="/api/v1/media/{sidecar.id}/original" download={sidecar.original_filename ?? sidecar.id}>
-              {sidecar.original_filename ?? sidecar.id}
-            </a>
+            <a
+              href={`/api/v1/media/${effectiveMedia.id}/files/${file.id}/content`}
+              download={file.original_filename}
+            >{file.original_filename}</a>
+            <span> ({file.role}, {formatBytes(file.size)})</span>
           {/each}
+        </dd>
+      {:else}
+        <dt>Download</dt>
+        <dd>
+          <a href="/api/v1/media/{effectiveMedia.id}/original" download={effectiveMedia.original_filename ?? effectiveMedia.id}>
+            {effectiveMedia.original_filename ?? effectiveMedia.id}
+          </a>
         </dd>
       {/if}
     </dl>
@@ -374,6 +344,4 @@
   .info { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin-top: 1rem; }
   .info dt { font-weight: 600; }
   .info .coord { display: block; opacity: 0.7; font-size: 0.85em; }
-  .sidecar-heading { font-size: 1.25rem; margin: 0.5rem 0 0.5rem; }
-  .download { display: inline-block; margin-top: 1rem; }
 </style>

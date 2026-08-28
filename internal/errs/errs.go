@@ -5,11 +5,8 @@ package errs
 import "errors"
 
 var (
-	ErrNotFound      = errors.New("not found")
-	ErrAlreadyExists = errors.New("already exists")
-	// ErrPairedSidecarsExist prevents deleting a primary while sidecars
-	// reference it through paired_with_id. HTTP maps it to 409 Conflict.
-	ErrPairedSidecarsExist     = errors.New("paired sidecars exist")
+	ErrNotFound                = errors.New("not found")
+	ErrAlreadyExists           = errors.New("already exists")
 	ErrInvalidArgument         = errors.New("invalid argument")
 	ErrPermissionDenied        = errors.New("permission denied")
 	ErrOwnerMismatch           = errors.New("owner mismatch")

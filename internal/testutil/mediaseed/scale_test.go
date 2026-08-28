@@ -35,18 +35,18 @@ func TestSeedScaleLibrary_Determinism(t *testing.T) {
 	ro := d.ReadDB()
 
 	var nMedia int
-	r.NoError(ro.QueryRowContext(ctx, `SELECT COUNT(*) FROM media`).Scan(&nMedia))
+	r.NoError(ro.QueryRowContext(ctx, `SELECT COUNT(*) FROM assets`).Scan(&nMedia))
 	r.Equal(1000, nMedia)
 
 	var nGPS int
 	r.NoError(ro.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM media WHERE latitude IS NOT NULL`).Scan(&nGPS))
+		`SELECT COUNT(*) FROM assets WHERE latitude IS NOT NULL`).Scan(&nGPS))
 	// 30% target ± 5pp under a fixed seed.
 	r.InDelta(300, nGPS, 50, "GPS count %d outside expected band", nGPS)
 
 	var nHidden int
 	r.NoError(ro.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM media WHERE hidden_at IS NOT NULL`).Scan(&nHidden))
+		`SELECT COUNT(*) FROM assets WHERE hidden_at IS NOT NULL`).Scan(&nHidden))
 	// 5% target ± 2pp.
 	r.InDelta(50, nHidden, 20, "hidden count %d outside expected band", nHidden)
 
@@ -88,12 +88,16 @@ func TestSeedScaleLibrary_TwoSeedsByteIdentical(t *testing.T) {
 		// imported_at and (nullable) hidden_at into one string. Two
 		// seeds with identical opts must produce identical strings.
 		r.NoError(ro.QueryRowContext(ctx, `
-			SELECT GROUP_CONCAT(id || '|' || path || '|' || size || '|' ||
+			SELECT GROUP_CONCAT(id || '|' || docbank_virtual_path || '|' || size || '|' ||
 			                    make || '|' || model || '|' || COALESCE(lens_model, '') || '|' ||
 			                    imported_at || '|' || COALESCE(latitude, 0) || '|' ||
 			                    COALESCE(longitude, 0) || '|' || COALESCE(hidden_at, ''),
 			                    char(10))
-			  FROM (SELECT * FROM media ORDER BY id)`).Scan(&mediaProj))
+			  FROM (
+			    SELECT a.*, f.docbank_virtual_path, f.size
+			    FROM assets a JOIN media_files f ON f.asset_id=a.id AND f.role='primary'
+			    ORDER BY a.id
+			  )`).Scan(&mediaProj))
 		r.NoError(ro.QueryRowContext(ctx, `
 			SELECT GROUP_CONCAT(id || '|' || media_id || '|' || generated_at, char(10))
 			  FROM (SELECT * FROM ai_results ORDER BY id)`).Scan(&resultsProj))

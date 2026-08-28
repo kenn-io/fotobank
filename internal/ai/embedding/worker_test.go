@@ -663,7 +663,7 @@ func TestWorker_RunPromotesThumbReadyBlocked(t *testing.T) {
 	resolver.defaultStatus = "ready"
 	resolver.defaultJPEG = mockJPEG
 	_, err := d.WriteDB().ExecContext(ctx,
-		`UPDATE media SET thumb_status='ready' WHERE id=?`, mid)
+		`UPDATE assets SET thumb_status='ready' WHERE id=?`, mid)
 	r.NoError(err)
 
 	gen, err := gens.FindOrCreateBuilding(ctx, fp, embedCfg().Dimension)

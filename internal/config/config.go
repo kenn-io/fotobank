@@ -151,8 +151,9 @@ type HTTP struct {
 }
 
 type Imports struct {
-	ConcurrentWorkers int    `toml:"concurrent_workers"`
-	FileLockPath      string `toml:"file_lock_path"`
+	ConcurrentWorkers int           `toml:"concurrent_workers"`
+	FileLockPath      string        `toml:"file_lock_path"`
+	SettleInterval    time.Duration `toml:"settle_interval"`
 }
 
 type Thumbs struct {
@@ -649,6 +650,9 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	}
 	if c.Imports.ConcurrentWorkers == 0 {
 		c.Imports.ConcurrentWorkers = 2
+	}
+	if c.Imports.SettleInterval == 0 {
+		c.Imports.SettleInterval = 2 * time.Second
 	}
 	if c.Thumbs.WorkerConcurrency == 0 {
 		c.Thumbs.WorkerConcurrency = 4

@@ -165,13 +165,7 @@ func TestRemoveRefusesWhenMediaExists(t *testing.T) {
 	_, err := svc.Ensure(context.Background(), p, "550e8400-e29b-41d4-a716-446655440000")
 	r.NoError(err)
 
-	// Insert a raw media row for this owner.
-	_, err = d.WriteDB().Exec(`
-		INSERT INTO media (id, owner_hub, owner_user_id, media_type, mime_type, path,
-		                   imported_at, size, checksum, thumb_status, thumb_version, thumb_updated_at)
-		VALUES ('c0000000-0000-0000-0000-000000000001', 'h', 'u', 'photo', 'image/jpeg',
-		        'x.jpg', datetime('now'), 1, 'cs', 'pending', 1, datetime('now'))`)
-	r.NoError(err)
+	_ = testutil.SeedPhoto(t, d.WriteDB(), p, "x")
 
 	r.ErrorIs(svc.Remove(context.Background(), p, false), errs.ErrInvalidArgument)
 }

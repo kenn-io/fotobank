@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/fotobank/internal/ai/skipped"
 	appsettingsstore "go.kenn.io/fotobank/internal/appsettings"
 	"go.kenn.io/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/geo"
@@ -28,7 +29,7 @@ import (
 
 // newImportCmd wires the `fotobank import` subcommand. It takes a single
 // positional source directory and runs the ingest importer against the
-// currently configured NAS store and media repo.
+// currently configured Docbank vault and media repo.
 func newImportCmd() *cobra.Command {
 	var (
 		cfgPath string
@@ -93,7 +94,7 @@ func runImport(ctx context.Context, opts importOpts) error {
 	// form of the user's argument.
 	absSource, _ := filepath.Abs(opts.source)
 	fmt.Fprintf(opts.stdout, "source:    %s\n", absSource)
-	fmt.Fprintf(opts.stdout, "nas root:  %s\n", cfg.NAS.Root)
+	fmt.Fprintf(opts.stdout, "docbank:   %s\n", cfg.Docbank.Root)
 	fmt.Fprintf(opts.stdout, "flash db:  %s\n", dbPath)
 	d, err := db.Open(dbPath)
 	if err != nil {
@@ -121,17 +122,23 @@ func runImport(ctx context.Context, opts importOpts) error {
 		return err
 	}
 
-	keys, err := loadStorageKeys(ctx, ownerSvc)
-	if err != nil {
-		return err
-	}
-	keys[owner] = registeredOwner.StorageKey
-	storeLayer, _ := buildStorageLayer(cfg, keys)
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	assetRepo := media.NewAssetRepo(d.WriteDB(), d.ReadDB())
+	contentStore, err := content.Open(ctx, content.Config{
+		Root: cfg.Docbank.Root,
+		ManagedRoots: []string{
+			cfg.NAS.Root,
+			cfg.Flash.Root,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("open Docbank vault: %w", err)
+	}
+	defer contentStore.Close()
 
 	lockPath := cfg.Imports.FileLockPath
 	if lockPath == "" {
-		lockPath = filepath.Join(cfg.NAS.Root, ".fotobank", "import.lock")
+		lockPath = filepath.Join(cfg.Flash.Root, ".fotobank", "import.lock")
 	}
 	unlock, err := ingest.Acquire(ctx, lockPath, opts.wait)
 	if err != nil {
@@ -151,7 +158,7 @@ func runImport(ctx context.Context, opts importOpts) error {
 	if err != nil {
 		return fmt.Errorf("load geo gazetteer: %w", err)
 	}
-	imp := ingest.NewImporter(storeLayer, repo, places)
+	imp := ingest.NewImporter(contentStore, assetRepo, repo, registeredOwner.StorageKey, places)
 
 	// Wire the production AIEnqueuer so an offline import auto-enqueues
 	// for AI processing. Queue rows use runtime claim fingerprints so
@@ -173,6 +180,7 @@ func runImport(ctx context.Context, opts importOpts) error {
 	res, err := imp.ImportDirectory(ctx, opts.source, ingest.Options{
 		Owner:             owner,
 		ConcurrentWorkers: workers,
+		SettleInterval:    cfg.Imports.SettleInterval,
 		Progress:          progress.handle,
 	})
 	if err != nil {
@@ -180,8 +188,8 @@ func runImport(ctx context.Context, opts importOpts) error {
 	}
 	progress.finish()
 
-	fmt.Fprintf(opts.stdout, "imported=%d\tduplicates=%d\tpath_collisions=%d\tfailures=%d\n",
-		res.Imported, res.Duplicates, res.PathCollisions, len(res.Failures))
+	fmt.Fprintf(opts.stdout, "imported=%d\tduplicates=%d\tconflicts=%d\tfailures=%d\n",
+		res.Imported, res.Duplicates, res.Conflicts, len(res.Failures))
 
 	if len(res.Failures) > 0 {
 		for _, f := range res.Failures {
@@ -253,9 +261,9 @@ func (p *importProgress) finish() {
 func formatProgressLine(ev ingest.ProgressEvent) string {
 	name := filepath.Base(ev.Path)
 	return fmt.Sprintf(
-		"  %d/%d · imported=%d dup=%d skip=%d fail=%d · %s",
+		"  %d/%d · imported=%d dup=%d conflict=%d fail=%d · %s",
 		ev.Done, ev.Total,
-		ev.Imported, ev.Duplicates, ev.PathCollisions, ev.Failures,
+		ev.Imported, ev.Duplicates, ev.Conflicts, ev.Failures,
 		name,
 	)
 }

@@ -223,12 +223,6 @@ func (s *AlbumService) AddMedia(
 			// Mask cross-owner as not-found (existence-oracle protection).
 			return 0, 0, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, mid)
 		}
-		if m.PairedWithID != nil {
-			return 0, 0, fmt.Errorf(
-				"%w: media id=%s is a sidecar; albums reference primaries only",
-				errs.ErrInvalidArgument, mid,
-			)
-		}
 	}
 
 	return s.albums.AddMedia(ctx, albumID, deduped, s.now())

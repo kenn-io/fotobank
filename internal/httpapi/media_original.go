@@ -15,7 +15,7 @@ import (
 // registerMediaOriginal wires GET /api/v1/media/{id}/original onto mux.
 // The handler enforces owner visibility via svc, honours single-range
 // Range requests, ETag / If-None-Match, and sets long-lived cache
-// headers since content is content-addressed (checksum is the ETag).
+// headers since content is content-addressed (SHA-256 is the ETag).
 // Callers that don't need media HTTP access (for example the OpenAPI
 // spec dumper) pass a Deps without a MediaService; this function then
 // returns without registering anything.
@@ -66,7 +66,7 @@ func registerMediaOriginal(mux *http.ServeMux, svc *service.MediaService) {
 			return
 		}
 
-		etag := `"` + m.Checksum + `"`
+		etag := `"` + m.SHA256 + `"`
 		h.Set("ETag", etag)
 		h.Set("Last-Modified", m.ImportedAt.UTC().Format(http.TimeFormat))
 		// no-cache forces a conditional ETag revalidation on every reuse.

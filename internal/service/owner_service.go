@@ -126,18 +126,16 @@ func (s *OwnerService) Remove(ctx context.Context, p owners.Principal, purge boo
 	if purge {
 		return fmt.Errorf("%w: --purge is not implemented", errs.ErrInvalidArgument)
 	}
-	var mediaCount, assetCount int
+	var assetCount int
 	row := s.repo.DB().QueryRowContext(ctx,
-		`SELECT
-			(SELECT COUNT(*) FROM media WHERE owner_hub=? AND owner_user_id=?),
-			(SELECT COUNT(*) FROM assets WHERE owner_hub=? AND owner_user_id=?)`,
-		p.Hub, p.UserID, p.Hub, p.UserID)
-	if err := row.Scan(&mediaCount, &assetCount); err != nil {
+		`SELECT COUNT(*) FROM assets WHERE owner_hub=? AND owner_user_id=?`,
+		p.Hub, p.UserID)
+	if err := row.Scan(&assetCount); err != nil {
 		return fmt.Errorf("count content for owner: %w", err)
 	}
-	if mediaCount > 0 || assetCount > 0 {
-		return fmt.Errorf("%w: owner %s has %d media rows and %d assets (use --purge)",
-			errs.ErrInvalidArgument, p, mediaCount, assetCount)
+	if assetCount > 0 {
+		return fmt.Errorf("%w: owner %s has %d assets (use --purge)",
+			errs.ErrInvalidArgument, p, assetCount)
 	}
 	return s.repo.Delete(ctx, p)
 }

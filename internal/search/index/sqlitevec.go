@@ -201,7 +201,7 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	sb.WriteString("       (CASE WHEN fused.rank_bm25 IS NOT NULL THEN 1.0 / (? + fused.rank_bm25) ELSE 0 END +\n")
 	sb.WriteString("        CASE WHEN fused.rank_vector IS NOT NULL THEN 1.0 / (? + fused.rank_vector) ELSE 0 END) AS rrf,\n")
 	sb.WriteString("       fused.bm25, fused.vec, fused.rank_bm25, fused.rank_vector\n")
-	sb.WriteString("FROM fused JOIN media m ON m.id = fused.id\n")
+	sb.WriteString("FROM fused JOIN assets m ON m.id = fused.id AND m.state = 'ready'\n")
 	// Candidates are picked by relevance (BM25 + ANN, fused via RRF
 	// inside the bm25/ann CTEs); the final page sort is then applied
 	// over that pool. SortNewest / SortOldest let the user request a
@@ -264,7 +264,7 @@ func (b *SQLiteVecBackend) BM25Only(ctx context.Context, in SearchInput) ([]Hit,
 	sb.WriteString("  )\n")
 	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version, m.thumb_status,\n")
 	sb.WriteString("       bm25.score AS bm25, bm25.rank_bm25\n")
-	sb.WriteString("FROM bm25 JOIN media m ON m.id = bm25.id\n")
+	sb.WriteString("FROM bm25 JOIN assets m ON m.id = bm25.id AND m.state = 'ready'\n")
 	// Same candidates-by-relevance / page-by-date split as
 	// FusedSearch: the bm25 CTE picks the top-K by BM25 score, then
 	// the final SELECT applies the user's sort over that pool.
@@ -333,7 +333,7 @@ func (b *SQLiteVecBackend) FilterOnly(ctx context.Context, in SearchInput) ([]Hi
 	sb.WriteString(in.Filter.SQL)
 	sb.WriteString(")\n")
 	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version, m.thumb_status\n")
-	sb.WriteString("FROM filter f JOIN media m ON m.id = f.id\n")
+	sb.WriteString("FROM filter f JOIN assets m ON m.id = f.id AND m.state = 'ready'\n")
 	switch in.Sort {
 	case SortOldest:
 		// Oldest first: NULL timestamps last so a row with a known

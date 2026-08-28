@@ -571,8 +571,8 @@ func runAIListGenerations(ctx context.Context, cfgPath, state string, stdout io.
 func eligibleEmbedCount(ctx context.Context, ro *sql.DB, caller owners.Principal) (int, error) {
 	var n int
 	err := ro.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM media m
-		 WHERE m.owner_hub = ? AND m.owner_user_id = ?
+		SELECT COUNT(*) FROM assets m
+		 WHERE m.state = 'ready' AND m.owner_hub = ? AND m.owner_user_id = ?
 		   AND m.thumb_status = 'ready'
 		   AND m.hidden_at IS NULL
 		   AND NOT EXISTS (

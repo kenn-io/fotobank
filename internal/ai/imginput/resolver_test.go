@@ -33,7 +33,7 @@ func TestResolverFollowsThumbVersionBump(t *testing.T) {
 	store, _ := newResolverStoreWithPreview(t, rw, owner, mid, makeJPEGForResolver(t, 2400, 1600))
 
 	_, err := rw.ExecContext(context.Background(),
-		`UPDATE media SET thumb_version=2 WHERE id=?`, mid)
+		`UPDATE assets SET thumb_version=2 WHERE id=?`, mid)
 	require.NoError(err)
 	writePreview(t, store, owner, mid, 2, makeJPEGForResolver(t, 800, 1600))
 
@@ -100,7 +100,7 @@ func newResolverStoreWithPreview(t *testing.T, rw *sql.DB, owner owners.Principa
 	})
 	var version int
 	require.NoError(t, rw.QueryRowContext(context.Background(),
-		`SELECT thumb_version FROM media WHERE id=?`, mid).Scan(&version))
+		`SELECT thumb_version FROM assets WHERE id=?`, mid).Scan(&version))
 	writePreview(t, store, owner, mid, version, jpg)
 	return store, version
 }

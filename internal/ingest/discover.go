@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/media"
 )
 
@@ -17,7 +18,17 @@ type Candidate struct {
 	Path     string // absolute source path
 	Type     media.Type
 	MimeType string
+	Kind     CandidateKind
 }
+
+type CandidateKind string
+
+const (
+	CandidateImage   CandidateKind = "image"
+	CandidateRAW     CandidateKind = "raw"
+	CandidateVideo   CandidateKind = "video"
+	CandidateSidecar CandidateKind = "sidecar"
+)
 
 // Discover walks root and invokes visit for every supported file. Non-
 // supported files are skipped silently; errors from visit abort the
@@ -59,11 +70,18 @@ func Discover(root string, visit func(Candidate) error) error {
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(p))
-		t, mime, ok := classify(ext)
+		t, mime, kind, ok := classify(ext)
 		if !ok {
 			return nil
 		}
-		return visit(Candidate{Path: p, Type: t, MimeType: mime})
+		info, err := os.Lstat(p)
+		if err != nil {
+			return fmt.Errorf("inspect source %s: %w", p, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%w: symbolic-link source file is not supported: %s", errs.ErrInvalidArgument, p)
+		}
+		return visit(Candidate{Path: p, Type: t, MimeType: mime, Kind: kind})
 	})
 }
 
@@ -105,36 +123,38 @@ func skipDir(name string) bool {
 	return false
 }
 
-func classify(ext string) (media.Type, string, bool) {
+func classify(ext string) (media.Type, string, CandidateKind, bool) {
 	switch ext {
 	case ".jpg", ".jpeg":
-		return media.TypePhoto, "image/jpeg", true
+		return media.TypePhoto, "image/jpeg", CandidateImage, true
 	case ".png":
-		return media.TypePhoto, "image/png", true
+		return media.TypePhoto, "image/png", CandidateImage, true
 	case ".gif":
-		return media.TypePhoto, "image/gif", true
+		return media.TypePhoto, "image/gif", CandidateImage, true
 	case ".heic":
-		return media.TypePhoto, "image/heic", true
+		return media.TypePhoto, "image/heic", CandidateImage, true
 	case ".arw":
-		return media.TypePhoto, "image/x-sony-arw", true
+		return media.TypePhoto, "image/x-sony-arw", CandidateRAW, true
 	case ".raf":
-		return media.TypePhoto, "image/x-fuji-raf", true
+		return media.TypePhoto, "image/x-fuji-raf", CandidateRAW, true
 	case ".dng":
-		return media.TypePhoto, "image/x-adobe-dng", true
+		return media.TypePhoto, "image/x-adobe-dng", CandidateRAW, true
 	case ".cr2":
-		return media.TypePhoto, "image/x-canon-cr2", true
+		return media.TypePhoto, "image/x-canon-cr2", CandidateRAW, true
 	case ".nef":
-		return media.TypePhoto, "image/x-nikon-nef", true
+		return media.TypePhoto, "image/x-nikon-nef", CandidateRAW, true
+	case ".xmp":
+		return media.TypePhoto, "application/rdf+xml", CandidateSidecar, true
 	case ".mp4":
-		return media.TypeVideo, "video/mp4", true
+		return media.TypeVideo, "video/mp4", CandidateVideo, true
 	case ".mov":
-		return media.TypeVideo, "video/quicktime", true
+		return media.TypeVideo, "video/quicktime", CandidateVideo, true
 	case ".m4v":
-		return media.TypeVideo, "video/x-m4v", true
+		return media.TypeVideo, "video/x-m4v", CandidateVideo, true
 	case ".avi":
-		return media.TypeVideo, "video/x-msvideo", true
+		return media.TypeVideo, "video/x-msvideo", CandidateVideo, true
 	case ".mpg", ".mp2":
-		return media.TypeVideo, "video/mpeg", true
+		return media.TypeVideo, "video/mpeg", CandidateVideo, true
 	}
-	return "", "", false
+	return "", "", "", false
 }

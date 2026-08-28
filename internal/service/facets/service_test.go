@@ -270,7 +270,7 @@ func TestAggregate_IncludeHidden_HonoredWithValidClaim(t *testing.T) {
 	svc, rw := newFacetServiceWithChecker(t, fakeHiddenChecker{valid: true})
 	insertSeedFixtures(t, rw)
 	_, err := rw.ExecContext(context.Background(),
-		`UPDATE media SET hidden_at = ? WHERE id = ?`,
+		`UPDATE assets SET hidden_at = ? WHERE id = ?`,
 		time.Now().UTC(), "m-sony-nogeo-video")
 	r.NoError(err)
 

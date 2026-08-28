@@ -45,24 +45,24 @@ type mediaDetails struct {
 // path in RefreshMediaFTS.
 func seedMediaWithDetails(t *testing.T, d *db.DB, p owners.Principal, det mediaDetails) string {
 	t.Helper()
-	id := uuid.NewString()
+	id := testutil.SeedPhoto(t, d.WriteDB(), p, idLabel(det.OriginalFilename))
 	_, err := d.WriteDB().ExecContext(context.Background(),
-		`INSERT INTO media(
-			id, owner_hub, owner_user_id, media_type, mime_type, path,
-			original_filename, imported_at, size, checksum,
-			make, model, lens_model, location_label,
-			thumb_status, thumb_version, import_source_path
-		) VALUES (?,?,?, 'photo','image/jpeg', ?,
-			?, ?, 0, ?,
-			?, ?, ?, ?,
-			'ready', 1, ?)`,
-		id, p.Hub, p.UserID, "/photos/"+id+".jpg",
-		nullIfEmpty(det.OriginalFilename), time.Now().UTC(), id+"-checksum",
-		nullIfEmpty(det.Make), nullIfEmpty(det.Model), nullIfEmpty(det.LensModel), nullIfEmpty(det.LocationLabel),
-		id,
-	)
+		`UPDATE assets SET make=?, model=?, lens_model=?, location_label=? WHERE id=?`,
+		nullIfEmpty(det.Make), nullIfEmpty(det.Model), nullIfEmpty(det.LensModel),
+		nullIfEmpty(det.LocationLabel), id)
+	require.NoError(t, err)
+	_, err = d.WriteDB().ExecContext(context.Background(),
+		`UPDATE media_files SET original_filename=? WHERE asset_id=? AND role='primary'`,
+		det.OriginalFilename, id)
 	require.NoError(t, err)
 	return id
+}
+
+func idLabel(filename string) string {
+	if filename == "" {
+		return uuid.NewString()
+	}
+	return filename
 }
 
 // nullIfEmpty turns "" into a SQL NULL so the test exercises the

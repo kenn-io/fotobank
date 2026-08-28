@@ -291,8 +291,9 @@ func (s *Service) aggregateCameras(ctx context.Context, in hybrid.Input) ([]Valu
 	where, args := hybrid.ResolveWhere(in)
 	q := fmt.Sprintf(`
 SELECT (m.make || ' ' || m.model) AS value, COUNT(*) AS count
-FROM media m
-WHERE %s AND m.make IS NOT NULL AND m.model IS NOT NULL
+FROM assets m
+WHERE %s AND m.make IS NOT NULL AND m.make <> ''
+  AND m.model IS NOT NULL AND m.model <> ''
 GROUP BY value
 ORDER BY count DESC, value ASC
 LIMIT %d`, where, facetTopN)
@@ -306,8 +307,8 @@ func (s *Service) aggregateLenses(ctx context.Context, in hybrid.Input) ([]Value
 	where, args := hybrid.ResolveWhere(in)
 	q := fmt.Sprintf(`
 SELECT m.lens_model AS value, COUNT(*) AS count
-FROM media m
-WHERE %s AND m.lens_model IS NOT NULL
+FROM assets m
+WHERE %s AND m.lens_model IS NOT NULL AND m.lens_model <> ''
 GROUP BY value
 ORDER BY count DESC, value ASC
 LIMIT %d`, where, facetTopN)
@@ -324,7 +325,7 @@ func (s *Service) aggregateTags(ctx context.Context, in hybrid.Input) ([]TagCoun
 	where, args := hybrid.ResolveWhere(in)
 	q := fmt.Sprintf(`
 SELECT mt.tag_key AS key, MAX(mt.tag_label) AS label, COUNT(DISTINCT m.id) AS count
-FROM media m
+FROM assets m
 JOIN ai_results r ON r.media_id = m.id
                  AND r.task = 'tag' AND r.status = 'active'
 JOIN media_tags mt ON mt.result_id = r.id
@@ -358,7 +359,7 @@ func (s *Service) aggregatePlaces(ctx context.Context, in hybrid.Input) (PlacesC
 SELECT
   COUNT(*) FILTER (WHERE m.latitude IS NOT NULL AND m.longitude IS NOT NULL) AS with_gps,
   COUNT(*) FILTER (WHERE m.latitude IS NULL OR m.longitude IS NULL) AS without_gps
-FROM media m
+FROM assets m
 WHERE %s`, where)
 	var pc PlacesCount
 	err := s.ro.QueryRowContext(ctx, q, args...).Scan(&pc.WithGPS, &pc.WithoutGPS)
@@ -375,7 +376,7 @@ func (s *Service) aggregateMediaTypes(ctx context.Context, in hybrid.Input) ([]V
 	where, args := hybrid.ResolveWhere(in)
 	q := fmt.Sprintf(`
 SELECT m.media_type AS value, COUNT(*) AS count
-FROM media m
+FROM assets m
 WHERE %s
 GROUP BY value
 ORDER BY count DESC, value ASC`, where)

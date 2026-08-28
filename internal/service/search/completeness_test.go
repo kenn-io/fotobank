@@ -75,7 +75,7 @@ func seedActiveGen(t *testing.T, gens *embedding.Generations) int64 {
 func hideMedia(t *testing.T, rw *sql.DB, mediaID string) {
 	t.Helper()
 	_, err := rw.ExecContext(context.Background(),
-		`UPDATE media SET hidden_at = ? WHERE id = ?`,
+		`UPDATE assets SET hidden_at = ? WHERE id = ?`,
 		time.Now().UTC(), mediaID)
 	require.NoError(t, err)
 }

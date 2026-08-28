@@ -128,8 +128,8 @@ func mostUsedCamera(b *testing.B, d *db.DB) string {
 	var camera string
 	err := d.ReadDB().QueryRowContext(context.Background(), `
 		SELECT make || ' ' || model
-		  FROM media
-		 WHERE make IS NOT NULL AND model IS NOT NULL
+		  FROM assets
+		 WHERE state = 'ready' AND make IS NOT NULL AND model IS NOT NULL
 		 GROUP BY make, model
 		 ORDER BY COUNT(*) DESC
 		 LIMIT 1`).Scan(&camera)
