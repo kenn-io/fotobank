@@ -58,7 +58,7 @@ func SeedPhoto(t *testing.T, rw *sql.DB, p owners.Principal, label string) strin
 		 mime_type, original_filename, size, docbank_node_id, docbank_virtual_path,
 		 current_version_id, sha256)
 		 VALUES (?,?,?,?, 'primary','image/jpeg', ?, 0, ?, ?, ?, ?)`,
-		fileID, id, p.Hub, p.UserID, label+".jpg", time.Now().UnixNano(), virtualPath,
+		fileID, id, p.Hub, p.UserID, label+".jpg", NextSyntheticDocbankNodeID(), virtualPath,
 		uuid.NewString(), hex.EncodeToString(digest[:]))
 	require.NoError(t, err)
 	_, err = rw.ExecContext(ctx, `UPDATE assets SET state='ready' WHERE id=?`, id)

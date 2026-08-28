@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/testutil"
 )
 
 // InsertMedia inserts a primary photo for owner with fields from the
@@ -74,7 +75,7 @@ func InsertMedia(t *testing.T, rw *sql.DB, p owners.Principal, id string, m medi
 			current_version_id, sha256
 		) VALUES (?, ?, ?, ?, 'primary', ?, ?, ?, ?, ?, ?, ?)`,
 		fileID, row.ID, p.Hub, p.UserID, row.MimeType, row.OriginalFilename,
-		row.Size, time.Now().UnixNano(), virtualPath, uuid.NewString(), sha)
+		row.Size, testutil.NextSyntheticDocbankNodeID(), virtualPath, uuid.NewString(), sha)
 	require.NoError(t, err)
 	_, err = rw.ExecContext(ctx, `UPDATE assets SET state = 'ready' WHERE id = ?`, row.ID)
 	require.NoError(t, err)
