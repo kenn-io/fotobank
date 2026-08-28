@@ -70,7 +70,7 @@ func TestDecodeJPEGOrientation6RotatesDimensions(t *testing.T) {
 }
 
 func TestDecodeHEICReturnsErrNoPreview(t *testing.T) {
-	// HEIC -> no_preview per spec §11.4. Decode does not touch src.
+	// HEIC returns no_preview without reading src.
 	_, err := thumb.Decode("image/heic", bytes.NewReader(nil))
 	require.ErrorIs(t, err, thumb.ErrNoPreview)
 }

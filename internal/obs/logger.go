@@ -1,7 +1,7 @@
 // Package obs is fotobank's observability layer: the canonical slog
 // logger, a private metrics registry, and the admin HTTP listener that
 // hosts /metrics, /readyz, and (optionally) pprof. See
-// docs/superpowers/specs/2026-04-25-fotobank-observability-design.md.
+// docs/architecture/operations.md.
 package obs
 
 import (

@@ -1,7 +1,7 @@
 // Package geo provides an offline reverse geocoder backed by Natural
 // Earth 1:10m. It produces coarse country/region/city labels suitable
 // for an info panel; it does NOT produce neighborhood/street-level
-// labels — that's an explicit out-of-scope deferral, see F2.1 spec.
+// labels.
 package geo
 
 import (
@@ -21,7 +21,7 @@ import (
 //go:embed data/ne_10m_populated_places.geojson
 var dataFS embed.FS
 
-// City-threshold defaults from spec §6.5.
+// A city farther than 25 km from the coordinate is not included in the label.
 const (
 	cityMaxDistanceKm = 25.0
 	earthRadiusKm     = 6371.0

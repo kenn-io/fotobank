@@ -365,8 +365,8 @@ func (l *displayCacheLRU) shouldUpsert(p owners.Principal, now time.Time) bool {
 
 // WithHiddenUnlock wraps next so that requests carrying a valid hidden-unlock
 // cookie get an UnlockClaim attached to the request context. Missing, invalid,
-// or expired cookies do NOT reject the request — filtering belongs to
-// service/repo per spec §1.3.
+// or expired cookies do not reject the request; filtering belongs to the
+// service and repository layers.
 //
 // Must run INSIDE WithMiddleware (after identity is resolved) because it reads
 // IdentityFromContext to verify that the session principal matches the caller.

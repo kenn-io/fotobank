@@ -381,8 +381,8 @@ func TestCheckAlbumAccessOverlappingAlbumLiveScopesORsDownload(t *testing.T) {
 }
 
 // CheckMediaAccess and CheckAlbumAccess share the same validateAndRetain
-// path as ResolveAll, so the multi-owner warn log (spec §6.1 step 4)
-// must fire on all three entry points, not just ResolveAll. Guards
+// path as ResolveAll, so the multi-owner warning must fire on all three entry
+// points, not just ResolveAll. This guards
 // against a future refactor that accidentally scopes the log to
 // ResolveAll.
 

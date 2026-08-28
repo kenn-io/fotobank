@@ -448,7 +448,6 @@ func validateGPSPair(lat, lon *float64) error {
 }
 
 // GPSBackfillMode discriminates what `gps backfill` considers a target.
-// See spec §4.7 / §7.4.
 type GPSBackfillMode int
 
 const (
@@ -536,8 +535,8 @@ func (r *Repo) UpdateGPSTx(
 	return nil
 }
 
-// ListGPSBackfillCandidates enumerates rows for `gps backfill`. Always
-// excludes media_type='video' (video GPS is out of scope per spec §5.5).
+// ListGPSBackfillCandidates enumerates rows for `gps backfill`. It always
+// excludes media_type='video' because video GPS extraction is not supported.
 // Rows are ordered by id and paginated via a keyset cursor: pass
 // afterID="" for the first page, then the last returned row's ID for
 // subsequent pages. Keyset (rather than offset) is required because the

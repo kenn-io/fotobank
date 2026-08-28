@@ -2,7 +2,7 @@
 // AI surface can be reasoned about independently of the rest of the API.
 // Routes are only registered when an AIService is wired into Deps; the
 // OpenAPI dumper passes Deps{} so the AI surface is absent from the
-// dumped spec until the runtime wires it in (Plan O).
+// dumped spec while the runtime wires it explicitly.
 package httpapi
 
 import (

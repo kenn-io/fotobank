@@ -648,7 +648,7 @@ CREATE TABLE auth_hidden_lockout (
 
 -- ============================================================
 -- AI: tag and caption pipeline.
--- See docs/superpowers/specs/2026-04-30-fotobank-ai-tag-caption-design.md.
+-- See docs/architecture/search-and-ai.md.
 -- ============================================================
 
 -- One row per task run (or in-flight insert that gets staled on retry).
@@ -727,8 +727,8 @@ CREATE TABLE ai_skipped (
 );
 
 -- ============================================================
--- Search v1: embedding generations and per-media vec mapping.
--- See docs/superpowers/specs/2026-05-01-fotobank-search-design.md §5.3-§5.4.
+-- Search: embedding generations and per-media vector mapping.
+-- See docs/architecture/search-and-ai.md.
 -- ============================================================
 
 CREATE TABLE embedding_generations (

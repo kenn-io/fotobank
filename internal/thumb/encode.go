@@ -45,8 +45,8 @@ func Resize(src image.Image, maxEdge int) image.Image {
 }
 
 // EncodeJPEG writes img to w as JPEG at the given quality (1-100).
-// Plan C chose JPEG over WebP because the only pure-Go WebP encoder
-// is lossless-only; see spec §7.2.
+// JPEG is used instead of WebP because the available pure-Go WebP encoder
+// is lossless-only.
 func EncodeJPEG(w io.Writer, img image.Image, quality int) error {
 	if quality < 1 || quality > 100 {
 		return fmt.Errorf("thumb: jpeg quality out of range: %d", quality)

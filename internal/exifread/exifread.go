@@ -24,8 +24,8 @@ type Metadata struct {
 	ISO          int
 	Aperture     float64
 
-	// RAW hint: an embedded JPEG preview is present and the thumb
-	// worker should attempt to extract it (Plan C).
+	// RAW hint: an embedded JPEG preview is present and the thumbnail
+	// worker should attempt to extract it.
 	HasEmbeddedPreview bool
 
 	// Videos.

@@ -1,14 +1,13 @@
 # fotobank
 
-Fotobank is a self-hosted photo archive and browsing app for people who want
-ordinary files on their own storage to remain the source of truth.
+Fotobank is a self-hosted photo archive and browsing app built around Docbank's
+content-addressed storage. Fotobank owns the photo-library model—metadata,
+albums, sharing, privacy, thumbnails, and search—while Docbank is becoming the
+authority for imported photos, videos, RAW files, sidecars, and their versions.
 
-It imports photos and videos into a predictable NAS-backed directory layout,
-keeps a SQLite metadata registry, generates thumbnails, and serves a web
-library for browsing, albums, sharing, hidden photos, and AI-assisted search.
-It is being built around one real operating environment: a personal/family
-photo archive on NAS, with optional local flash caching and coexistence with
-Lightroom Classic.
+Import copies source files and leaves them untouched. Writable, partial
+checkouts will provide ordinary files for Lightroom Classic and filesystem
+tools without making a working directory the archive authority.
 
 Fotobank is not trying to be every photo product for every household. It is a
 small, inspectable archive manager optimized for my own storage topology,
@@ -32,12 +31,12 @@ project is headed, not to promise a stable install experience today.
 
 Fotobank is built around a few opinions:
 
-- **The filesystem matters.** Originals are imported into ordinary
-  date-oriented directories with stable names. The library should remain
-  inspectable with shell tools, Finder, Lightroom Classic, backup software, and
-  future migration scripts.
-- **NAS is authoritative.** Durable bytes live on NAS. Local flash is a cache
-  for performance, not the place where irreplaceable data lives.
+- **Working files matter.** Selected media should be available as ordinary
+  writable files for Lightroom Classic, Finder, and shell tools. Those files
+  are explicit checkouts, not hidden storage internals.
+- **Docbank is content authority.** Imported media and immutable versions live
+  in Docbank. NAS can host Docbank and durable backups; local flash and
+  Fotobank thumbnails remain disposable performance layers.
 - **SQLite is enough for the metadata core.** The app is meant to be simple to
   run, snapshot, inspect, and restore.
 - **The CLI and web app should share one write path.** Humans use the web UI;
@@ -83,8 +82,9 @@ project I would look at.
 Fotobank is different because it is narrower and more personal. I wanted a
 system where:
 
-- import-time filesystem organization is central, not incidental;
-- NAS remains the authoritative archive and local flash remains disposable;
+- writable filesystem checkouts remain explicit and rebuildable;
+- Docbank is the authoritative media archive and local flash remains
+  disposable;
 - Lightroom Classic can continue to watch the same organized tree;
 - one Go binary owns both the CLI and server write paths;
 - SQLite is the primary metadata store;
@@ -119,11 +119,11 @@ binary.
   `internal/search`, and `internal/ai` hold the domain packages.
 - `frontend/` is the Svelte app built into `internal/web/dist`.
 
-Storage is split into:
-
-- **NAS:** authoritative originals, thumbnails, and backup snapshots.
-- **Flash:** local SQLite database plus optional cache for thumbnails and
-  recent originals.
+The Docbank authority cutover is in progress. The active import path still uses
+the earlier NAS-backed media table, while the embedded Docbank boundary and
+replacement asset/file domain are already present. The current and stable
+boundaries are documented in
+[`docs/architecture/`](docs/architecture/README.md).
 
 Identity supports local stub mode for development and header mode for
 deployment behind a trusted identity-aware reverse proxy.

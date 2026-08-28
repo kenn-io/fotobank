@@ -448,7 +448,7 @@ func (g *Generations) PromoteFromBuilding(ctx context.Context, id int64) error {
 
 // Retire transitions id to the retired state and stamps retired_at.
 // The vec0 table is left in place — the compactor drops it once the
-// retain_retired_days window elapses (see Plan K1).
+// retain_retired_days window elapses.
 func (g *Generations) Retire(ctx context.Context, id int64) error {
 	if _, err := g.rw.ExecContext(ctx,
 		`UPDATE embedding_generations

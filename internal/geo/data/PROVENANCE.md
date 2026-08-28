@@ -26,8 +26,8 @@ and conversion options:
 - **`-lco COORDINATE_PRECISION=6`** caps coordinates at 6 decimal degrees
   (~11cm at the equator) — far finer than GPS (~5-10m) and dramatically
   smaller than GDAL's 15-decimal default.
-- **`-select <fields>`** keeps only the fields the F2.1 resolver consumes
-  (per spec §6.6); the full Natural Earth schema includes ~150 localized
+- **`-select <fields>`** keeps only the fields the resolver consumes; the full
+  Natural Earth schema includes ~150 localized
   name variants and metadata that are dead weight here.
 - **`-simplify 0.01`** (admin_0, admin_1 only) applies Douglas-Peucker
   simplification at ~1 km tolerance. Acceptable for reverse-geocoding
