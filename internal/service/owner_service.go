@@ -121,10 +121,10 @@ func (s *OwnerService) List(ctx context.Context) ([]owners.Owner, error) {
 
 // Remove deletes the owner row for p. With purge=false, it refuses if
 // any media or asset rows still reference the owner. Purge=true is reserved
-// for Plan B (storage-layer byte deletion) and is rejected here.
+// for a future operation that also deletes owned content, and is rejected here.
 func (s *OwnerService) Remove(ctx context.Context, p owners.Principal, purge bool) error {
 	if purge {
-		return fmt.Errorf("%w: --purge requires the storage layer (Plan B)", errs.ErrInvalidArgument)
+		return fmt.Errorf("%w: --purge is not implemented", errs.ErrInvalidArgument)
 	}
 	var mediaCount, assetCount int
 	row := s.repo.DB().QueryRowContext(ctx,

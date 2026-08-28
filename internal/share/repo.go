@@ -581,8 +581,8 @@ func (r *Repo) ValidateHeaderScopes(
 	return out, rows.Err()
 }
 
-// CoverMediaByScopes runs pass 2 of CheckMediaAccess per spec §6.3:
-// given a retained-owner validated slice, returns one AccessPath per
+// CoverMediaByScopes runs the coverage-query pass of CheckMediaAccess.
+// Given a retained-owner validated slice, it returns one AccessPath per
 // covering scope. The retained-owner predicate on scopes.owner_hub /
 // owner_user_id is a belt-and-braces guard so a bug in the Go-side
 // degradation cannot leak a dropped-owner scope through the DB layer.
@@ -635,8 +635,7 @@ func (r *Repo) CoverMediaByScopes(
 	// scope_media / album_media membership. The top-level AND on the
 	// media row for the requested id ensures a hidden photo (or a sidecar
 	// whose primary is hidden) cannot pass through to the grantee.
-	// Permanent design constraint per spec §4.2: no IncludeHidden
-	// escape hatch at this surface.
+	// Grantee reads have no IncludeHidden escape hatch.
 	q := `
 WITH validated(uuid, target_type, target_album_id, allow_download) AS (
     VALUES ` + strings.Join(valRows, ",") + `
@@ -782,7 +781,7 @@ type SharedMediaCursor struct {
 // id ASC (display_time = COALESCE(timestamp, imported_at)). can_download
 // is MAX(allow_download) across covering scopes. When albumID is
 // non-empty, the result is further restricted to album_media members of
-// that album. See spec §6.4 / §9.2.
+// that album.
 func (r *Repo) ListSharedMediaIDs(
 	ctx context.Context,
 	validated []Scope,

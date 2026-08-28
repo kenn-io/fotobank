@@ -48,7 +48,7 @@ func TestHeaderProviderRequiresUserIDAndHub(t *testing.T) {
 func TestHeaderProviderCallsGuard(t *testing.T) {
 	hp := identity.NewHeader(identity.HeaderConfig{
 		UserIDHeader: "X-Auth-User-Id", HubHeader: "X-Auth-Hub",
-	}, identity.NewGuard(identity.GuardConfig{ListenAddress: "0.0.0.0:8090"})) // public bind with no CIDR/secret/mTLS → guard rejects
+	}, identity.NewGuard(identity.GuardConfig{ListenAddress: "0.0.0.0:8090"})) // public bind with no CIDR or secret → guard rejects
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("X-Auth-Hub", "h")

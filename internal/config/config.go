@@ -134,7 +134,6 @@ type IdentityHeader struct {
 	TrustedProxyCIDRs []string `toml:"trusted_proxy_cidrs"`
 	ProxySecretHeader string   `toml:"proxy_secret_header"`
 	ProxySecret       string   `toml:"proxy_secret"`
-	ProxyMTLSCAFile   string   `toml:"proxy_mtls_ca_file"`
 }
 
 type HTTP struct {
@@ -241,7 +240,6 @@ func expandHomePaths(c *Config) error {
 		&c.Docbank.Root,
 		&c.NAS.Root,
 		&c.Imports.FileLockPath,
-		&c.Identity.Header.ProxyMTLSCAFile,
 	}
 	for _, p := range fields {
 		expanded, err := expandHome(*p)
@@ -536,11 +534,10 @@ func (c *Config) validateHeaderGuard() error {
 	h := c.Identity.Header
 	if isLoopbackBind(c.HTTP.ListenAddress) ||
 		len(h.TrustedProxyCIDRs) > 0 ||
-		(h.ProxySecretHeader != "" && h.ProxySecret != "") ||
-		h.ProxyMTLSCAFile != "" {
+		(h.ProxySecretHeader != "" && h.ProxySecret != "") {
 		return nil
 	}
-	return fmt.Errorf("%w: [identity].mode=header requires loopback bind, trusted_proxy_cidrs, proxy_secret (header + value), or mtls",
+	return fmt.Errorf("%w: [identity].mode=header requires loopback bind, trusted_proxy_cidrs, or proxy_secret (header + value)",
 		errs.ErrBadConfiguration)
 }
 

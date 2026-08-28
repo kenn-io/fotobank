@@ -90,7 +90,7 @@ func UnlockClaimFromContext(ctx context.Context) (UnlockClaim, bool) {
 	return c, ok
 }
 
-// Argon2id parameters — locked per spec §2.3; not configurable in F2.4.
+// Argon2id parameters are intentionally fixed rather than operator-configurable.
 const (
 	argon2Memory     = 19456 // KiB
 	argon2Time       = 2

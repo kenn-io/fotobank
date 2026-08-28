@@ -67,9 +67,8 @@ func AllSizes() []Size {
 
 // ThumbKey is the storage key for one thumbnail. The versioned v{N}/
 // subdirectory makes every write write-once — critical because
-// storage.Store.Write rejects overwrites (see spec §7.1). Files are
-// JPEG (see spec §7.2); format change would bump this function's
-// suffix.
+// storage.Store.Write rejects overwrites. Files are JPEG; a format
+// change must change this function's suffix.
 func ThumbKey(mediaID string, version int, size Size) string {
 	return fmt.Sprintf(".thumbs/%s/v%d/%s.jpg", mediaID, version, size)
 }

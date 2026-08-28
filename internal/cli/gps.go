@@ -54,7 +54,7 @@ type gpsBackfillOpts struct {
 //   - relabel: re-resolve labels for rows that already have coords;
 //     never re-reads EXIF.
 //
-// Videos are skipped in all modes (per spec §5.5).
+// Videos are skipped in all modes because video GPS extraction is unsupported.
 func newGPSBackfillCmd() *cobra.Command {
 	var opts gpsBackfillOpts
 	cmd := &cobra.Command{

@@ -80,9 +80,8 @@ func NewScopeResolver(r *Repo, now func() time.Time, logger *slog.Logger) *Scope
 // ResolveAll validates the presented scopes and returns the fully-
 // expanded view. Header input is sanitised (dedupe, drop empty,
 // drop syntactically-invalid UUIDs, cap at MaxHeaderScopes) before
-// being validated by the repo. The single-owner degradation rule
-// from spec §6.1 is applied to the repo result: when the validated
-// set spans multiple owners, only the lexicographically smallest
+// being validated by the repo. When the validated set spans multiple
+// owners, only the lexicographically smallest
 // (owner_hub, owner_user_id) is retained.
 func (r *ScopeResolver) ResolveAll(
 	ctx context.Context,
@@ -114,9 +113,8 @@ func (r *ScopeResolver) ResolveAll(
 }
 
 // CheckMediaAccess answers "can caller see media mediaID via one of
-// these presented scopes?" Runs the two-pass shape from spec §6.3:
-// pass 1 is sanitize + validate + single-owner degradation (shared
-// with ResolveAll); pass 2 is the per-item coverage query.
+// these presented scopes?" It first sanitizes, validates, and retains one
+// owner, then runs the per-item coverage query.
 func (r *ScopeResolver) CheckMediaAccess(
 	ctx context.Context,
 	caller owners.Principal,
@@ -136,7 +134,7 @@ func (r *ScopeResolver) CheckMediaAccess(
 // CheckAlbumAccess answers "can caller see album albumID's metadata
 // and contents?" It checks album_live only — a media_set scope does
 // not imply album visibility even if its membership happens to belong
-// to that album. See spec §4.1 + §11.6.
+// to that album.
 func (r *ScopeResolver) CheckAlbumAccess(
 	ctx context.Context,
 	caller owners.Principal,
@@ -182,8 +180,8 @@ func (r *ScopeResolver) validateAndRetain(
 	return retained, retained[0].Owner, nil
 }
 
-// logMultiOwnerDegradation emits the spec §6.1 warn log when a multi-
-// owner presentation is reduced to a single retained owner.
+// logMultiOwnerDegradation warns when a multi-owner presentation is reduced
+// to one retained owner.
 func (r *ScopeResolver) logMultiOwnerDegradation(
 	caller, retained owners.Principal,
 	distinctOwners []owners.Principal,
@@ -252,7 +250,7 @@ func sanitizeHeaderScopes(in []string) []string {
 }
 
 // retainSmallestOwner returns the subset of scopes belonging to the
-// lexicographically smallest (hub, user_id) owner. See spec §6.1.
+// lexicographically smallest (hub, user_id) owner.
 func retainSmallestOwner(scopes []Scope) []Scope {
 	if len(scopes) == 0 {
 		return nil

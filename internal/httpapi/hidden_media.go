@@ -82,7 +82,7 @@ func registerListHiddenMedia(
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
 		}
 		caller := id.Principal.OwnersPrincipal()
-		// List requires the unlock cookie — return 403 without it (spec §2.4).
+		// List requires the unlock cookie and returns 403 without it.
 		// This differs from direct-by-id which returns 404 (anti-enumeration).
 		claim, hasClaim := hidden.UnlockClaimFromContext(ctx)
 		if !hasClaim || claim.Principal != caller {

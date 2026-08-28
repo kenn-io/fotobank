@@ -51,7 +51,6 @@ request_id_header = "X-Auth-Request-Id"
 trusted_proxy_cidrs = []             # e.g. ["10.0.0.0/24"]
 proxy_secret_header = ""             # when set, require X-Auth-Proxy-Secret match
 proxy_secret = ""                    # loaded from env FOTOBANK_PROXY_SECRET if unset here
-proxy_mtls_ca_file = ""              # PEM file of CA certs for client auth
 
 [http]
 listen_address = "127.0.0.1:8090"    # TCP host:port or "unix:/path/to/socket"

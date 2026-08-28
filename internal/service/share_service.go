@@ -280,8 +280,8 @@ func (s *ShareService) PreviewScope(ctx context.Context, uuid string, caller own
 	return out, nil
 }
 
-// previewWarnings implements the spec §7.7 warning set: broker not yet
-// active, expiry already passed, empty-on-the-wire album_live, and a
+// previewWarnings reports a broker that is not active, expired scopes,
+// empty-on-the-wire album_live scopes, and a
 // "more than 25% of thumbs not ready" smoke signal.
 func previewWarnings(exp share.ExpandedScope, mediaRows []media.Media, now time.Time) []string {
 	var w []string

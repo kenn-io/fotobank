@@ -16,7 +16,7 @@ import (
 )
 
 // translateAlbumError maps service-layer errors to huma.StatusError with
-// Plan D's rules (which differ from the global Translate):
+// album-specific rules that differ from the global Translate:
 //
 //   - errs.ErrOwnerMismatch → 500. In the albums surface this means the
 //     AlbumService pre-flight missed a row and the DB trigger fired.

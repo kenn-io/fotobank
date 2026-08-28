@@ -109,7 +109,7 @@ func parseExifTimestamp(by map[string]exif.ExifTag) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// parseExifGPSCoords enforces the validation matrix from F2.1 spec §5.3.
+// parseExifGPSCoords validates and converts EXIF GPS fields.
 // Returns (lat, lon, true) only when every condition holds: rationals
 // present and non-zero-denominator, refs are exactly N|S and E|W,
 // resulting decimals are in -90..90 / -180..180, and (lat, lon) is not

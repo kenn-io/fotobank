@@ -81,7 +81,7 @@ func (b *EventBus) EmitAIEmbedGenerationCreated(p owners.Principal, ev AIEmbedGe
 
 // EmitAIEmbedGenerationActivated publishes an ai.embed.generation_activated
 // event to p. Fires from the activator's Tick after a successful
-// PromoteFromBuilding (Plan H1). The event payload carries the
+// PromoteFromBuilding. The event payload carries the
 // promoted row's id and fingerprint so listeners can route by either.
 func (b *EventBus) EmitAIEmbedGenerationActivated(p owners.Principal, ev AIEmbedGenerationEvent) {
 	data, err := json.Marshal(ev)

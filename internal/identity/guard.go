@@ -12,8 +12,8 @@ import (
 )
 
 // GuardConfig declares the ingress checks the direct-access guard enforces.
-// At least one of loopback/UDS bind, trusted CIDRs, proxy secret, or mTLS
-// must be configured; otherwise every request is rejected.
+// At least one of loopback/UDS bind, trusted CIDRs, or proxy secret must be
+// configured; otherwise every request is rejected.
 type GuardConfig struct {
 	// ListenAddress is the server bind address (e.g. "127.0.0.1:8090" or
 	// "unix:/run/fotobank.sock"). Loopback and UDS binds are trusted by
@@ -28,10 +28,6 @@ type GuardConfig struct {
 	// ProxySecret is the expected value of ProxySecretHeader. Empty
 	// disables the check. Comparison is constant-time.
 	ProxySecret string
-	// ProxyMTLSCAFile is the path to the CA bundle that validates client
-	// certificates. A non-empty value signals the TLS layer enforces
-	// mTLS, so the guard trusts the transport to reject bad clients.
-	ProxyMTLSCAFile string
 }
 
 // Guard decides whether an incoming request is permitted to reach a
@@ -48,7 +44,6 @@ type guardMode struct {
 	loopbackBind bool
 	cidrCheck    bool
 	secretCheck  bool
-	mtls         bool
 }
 
 // NewGuard builds a Guard from cfg, parsing the configured CIDR list and
@@ -67,7 +62,6 @@ func NewGuard(cfg GuardConfig) *Guard {
 			loopbackBind: isLoopbackOrUDS(cfg.ListenAddress),
 			cidrCheck:    len(nets) > 0,
 			secretCheck:  cfg.ProxySecretHeader != "" && cfg.ProxySecret != "",
-			mtls:         cfg.ProxyMTLSCAFile != "",
 		},
 	}
 	if g.mode.secretCheck {
@@ -78,12 +72,12 @@ func NewGuard(cfg GuardConfig) *Guard {
 
 // Check returns nil when the request satisfies the configured ingress
 // checks and an error wrapping errs.ErrDirectAccessBlocked otherwise.
-// Loopback/UDS bind and mTLS are treated as trusted transports; CIDR and
-// proxy-secret checks, when configured, are additive and must all pass.
+// Loopback/UDS binds are trusted transports; CIDR and proxy-secret checks,
+// when configured, are additive and must all pass.
 func (g *Guard) Check(r *http.Request) error {
 	// At least one ingress check must be configured, otherwise a public
-	// bind with no CIDR/secret/mTLS would expose the server.
-	if !g.mode.loopbackBind && !g.mode.mtls && !g.mode.cidrCheck && !g.mode.secretCheck {
+	// bind with no CIDR or secret would expose the server.
+	if !g.mode.loopbackBind && !g.mode.cidrCheck && !g.mode.secretCheck {
 		return fmt.Errorf("%w: no ingress check satisfied", errs.ErrDirectAccessBlocked)
 	}
 

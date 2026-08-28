@@ -60,8 +60,7 @@ func newImporterFixture(t *testing.T) *importerFixture {
 	return &importerFixture{owner: owner, store: store, repo: repo, nas: nas, db: d}
 }
 
-// copyFile copies src to dst without preserving permissions, a thin
-// io.Copy wrapper that matches the Plan B helper sketch.
+// copyFile copies src to dst without preserving permissions.
 func copyFile(t *testing.T, src, dst string) {
 	t.Helper()
 	r := require.New(t)

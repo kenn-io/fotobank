@@ -49,8 +49,8 @@ func TestNaturalEarthResolveKnownCities(t *testing.T) {
 	}
 }
 
-// TestNaturalEarthCoordOrderFootgun guards against the orb.Point{lon, lat}
-// vs. orb.Point{lat, lon} silent bug (spec §6.4). Resolving with the
+// TestNaturalEarthCoordOrderFootgun guards against the silent
+// orb.Point{lon, lat} vs. orb.Point{lat, lon} bug. Resolving with the
 // arguments swapped MUST NOT produce a Paris-shaped label — Paris's
 // (lat=48.8566, lon=2.3522) swapped becomes (lat=2.3522, lon=48.8566)
 // which lands in the Indian Ocean / Somalia.

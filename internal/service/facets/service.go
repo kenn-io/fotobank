@@ -81,9 +81,8 @@ type TagCount struct {
 
 // PlacesCount aggregates the (lat, lng) presence into two buckets so
 // the Places facet can render "with GPS" / "without GPS" toggles
-// without a per-coordinate breakdown. The reverse-geocoded
-// LocationLabel facet — when v2 lands — will surface as a separate
-// list; this Plan A shape stays minimal.
+// without a per-coordinate breakdown. Location labels are a separate
+// projection rather than a per-coordinate facet.
 type PlacesCount struct {
 	WithGPS    int
 	WithoutGPS int

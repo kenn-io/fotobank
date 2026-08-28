@@ -53,16 +53,6 @@ func TestGuardChecksProxySecretConstantTime(t *testing.T) {
 	require.NoError(t, g.Check(r))
 }
 
-func TestGuardAcceptsWhenMTLSConfigured(t *testing.T) {
-	// With mTLS configured, the guard trusts the TLS layer to reject
-	// unverified clients; Check returns nil.
-	g := identity.NewGuard(identity.GuardConfig{
-		ListenAddress:   "0.0.0.0:8090",
-		ProxyMTLSCAFile: "/etc/ssl/ca.pem",
-	})
-	require.NoError(t, g.Check(httptest.NewRequest("GET", "/", nil)))
-}
-
 func TestGuardAdditiveChecks(t *testing.T) {
 	// When CIDR + proxy secret both set, both must pass.
 	g := identity.NewGuard(identity.GuardConfig{

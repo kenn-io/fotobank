@@ -246,8 +246,8 @@ func TestWorkerDrainsPNGPhotoToReady(t *testing.T) {
 	<-done
 }
 
-// TestWorkerStaleWriteDoesNotCorruptReclaim is the regression guard for
-// spec §5.1: after a sweep bumps thumb_version, the worker's next claim
+// TestWorkerStaleWriteDoesNotCorruptReclaim verifies that after a sweep bumps
+// thumb_version, the worker's next claim
 // must write to the v+1 key, NOT retry the v0 key (which would hit
 // storage.ErrPathOccupied because the prior attempt's bytes linger).
 func TestWorkerStaleWriteDoesNotCorruptReclaim(t *testing.T) {
