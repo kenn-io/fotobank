@@ -219,4 +219,5 @@ make api-generate     # regenerate OpenAPI and TypeScript schema
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Copyright 2026 Kenn Software LLC. Licensed under the Apache License 2.0. See
+[LICENSE](LICENSE) and [NOTICE](NOTICE).
