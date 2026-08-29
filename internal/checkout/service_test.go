@@ -69,6 +69,7 @@ func TestServiceRejectsCheckoutRootMovedAfterValidation(t *testing.T) {
 	r.NoError(os.Mkdir(root, 0o700))
 	validatedRoot, err := fixture.content.ResolveCheckoutRoot(root)
 	r.NoError(err)
+	t.Cleanup(func() { r.NoError(validatedRoot.Close()) })
 	if err := os.Rename(root, filepath.Join(parent, "moved-checkout")); err != nil {
 		t.Skipf("renaming an opened directory is unavailable: %v", err)
 	}

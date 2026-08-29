@@ -110,22 +110,10 @@ func TestFlashCacheRejectsTraversalAndAbsoluteKeys(t *testing.T) {
 
 func TestFlashCacheJanitorEvictsByAge(t *testing.T) {
 	r := require.New(t)
-	fc, _, flashRoot, p := newFlashCache(t)
-	_, err := fc.Write(context.Background(), p, "old.bin", bytes.NewReader([]byte("old")))
-	r.NoError(err)
-	// Populate flash via a read.
-	rc, err := fc.ReadRange(context.Background(), p, "old.bin", 0, -1)
-	r.NoError(err)
-	r.NoError(rc.Close())
-
-	// Poll until the populate finishes.
+	fc, _, flashRoot, _ := newFlashCache(t)
 	flashPath := filepath.Join(flashRoot, "key1", "old.bin")
-	for range 50 {
-		if _, err := os.Stat(flashPath); err == nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	r.NoError(os.MkdirAll(filepath.Dir(flashPath), 0o700))
+	r.NoError(os.WriteFile(flashPath, []byte("old"), 0o600))
 
 	// Back-date the flash file to look old.
 	old := time.Now().Add(-10 * 24 * time.Hour)
@@ -134,7 +122,7 @@ func TestFlashCacheJanitorEvictsByAge(t *testing.T) {
 	// Run the janitor directly (not on a timer).
 	r.NoError(fc.Evict(context.Background()))
 
-	_, err = os.Stat(flashPath)
+	_, err := os.Stat(flashPath)
 	r.ErrorIs(err, os.ErrNotExist)
 }
 
