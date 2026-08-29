@@ -132,7 +132,27 @@ import source. Discovery traverses that canonical root and rejects supported
 media paths that are symbolic links instead of following them beyond the
 validated tree.
 
-Writable checkouts for Lightroom are not implemented yet. Their architectural
-boundary is already fixed: a checkout is a materialized working copy, never
-authority, and must never hardlink writable files to Docbank's content-addressed
-objects.
+## Writable checkouts
+
+A checkout is a materialized working copy for tools such as Lightroom, never
+content authority. `fotobank checkout estimate` reports the distinct file and
+byte count selected by explicit assets, albums, inclusive capture-year ranges,
+or all ready assets. An all-assets checkout requires a caller-supplied byte
+ceiling so a second full archive copy is never created implicitly.
+
+`fotobank checkout create` requires an existing empty directory outside the
+Docbank, NAS, and flash-managed roots. It resolves every selected file to its
+recorded immutable Docbank version and publishes a verified ordinary copy via
+a temporary file and rename. It never hardlinks a writable file to a Docbank
+content-addressed object.
+
+The `capture_date` layout keeps every asset's related files together beneath
+`YYYY/MM/DD/{asset-uuid}/`; assets without capture time use
+`undated/{asset-uuid}/`. Each entry records its relative path, exact base
+version, SHA-256, size, and initial filesystem observation. Checkout creation
+is `building` until every entry is published and then becomes `active`; a
+materialization failure makes the durable checkout `error` without pretending
+the partial working tree is usable.
+
+Checkouts are currently one-way materializations. Fotobank does not yet scan
+working files or commit Lightroom changes back as new Docbank versions.

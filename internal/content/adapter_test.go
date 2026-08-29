@@ -63,6 +63,23 @@ func TestAdapterResolveImportRootRejectsManagedStorageAlias(t *testing.T) {
 	r.ErrorIs(err, errs.ErrBadConfiguration)
 }
 
+func TestAdapterResolveCheckoutRootRejectsManagedStorageAlias(t *testing.T) {
+	r := require.New(t)
+	managedRoot := t.TempDir()
+	adapter, err := content.Open(t.Context(), content.Config{
+		Root: t.TempDir(), ManagedRoots: []string{managedRoot},
+	})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+	alias := filepath.Join(t.TempDir(), "checkout-link")
+	if err := os.Symlink(managedRoot, alias); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	_, err = adapter.ResolveCheckoutRoot(alias)
+	r.ErrorIs(err, errs.ErrBadConfiguration)
+}
+
 func TestAdapterCreate(t *testing.T) {
 	require := require.New(t)
 	adapter, err := content.Open(t.Context(), content.Config{Root: t.TempDir()})
