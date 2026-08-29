@@ -147,6 +147,13 @@ recorded immutable Docbank version and publishes a verified ordinary copy with
 an atomic no-replace operation inside a root-bound filesystem view. It never
 hardlinks a writable file to a Docbank content-addressed object.
 
+The content adapter canonicalizes and checks a checkout root, then returns an
+opaque validated-root value. The checkout service accepts that value rather
+than a filesystem string, so transports cannot bypass the storage-overlap
+check. Once a checkout row exists, every later failure attempts the `error`
+transition through a short cleanup context independent of caller cancellation;
+if that database write also fails, the returned error reports both failures.
+
 The `capture_date` layout keeps every asset's related files together beneath
 `YYYY/MM/DD/{asset-uuid}/`; assets without capture time use
 `undated/{asset-uuid}/`. Each entry records its relative path, exact base

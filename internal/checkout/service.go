@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/owners"
@@ -36,7 +37,7 @@ func NewMaterializer(repo *Repo, resolver *contentresolver.Resolver) *Materializ
 }
 
 type CreateRequest struct {
-	Root          string
+	Root          content.CheckoutRoot
 	Selection     Selection
 	CapacityLimit int64
 }
@@ -70,9 +71,6 @@ func (s *Materializer) Create(
 	if s == nil || s.repo == nil || s.resolver == nil {
 		return CreateResult{}, fmt.Errorf("create checkout: %w: service is not configured", errs.ErrInvalidArgument)
 	}
-	if !filepath.IsAbs(request.Root) || filepath.Clean(request.Root) != request.Root {
-		return CreateResult{}, fmt.Errorf("create checkout: %w: root must be a canonical absolute path", errs.ErrInvalidArgument)
-	}
 	if request.CapacityLimit < 0 {
 		return CreateResult{}, fmt.Errorf("create checkout: %w: capacity limit cannot be negative", errs.ErrInvalidArgument)
 	}
@@ -80,7 +78,8 @@ func (s *Materializer) Create(
 		return CreateResult{}, fmt.Errorf("create checkout: %w: all-assets checkout requires --max-bytes", errs.ErrInvalidArgument)
 	}
 	request.Selection = normalizeSelection(request.Selection)
-	workingRoot, err := os.OpenRoot(request.Root)
+	rootPath := request.Root.Path()
+	workingRoot, err := request.Root.Open()
 	if err != nil {
 		return CreateResult{}, fmt.Errorf("create checkout: open root: %w", err)
 	}
@@ -105,7 +104,7 @@ func (s *Materializer) Create(
 	}
 	now := s.now().UTC()
 	checkout := Checkout{
-		ID: s.newID(), Owner: caller, Root: request.Root, Layout: "capture_date",
+		ID: s.newID(), Owner: caller, Root: rootPath, Layout: "capture_date",
 		Selection: request.Selection, State: StateBuilding,
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -130,7 +129,7 @@ func (s *Materializer) Create(
 		}
 	}
 	if err := s.repo.SetState(ctx, checkout.ID, StateActive, "", s.now().UTC()); err != nil {
-		return CreateResult{}, err
+		return CreateResult{}, s.fail(ctx, checkout.ID, fmt.Errorf("activate checkout: %w", err))
 	}
 	checkout.State = StateActive
 	checkout.UpdatedAt = s.now().UTC()
@@ -138,7 +137,9 @@ func (s *Materializer) Create(
 }
 
 func (s *Materializer) fail(ctx context.Context, checkoutID string, cause error) error {
-	stateErr := s.repo.SetState(ctx, checkoutID, StateError, cause.Error(), s.now().UTC())
+	stateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	stateErr := s.repo.SetState(stateCtx, checkoutID, StateError, cause.Error(), s.now().UTC())
 	return errors.Join(cause, stateErr)
 }
 

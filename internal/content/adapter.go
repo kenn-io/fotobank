@@ -20,6 +20,28 @@ type Config struct {
 	ManagedRoots []string
 }
 
+// CheckoutRoot is an existing canonical working directory that the opened
+// adapter verified does not overlap Docbank or Fotobank-managed storage. Its
+// path cannot be constructed outside this package.
+type CheckoutRoot struct {
+	path string
+}
+
+// Path returns the canonical path recorded in Fotobank's checkout catalog.
+func (r CheckoutRoot) Path() string { return r.path }
+
+// Open binds filesystem operations to the validated working directory.
+func (r CheckoutRoot) Open() (*os.Root, error) {
+	if r.path == "" {
+		return nil, fmt.Errorf("%w: checkout root is not validated", errs.ErrInvalidArgument)
+	}
+	root, err := os.OpenRoot(r.path)
+	if err != nil {
+		return nil, fmt.Errorf("open checkout root: %w", err)
+	}
+	return root, nil
+}
+
 type Identity struct {
 	SHA256 string
 	Size   int64
@@ -186,8 +208,12 @@ func (a *Adapter) ResolveImportRoot(sourceRoot string) (string, error) {
 // ResolveCheckoutRoot returns an existing canonical directory after rejecting
 // overlap with Docbank authority or Fotobank-managed storage. Materializers
 // use the returned path as the working-copy root.
-func (a *Adapter) ResolveCheckoutRoot(checkoutRoot string) (string, error) {
-	return a.resolveExternalRoot(checkoutRoot, "checkout")
+func (a *Adapter) ResolveCheckoutRoot(checkoutRoot string) (CheckoutRoot, error) {
+	resolved, err := a.resolveExternalRoot(checkoutRoot, "checkout")
+	if err != nil {
+		return CheckoutRoot{}, err
+	}
+	return CheckoutRoot{path: resolved}, nil
 }
 
 func (a *Adapter) resolveExternalRoot(sourceRoot, kind string) (string, error) {

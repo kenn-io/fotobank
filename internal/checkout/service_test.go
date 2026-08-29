@@ -31,9 +31,11 @@ func TestServiceMaterializesExactVersionAndRecordsEntry(t *testing.T) {
 		Owner: fixture.owner, Timestamp: &captured, OriginalFilename: "IMG_0042.JPG",
 	})
 	root := t.TempDir()
+	validatedRoot, err := fixture.content.ResolveCheckoutRoot(root)
+	r.NoError(err)
 
 	result, err := fixture.service.Create(t.Context(), fixture.owner, checkout.CreateRequest{
-		Root: root, Selection: checkout.Selection{AssetIDs: []string{item.ID}},
+		Root: validatedRoot, Selection: checkout.Selection{AssetIDs: []string{item.ID}},
 	})
 	r.NoError(err)
 	r.Equal(checkout.StateActive, result.Checkout.State)
@@ -103,16 +105,22 @@ func TestServiceRequiresCapacityAcceptanceForAllAssets(t *testing.T) {
 		Owner: fixture.owner,
 	})
 
-	_, err := fixture.service.Create(t.Context(), fixture.owner, checkout.CreateRequest{
-		Root: t.TempDir(), Selection: checkout.Selection{All: true},
-	})
-	r.ErrorIs(err, errs.ErrInvalidArgument)
+	firstRoot, err := fixture.content.ResolveCheckoutRoot(t.TempDir())
+	r.NoError(err)
 	_, err = fixture.service.Create(t.Context(), fixture.owner, checkout.CreateRequest{
-		Root: t.TempDir(), Selection: checkout.Selection{All: true}, CapacityLimit: 4,
+		Root: firstRoot, Selection: checkout.Selection{All: true},
 	})
 	r.ErrorIs(err, errs.ErrInvalidArgument)
+	secondRoot, err := fixture.content.ResolveCheckoutRoot(t.TempDir())
+	r.NoError(err)
+	_, err = fixture.service.Create(t.Context(), fixture.owner, checkout.CreateRequest{
+		Root: secondRoot, Selection: checkout.Selection{All: true}, CapacityLimit: 4,
+	})
+	r.ErrorIs(err, errs.ErrInvalidArgument)
+	thirdRoot, err := fixture.content.ResolveCheckoutRoot(t.TempDir())
+	r.NoError(err)
 	result, err := fixture.service.Create(t.Context(), fixture.owner, checkout.CreateRequest{
-		Root: t.TempDir(), Selection: checkout.Selection{All: true}, CapacityLimit: 5,
+		Root: thirdRoot, Selection: checkout.Selection{All: true}, CapacityLimit: 5,
 	})
 	r.NoError(err)
 	r.Equal(int64(5), result.Estimate.Bytes)
