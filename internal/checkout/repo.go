@@ -182,6 +182,27 @@ func (r *Repo) Insert(ctx context.Context, checkout Checkout) error {
 	return nil
 }
 
+func (r *Repo) LiveRoots(ctx context.Context) ([]string, error) {
+	rows, err := r.ro.QueryContext(ctx, `SELECT root FROM checkouts
+		WHERE state IN ('building', 'active') ORDER BY root`)
+	if err != nil {
+		return nil, fmt.Errorf("list live checkout roots: %w", err)
+	}
+	defer rows.Close()
+	var roots []string
+	for rows.Next() {
+		var root string
+		if err := rows.Scan(&root); err != nil {
+			return nil, fmt.Errorf("list live checkout roots: scan: %w", err)
+		}
+		roots = append(roots, root)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list live checkout roots: iterate: %w", err)
+	}
+	return roots, nil
+}
+
 func (r *Repo) InsertEntry(ctx context.Context, entry Entry) error {
 	_, err := r.rw.ExecContext(ctx, `INSERT INTO checkout_entries (
 		checkout_id, file_id, relative_path, base_version_id, base_sha256,
