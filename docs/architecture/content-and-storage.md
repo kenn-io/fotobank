@@ -160,9 +160,11 @@ The `capture_date` layout keeps every asset's related files together beneath
 `YYYY/MM/DD/{asset-uuid}/`; assets without capture time use
 `undated/{asset-uuid}/`. Each entry records its relative path, exact base
 version, SHA-256, size, and initial filesystem observation. Checkout creation
-is `building` until every entry is published and then becomes `active`; a
-materialization failure makes the durable checkout `error` without pretending
-the partial working tree is usable.
+is `building` until every entry is published and then becomes `active`.
+Selector and file identifiers are detached historical snapshots, so deleting
+a source album or asset does not erase the checkout's saved selection or file
+bindings. A materialization failure makes the durable checkout `error` without
+pretending the partial working tree is usable.
 
 Checkouts are currently one-way materializations. Fotobank does not yet scan
 working files or commit Lightroom changes back as new Docbank versions.

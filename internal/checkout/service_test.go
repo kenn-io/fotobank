@@ -58,6 +58,50 @@ func TestServiceMaterializesExactVersionAndRecordsEntry(t *testing.T) {
 	r.Equal(result.Checkout.Selection, stored.Selection)
 }
 
+func TestCheckoutRetainsBindingsAfterSourceDeletion(t *testing.T) {
+	r := require.New(t)
+	fixture := newFixture(t)
+	body := []byte("authoritative photo bytes")
+	item := assetfixture.InsertContent(t, fixture.media, fixture.content, body, media.Media{
+		Owner: fixture.owner, OriginalFilename: "IMG_0042.JPG",
+	})
+	now := time.Now().UTC()
+	albumID := uuid.NewString()
+	albums := album.NewRepo(fixture.db.WriteDB(), fixture.db.ReadDB())
+	r.NoError(albums.Insert(t.Context(), album.Album{
+		ID: albumID, Owner: fixture.owner, Name: "Lightroom", CreatedAt: now, UpdatedAt: now,
+	}))
+	added, present, err := albums.AddMedia(t.Context(), albumID, []string{item.ID}, now)
+	r.NoError(err)
+	r.Equal(1, added)
+	r.Zero(present)
+	root := t.TempDir()
+	validatedRoot, err := fixture.content.ResolveCheckoutRoot(root)
+	r.NoError(err)
+
+	result, err := fixture.service.Create(t.Context(), fixture.owner, checkout.CreateRequest{
+		Root: validatedRoot,
+		Selection: checkout.Selection{
+			AssetIDs: []string{item.ID}, AlbumIDs: []string{albumID},
+		},
+	})
+	r.NoError(err)
+	entries, err := fixture.checkouts.ListEntries(t.Context(), result.Checkout.ID)
+	r.NoError(err)
+	r.Len(entries, 1)
+	r.NoError(albums.Delete(t.Context(), albumID))
+	r.NoError(fixture.media.Delete(t.Context(), item.ID))
+
+	stored, err := fixture.checkouts.Get(t.Context(), result.Checkout.ID)
+	r.NoError(err)
+	r.Equal([]string{item.ID}, stored.Selection.AssetIDs)
+	r.Equal([]string{albumID}, stored.Selection.AlbumIDs)
+	retainedEntries, err := fixture.checkouts.ListEntries(t.Context(), result.Checkout.ID)
+	r.NoError(err)
+	r.Equal(entries, retainedEntries)
+	r.FileExists(filepath.Join(root, filepath.FromSlash(entries[0].RelativePath)))
+}
+
 func TestRepoResolveSelectionSupportsAlbumsYearsAndAll(t *testing.T) {
 	r := require.New(t)
 	fixture := newFixture(t)
