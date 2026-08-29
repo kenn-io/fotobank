@@ -36,30 +36,30 @@
   .lb-drawer {
     width: 100%;
     height: 100%;
-    background: var(--surface);
-    border-left: 1px solid var(--border);
+    background: var(--bg-surface);
+    border-left: 1px solid var(--border-default);
     display: flex; flex-direction: column;
-    box-shadow: inset 0 1px 0 var(--rim-highlight);
+    box-shadow: inset 0 1px 0 var(--fb-rim-highlight);
   }
   .lb-drawer-head {
     display: flex; justify-content: flex-end;
     padding: var(--space-4);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-default);
   }
   .lb-drawer-head button {
     background: transparent;
-    color: var(--ink-2);
+    color: var(--text-secondary);
     border: none;
-    font-size: var(--text-lg);
+    font-size: var(--font-size-lg);
     cursor: pointer;
   }
-  .lb-drawer-head button:hover { color: var(--ink); }
+  .lb-drawer-head button:hover { color: var(--text-primary); }
   /* Drawer inherits theme colors; the metadata content reads against
      --bg-surface using the standard text tokens. */
   .lb-drawer-body {
     padding: var(--space-6);
     overflow: auto;
-    color: var(--ink);
+    color: var(--text-primary);
   }
-  .lb-drawer-body :global(a) { color: var(--ink); }
+  .lb-drawer-body :global(a) { color: var(--text-primary); }
 </style>

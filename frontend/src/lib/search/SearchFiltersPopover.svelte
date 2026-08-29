@@ -301,8 +301,8 @@
     flex-direction: column;
     gap: 8px;
     padding: 8px 12px;
-    border: 1px solid var(--border);
-    background: var(--surface-2);
+    border: 1px solid var(--border-default);
+    background: var(--bg-inset);
   }
   .filter-row {
     display: flex;
@@ -318,14 +318,14 @@
     flex-direction: column;
     gap: 2px;
     font-size: 12px;
-    color: var(--ink-2);
+    color: var(--text-secondary);
   }
   .filter-label input {
     height: 26px;
     padding: 0 8px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--ink);
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    color: var(--text-primary);
     font-size: 13px;
   }
   .suggestions {
@@ -343,25 +343,25 @@
     padding: 4px 8px;
     border: none;
     background: transparent;
-    color: var(--ink);
+    color: var(--text-primary);
     font-size: 13px;
     text-align: left;
     cursor: pointer;
   }
   .suggestion:hover {
-    background: var(--surface);
+    background: var(--bg-surface);
   }
   .suggestion-count {
-    color: var(--ink-2);
+    color: var(--text-secondary);
     font-size: 11px;
   }
   .segment {
     flex: 1;
     height: 28px;
     padding: 0 8px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--ink);
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    color: var(--text-primary);
     font-size: 13px;
     cursor: pointer;
   }
@@ -369,7 +369,7 @@
     border-left: none;
   }
   .segment[aria-pressed="true"] {
-    background: var(--surface-2);
+    background: var(--bg-inset);
     font-weight: 600;
   }
   .filter-toggle {
@@ -377,6 +377,6 @@
     align-items: center;
     gap: 6px;
     font-size: 12px;
-    color: var(--ink-2);
+    color: var(--text-secondary);
   }
 </style>

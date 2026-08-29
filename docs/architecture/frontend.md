@@ -64,10 +64,21 @@ available from the detail page.
 
 ![Media detail showing the original download for a single-file asset](images/single-file-download.png)
 
-The visual system is implemented in `frontend/src/app.css` and the route
-components. Architecture docs record interaction and data boundaries, not old
-mockups or dated aesthetic proposals. A UI pull request includes a screenshot
-of the implemented result using synthetic data.
+Shared control behavior and accessibility come from the pinned
+`@kenn-io/kit-ui` source dependency. Fotobank imports the library's theme
+tokens before `frontend/src/app.css`; the app stylesheet then maps those tokens
+to Fotobank's dense, amber-accented darkroom palette, IBM Plex UI type, and
+Fraunces display type. Existing components and new shared controls use the same
+token vocabulary, so adopting a shared control does not imply adopting another
+product's visual identity.
+
+![Fotobank header using the darkroom theme over kit-ui tokens](images/kit-ui-theme-foundation.png)
+
+`make frontend-check` runs `kit-ui-check` in warning mode alongside type checks
+and unit tests. Warnings identify remaining local control equivalents without
+blocking incremental adoption. Architecture docs record interaction and data
+boundaries, not old mockups or dated aesthetic proposals. A UI pull request
+includes a screenshot of the implemented result using synthetic data.
 
 ## Tests
 

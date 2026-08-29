@@ -130,20 +130,20 @@
 <style>
   .drawer {
     position: fixed; right: 0; top: 0; bottom: 0; width: 360px;
-    background: var(--surface-2); border-left: 1px solid var(--border);
+    background: var(--bg-inset); border-left: 1px solid var(--border-default);
     padding: 16px; overflow-y: auto; z-index: 50;
     display: flex; flex-direction: column; gap: 12px;
   }
   .drawer header { display: flex; align-items: center; gap: 8px; }
   .drawer h2 { margin: 0; font-size: 16px; flex: 1; }
-  .close { background: transparent; border: 0; font-size: 20px; cursor: pointer; color: var(--ink-3); }
+  .close { background: transparent; border: 0; font-size: 20px; cursor: pointer; color: var(--text-muted); }
   dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 13px; margin: 0; }
-  dt { color: var(--ink-3); }
+  dt { color: var(--text-muted); }
   dd { margin: 0; }
   .mono { font-family: monospace; font-size: 12px; }
-  .muted { color: var(--ink-3); font-size: 12px; }
-  .error { color: var(--danger); white-space: pre-wrap; }
-  .preview pre { background: var(--surface); padding: 8px; font-size: 11px; overflow: auto; border-radius: 4px; margin: 0; }
+  .muted { color: var(--text-muted); font-size: 12px; }
+  .error { color: var(--accent-red); white-space: pre-wrap; }
+  .preview pre { background: var(--bg-surface); padding: 8px; font-size: 11px; overflow: auto; border-radius: 4px; margin: 0; }
   .actions { display: flex; gap: 8px; margin-top: auto; }
-  .danger { color: var(--danger); border-color: var(--danger); }
+  .danger { color: var(--accent-red); border-color: var(--accent-red); }
 </style>

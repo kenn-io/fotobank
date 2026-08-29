@@ -47,10 +47,10 @@
     align-items: center;
     height: 22px;
     padding: 0 8px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-default);
     border-radius: 999px;
-    background: var(--surface-2);
-    color: var(--ink-2);
+    background: var(--bg-inset);
+    color: var(--text-secondary);
     font-size: 12px;
     line-height: 1;
     white-space: nowrap;

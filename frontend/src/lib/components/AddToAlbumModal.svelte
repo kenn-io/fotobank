@@ -166,33 +166,33 @@
     z-index: 200;
   }
   .modal {
-    background: var(--surface);
-    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
     padding: var(--space-6);
     min-width: 400px;
     max-height: 80vh;
     display: flex; flex-direction: column;
-    color: var(--ink);
+    color: var(--text-primary);
     /* Relief — same elevated-panel treatment as ConfirmModal. */
-    box-shadow: var(--shadow-relief-strong);
+    box-shadow: var(--fb-shadow-relief-strong);
   }
   .modal h2 { margin-top: 0; }
   .subtitle {
-    color: var(--ink-3);
-    font-size: var(--text-base);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
     margin-bottom: var(--space-5);
   }
   .search {
     padding: var(--space-3) var(--space-4);
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--ink);
+    border: 1px solid var(--border-default);
+    background: var(--bg-inset);
+    color: var(--text-primary);
   }
   .list {
     margin-top: var(--space-5);
     overflow-y: auto;
     flex: 1;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-default);
   }
   .row {
     display: flex;
@@ -201,28 +201,28 @@
     padding: var(--space-4) var(--space-5);
     background: transparent;
     border: 0;
-    border-bottom: 1px solid var(--border);
-    color: var(--ink);
+    border-bottom: 1px solid var(--border-default);
+    color: var(--text-primary);
     cursor: pointer;
     text-align: left;
   }
   .row:last-child { border-bottom: 0; }
-  .row:hover { background: var(--surface-2); }
+  .row:hover { background: var(--bg-inset); }
   .row.selected {
-    background: var(--surface-2);
+    background: var(--bg-inset);
     font-weight: 600;
-    outline: 2px solid var(--amber);
+    outline: 2px solid var(--accent-blue);
     outline-offset: -2px;
   }
-  .row.create-new { color: var(--amber); font-weight: 500; }
-  .row.load-more { color: var(--ink-3); font-style: italic; justify-content: center; }
+  .row.create-new { color: var(--accent-blue); font-weight: 500; }
+  .row.load-more { color: var(--text-muted); font-style: italic; justify-content: center; }
   .row.load-more:disabled { cursor: not-allowed; opacity: 0.6; }
-  .row.error-row { color: var(--danger); align-items: center; }
+  .row.error-row { color: var(--accent-red); align-items: center; }
   .error-msg { flex: 1; }
-  .count { color: var(--ink-3); font-size: var(--text-sm); }
+  .count { color: var(--text-muted); font-size: var(--font-size-xs); }
   .error {
-    color: var(--danger);
-    font-size: var(--text-base);
+    color: var(--accent-red);
+    font-size: var(--font-size-sm);
     margin-top: var(--space-4);
   }
   .actions {
@@ -231,30 +231,30 @@
   }
   .btn-ghost {
     background: transparent;
-    color: var(--ink-2);
-    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-default);
     padding: var(--space-3) var(--space-5);
     cursor: pointer;
   }
   .btn-ghost:hover:not(:disabled) {
-    background: var(--surface-2);
-    color: var(--ink);
-    border-color: var(--border-2);
+    background: var(--bg-inset);
+    color: var(--text-primary);
+    border-color: var(--border-muted);
   }
   .btn-ghost:disabled { cursor: not-allowed; opacity: 0.6; }
   .btn-primary {
-    background: var(--amber);
-    /* Dark foreground on amber so the label stays readable; --ink
+    background: var(--accent-blue);
+    /* Dark foreground on amber so the label stays readable; --text-primary
        (light body color) was too low-contrast against the warm fill. */
-    color: var(--bg);
-    border: 1px solid var(--amber);
+    color: var(--bg-primary);
+    border: 1px solid var(--accent-blue);
     padding: var(--space-3) var(--space-5);
     cursor: pointer;
     font-weight: 500;
   }
   .btn-primary:hover:not(:disabled) {
-    background: var(--amber-deep);
-    border-color: var(--amber-deep);
+    background: var(--fb-accent-deep);
+    border-color: var(--fb-accent-deep);
   }
   .btn-primary:disabled { cursor: not-allowed; opacity: 0.6; }
 </style>

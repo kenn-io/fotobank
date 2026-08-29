@@ -67,7 +67,7 @@
   .month { display: block; }
   .day-header {
     font-size: 12px;
-    color: var(--ink-2);
+    color: var(--text-secondary);
     padding: 16px 4px 8px;
     font-weight: 500;
     display: flex;
@@ -80,7 +80,7 @@
   .placeholder {
     width: 100%;
     height: 100%;
-    background: var(--surface-2);
+    background: var(--bg-inset);
     border-radius: 2px;
   }
 </style>

@@ -92,12 +92,12 @@
 
 <style>
   table.shares { width: 100%; border-collapse: collapse; }
-  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-  th { background: var(--surface-2); color: var(--ink-3); font-weight: 500; font-size: 12px; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border-default); }
+  th { background: var(--bg-inset); color: var(--text-muted); font-weight: 500; font-size: 12px; }
   tbody tr { cursor: pointer; }
-  tbody tr:hover { background: var(--surface-2); }
+  tbody tr:hover { background: var(--bg-inset); }
   .actions-col { width: 1%; white-space: nowrap; }
-  .type { color: var(--ink-3); font-size: 12px; }
+  .type { color: var(--text-muted); font-size: 12px; }
   .mono { font-family: monospace; font-size: 13px; }
-  .danger { color: var(--danger); border-color: var(--danger); }
+  .danger { color: var(--accent-red); border-color: var(--accent-red); }
 </style>

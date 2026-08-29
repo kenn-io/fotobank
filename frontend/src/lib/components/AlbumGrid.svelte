@@ -43,21 +43,21 @@
     display: flex;
     flex-direction: column;
     text-decoration: none;
-    color: var(--ink);
+    color: var(--text-primary);
   }
   .cover {
     aspect-ratio: 1 / 1;
     object-fit: cover;
     width: 100%;
     border-radius: 6px;
-    background: var(--surface-2);
+    background: var(--bg-inset);
   }
   .placeholder {
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--border);
-    color: var(--ink-3);
+    border: 1px solid var(--border-default);
+    color: var(--text-muted);
   }
   .placeholder .icon { font-size: 32px; }
   .meta { padding: 6px 4px; }
@@ -67,5 +67,5 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .count { font-size: 12px; color: var(--ink-3); }
+  .count { font-size: 12px; color: var(--text-muted); }
 </style>

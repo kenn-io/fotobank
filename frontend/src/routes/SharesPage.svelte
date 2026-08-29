@@ -172,7 +172,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-default);
   }
   .page-header h1 { margin: 0; font-size: 18px; }
   .show-revoked {
@@ -180,27 +180,27 @@
     gap: 6px;
     align-items: center;
     font-size: 13px;
-    color: var(--ink-3);
+    color: var(--text-muted);
   }
   .filter-banner {
-    background: var(--surface-2);
+    background: var(--bg-inset);
     padding: 8px 16px;
     display: flex;
     gap: 12px;
     align-items: center;
     justify-content: space-between;
     font-size: 13px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-default);
   }
   .filter-banner code { font-family: monospace; }
   .empty {
     padding: 64px 16px;
     text-align: center;
-    color: var(--ink-2);
+    color: var(--text-secondary);
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 12px;
   }
-  .loading { padding: 12px; color: var(--ink-3); }
+  .loading { padding: 12px; color: var(--text-muted); }
 </style>

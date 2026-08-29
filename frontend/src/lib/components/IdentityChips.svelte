@@ -9,8 +9,8 @@
   // empty placeholders during the /me round-trip; the rest of the
   // header stays visible.
   //
-  // `error` (optional) flips the HUB chip's status dot from --ok to
-  // --danger. Today AppConfigStore treats network failure as
+  // `error` (optional) flips the HUB chip's status dot from the shared
+  // success token to the shared danger token. Today AppConfigStore treats network failure as
   // "resolved disabled" so we never set this in production, but the
   // prop is wired so a future health-bound caller can flip it.
   let {
@@ -23,12 +23,12 @@
     error?: boolean;
   } = $props();
 
-  // The dot reads --ok / --danger via inline style so the test can
+  // The dot reads the shared semantic tokens via inline style so the test can
   // assert the active token without scraping computed styles. The
   // mockup spec pins the green-on-ok / red-on-error colors to those
   // tokens; using them here keeps the dot in lockstep with the
   // palette.
-  const dotColor = $derived(error ? "var(--danger)" : "var(--ok)");
+  const dotColor = $derived(error ? "var(--accent-red)" : "var(--accent-green)");
   const dotShadow = $derived(
     error
       ? "0 0 6px rgba(208,69,69,0.5)"
@@ -65,31 +65,31 @@
     display: inline-flex;
     align-items: stretch;
     height: 24px;
-    border: 1px solid var(--border);
-    background: var(--surface);
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface);
     font-family: var(--font-mono);
     font-size: 11px;
   }
   .id-chip:hover {
-    border-color: var(--border-2);
+    border-color: var(--border-muted);
   }
   .id-chip-label {
     display: inline-flex;
     align-items: center;
     padding: 0 8px;
-    color: var(--ink-3);
+    color: var(--text-muted);
     font-size: 9px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--border-default);
     background: rgba(0, 0, 0, 0.25);
   }
   .id-chip-value {
     display: inline-flex;
     align-items: center;
     padding: 0 9px;
-    color: var(--ink);
+    color: var(--text-primary);
     font-variant-numeric: tabular-nums;
   }
   .id-chip-dot {

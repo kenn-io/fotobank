@@ -192,7 +192,7 @@
 </VirtualGrid>
 
 {#if mediaStore.loading}
-  <div style="padding:12px; color: var(--ink-3)">Loading…</div>
+  <div style="padding:12px; color: var(--text-muted)">Loading…</div>
 {/if}
 {#if mediaStore.months.length === 0 && !mediaStore.loading}
   {#if !isEmpty(activeFilters)}
@@ -214,7 +214,7 @@
       </button>
     </div>
   {:else}
-    <div style="padding:24px; color: var(--ink-2)">No photos yet.</div>
+    <div style="padding:24px; color: var(--text-secondary)">No photos yet.</div>
   {/if}
 {/if}
 
@@ -242,27 +242,27 @@
     align-items: center;
     gap: var(--space-3);
     padding: 48px var(--space-4);
-    color: var(--ink-2);
+    color: var(--text-secondary);
     text-align: center;
   }
   .empty-filtered p {
     margin: 0;
-    font-size: var(--text-base);
+    font-size: var(--font-size-sm);
   }
   .empty-filtered .clear-all {
     display: inline-flex;
     align-items: center;
     height: 28px;
     padding: 0 12px;
-    background: color-mix(in srgb, var(--amber) 14%, transparent);
-    color: var(--amber);
-    border: 1px solid color-mix(in srgb, var(--amber) 24%, transparent);
-    font-size: var(--text-sm);
+    background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
+    color: var(--accent-blue);
+    border: 1px solid color-mix(in srgb, var(--accent-blue) 24%, transparent);
+    font-size: var(--font-size-xs);
     font-weight: 500;
     cursor: pointer;
     transition: background 100ms;
   }
   .empty-filtered .clear-all:hover {
-    background: color-mix(in srgb, var(--amber) 22%, transparent);
+    background: color-mix(in srgb, var(--accent-blue) 22%, transparent);
   }
 </style>

@@ -71,15 +71,15 @@
     z-index: 200;
   }
   .modal {
-    background: var(--surface);
-    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
     padding: var(--space-6);
     min-width: 320px; max-width: 480px;
-    color: var(--ink);
+    color: var(--text-primary);
     /* Relief — modals float above the scrim; the strong composite adds
        a soft drop plus the rim highlight so the panel reads as
        elevated, not stamped. */
-    box-shadow: var(--shadow-relief-strong);
+    box-shadow: var(--fb-shadow-relief-strong);
   }
   .modal h2 { margin-top: 0; }
   .actions {
@@ -89,41 +89,41 @@
   /* Ghost secondary: transparent until hover. */
   .btn-ghost {
     background: transparent;
-    color: var(--ink-2);
-    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-default);
     padding: var(--space-3) var(--space-5);
     cursor: pointer;
   }
   .btn-ghost:hover:not(:disabled) {
-    background: var(--surface-2);
-    color: var(--ink);
-    border-color: var(--border-2);
+    background: var(--bg-inset);
+    color: var(--text-primary);
+    border-color: var(--border-muted);
   }
   .btn-ghost:disabled { cursor: not-allowed; opacity: 0.6; }
   /* Amber primary: filled accent for the confirm action. Dark
-     foreground (--bg) instead of --ink so the label has readable
+     foreground (--bg-primary) instead of --text-primary so the label has readable
      contrast against the warm-orange fill. */
   .btn-primary {
-    background: var(--amber);
-    color: var(--bg);
-    border: 1px solid var(--amber);
+    background: var(--accent-blue);
+    color: var(--bg-primary);
+    border: 1px solid var(--accent-blue);
     padding: var(--space-3) var(--space-5);
     cursor: pointer;
     font-weight: 500;
   }
   .btn-primary:hover:not(:disabled) {
-    background: var(--amber-deep);
-    border-color: var(--amber-deep);
+    background: var(--fb-accent-deep);
+    border-color: var(--fb-accent-deep);
   }
   .btn-primary:disabled { cursor: not-allowed; opacity: 0.6; }
-  /* Destructive variant overrides the amber primary with --danger. */
+  /* Destructive variant overrides the amber primary with --accent-red. */
   .btn-primary.danger {
-    background: var(--danger);
-    border-color: var(--danger);
+    background: var(--accent-red);
+    border-color: var(--accent-red);
   }
   .btn-primary.danger:hover:not(:disabled) {
-    background: var(--danger);
-    border-color: var(--danger);
+    background: var(--accent-red);
+    border-color: var(--accent-red);
     filter: brightness(1.1);
   }
 </style>

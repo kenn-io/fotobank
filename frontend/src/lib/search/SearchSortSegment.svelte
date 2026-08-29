@@ -73,9 +73,9 @@
   .search-sort-segment button {
     height: 28px;
     padding: 0 10px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--ink);
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    color: var(--text-primary);
     font-size: 13px;
     cursor: pointer;
   }
@@ -83,7 +83,7 @@
     border-left: none;
   }
   .search-sort-segment button.selected {
-    background: var(--surface-2);
+    background: var(--bg-inset);
     font-weight: 600;
   }
 </style>

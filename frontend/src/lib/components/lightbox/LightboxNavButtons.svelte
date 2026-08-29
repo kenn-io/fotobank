@@ -23,12 +23,12 @@
 <style>
   .lb-nav {
     position: absolute; top: 50%; transform: translateY(-50%);
-    background: var(--surface);
-    color: var(--ink-2);
-    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-default);
     width: 48px; height: 48px;
     display: flex; align-items: center; justify-content: center;
-    /* 28px chevron keeps the existing tap-target weight; --text-lg (16px) reads too small. */
+    /* 28px chevron keeps the existing tap-target weight; --font-size-lg (15px) reads too small. */
     font-size: 28px; cursor: pointer; padding: 0;
     /* Sit above the photo for the same reason as the toolbar — see
        LightboxToolbar.svelte. A landscape photo filling the stage's
@@ -38,8 +38,8 @@
   .lb-prev { left: var(--space-6); }
   .lb-next { right: var(--space-6); }
   .lb-nav:hover {
-    background: var(--surface-2);
-    color: var(--ink);
-    border-color: var(--border-2);
+    background: var(--bg-inset);
+    color: var(--text-primary);
+    border-color: var(--border-muted);
   }
 </style>

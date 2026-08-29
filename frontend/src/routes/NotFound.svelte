@@ -12,9 +12,9 @@
 </div>
 
 <style>
-  .wrap { padding: 32px; color: var(--ink); }
+  .wrap { padding: 32px; color: var(--text-primary); }
   h1 { margin: 0 0 8px; font-size: 18px; }
-  p { color: var(--ink-2); margin: 0 0 16px; }
-  a { color: var(--amber); text-decoration: none; }
+  p { color: var(--text-secondary); margin: 0 0 16px; }
+  a { color: var(--accent-blue); text-decoration: none; }
   a:hover { text-decoration: underline; }
 </style>

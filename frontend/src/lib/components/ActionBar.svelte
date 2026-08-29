@@ -31,8 +31,8 @@
     align-items: center;
     gap: 12px;
     padding: 8px 12px;
-    background: var(--surface-2);
-    border-bottom: 1px solid var(--border);
+    background: var(--bg-inset);
+    border-bottom: 1px solid var(--border-default);
   }
   .count { font-weight: 600; }
   .actions { display: flex; gap: 8px; }

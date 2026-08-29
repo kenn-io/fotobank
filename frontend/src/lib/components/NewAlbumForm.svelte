@@ -56,6 +56,6 @@
 <style>
   .new-album-form { display: flex; flex-direction: column; gap: 12px; }
   label { display: flex; flex-direction: column; gap: 4px; }
-  .error { color: var(--danger); font-size: 13px; }
+  .error { color: var(--accent-red); font-size: 13px; }
   .actions { display: flex; gap: 8px; justify-content: flex-end; }
 </style>

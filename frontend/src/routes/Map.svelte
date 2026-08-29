@@ -395,14 +395,14 @@
   .error,
   .empty {
     padding: 24px;
-    color: var(--ink-2);
+    color: var(--text-secondary);
   }
   .map-page-header {
     display: flex;
     align-items: center;
     gap: 16px;
     padding: 8px 12px;
-    border-bottom: 1px solid var(--border, #e5e7eb);
+    border-bottom: 1px solid var(--border-default);
     flex: 0 0 auto;
   }
   .hidden-toggle {
@@ -410,7 +410,7 @@
     align-items: center;
     gap: 6px;
     font-size: 13px;
-    color: var(--ink-2);
+    color: var(--text-secondary);
     cursor: pointer;
     margin-left: auto;
   }
@@ -420,20 +420,20 @@
   }
   .tabs button {
     background: transparent;
-    border: 1px solid var(--border, #e5e7eb);
+    border: 1px solid var(--border-default);
     border-radius: 12px;
     padding: 4px 12px;
     font-size: 13px;
     cursor: pointer;
-    color: var(--ink-2);
+    color: var(--text-secondary);
   }
   .tabs button.active {
-    background: var(--amber);
-    border-color: var(--amber);
-    /* Dark foreground on the amber pill — pairing the light --ink
+    background: var(--accent-blue);
+    border-color: var(--accent-blue);
+    /* Dark foreground on the amber pill — pairing the light --text-primary
        body color with warm-orange amber gave a low-contrast active
-       label. --bg (canvas dark) restores readable contrast. */
-    color: var(--bg);
+       label. --bg-primary (canvas dark) restores readable contrast. */
+    color: var(--bg-primary);
   }
   .map-page-grid {
     display: grid;

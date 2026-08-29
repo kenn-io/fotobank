@@ -518,7 +518,7 @@
   }
   .search-status {
     padding: 24px 16px;
-    color: var(--ink-2);
+    color: var(--text-secondary);
     text-align: center;
   }
 </style>

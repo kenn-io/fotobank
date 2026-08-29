@@ -57,31 +57,31 @@
        looser visual. */
     gap: 10px;
     padding: 10px var(--space-5);
-    background: var(--surface);
-    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
     /* Indicator stripe: 2px left edge tinted by kind. Default (info)
        reads as a neutral hairline; status kinds shift to ok / warn /
        danger so the stripe matches the message tone. Body text stays
-       --ink across all kinds; only the stripe carries the signal. */
+       --text-primary across all kinds; only the stripe carries the signal. */
     border-left-width: 2px;
-    border-left-color: var(--border-2);
-    font-size: var(--text-base);
-    color: var(--ink);
+    border-left-color: var(--border-muted);
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
     /* Relief — toasts float above the page; the strong composite gives
        the card a sense of being lifted, matching modal panels. */
-    box-shadow: var(--shadow-relief-strong);
+    box-shadow: var(--fb-shadow-relief-strong);
   }
 
   .toast--error {
-    border-left-color: var(--danger);
+    border-left-color: var(--accent-red);
   }
 
   .toast--success {
-    border-left-color: var(--ok);
+    border-left-color: var(--accent-green);
   }
 
   .toast--warning {
-    border-left-color: var(--warn);
+    border-left-color: var(--accent-amber);
   }
 
   .toast-body {
@@ -97,8 +97,8 @@
   .toast-details {
     margin: var(--space-2) 0 0;
     padding-left: var(--space-6);
-    font-size: var(--text-sm);
-    color: var(--ink-2);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
   }
 
   .toast-details li {
@@ -110,7 +110,7 @@
     background: none;
     border: none;
     cursor: pointer;
-    color: var(--ink-3);
+    color: var(--text-muted);
     /* 18px: dismiss × keeps the existing tap-target glyph; 16px (text-lg)
        reads too small and 24px wraps. No scale stop matches. */
     font-size: 18px;
@@ -119,6 +119,6 @@
   }
 
   .toast-dismiss:hover {
-    color: var(--ink);
+    color: var(--text-primary);
   }
 </style>
