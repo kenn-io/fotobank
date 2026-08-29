@@ -31,7 +31,10 @@ func TestCreateRecordsActivationCancellationAsError(t *testing.T) {
 	r.NoError(err)
 	repo := NewRepo(database.WriteDB(), database.ReadDB())
 	resolver := contentresolver.New(media.NewRepo(database.WriteDB(), database.ReadDB()), adapter)
-	materializer := NewMaterializer(repo, resolver, filepath.Join(t.TempDir(), "checkout.lock"))
+	lockDir := t.TempDir()
+	materializer := NewMaterializer(
+		repo, resolver,
+		filepath.Join(lockDir, "checkout.lock"), filepath.Join(lockDir, "database.lock"))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	calls := 0

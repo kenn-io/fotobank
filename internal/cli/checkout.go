@@ -193,7 +193,7 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 	}
 	checkoutRepo := checkout.NewRepo(database.WriteDB(), database.ReadDB())
 	if !withContent {
-		runtime.service = service.NewCheckoutService(checkoutRepo, nil, "")
+		runtime.service = service.NewCheckoutService(checkoutRepo, nil, "", "")
 		return runtime, nil
 	}
 	contentStore, err := content.Open(ctx, content.Config{
@@ -205,7 +205,8 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 	}
 	runtime.content = contentStore
 	resolver := contentresolver.New(media.NewRepo(database.WriteDB(), database.ReadDB()), contentStore)
-	runtime.service = service.NewCheckoutService(checkoutRepo, resolver, dbPath+".checkout.lock")
+	runtime.service = service.NewCheckoutService(
+		checkoutRepo, resolver, dbPath+".checkout.lock", lockPathFor(dbPath))
 	return runtime, nil
 }
 
