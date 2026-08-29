@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -102,12 +100,8 @@ func loadThumbsConfig(cfgPath string, requireStub bool) (*config.Config, error) 
 
 // openDB opens the SQLite database for the thumbs command, preferring
 // FOTOBANK_DB_PATH over the path derived from cfg.Flash.Root.
-func openDB(cfg *config.Config) (*db.DB, error) {
-	dbPath := os.Getenv("FOTOBANK_DB_PATH")
-	if dbPath == "" {
-		dbPath = filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
-	}
-	return db.Open(dbPath)
+func openDB(cfg *config.Config) (*databaseHandle, error) {
+	return openDatabase(cfg)
 }
 
 // validateSelectors returns a usage error when no selector flag is set.
@@ -226,7 +220,7 @@ func runThumbsRegenerate(ctx context.Context, opts regenerateOpts, stdout, _ io.
 	}
 	defer func() { _ = d.Close() }()
 
-	scope, err := resolveOwners(ctx, d, cfg, opts)
+	scope, err := resolveOwners(ctx, d.DB, cfg, opts)
 	if err != nil {
 		return err
 	}

@@ -4,20 +4,15 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
-	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/fotobank/internal/checkout"
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/contentresolver"
-	"go.kenn.io/fotobank/internal/db"
-	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/service"
@@ -166,11 +161,10 @@ func runCheckoutCreate(
 }
 
 type checkoutRuntime struct {
-	db           *db.DB
-	databaseLock *flock.Flock
-	content      *content.Adapter
-	service      *service.CheckoutService
-	owner        owners.Principal
+	db      *databaseHandle
+	content *content.Adapter
+	service *service.CheckoutService
+	owner   owners.Principal
 }
 
 func openCheckoutRuntime(ctx context.Context, configPath string, withContent bool) (*checkoutRuntime, error) {
@@ -188,25 +182,12 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 	if err != nil {
 		return nil, err
 	}
-	lockPath := lockPathFor(dbPath)
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
-		return nil, fmt.Errorf("create database lock directory: %w", err)
-	}
-	databaseLock := flock.New(lockPath)
-	locked, err := databaseLock.TryRLock()
+	database, err := openDatabasePath(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("lock database lifetime: %w", err)
-	}
-	if !locked {
-		return nil, fmt.Errorf("open checkout: %w: another process is replacing the database", errs.ErrAlreadyExists)
-	}
-	database, err := db.Open(dbPath)
-	if err != nil {
-		_ = databaseLock.Unlock()
 		return nil, err
 	}
 	owner := owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
-	runtime := &checkoutRuntime{db: database, databaseLock: databaseLock, owner: owner}
+	runtime := &checkoutRuntime{db: database, owner: owner}
 	ownerService := service.NewOwnerService(owners.NewRepo(database.WriteDB(), database.ReadDB()))
 	if _, err := ownerService.Ensure(ctx, owner, cfg.Identity.Stub.StorageKey); err != nil {
 		runtime.close()
@@ -236,8 +217,5 @@ func (r *checkoutRuntime) close() {
 	}
 	if r.db != nil {
 		_ = r.db.Close()
-	}
-	if r.databaseLock != nil {
-		_ = r.databaseLock.Unlock()
 	}
 }

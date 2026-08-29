@@ -42,11 +42,13 @@ database file without its WAL state. Publication uses a temporary file,
 durability sync, and rename. Retention never treats an unparseable file as a
 valid managed snapshot.
 
-Server, checkout, backup, restore, and content recovery canonicalize the SQLite
-path through existing symlinks—or through the deepest existing ancestor for a
-new database—before opening it or deriving process-lock paths. Server, checkout,
-and restore therefore coordinate on the same lock when configuration names the
-database through an alias.
+Every CLI database user canonicalizes the SQLite path through existing
+symlinks—or through the deepest existing ancestor for a new database—before
+opening it or deriving process-lock paths. Database users acquire one shared
+lifetime lock before opening SQLite and retain it until their pools close.
+Restore takes that same lock exclusively, so it refuses to replace the database
+while the server, an import, or another command is using it, including when
+configuration names the database through an alias.
 
 Current backup covers Fotobank metadata only and is therefore not a complete
 media recovery mechanism. A coordinated backup must guarantee that every

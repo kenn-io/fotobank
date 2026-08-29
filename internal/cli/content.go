@@ -14,7 +14,6 @@ import (
 	appsettingsstore "go.kenn.io/fotobank/internal/appsettings"
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
-	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/ingest"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
@@ -83,7 +82,7 @@ func runContentRecovery(ctx context.Context, opts contentRecoveryOpts) error {
 	if err != nil {
 		return err
 	}
-	d, err := db.Open(dbPath)
+	d, err := openDatabasePath(dbPath)
 	if err != nil {
 		return err
 	}
@@ -117,7 +116,7 @@ func runContentRecovery(ctx context.Context, opts contentRecoveryOpts) error {
 	if err != nil {
 		return fmt.Errorf("load effective ai config: %w", err)
 	}
-	enqueuer := newIngestAIEnqueuer(d, aiProvider.Effective())
+	enqueuer := newIngestAIEnqueuer(d.DB, aiProvider.Effective())
 	assets := media.NewAssetRepo(d.WriteDB(), d.ReadDB())
 	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	reports := make([]ownerRecoveryReport, 0, len(registeredOwners))

@@ -83,9 +83,9 @@ func runImport(ctx context.Context, opts importOpts) error {
 		return fmt.Errorf("fotobank import requires identity.mode = stub (got %q)", cfg.Identity.Mode)
 	}
 
-	dbPath := os.Getenv("FOTOBANK_DB_PATH")
-	if dbPath == "" {
-		dbPath = filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
+	dbPath, err := resolveDBPath(cfg)
+	if err != nil {
+		return err
 	}
 	// Print resolved paths up front so a user with a misconfigured root
 	// (e.g. an unexpanded "~" or a typo) sees IMMEDIATELY where bytes
@@ -96,7 +96,7 @@ func runImport(ctx context.Context, opts importOpts) error {
 	fmt.Fprintf(opts.stdout, "source:    %s\n", absSource)
 	fmt.Fprintf(opts.stdout, "docbank:   %s\n", cfg.Docbank.Root)
 	fmt.Fprintf(opts.stdout, "flash db:  %s\n", dbPath)
-	d, err := db.Open(dbPath)
+	d, err := openDatabasePath(dbPath)
 	if err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func runImport(ctx context.Context, opts importOpts) error {
 	// for AI processing. Queue rows use runtime claim fingerprints so
 	// server workers claim the same settings identity that admin Apply
 	// publishes.
-	imp.SetAIEnqueuer(newIngestAIEnqueuer(d, aiSnap))
+	imp.SetAIEnqueuer(newIngestAIEnqueuer(d.DB, aiSnap))
 
 	progress := newImportProgress(opts.stdout)
 	res, err := imp.ImportDirectory(ctx, opts.source, ingest.Options{

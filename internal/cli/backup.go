@@ -45,6 +45,11 @@ func newBackupSnapshotCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			lifetime, err := acquireDatabaseLifetime(dbPath)
+			if err != nil {
+				return err
+			}
+			defer lifetime.Close()
 			dst := out
 			if dst == "" {
 				dir := backupDirFor(cfg)
@@ -55,7 +60,7 @@ func newBackupSnapshotCmd() *cobra.Command {
 					time.Now().UTC().Format(backup.StampLayout)+backup.SnapshotExt)
 			}
 			start := time.Now()
-			if err := backup.SnapshotPath(cmd.Context(), dbPath, dst); err != nil {
+			if err := backup.SnapshotPath(cmd.Context(), lifetime.path, dst); err != nil {
 				return err
 			}
 			elapsed := time.Since(start)

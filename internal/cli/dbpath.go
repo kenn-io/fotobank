@@ -26,6 +26,12 @@ func resolveDBPath(cfg *config.Config) (string, error) {
 	} else {
 		p = filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
 	}
+	return canonicalDBPath(p)
+}
+
+// canonicalDBPath resolves existing symlinks before a database or its lock is
+// opened. Missing final components are retained beneath the resolved ancestor.
+func canonicalDBPath(p string) (string, error) {
 	abs, err := filepath.Abs(p)
 	if err != nil {
 		return "", fmt.Errorf("make database path absolute: %w", err)

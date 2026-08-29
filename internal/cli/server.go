@@ -40,7 +40,6 @@ import (
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/contentresolver"
-	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
 	"go.kenn.io/fotobank/internal/media"
@@ -175,13 +174,9 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		return err
 	}
 
-	// The server lock refuses two servers on the same DB. The shared lifetime
-	// lock lets ordinary database users coexist while blocking backup restore,
-	// which takes the same lock exclusively. Advisory locks release on exit.
-	lockPath := lockPathFor(dbPath)
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
-		return fmt.Errorf("mkdir lock dir: %w", err)
-	}
+	// The server lock refuses two servers on the same DB. openDatabasePath
+	// holds the shared database lifetime lock before opening SQLite, so backup
+	// restore cannot replace the files until shutdown closes the handle.
 	serverLock := flock.New(dbPath + ".server.lock")
 	ok, err := serverLock.TryLock()
 	if err != nil {
@@ -191,17 +186,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		return fmt.Errorf("another fotobank process is using %s", dbPath)
 	}
 	defer func() { _ = serverLock.Unlock() }()
-	databaseLock := flock.New(lockPath)
-	ok, err = databaseLock.TryRLock()
-	if err != nil {
-		return fmt.Errorf("acquire database lifetime lock: %w", err)
-	}
-	if !ok {
-		return fmt.Errorf("another fotobank process is replacing %s", dbPath)
-	}
-	defer func() { _ = databaseLock.Unlock() }()
-
-	d, err := db.Open(dbPath)
+	d, err := openDatabasePath(dbPath)
 	if err != nil {
 		return err
 	}
@@ -278,7 +263,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		album.NewRepo(d.WriteDB(), d.ReadDB()),
 		mediaRepo,
 		sharesRepo,
-		d,
+		d.DB,
 	)
 	shareSvc := service.NewShareService(
 		sharesRepo,
