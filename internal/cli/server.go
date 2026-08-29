@@ -177,6 +177,9 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	// The server lock refuses two servers on the same DB. openDatabasePath
 	// holds the shared database lifetime lock before opening SQLite, so backup
 	// restore cannot replace the files until shutdown closes the handle.
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		return fmt.Errorf("create database directory: %w", err)
+	}
 	serverLock := flock.New(dbPath + ".server.lock")
 	ok, err := serverLock.TryLock()
 	if err != nil {
