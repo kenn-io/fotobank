@@ -37,6 +37,12 @@ func (r *CheckoutRoot) Path() string {
 	return r.path
 }
 
+// Overlaps reports whether another canonical path is equal to, contains, or is
+// contained by this checkout root.
+func (r *CheckoutRoot) Overlaps(other string) bool {
+	return r != nil && pathsOverlap(r.path, other)
+}
+
 // Take transfers ownership of the bound directory to the materializer. A
 // validated root is single-use so no later operation can reopen its path.
 func (r *CheckoutRoot) Take() (*os.Root, error) {

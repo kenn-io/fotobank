@@ -163,9 +163,10 @@ requires the same lock exclusively, so database replacement cannot overlap an
 estimate or materialization. Creation also holds its exclusive creation lock.
 After acquiring the creation lock, the next creator marks any
 remaining `building` rows for its owner as interrupted; a live creator cannot
-be misclassified because it would still hold the lock. Only `building` and
-`active` rows reserve a root, so an operator can empty a partial interrupted
-directory and retry it.
+be misclassified because it would still hold the lock. A `building` or `active`
+checkout reserves its entire root tree: another checkout cannot use that root,
+an ancestor, or a descendant. An operator can empty a partial interrupted
+directory and retry it after recovery moves the old row to `error`.
 
 The `capture_date` layout keeps every asset's related files together beneath
 `YYYY/MM/DD/{asset-uuid}/`; assets without capture time use

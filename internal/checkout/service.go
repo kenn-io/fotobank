@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -114,6 +115,14 @@ func (s *Materializer) Create(
 	}
 	request.Selection = normalizeSelection(request.Selection)
 	rootPath := request.Root.Path()
+	liveRoots, err := s.repo.LiveRoots(ctx)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	if slices.ContainsFunc(liveRoots, request.Root.Overlaps) {
+		return CreateResult{}, fmt.Errorf(
+			"create checkout: %w: root overlaps live checkout", errs.ErrAlreadyExists)
+	}
 	workingRoot, err := request.Root.Take()
 	if err != nil {
 		return CreateResult{}, fmt.Errorf("create checkout: open root: %w", err)

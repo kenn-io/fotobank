@@ -170,6 +170,42 @@ func TestServiceRequiresCapacityAcceptanceForAllAssets(t *testing.T) {
 	r.Equal(int64(5), result.Estimate.Bytes)
 }
 
+func TestServiceRejectsCheckoutRootsOverlappingLiveCheckout(t *testing.T) {
+	testCases := map[string]struct {
+		liveIsParent bool
+	}{
+		"requested child":  {liveIsParent: true},
+		"requested parent": {liveIsParent: false},
+	}
+	for name, testCase := range testCases {
+		t.Run(name, func(t *testing.T) {
+			r := require.New(t)
+			fixture := newFixture(t)
+			parent := filepath.Join(t.TempDir(), "checkout")
+			child := filepath.Join(parent, "child")
+			r.NoError(os.MkdirAll(child, 0o700))
+			liveRoot, requestedRoot := child, parent
+			if testCase.liveIsParent {
+				liveRoot, requestedRoot = parent, child
+			}
+			now := time.Now().UTC()
+			r.NoError(fixture.checkouts.Insert(t.Context(), checkout.Checkout{
+				ID: uuid.NewString(), Owner: fixture.owner, Root: liveRoot, Layout: "capture_date",
+				Selection: checkout.Selection{All: true}, State: checkout.StateActive,
+				CreatedAt: now, UpdatedAt: now,
+			}))
+			validatedRoot, err := fixture.content.ResolveCheckoutRoot(requestedRoot)
+			r.NoError(err)
+
+			_, err = fixture.service.Create(t.Context(), fixture.owner, checkout.CreateRequest{
+				Root: validatedRoot, Selection: checkout.Selection{All: true}, CapacityLimit: 1,
+			})
+			r.ErrorIs(err, errs.ErrAlreadyExists)
+			r.Contains(err.Error(), "overlaps live checkout")
+		})
+	}
+}
+
 type fixture struct {
 	db        *db.DB
 	owner     owners.Principal
