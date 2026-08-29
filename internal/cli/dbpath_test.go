@@ -16,7 +16,7 @@ func TestResolveDBPathHonorsEnvOverride(t *testing.T) {
 	cfg := &config.Config{}
 	got, err := resolveDBPath(cfg)
 	require.NoError(t, err)
-	require.Equal(t, want, got)
+	require.Equal(t, filepath.Join(canonicalExistingPath(t, filepath.Dir(want)), filepath.Base(want)), got)
 }
 
 func TestResolveDBPathFallsBackToFlashRoot(t *testing.T) {
@@ -25,7 +25,9 @@ func TestResolveDBPathFallsBackToFlashRoot(t *testing.T) {
 	cfg.Flash.Root = filepath.Join(t.TempDir(), "flashroot")
 	got, err := resolveDBPath(cfg)
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(cfg.Flash.Root, "fotobank.sqlite"), got)
+	require.Equal(t, filepath.Join(
+		canonicalExistingPath(t, filepath.Dir(cfg.Flash.Root)),
+		filepath.Base(cfg.Flash.Root), "fotobank.sqlite"), got)
 }
 
 func TestResolveDBPathCanonicalizesExistingParent(t *testing.T) {
@@ -38,10 +40,17 @@ func TestResolveDBPathCanonicalizesExistingParent(t *testing.T) {
 
 	got, err := resolveDBPath(&config.Config{})
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(realParent, "fotobank.sqlite"), got)
+	require.Equal(t, filepath.Join(canonicalExistingPath(t, realParent), "fotobank.sqlite"), got)
 }
 
 func TestLockPathForDerivesFromDBPath(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "fotobank.sqlite")
 	require.Equal(t, dbPath+".lock", lockPathFor(dbPath))
+}
+
+func canonicalExistingPath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	require.NoError(t, err)
+	return resolved
 }

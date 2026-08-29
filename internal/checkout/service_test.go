@@ -188,9 +188,13 @@ func TestServiceRejectsCheckoutRootsOverlappingLiveCheckout(t *testing.T) {
 			if testCase.liveIsParent {
 				liveRoot, requestedRoot = parent, child
 			}
+			validatedLiveRoot, err := fixture.content.ResolveCheckoutRoot(liveRoot)
+			r.NoError(err)
+			canonicalLiveRoot := validatedLiveRoot.Path()
+			r.NoError(validatedLiveRoot.Close())
 			now := time.Now().UTC()
 			r.NoError(fixture.checkouts.Insert(t.Context(), checkout.Checkout{
-				ID: uuid.NewString(), Owner: fixture.owner, Root: liveRoot, Layout: "capture_date",
+				ID: uuid.NewString(), Owner: fixture.owner, Root: canonicalLiveRoot, Layout: "capture_date",
 				Selection: checkout.Selection{All: true}, State: checkout.StateActive,
 				CreatedAt: now, UpdatedAt: now,
 			}))

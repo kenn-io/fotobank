@@ -133,13 +133,17 @@ func TestCheckoutCreateRecoversInterruptedCheckoutAfterTakingLock(t *testing.T) 
 	item := assetfixture.InsertContent(t,
 		media.NewRepo(database.WriteDB(), database.ReadDB()), contentStore,
 		[]byte("checkout bytes"), media.Media{Owner: owner, OriginalFilename: "IMG_0100.JPG"})
-	r.NoError(contentStore.Close())
 	root := filepath.Join(tmp, "checkout")
 	r.NoError(os.Mkdir(root, 0o700))
+	validatedRoot, err := contentStore.ResolveCheckoutRoot(root)
+	r.NoError(err)
+	canonicalRoot := validatedRoot.Path()
+	r.NoError(validatedRoot.Close())
+	r.NoError(contentStore.Close())
 	interruptedID := uuid.NewString()
 	now := time.Now().UTC()
 	r.NoError(checkout.NewRepo(database.WriteDB(), database.ReadDB()).Insert(t.Context(), checkout.Checkout{
-		ID: interruptedID, Owner: owner, Root: root, Layout: "capture_date",
+		ID: interruptedID, Owner: owner, Root: canonicalRoot, Layout: "capture_date",
 		Selection: checkout.Selection{AssetIDs: []string{item.ID}}, State: checkout.StateBuilding,
 		CreatedAt: now, UpdatedAt: now,
 	}))
@@ -182,6 +186,6 @@ func TestCheckoutCreateRecoversInterruptedCheckoutAfterTakingLock(t *testing.T) 
 	r.Contains(lastError, "interrupted")
 	var active int
 	r.NoError(database.ReadDB().QueryRowContext(t.Context(),
-		`SELECT COUNT(*) FROM checkouts WHERE root = ? AND state = 'active'`, root).Scan(&active))
+		`SELECT COUNT(*) FROM checkouts WHERE root = ? AND state = 'active'`, canonicalRoot).Scan(&active))
 	r.Equal(1, active)
 }
