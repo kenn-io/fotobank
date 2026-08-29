@@ -371,15 +371,17 @@ CREATE TABLE checkouts (
 CREATE INDEX checkouts_owner_idx
   ON checkouts(owner_hub, owner_user_id, created_at, id);
 
+-- Source identifiers below are historical snapshots, not ownership links.
+-- Deleting an asset, album, or media file must not erase a checkout ledger.
 CREATE TABLE checkout_asset_selections (
     checkout_id     UUID NOT NULL REFERENCES checkouts(id) ON DELETE CASCADE,
-    asset_id        UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    asset_id        UUID NOT NULL,
     PRIMARY KEY (checkout_id, asset_id)
 );
 
 CREATE TABLE checkout_album_selections (
     checkout_id     UUID NOT NULL REFERENCES checkouts(id) ON DELETE CASCADE,
-    album_id        UUID NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+    album_id        UUID NOT NULL,
     PRIMARY KEY (checkout_id, album_id)
 );
 
@@ -392,7 +394,7 @@ CREATE TABLE checkout_year_selections (
 
 CREATE TABLE checkout_entries (
     checkout_id       UUID NOT NULL REFERENCES checkouts(id) ON DELETE CASCADE,
-    file_id           UUID NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,
+    file_id           UUID NOT NULL,
     relative_path     TEXT NOT NULL,
     base_version_id   TEXT NOT NULL,
     base_sha256       TEXT NOT NULL CHECK (
