@@ -103,12 +103,13 @@ func (imp *Importer) RecoverOwner(ctx context.Context, owner owners.Principal) (
 		if unresolved > 0 {
 			continue
 		}
-		if asset.State == media.AssetPending {
-			if err := imp.assets.FinalizeReady(ctx, assetID); err != nil {
-				return result, err
-			}
-			result.Finalized++
+		if asset.State != media.AssetPending {
+			continue
 		}
+		if err := imp.assets.FinalizeReady(ctx, assetID); err != nil {
+			return result, err
+		}
+		result.Finalized++
 		imp.refreshFTS(ctx, assetID)
 		if asset.Type == media.TypePhoto {
 			if err := imp.ai.EnqueueForPhoto(ctx, assetID); err != nil {

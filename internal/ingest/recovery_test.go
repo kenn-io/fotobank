@@ -2,6 +2,7 @@ package ingest_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
@@ -49,6 +50,8 @@ func TestRecoverOwnerAdoptsCreateAfterVaultRestart(t *testing.T) {
 		storageKey,
 		nil,
 	)
+	aiCalls := &countingAIEnqueuer{}
+	recoverer.SetAIEnqueuer(aiCalls)
 	result, err := recoverer.RecoverOwner(t.Context(), owner)
 	r.NoError(err)
 	r.Equal(1, result.Adopted)
@@ -64,6 +67,12 @@ func TestRecoverOwnerAdoptsCreateAfterVaultRestart(t *testing.T) {
 	r.NoError(err)
 	r.Equal(receipt.Node.ID, *file.DocbankNodeID)
 	r.Equal(receipt.Version.ID, file.CurrentVersionID)
+	r.Equal(1, aiCalls.photos)
+
+	result, err = recoverer.RecoverOwner(t.Context(), owner)
+	r.NoError(err)
+	r.Zero(result.Finalized)
+	r.Equal(1, aiCalls.photos, "an already-ready asset must not be rescheduled")
 }
 
 func TestRecoverOwnerLeavesMissingCreatePending(t *testing.T) {
@@ -196,4 +205,19 @@ func ownerStorageKey(t *testing.T, db *sql.DB, owner owners.Principal) string {
 		owner.Hub, owner.UserID,
 	).Scan(&storageKey))
 	return storageKey
+}
+
+type countingAIEnqueuer struct {
+	photos int
+	videos int
+}
+
+func (c *countingAIEnqueuer) EnqueueForPhoto(_ context.Context, _ string) error {
+	c.photos++
+	return nil
+}
+
+func (c *countingAIEnqueuer) RecordVideoSkip(_ context.Context, _ string) error {
+	c.videos++
+	return nil
 }
