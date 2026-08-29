@@ -17,10 +17,9 @@ func NewCheckoutService(
 	repo *checkout.Repo,
 	resolver *contentresolver.Resolver,
 	creationLockPath string,
-	databaseLockPath string,
 ) *CheckoutService {
 	return &CheckoutService{materializer: checkout.NewMaterializer(
-		repo, resolver, creationLockPath, databaseLockPath)}
+		repo, resolver, creationLockPath)}
 }
 
 func (s *CheckoutService) Estimate(
