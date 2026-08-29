@@ -28,11 +28,37 @@ type Identity struct {
 type Node struct {
 	ID               int64
 	VirtualPath      string
+	Kind             string
 	CurrentVersionID string
 	SHA256           string
 	Size             int64
 	MediaType        string
 	Revision         int64
+}
+
+// Walk visits every live node beneath virtualRoot using Docbank's bounded,
+// stable traversal snapshot. The callback receives Fotobank projections only;
+// Docbank types remain inside this package.
+func (a *Adapter) Walk(ctx context.Context, virtualRoot string, visit func(Node) error) error {
+	walker, err := a.vault.Walk(ctx, virtualRoot, docbank.WalkOptions{})
+	if err != nil {
+		return translateError(err)
+	}
+	defer walker.Close()
+	for {
+		page, nextErr := walker.Next(ctx)
+		if nextErr != nil {
+			if nextErr == io.EOF {
+				return translateError(walker.Close())
+			}
+			return translateError(nextErr)
+		}
+		for _, entry := range page {
+			if err := visit(projectNode(entry.Node, entry.Path)); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 type Version struct {
@@ -350,6 +376,7 @@ func projectNode(node docbank.Node, virtualPath string) Node {
 	return Node{
 		ID:               node.ID,
 		VirtualPath:      virtualPath,
+		Kind:             node.Kind,
 		CurrentVersionID: node.CurrentVersionID,
 		SHA256:           node.BlobHash,
 		Size:             node.Size,

@@ -30,6 +30,15 @@ func VirtualPath(ownerStorageKey, fileID, originalBasename string) (string, erro
 	return path.Join("/owners", ownerStorageKey, "media", fileID, basename), nil
 }
 
+// OwnerMediaRoot returns the subtree that contains one owner's authoritative
+// media files.
+func OwnerMediaRoot(ownerStorageKey string) (string, error) {
+	if err := validateCanonicalUUID("owner storage key", ownerStorageKey); err != nil {
+		return "", err
+	}
+	return path.Join("/owners", ownerStorageKey, "media"), nil
+}
+
 func validateCanonicalUUID(name, value string) error {
 	parsed, err := uuid.Parse(value)
 	if err != nil || parsed.String() != value {

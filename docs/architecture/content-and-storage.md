@@ -39,6 +39,7 @@ Only `internal/content` imports `go.kenn.io/docbank`. It owns:
 - stable virtual-path construction;
 - create requests with required expected SHA-256 and size;
 - exact-version and current-version reads;
+- bounded traversal of an owner's media subtree for reconciliation;
 - error translation into Fotobank sentinels; and
 - serialization of content mutations to bound local concurrency.
 
@@ -91,8 +92,9 @@ Repeating the same create with the same path and identity is idempotent.
 Different content at the reserved path marks the asset and all sibling
 operations as a durable conflict. Receipts are rejected after conflict and the
 asset cannot become ready. A later import of the same source identities resumes
-pending operations. Standalone orphan reporting remains a separate operational
-capability.
+pending operations. The content recovery command adopts matching creates left
+across a process interruption, completes fully applied assets, and reports
+unmatched Docbank files without changing them.
 
 The owner routes serve the primary through `/api/v1/media/{asset}/original`
 and attached RAW/XMP content through

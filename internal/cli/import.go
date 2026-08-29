@@ -164,17 +164,7 @@ func runImport(ctx context.Context, opts importOpts) error {
 	// for AI processing. Queue rows use runtime claim fingerprints so
 	// server workers claim the same settings identity that admin Apply
 	// publishes.
-	aiQueue := jobs.NewQueue(d.WriteDB(), d.ReadDB())
-	aiSkippedRepo := skipped.NewRepo(d.WriteDB(), d.ReadDB())
-	enq := ingest.NewRealAIEnqueuer(
-		aiSnap.Result.Tag, aiSnap.Result.Caption,
-		aiQueue.Enqueue,
-		aiSkippedRepo.Record,
-	).WithClaimFingerprints(aiSnap.Claim.Tag, aiSnap.Claim.Caption, aiQueue.EnqueueClaim)
-	if cfg.AI.Embed.Enabled {
-		enq.WithEmbedClaim(aiSnap.Result.Embed, aiSnap.Claim.Embed)
-	}
-	imp.SetAIEnqueuer(enq)
+	imp.SetAIEnqueuer(newIngestAIEnqueuer(d, aiSnap))
 
 	progress := newImportProgress(opts.stdout)
 	res, err := imp.ImportDirectory(ctx, opts.source, ingest.Options{
@@ -198,6 +188,25 @@ func runImport(ctx context.Context, opts importOpts) error {
 		return fmt.Errorf("import completed with %d failure(s)", len(res.Failures))
 	}
 	return nil
+}
+
+func newIngestAIEnqueuer(d *db.DB, snapshot airuntime.Snapshot) ingest.AIEnqueuer {
+	aiQueue := jobs.NewQueue(d.WriteDB(), d.ReadDB())
+	aiSkippedRepo := skipped.NewRepo(d.WriteDB(), d.ReadDB())
+	enqueuer := ingest.NewRealAIEnqueuer(
+		snapshot.Result.Tag,
+		snapshot.Result.Caption,
+		aiQueue.Enqueue,
+		aiSkippedRepo.Record,
+	).WithClaimFingerprints(
+		snapshot.Claim.Tag,
+		snapshot.Claim.Caption,
+		aiQueue.EnqueueClaim,
+	)
+	if snapshot.Config.Embed.Enabled {
+		enqueuer.WithEmbedClaim(snapshot.Result.Embed, snapshot.Claim.Embed)
+	}
+	return enqueuer
 }
 
 // importProgress prints live progress for `fotobank import`. On a TTY
