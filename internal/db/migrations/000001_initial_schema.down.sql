@@ -25,6 +25,7 @@ DROP TABLE IF EXISTS checkout_entries;
 DROP TABLE IF EXISTS checkout_year_selections;
 DROP TABLE IF EXISTS checkout_album_selections;
 DROP TABLE IF EXISTS checkout_asset_selections;
+DROP INDEX IF EXISTS checkouts_live_root_uq;
 DROP TABLE IF EXISTS checkouts;
 DROP TRIGGER IF EXISTS album_media_owner_consistency_update;
 DROP TRIGGER IF EXISTS album_media_owner_consistency_insert;

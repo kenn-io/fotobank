@@ -202,6 +202,26 @@ func (r *Repo) SetState(ctx context.Context, id string, state State, message str
 	return nil
 }
 
+func (r *Repo) markBuildingInterrupted(
+	ctx context.Context,
+	owner owners.Principal,
+	message string,
+	now time.Time,
+) (int64, error) {
+	res, err := r.rw.ExecContext(ctx, `UPDATE checkouts
+		SET state = ?, last_error = ?, updated_at = ?
+		WHERE owner_hub = ? AND owner_user_id = ? AND state = ?`,
+		string(StateError), message, now, owner.Hub, owner.UserID, string(StateBuilding))
+	if err != nil {
+		return 0, fmt.Errorf("mark interrupted checkouts: %w", err)
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("mark interrupted checkouts: rows affected: %w", err)
+	}
+	return count, nil
+}
+
 func (r *Repo) Get(ctx context.Context, id string) (Checkout, error) {
 	var checkout Checkout
 	var state string

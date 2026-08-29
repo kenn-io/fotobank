@@ -155,6 +155,11 @@ so replacing the pathname after validation cannot redirect writes. Once a
 checkout row exists, every later failure attempts the `error`
 transition through a short cleanup context independent of caller cancellation;
 if that database write also fails, the returned error reports both failures.
+Checkout creation also holds a process lock beside the SQLite database. After
+acquiring that lock, the next creator marks any remaining `building` rows for
+its owner as interrupted; a live creator cannot be misclassified because it
+would still hold the lock. Only `building` and `active` rows reserve a root, so
+an operator can empty a partial interrupted directory and retry it.
 
 The `capture_date` layout keeps every asset's related files together beneath
 `YYYY/MM/DD/{asset-uuid}/`; assets without capture time use

@@ -179,32 +179,33 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 	if cfg.Identity.Mode != "stub" {
 		return nil, fmt.Errorf("fotobank checkout requires identity.mode = stub (got %q)", cfg.Identity.Mode)
 	}
-	database, err := db.Open(resolveDBPath(cfg))
+	dbPath := resolveDBPath(cfg)
+	database, err := db.Open(dbPath)
 	if err != nil {
 		return nil, err
 	}
 	owner := owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
+	runtime := &checkoutRuntime{db: database, owner: owner}
 	ownerService := service.NewOwnerService(owners.NewRepo(database.WriteDB(), database.ReadDB()))
 	if _, err := ownerService.Ensure(ctx, owner, cfg.Identity.Stub.StorageKey); err != nil {
-		_ = database.Close()
+		runtime.close()
 		return nil, err
 	}
 	checkoutRepo := checkout.NewRepo(database.WriteDB(), database.ReadDB())
-	runtime := &checkoutRuntime{db: database, owner: owner}
 	if !withContent {
-		runtime.service = service.NewCheckoutService(checkoutRepo, nil)
+		runtime.service = service.NewCheckoutService(checkoutRepo, nil, "")
 		return runtime, nil
 	}
 	contentStore, err := content.Open(ctx, content.Config{
 		Root: cfg.Docbank.Root, ManagedRoots: []string{cfg.NAS.Root, cfg.Flash.Root},
 	})
 	if err != nil {
-		_ = database.Close()
+		runtime.close()
 		return nil, fmt.Errorf("open Docbank vault: %w", err)
 	}
 	runtime.content = contentStore
 	resolver := contentresolver.New(media.NewRepo(database.WriteDB(), database.ReadDB()), contentStore)
-	runtime.service = service.NewCheckoutService(checkoutRepo, resolver)
+	runtime.service = service.NewCheckoutService(checkoutRepo, resolver, dbPath+".checkout.lock")
 	return runtime, nil
 }
 

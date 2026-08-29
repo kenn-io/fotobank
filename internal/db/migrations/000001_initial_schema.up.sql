@@ -357,7 +357,7 @@ CREATE TABLE checkouts (
     id              UUID PRIMARY KEY,
     owner_hub       TEXT NOT NULL,
     owner_user_id   TEXT NOT NULL,
-    root            TEXT NOT NULL UNIQUE,
+    root            TEXT NOT NULL,
     layout          TEXT NOT NULL CHECK (layout IN ('capture_date')),
     include_all     INTEGER NOT NULL DEFAULT 0 CHECK (include_all IN (0, 1)),
     state           TEXT NOT NULL CHECK (state IN ('building', 'active', 'error')),
@@ -370,6 +370,9 @@ CREATE TABLE checkouts (
 
 CREATE INDEX checkouts_owner_idx
   ON checkouts(owner_hub, owner_user_id, created_at, id);
+
+CREATE UNIQUE INDEX checkouts_live_root_uq ON checkouts(root)
+  WHERE state IN ('building', 'active');
 
 -- Source identifiers below are historical snapshots, not ownership links.
 -- Deleting an asset, album, or media file must not erase a checkout ledger.

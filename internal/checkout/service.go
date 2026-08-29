@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/google/uuid"
 
 	"go.kenn.io/fotobank/internal/content"
@@ -28,12 +29,15 @@ import (
 type Materializer struct {
 	repo     *Repo
 	resolver *contentresolver.Resolver
+	lockPath string
 	now      func() time.Time
 	newID    func() string
 }
 
-func NewMaterializer(repo *Repo, resolver *contentresolver.Resolver) *Materializer {
-	return &Materializer{repo: repo, resolver: resolver, now: time.Now, newID: uuid.NewString}
+func NewMaterializer(repo *Repo, resolver *contentresolver.Resolver, lockPath string) *Materializer {
+	return &Materializer{
+		repo: repo, resolver: resolver, lockPath: lockPath, now: time.Now, newID: uuid.NewString,
+	}
 }
 
 type CreateRequest struct {
@@ -64,6 +68,14 @@ func (s *Materializer) Estimate(
 	return estimateCandidates(candidates), nil
 }
 
+func (s *Materializer) recoverInterrupted(
+	ctx context.Context,
+	caller owners.Principal,
+) (int64, error) {
+	return s.repo.markBuildingInterrupted(
+		ctx, caller, "checkout creation was interrupted before completion", s.now().UTC())
+}
+
 func (s *Materializer) Create(
 	ctx context.Context,
 	caller owners.Principal,
@@ -73,6 +85,21 @@ func (s *Materializer) Create(
 		return CreateResult{}, fmt.Errorf("create checkout: %w: service is not configured", errs.ErrInvalidArgument)
 	}
 	defer request.Root.Close()
+	if s.lockPath == "" {
+		return CreateResult{}, fmt.Errorf("create checkout: %w: creation lock is not configured", errs.ErrInvalidArgument)
+	}
+	creationLock := flock.New(s.lockPath)
+	locked, err := creationLock.TryLock()
+	if err != nil {
+		return CreateResult{}, fmt.Errorf("create checkout: lock creation: %w", err)
+	}
+	if !locked {
+		return CreateResult{}, fmt.Errorf("create checkout: %w: another checkout creation is in progress", errs.ErrAlreadyExists)
+	}
+	defer func() { _ = creationLock.Unlock() }()
+	if _, err := s.recoverInterrupted(ctx, caller); err != nil {
+		return CreateResult{}, err
+	}
 	if request.CapacityLimit < 0 {
 		return CreateResult{}, fmt.Errorf("create checkout: %w: capacity limit cannot be negative", errs.ErrInvalidArgument)
 	}

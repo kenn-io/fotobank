@@ -8,8 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/fotobank/internal/checkout"
 	"go.kenn.io/fotobank/internal/cli"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/db"
@@ -62,4 +65,77 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(root, "undated", item.ID, "IMG_0100.JPG"))
 	r.NoError(err)
 	r.Equal(body, got)
+}
+
+func TestCheckoutCreateRecoversInterruptedCheckoutAfterTakingLock(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	database, err := db.Open(dbPath)
+	r.NoError(err)
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err = database.WriteDB().ExecContext(t.Context(),
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES (?, ?, ?, ?)`,
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC())
+	r.NoError(err)
+	contentStore, err := content.Open(t.Context(), content.Config{
+		Root: filepath.Join(tmp, "flash", "docbank"),
+	})
+	r.NoError(err)
+	item := assetfixture.InsertContent(t,
+		media.NewRepo(database.WriteDB(), database.ReadDB()), contentStore,
+		[]byte("checkout bytes"), media.Media{Owner: owner, OriginalFilename: "IMG_0100.JPG"})
+	r.NoError(contentStore.Close())
+	root := filepath.Join(tmp, "checkout")
+	r.NoError(os.Mkdir(root, 0o700))
+	interruptedID := uuid.NewString()
+	now := time.Now().UTC()
+	r.NoError(checkout.NewRepo(database.WriteDB(), database.ReadDB()).Insert(t.Context(), checkout.Checkout{
+		ID: interruptedID, Owner: owner, Root: root, Layout: "capture_date",
+		Selection: checkout.Selection{AssetIDs: []string{item.ID}}, State: checkout.StateBuilding,
+		CreatedAt: now, UpdatedAt: now,
+	}))
+	r.NoError(database.Close())
+
+	holder := flock.New(dbPath + ".checkout.lock")
+	locked, err := holder.TryLock()
+	r.NoError(err)
+	r.True(locked)
+	t.Cleanup(func() { _ = holder.Unlock() })
+	var stdout, stderr bytes.Buffer
+	code := cli.RunContext(t.Context(), []string{
+		"checkout", "create", "--config", cfgPath, "--asset", item.ID, root,
+	}, &stdout, &stderr)
+	r.NotZero(code)
+	r.Contains(stderr.String(), "another checkout creation is in progress")
+	database, err = db.Open(dbPath)
+	r.NoError(err)
+	var state string
+	r.NoError(database.ReadDB().QueryRowContext(t.Context(),
+		`SELECT state FROM checkouts WHERE id = ?`, interruptedID).Scan(&state))
+	r.Equal(string(checkout.StateBuilding), state)
+	r.NoError(database.Close())
+	r.NoError(holder.Unlock())
+
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
+		"checkout", "create", "--config", cfgPath, "--asset", item.ID, root,
+	}, &stdout, &stderr)
+	r.Zero(code, "stderr=%s", stderr.String())
+	database, err = db.Open(dbPath)
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(database.Close()) })
+	var lastError string
+	r.NoError(database.ReadDB().QueryRowContext(t.Context(),
+		`SELECT state, last_error FROM checkouts WHERE id = ?`, interruptedID).
+		Scan(&state, &lastError))
+	r.Equal(string(checkout.StateError), state)
+	r.Contains(lastError, "interrupted")
+	var active int
+	r.NoError(database.ReadDB().QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM checkouts WHERE root = ? AND state = 'active'`, root).Scan(&active))
+	r.Equal(1, active)
 }
