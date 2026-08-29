@@ -66,6 +66,10 @@ func TestRepoResolveSelectionSupportsAlbumsYearsAndAll(t *testing.T) {
 	byAlbum := assetfixture.InsertContent(t, fixture.media, fixture.content, []byte("album"), media.Media{
 		Owner: fixture.owner,
 	})
+	hiddenAt := time.Now().UTC()
+	hidden := assetfixture.InsertContent(t, fixture.media, fixture.content, []byte("hidden"), media.Media{
+		Owner: fixture.owner, HiddenAt: &hiddenAt,
+	})
 	now := time.Now().UTC()
 	albumID := uuid.NewString()
 	albums := album.NewRepo(fixture.db.WriteDB(), fixture.db.ReadDB())
@@ -86,6 +90,10 @@ func TestRepoResolveSelectionSupportsAlbumsYearsAndAll(t *testing.T) {
 	r.NoError(err)
 	r.Len(all, 2)
 	r.ElementsMatch([]string{byYear.ID, byAlbum.ID}, []string{candidates[0].AssetID, candidates[1].AssetID})
+	_, err = fixture.checkouts.ResolveSelection(t.Context(), fixture.owner, checkout.Selection{
+		AssetIDs: []string{hidden.ID},
+	})
+	r.ErrorIs(err, errs.ErrNotFound)
 }
 
 func TestServiceRequiresCapacityAcceptanceForAllAssets(t *testing.T) {

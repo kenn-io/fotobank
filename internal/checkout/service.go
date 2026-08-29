@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -79,7 +80,12 @@ func (s *Materializer) Create(
 		return CreateResult{}, fmt.Errorf("create checkout: %w: all-assets checkout requires --max-bytes", errs.ErrInvalidArgument)
 	}
 	request.Selection = normalizeSelection(request.Selection)
-	contents, err := os.ReadDir(request.Root)
+	workingRoot, err := os.OpenRoot(request.Root)
+	if err != nil {
+		return CreateResult{}, fmt.Errorf("create checkout: open root: %w", err)
+	}
+	defer workingRoot.Close()
+	contents, err := fs.ReadDir(workingRoot.FS(), ".")
 	if err != nil {
 		return CreateResult{}, fmt.Errorf("create checkout: read root: %w", err)
 	}
@@ -119,7 +125,7 @@ func (s *Materializer) Create(
 			return CreateResult{}, s.fail(ctx, checkout.ID, err)
 		}
 		paths[relativePath] = candidate.FileID
-		if err := s.materialize(ctx, checkout, candidate, relativePath); err != nil {
+		if err := s.materialize(ctx, workingRoot, checkout, candidate, relativePath); err != nil {
 			return CreateResult{}, s.fail(ctx, checkout.ID, err)
 		}
 	}
@@ -138,6 +144,7 @@ func (s *Materializer) fail(ctx context.Context, checkoutID string, cause error)
 
 func (s *Materializer) materialize(
 	ctx context.Context,
+	workingRoot *os.Root,
 	checkout Checkout,
 	candidate Candidate,
 	relativePath string,
@@ -151,26 +158,20 @@ func (s *Materializer) materialize(
 	if err != nil {
 		return fmt.Errorf("materialize %s: open version: %w", relativePath, err)
 	}
-	destination := filepath.Join(checkout.Root, filepath.FromSlash(relativePath))
-	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+	destination := filepath.FromSlash(relativePath)
+	directory := filepath.Dir(destination)
+	if err := workingRoot.MkdirAll(directory, 0o700); err != nil {
 		return errors.Join(fmt.Errorf("materialize %s: create directory: %w", relativePath, err), opened.Reader.Close())
 	}
-	if _, err := os.Lstat(destination); err == nil {
-		return errors.Join(
-			fmt.Errorf("materialize %s: %w: destination already exists", relativePath, errs.ErrAlreadyExists),
-			opened.Reader.Close())
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return errors.Join(fmt.Errorf("materialize %s: inspect destination: %w", relativePath, err), opened.Reader.Close())
-	}
-	temp, err := os.CreateTemp(filepath.Dir(destination), ".fotobank-materialize-*")
+	tempName := filepath.Join(directory, ".fotobank-"+candidate.FileID+".tmp")
+	temp, err := workingRoot.OpenFile(tempName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return errors.Join(fmt.Errorf("materialize %s: create temporary file: %w", relativePath, err), opened.Reader.Close())
 	}
-	tempName := temp.Name()
 	removeTemp := true
 	defer func() {
 		if removeTemp {
-			_ = os.Remove(tempName)
+			_ = workingRoot.Remove(tempName)
 		}
 	}()
 
@@ -187,11 +188,11 @@ func (s *Materializer) materialize(
 		return fmt.Errorf("materialize %s: %w: copied digest differs from catalog",
 			relativePath, errs.ErrContentIdentityMismatch)
 	}
-	if err := os.Rename(tempName, destination); err != nil {
-		return fmt.Errorf("materialize %s: publish: %w", relativePath, err)
+	if err := publish(workingRoot, tempName, destination); err != nil {
+		return fmt.Errorf("materialize %s: %w", relativePath, err)
 	}
 	removeTemp = false
-	info, err := os.Stat(destination)
+	info, err := workingRoot.Stat(destination)
 	if err != nil {
 		return fmt.Errorf("materialize %s: stat published file: %w", relativePath, err)
 	}
@@ -204,6 +205,23 @@ func (s *Materializer) materialize(
 	}
 	if err := s.repo.InsertEntry(ctx, entry); err != nil {
 		return fmt.Errorf("materialize %s: record entry: %w", relativePath, err)
+	}
+	return nil
+}
+
+// publish atomically gives a completed temporary copy its final name without
+// replacing an untracked working file. Both names are inside the root-bound
+// filesystem view; the temporary hardlink is removed after publication and is
+// never linked to Docbank content-addressed storage.
+func publish(workingRoot *os.Root, tempName, destination string) error {
+	if err := workingRoot.Link(tempName, destination); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("%w: destination already exists", errs.ErrAlreadyExists)
+		}
+		return fmt.Errorf("publish checkout file: %w", err)
+	}
+	if err := workingRoot.Remove(tempName); err != nil {
+		return fmt.Errorf("remove published temporary link: %w", err)
 	}
 	return nil
 }

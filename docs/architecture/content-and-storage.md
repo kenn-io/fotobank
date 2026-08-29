@@ -137,14 +137,15 @@ validated tree.
 A checkout is a materialized working copy for tools such as Lightroom, never
 content authority. `fotobank checkout estimate` reports the distinct file and
 byte count selected by explicit assets, albums, inclusive capture-year ranges,
-or all ready assets. An all-assets checkout requires a caller-supplied byte
-ceiling so a second full archive copy is never created implicitly.
+or all ready visible assets. Hidden assets are excluded because the CLI has no
+hidden-media unlock session. An all-assets checkout requires a caller-supplied
+byte ceiling so a second full archive copy is never created implicitly.
 
 `fotobank checkout create` requires an existing empty directory outside the
 Docbank, NAS, and flash-managed roots. It resolves every selected file to its
-recorded immutable Docbank version and publishes a verified ordinary copy via
-a temporary file and rename. It never hardlinks a writable file to a Docbank
-content-addressed object.
+recorded immutable Docbank version and publishes a verified ordinary copy with
+an atomic no-replace operation inside a root-bound filesystem view. It never
+hardlinks a writable file to a Docbank content-addressed object.
 
 The `capture_date` layout keeps every asset's related files together beneath
 `YYYY/MM/DD/{asset-uuid}/`; assets without capture time use
