@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"go.kenn.io/fotobank/internal/album"
-	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
@@ -25,13 +25,13 @@ import (
 // repos the owner services use for data — but it never calls the owner
 // services, which enforce caller == owner.
 type SharedReadService struct {
-	shares   *share.Repo
-	media    *media.Repo
-	albums   *album.Repo
-	storage  storage.Store
-	content  *content.Adapter
-	resolver *share.ScopeResolver
-	now      func() time.Time
+	shares          *share.Repo
+	media           *media.Repo
+	albums          *album.Repo
+	storage         storage.Store
+	contentResolver *contentresolver.Resolver
+	resolver        *share.ScopeResolver
+	now             func() time.Time
 }
 
 // NewSharedReadService constructs a SharedReadService with prod
@@ -41,11 +41,11 @@ func NewSharedReadService(
 	m *media.Repo,
 	a *album.Repo,
 	s storage.Store,
-	c *content.Adapter,
+	c *contentresolver.Resolver,
 	r *share.ScopeResolver,
 ) *SharedReadService {
 	return &SharedReadService{
-		shares: shares, media: m, albums: a, storage: s, content: c, resolver: r,
+		shares: shares, media: m, albums: a, storage: s, contentResolver: c, resolver: r,
 		now: func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -501,15 +501,18 @@ func (s *SharedReadService) OpenOriginal(
 	}
 	// Defense in depth: hidden_at IS NULL is enforced at the repository
 	// (CoverMediaByScopes) and again here. Grantees cannot include hidden rows.
-	m, err := s.media.GetByIDVisible(ctx, mediaID, false)
+	ref, err := s.contentResolver.ResolveCurrent(ctx, mediaID, "")
 	if err != nil {
 		return nil, media.Media{}, err
 	}
-	rc, err := openExactVersion(ctx, s.content, m.CurrentVersionID, offset, length)
+	if ref.Asset.HiddenAt != nil {
+		return nil, media.Media{}, fmt.Errorf("%w: media id=%s", errs.ErrNotFound, mediaID)
+	}
+	opened, err := s.contentResolver.Open(ctx, ref, offset, length)
 	if err != nil {
 		return nil, media.Media{}, fmt.Errorf("read shared original: %w", err)
 	}
-	return rc, m, nil
+	return opened.Reader, ref.Asset, nil
 }
 
 // OpenThumb returns the cached thumb bytes, gated only by

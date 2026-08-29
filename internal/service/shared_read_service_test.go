@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/fotobank/internal/album"
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/media"
@@ -58,7 +59,9 @@ func newSharedReadFixture(t *testing.T) sharedReadFixture {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, contentStore.Close()) })
 	resolver := share.NewScopeResolver(shares, func() time.Time { return now }, nil)
-	svc := service.NewSharedReadService(shares, mRepo, aRepo, store, contentStore, resolver)
+	svc := service.NewSharedReadService(
+		shares, mRepo, aRepo, store, contentresolver.New(mRepo, contentStore), resolver,
+	)
 	return sharedReadFixture{
 		t: t, db: d, shares: shares, mediaR: mRepo, albumsR: aRepo,
 		store: store, content: contentStore, resolver: resolver, svc: svc, now: now,

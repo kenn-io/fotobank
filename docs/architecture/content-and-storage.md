@@ -42,6 +42,20 @@ Only `internal/content` imports `go.kenn.io/docbank`. It owns:
 - error translation into Fotobank sentinels; and
 - serialization of content mutations to bound local concurrency.
 
+`internal/contentresolver` is the shared product-to-content boundary above the
+adapter. It resolves a ready asset and either its primary or a named attached
+file, then binds an immutable version to that file's recorded Docbank node.
+Owner and shared-read services apply authorization and hidden-media policy
+before opening the resolved reference. Projection workers use the same
+resolver without transport authorization.
+
+Current references use the version cached on the file and require Docbank's
+SHA-256 and size to match the Fotobank projection. Historical references may
+name any immutable version of the same Docbank node; a version belonging to a
+different file is rejected even when the caller can access the asset. This is
+the read primitive used by current downloads and projections and reserved for
+later checkout materialization and rebuilds.
+
 The embedded vault is configured with loose compression disabled and Fotobank
 does not pack imported media. Callers still use public Docbank read APIs and
 must not derive blob shard paths or depend on the physical representation.
@@ -55,8 +69,9 @@ Virtual paths are internal stable names:
 The path is allocated before content creation. Public APIs expose the asset
 UUID, never this path or the sequential Docbank node ID.
 
-`internal/content` exposes sequential verified readers. A caller
-must drain a full stream and check verification before treating the read as
+`internal/content` exposes sequential verified readers. The resolver converts
+full-stream verification into ordinary read errors at EOF, so consumers must
+drain a full stream and handle its terminal error before treating the read as
 successful. Exact-version range reads serve video and HTTP Range responses; a
 partial range proves catalog access and range bounds, not whole-object
 integrity.

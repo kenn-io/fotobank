@@ -39,6 +39,7 @@ import (
 	"go.kenn.io/fotobank/internal/backup"
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
@@ -232,7 +233,9 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	}
 	storeLayer, flashCache := buildStorageLayer(cfg, keys)
 
-	mediaSvc := service.NewMediaService(media.NewRepo(d.WriteDB(), d.ReadDB()), contentStore)
+	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	contentResolver := contentresolver.New(mediaRepo, contentStore)
+	mediaSvc := service.NewMediaService(mediaRepo, contentResolver)
 
 	// F2.4 Hidden privacy. hiddenRepo and hiddenSvc are wired after
 	// mediaSvc because hidden.NewService takes MediaPrivacy which is
@@ -262,7 +265,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	sharesRepo := share.NewRepo(d.WriteDB(), d.ReadDB())
 	albumSvc := service.NewAlbumService(
 		album.NewRepo(d.WriteDB(), d.ReadDB()),
-		media.NewRepo(d.WriteDB(), d.ReadDB()),
+		mediaRepo,
 		sharesRepo,
 		d,
 	)
@@ -377,10 +380,10 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	resolver := share.NewScopeResolver(sharesRepo, nil, logger.With("component", "share"))
 	sharedSvc := service.NewSharedReadService(
 		sharesRepo,
-		media.NewRepo(d.WriteDB(), d.ReadDB()),
+		mediaRepo,
 		album.NewRepo(d.WriteDB(), d.ReadDB()),
 		storeLayer,
-		contentStore,
+		contentResolver,
 		resolver,
 	)
 
@@ -720,7 +723,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	})
 
 	thumbWorker := thumb.NewWorker(thumbQueue, storeLayer, thumb.Config{
-		Content:           contentStore,
+		Content:           contentResolver,
 		WorkerConcurrency: cfg.Thumbs.WorkerConcurrency,
 		PollInterval:      cfg.Thumbs.PollInterval,
 		LeaseTimeout:      cfg.Thumbs.LeaseTimeout,

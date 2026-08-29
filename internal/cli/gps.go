@@ -10,6 +10,7 @@ import (
 
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/exifread"
@@ -250,6 +251,7 @@ type backfiller struct {
 	svc     *service.MediaService
 	repo    *media.Repo
 	content *content.Adapter
+	resolve *contentresolver.Resolver
 	places  *geo.NaturalEarth
 	mode    media.GPSBackfillMode
 	since   *time.Time
@@ -277,11 +279,13 @@ func newBackfiller(
 		return nil, fmt.Errorf("open Docbank vault: %w", err)
 	}
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
-	svc := service.NewMediaService(repo, contentStore)
+	resolver := contentresolver.New(repo, contentStore)
+	svc := service.NewMediaService(repo, resolver)
 	return &backfiller{
 		svc:     svc,
 		repo:    repo,
 		content: contentStore,
+		resolve: resolver,
 		places:  places,
 		mode:    opts.parsedMode,
 		since:   opts.sinceTime,
@@ -380,7 +384,7 @@ func reextractOne(
 	owner owners.Principal,
 	row media.Media,
 ) error {
-	opened, err := b.content.OpenVersion(ctx, row.CurrentVersionID)
+	opened, err := b.resolve.OpenCurrent(ctx, row.ID, "", 0, -1)
 	if err != nil {
 		return fmt.Errorf("read Docbank version: %w", err)
 	}
@@ -392,9 +396,6 @@ func reextractOne(
 	}
 	if _, err := io.Copy(io.Discard, rc); err != nil {
 		return fmt.Errorf("drain original: %w", err)
-	}
-	if err := rc.Verify(); err != nil {
-		return fmt.Errorf("verify original: %w", err)
 	}
 	// ExtractPhotoFromReader returns Metadata{} (no error) when the
 	// file simply has no EXIF segment. Such rows naturally fall
