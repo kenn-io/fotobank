@@ -2,6 +2,7 @@ package checkout
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -30,13 +31,13 @@ func TestCreateRecordsActivationCancellationAsError(t *testing.T) {
 	r.NoError(err)
 	repo := NewRepo(database.WriteDB(), database.ReadDB())
 	resolver := contentresolver.New(media.NewRepo(database.WriteDB(), database.ReadDB()), adapter)
-	materializer := NewMaterializer(repo, resolver)
+	materializer := NewMaterializer(repo, resolver, filepath.Join(t.TempDir(), "checkout.lock"))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	calls := 0
 	materializer.now = func() time.Time {
 		calls++
-		if calls == 2 {
+		if calls == 3 {
 			cancel()
 		}
 		return time.Now()
