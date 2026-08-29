@@ -24,9 +24,11 @@ type Config struct {
 // adapter verified does not overlap Docbank or Fotobank-managed storage. Its
 // path cannot be constructed outside this package.
 type CheckoutRoot struct {
-	mu   sync.Mutex
-	path string
-	root *os.Root
+	mu           sync.Mutex
+	path         string
+	root         *os.Root
+	docbankRoot  string
+	managedRoots []string
 }
 
 // Path returns the canonical path recorded in Fotobank's checkout catalog.
@@ -59,7 +61,24 @@ func (r *CheckoutRoot) Take() (*os.Root, error) {
 	if err != nil {
 		return nil, fmt.Errorf("inspect bound checkout root: %w", err)
 	}
-	pathInfo, err := os.Stat(r.path)
+	resolved, err := filepath.EvalSymlinks(r.path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: resolve checkout root again: %w", errs.ErrBadConfiguration, err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("make checkout root absolute again: %w", err)
+	}
+	resolved = filepath.Clean(resolved)
+	if pathsOverlap(resolved, r.docbankRoot) {
+		return nil, fmt.Errorf("%w: checkout root now overlaps Docbank vault", errs.ErrBadConfiguration)
+	}
+	for _, managedRoot := range r.managedRoots {
+		if pathsOverlap(resolved, managedRoot) {
+			return nil, fmt.Errorf("%w: checkout root now overlaps managed storage", errs.ErrBadConfiguration)
+		}
+	}
+	pathInfo, err := os.Stat(resolved)
 	if err != nil {
 		return nil, fmt.Errorf("%w: checkout root path changed after validation: %w", errs.ErrBadConfiguration, err)
 	}
@@ -299,7 +318,10 @@ func (a *Adapter) ResolveCheckoutRoot(checkoutRoot string) (*CheckoutRoot, error
 		}
 	}
 	closeBound = false
-	return &CheckoutRoot{path: resolved, root: bound}, nil
+	return &CheckoutRoot{
+		path: resolved, root: bound, docbankRoot: a.root,
+		managedRoots: append([]string(nil), a.managedRoots...),
+	}, nil
 }
 
 func (a *Adapter) resolveExternalRoot(sourceRoot, kind string) (string, error) {

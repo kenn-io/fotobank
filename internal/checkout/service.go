@@ -232,13 +232,40 @@ func (s *Materializer) materialize(
 		return fmt.Errorf("materialize %s: %w: copied digest differs from catalog",
 			relativePath, errs.ErrContentIdentityMismatch)
 	}
-	if err := publish(workingRoot, tempName, destination); err != nil {
+	published, err := publish(workingRoot, tempName, destination)
+	if err != nil {
 		return fmt.Errorf("materialize %s: %w", relativePath, err)
 	}
 	removeTemp = false
-	info, err := workingRoot.Stat(destination)
+	digest.Reset()
+	if _, err := io.Copy(digest, published); err != nil {
+		return errors.Join(
+			fmt.Errorf("materialize %s: hash published file: %w", relativePath, err),
+			published.Close())
+	}
+	info, err := published.Stat()
 	if err != nil {
-		return fmt.Errorf("materialize %s: stat published file: %w", relativePath, err)
+		return errors.Join(
+			fmt.Errorf("materialize %s: stat published file: %w", relativePath, err),
+			published.Close())
+	}
+	pathInfo, err := workingRoot.Stat(destination)
+	if err != nil {
+		return errors.Join(
+			fmt.Errorf("materialize %s: stat final checkout path: %w", relativePath, err),
+			published.Close())
+	}
+	if err := published.Close(); err != nil {
+		return fmt.Errorf("materialize %s: close published file: %w", relativePath, err)
+	}
+	if !os.SameFile(info, pathInfo) {
+		return fmt.Errorf("materialize %s: %w: published file was replaced during observation",
+			relativePath, errs.ErrContentConflict)
+	}
+	observedSHA = hex.EncodeToString(digest.Sum(nil))
+	if observedSHA != candidate.SHA256 {
+		return fmt.Errorf("materialize %s: %w: published file differs from exact version",
+			relativePath, errs.ErrContentConflict)
 	}
 	now := s.now().UTC()
 	entry := Entry{
@@ -256,18 +283,24 @@ func (s *Materializer) materialize(
 // publish atomically gives a completed temporary copy its final name without
 // replacing an untracked working file. Both names are inside the root-bound
 // filesystem view; the temporary hardlink is removed after publication and is
-// never linked to Docbank content-addressed storage.
-func publish(workingRoot *os.Root, tempName, destination string) error {
+// never linked to Docbank content-addressed storage. The returned handle was
+// opened from the final root-bound path so the caller can derive one pinned
+// initial observation even if another process later replaces the path.
+func publish(workingRoot *os.Root, tempName, destination string) (*os.File, error) {
 	if err := workingRoot.Link(tempName, destination); err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return fmt.Errorf("%w: destination already exists", errs.ErrAlreadyExists)
+			return nil, fmt.Errorf("%w: destination already exists", errs.ErrAlreadyExists)
 		}
-		return fmt.Errorf("publish checkout file: %w", err)
+		return nil, fmt.Errorf("publish checkout file: %w", err)
 	}
 	if err := workingRoot.Remove(tempName); err != nil {
-		return fmt.Errorf("remove published temporary link: %w", err)
+		return nil, fmt.Errorf("remove published temporary link: %w", err)
 	}
-	return nil
+	published, err := workingRoot.Open(destination)
+	if err != nil {
+		return nil, fmt.Errorf("open published checkout file: %w", err)
+	}
+	return published, nil
 }
 
 func workingPath(candidate Candidate) (string, error) {

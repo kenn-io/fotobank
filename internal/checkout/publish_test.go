@@ -1,6 +1,7 @@
 package checkout
 
 import (
+	"io"
 	"os"
 	"testing"
 
@@ -21,9 +22,33 @@ func TestPublishRefusesExistingDestination(t *testing.T) {
 	r.NoError(temp.Close())
 	r.NoError(root.WriteFile("photo.jpg", []byte("existing bytes"), 0o600))
 
-	err = publish(root, "copy.tmp", "photo.jpg")
+	_, err = publish(root, "copy.tmp", "photo.jpg")
 	r.ErrorIs(err, errs.ErrAlreadyExists)
 	got, err := root.ReadFile("photo.jpg")
 	r.NoError(err)
 	r.Equal([]byte("existing bytes"), got)
+}
+
+func TestPublishReturnsOpenedFinalFile(t *testing.T) {
+	r := require.New(t)
+	root, err := os.OpenRoot(t.TempDir())
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(root.Close()) })
+	temp, err := root.OpenFile("copy.tmp", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	r.NoError(err)
+	_, err = temp.WriteString("published bytes")
+	r.NoError(err)
+	r.NoError(temp.Close())
+
+	published, err := publish(root, "copy.tmp", "photo.jpg")
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(published.Close()) })
+	if err := root.Remove("photo.jpg"); err != nil {
+		t.Skipf("replacing an opened file is unavailable: %v", err)
+	}
+	r.NoError(root.WriteFile("photo.jpg", []byte("replacement"), 0o600))
+
+	got, err := io.ReadAll(published)
+	r.NoError(err)
+	r.Equal([]byte("published bytes"), got)
 }

@@ -151,11 +151,12 @@ hardlinks a writable file to a Docbank content-addressed object.
 
 The content adapter opens a checkout root, verifies that exact directory
 against the canonical path and storage boundaries, then returns an opaque
-single-use capability retaining the open directory. The checkout service
-revalidates the catalog path against that retained directory immediately before
-insertion, then transfers the same handle into materialization instead of
-reopening the path. A renamed or replaced root is rejected rather than leaving
-the catalog pointed at a different directory from the materialized files. Once a
+single-use capability retaining the open directory. Immediately before
+transfer, the capability resolves the catalog path again, reapplies the Docbank,
+NAS, and flash boundaries, and checks that the path still names the retained
+directory. Materialization uses that same handle instead of reopening the root.
+A renamed, replaced, or newly aliased root is rejected rather than leaving the
+catalog pointed at a different directory from the materialized files. Once a
 checkout row exists, every later failure attempts the `error`
 transition through a short cleanup context independent of caller cancellation;
 if that database write also fails, the returned error reports both failures.
@@ -173,8 +174,10 @@ directory and retry it after recovery moves the old row to `error`.
 The `capture_date` layout keeps every asset's related files together beneath
 `YYYY/MM/DD/{asset-uuid}/`; assets without capture time use
 `undated/{asset-uuid}/`. Each entry records its relative path, exact base
-version, SHA-256, size, and initial filesystem observation. Checkout creation
-is `building` until every entry is published and then becomes `active`.
+version, SHA-256, size, and initial filesystem observation. Fotobank reopens
+the final root-bound path and derives that observation from one file handle; a
+file replaced during publication cannot be recorded as a clean entry. Checkout
+creation is `building` until every entry is published and then becomes `active`.
 Selector and file identifiers are detached historical snapshots, so deleting
 a source album or asset does not erase the checkout's saved selection or file
 bindings. A materialization failure makes the durable checkout `error` without

@@ -55,7 +55,13 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 		return RestoreResult{}, fmt.Errorf("validate snapshot: %w", err)
 	}
 
-	// 2. Acquire the lifetime lock. Non-blocking; refuse if held.
+	// 2. Create the destination directory before acquiring its colocated
+	//    lifetime lock. Flash-loss recovery can start with neither present.
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		return RestoreResult{}, fmt.Errorf("create database directory: %w", err)
+	}
+
+	// 3. Acquire the lifetime lock. Non-blocking; refuse if held.
 	l := flock.New(lockPath)
 	ok, err := l.TryLock()
 	if err != nil {
@@ -66,7 +72,7 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 	}
 	defer func() { _ = l.Unlock() }()
 
-	// 3. Arm rollback BEFORE any move-aside. This guards against partial
+	// 4. Arm rollback BEFORE any move-aside. This guards against partial
 	//    move-aside failure (first rename succeeds, second fails).
 	//    The suffix combines a UTC nanosecond timestamp (operator-readable)
 	//    with 4 random hex bytes (collision-proof). Without the random
@@ -133,7 +139,7 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 		}
 	}()
 
-	// 4. Move-aside.
+	// 5. Move-aside.
 	for _, p := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
 		movedTo := p + suffix
 		if rmErr := os.Rename(p, movedTo); rmErr != nil {
@@ -145,7 +151,7 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 		movedAside = append(movedAside, movedTo)
 	}
 
-	// 5. Copy snapshot in atomically.
+	// 6. Copy snapshot in atomically.
 	if err := copyFile(snapshotPath, dbPath); err != nil {
 		return RestoreResult{}, fmt.Errorf("copy snapshot: %w", err)
 	}
@@ -154,7 +160,7 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 		return RestoreResult{}, fmt.Errorf("fsync db dir: %w", err)
 	}
 
-	// 6. Forward-port the schema. db.Open enables WAL and runs migrations
+	// 7. Forward-port the schema. db.Open enables WAL and runs migrations
 	//    idempotently. Close immediately on success so the server can
 	//    open the DB freshly.
 	openedDB, err = db.Open(dbPath)
@@ -167,7 +173,7 @@ func Restore(ctx context.Context, snapshotPath, dbPath, lockPath string) (res Re
 	}
 	openedDB = nil
 
-	// 7. Disarm rollback.
+	// 8. Disarm rollback.
 	success = true
 	return RestoreResult{
 		SnapshotPath:     snapshotPath,

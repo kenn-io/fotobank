@@ -95,11 +95,11 @@ func TestAdapterResolveCheckoutRootRejectsPathReplacementBeforeUse(t *testing.T)
 	validated, err := adapter.ResolveCheckoutRoot(checkoutRoot)
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(validated.Close()) })
-	movedRoot := filepath.Join(parent, "validated-checkout")
+	movedRoot := filepath.Join(managedRoot, "validated-checkout")
 	if err := os.Rename(checkoutRoot, movedRoot); err != nil {
 		t.Skipf("renaming an opened directory is unavailable: %v", err)
 	}
-	if err := os.Symlink(managedRoot, checkoutRoot); err != nil {
+	if err := os.Symlink(movedRoot, checkoutRoot); err != nil {
 		t.Skipf("symlink creation unavailable: %v", err)
 	}
 

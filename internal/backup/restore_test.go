@@ -97,7 +97,7 @@ func TestRestoreRefusesIfLockHeld(t *testing.T) {
 func TestRestoreAllowsMissingDB(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "live.sqlite") // does not exist
+	dbPath := filepath.Join(tmp, "restored", "live.sqlite") // parent does not exist
 	snapPath := filepath.Join(tmp, "snap.sqlite")
 	lockPath := dbPath + ".lock"
 
