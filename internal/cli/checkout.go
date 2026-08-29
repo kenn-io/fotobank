@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/fotobank/internal/checkout"
@@ -14,6 +17,7 @@ import (
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/service"
@@ -162,10 +166,11 @@ func runCheckoutCreate(
 }
 
 type checkoutRuntime struct {
-	db      *db.DB
-	content *content.Adapter
-	service *service.CheckoutService
-	owner   owners.Principal
+	db           *db.DB
+	databaseLock *flock.Flock
+	content      *content.Adapter
+	service      *service.CheckoutService
+	owner        owners.Principal
 }
 
 func openCheckoutRuntime(ctx context.Context, configPath string, withContent bool) (*checkoutRuntime, error) {
@@ -180,12 +185,25 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 		return nil, fmt.Errorf("fotobank checkout requires identity.mode = stub (got %q)", cfg.Identity.Mode)
 	}
 	dbPath := resolveDBPath(cfg)
+	lockPath := lockPathFor(dbPath)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		return nil, fmt.Errorf("create database lock directory: %w", err)
+	}
+	databaseLock := flock.New(lockPath)
+	locked, err := databaseLock.TryRLock()
+	if err != nil {
+		return nil, fmt.Errorf("lock database lifetime: %w", err)
+	}
+	if !locked {
+		return nil, fmt.Errorf("open checkout: %w: another process is replacing the database", errs.ErrAlreadyExists)
+	}
 	database, err := db.Open(dbPath)
 	if err != nil {
+		_ = databaseLock.Unlock()
 		return nil, err
 	}
 	owner := owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
-	runtime := &checkoutRuntime{db: database, owner: owner}
+	runtime := &checkoutRuntime{db: database, databaseLock: databaseLock, owner: owner}
 	ownerService := service.NewOwnerService(owners.NewRepo(database.WriteDB(), database.ReadDB()))
 	if _, err := ownerService.Ensure(ctx, owner, cfg.Identity.Stub.StorageKey); err != nil {
 		runtime.close()
@@ -193,7 +211,7 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 	}
 	checkoutRepo := checkout.NewRepo(database.WriteDB(), database.ReadDB())
 	if !withContent {
-		runtime.service = service.NewCheckoutService(checkoutRepo, nil, "", "")
+		runtime.service = service.NewCheckoutService(checkoutRepo, nil, "")
 		return runtime, nil
 	}
 	contentStore, err := content.Open(ctx, content.Config{
@@ -205,8 +223,7 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 	}
 	runtime.content = contentStore
 	resolver := contentresolver.New(media.NewRepo(database.WriteDB(), database.ReadDB()), contentStore)
-	runtime.service = service.NewCheckoutService(
-		checkoutRepo, resolver, dbPath+".checkout.lock", lockPathFor(dbPath))
+	runtime.service = service.NewCheckoutService(checkoutRepo, resolver, dbPath+".checkout.lock")
 	return runtime, nil
 }
 
@@ -214,5 +231,10 @@ func (r *checkoutRuntime) close() {
 	if r.content != nil {
 		_ = r.content.Close()
 	}
-	_ = r.db.Close()
+	if r.db != nil {
+		_ = r.db.Close()
+	}
+	if r.databaseLock != nil {
+		_ = r.databaseLock.Unlock()
+	}
 }

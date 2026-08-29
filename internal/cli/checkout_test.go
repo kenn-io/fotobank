@@ -62,6 +62,13 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	code = cli.RunContext(t.Context(), []string{
+		"checkout", "estimate", "--config", cfgPath, "--asset", item.ID,
+	}, &stdout, &stderr)
+	r.NotZero(code)
+	r.Contains(stderr.String(), "another process is replacing the database")
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
 		"checkout", "create", "--config", cfgPath, "--asset", item.ID, root,
 	}, &stdout, &stderr)
 	r.NotZero(code)

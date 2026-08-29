@@ -157,10 +157,11 @@ so replacing the pathname after validation cannot redirect writes. Once a
 checkout row exists, every later failure attempts the `error`
 transition through a short cleanup context independent of caller cancellation;
 if that database write also fails, the returned error reports both failures.
-Checkout creation holds its exclusive creation lock and a shared database
-lifetime lock. The server holds the same database lock in shared mode, while
-restore requires it exclusively, so database replacement cannot overlap
-materialization. After acquiring the creation lock, the next creator marks any
+Every checkout command acquires a shared database lifetime lock before opening
+or migrating SQLite and retains it until the connection pools close. Restore
+requires the same lock exclusively, so database replacement cannot overlap an
+estimate or materialization. Creation also holds its exclusive creation lock.
+After acquiring the creation lock, the next creator marks any
 remaining `building` rows for its owner as interrupted; a live creator cannot
 be misclassified because it would still hold the lock. Only `building` and
 `active` rows reserve a root, so an operator can empty a partial interrupted
