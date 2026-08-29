@@ -37,7 +37,8 @@ func NewMaterializer(repo *Repo, resolver *contentresolver.Resolver) *Materializ
 }
 
 type CreateRequest struct {
-	Root          content.CheckoutRoot
+	// Root is consumed and closed by Create, including when request validation fails.
+	Root          *content.CheckoutRoot
 	Selection     Selection
 	CapacityLimit int64
 }
@@ -71,6 +72,7 @@ func (s *Materializer) Create(
 	if s == nil || s.repo == nil || s.resolver == nil {
 		return CreateResult{}, fmt.Errorf("create checkout: %w: service is not configured", errs.ErrInvalidArgument)
 	}
+	defer request.Root.Close()
 	if request.CapacityLimit < 0 {
 		return CreateResult{}, fmt.Errorf("create checkout: %w: capacity limit cannot be negative", errs.ErrInvalidArgument)
 	}
@@ -79,7 +81,7 @@ func (s *Materializer) Create(
 	}
 	request.Selection = normalizeSelection(request.Selection)
 	rootPath := request.Root.Path()
-	workingRoot, err := request.Root.Open()
+	workingRoot, err := request.Root.Take()
 	if err != nil {
 		return CreateResult{}, fmt.Errorf("create checkout: open root: %w", err)
 	}

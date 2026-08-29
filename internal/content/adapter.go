@@ -24,22 +24,49 @@ type Config struct {
 // adapter verified does not overlap Docbank or Fotobank-managed storage. Its
 // path cannot be constructed outside this package.
 type CheckoutRoot struct {
+	mu   sync.Mutex
 	path string
+	root *os.Root
 }
 
 // Path returns the canonical path recorded in Fotobank's checkout catalog.
-func (r CheckoutRoot) Path() string { return r.path }
+func (r *CheckoutRoot) Path() string {
+	if r == nil {
+		return ""
+	}
+	return r.path
+}
 
-// Open binds filesystem operations to the validated working directory.
-func (r CheckoutRoot) Open() (*os.Root, error) {
-	if r.path == "" {
+// Take transfers ownership of the bound directory to the materializer. A
+// validated root is single-use so no later operation can reopen its path.
+func (r *CheckoutRoot) Take() (*os.Root, error) {
+	if r == nil {
 		return nil, fmt.Errorf("%w: checkout root is not validated", errs.ErrInvalidArgument)
 	}
-	root, err := os.OpenRoot(r.path)
-	if err != nil {
-		return nil, fmt.Errorf("open checkout root: %w", err)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.root == nil {
+		return nil, fmt.Errorf("%w: checkout root is not validated or was already consumed", errs.ErrInvalidArgument)
 	}
+	root := r.root
+	r.root = nil
 	return root, nil
+}
+
+// Close releases a validated root that was not transferred to a materializer.
+// It is safe to call after Take or more than once.
+func (r *CheckoutRoot) Close() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.root == nil {
+		return nil
+	}
+	err := r.root.Close()
+	r.root = nil
+	return err
 }
 
 type Identity struct {
@@ -205,15 +232,56 @@ func (a *Adapter) ResolveImportRoot(sourceRoot string) (string, error) {
 	return a.resolveExternalRoot(sourceRoot, "import")
 }
 
-// ResolveCheckoutRoot returns an existing canonical directory after rejecting
+// ResolveCheckoutRoot binds an existing canonical directory after rejecting
 // overlap with Docbank authority or Fotobank-managed storage. Materializers
-// use the returned path as the working-copy root.
-func (a *Adapter) ResolveCheckoutRoot(checkoutRoot string) (CheckoutRoot, error) {
-	resolved, err := a.resolveExternalRoot(checkoutRoot, "checkout")
-	if err != nil {
-		return CheckoutRoot{}, err
+// consume the returned capability as the working-copy root.
+func (a *Adapter) ResolveCheckoutRoot(checkoutRoot string) (*CheckoutRoot, error) {
+	if a == nil || a.vault == nil {
+		return nil, fmt.Errorf("%w: Docbank vault is not open", errs.ErrContentUnavailable)
 	}
-	return CheckoutRoot{path: resolved}, nil
+	bound, err := os.OpenRoot(checkoutRoot)
+	if err != nil {
+		return nil, fmt.Errorf("open checkout root: %w", err)
+	}
+	closeBound := true
+	defer func() {
+		if closeBound {
+			_ = bound.Close()
+		}
+	}()
+	openedInfo, err := bound.Stat(".")
+	if err != nil {
+		return nil, fmt.Errorf("inspect opened checkout root: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(checkoutRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve checkout root: %w", err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("make checkout root absolute: %w", err)
+	}
+	resolved = filepath.Clean(resolved)
+	resolvedInfo, err := os.Stat(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("stat checkout root: %w", err)
+	}
+	if !os.SameFile(openedInfo, resolvedInfo) {
+		return nil, fmt.Errorf("%w: checkout root changed during validation", errs.ErrBadConfiguration)
+	}
+	if !openedInfo.IsDir() {
+		return nil, fmt.Errorf("%w: checkout root is not a directory", errs.ErrInvalidArgument)
+	}
+	if pathsOverlap(resolved, a.root) {
+		return nil, fmt.Errorf("%w: checkout root overlaps Docbank vault", errs.ErrBadConfiguration)
+	}
+	for _, managedRoot := range a.managedRoots {
+		if pathsOverlap(resolved, managedRoot) {
+			return nil, fmt.Errorf("%w: checkout root overlaps managed storage", errs.ErrBadConfiguration)
+		}
+	}
+	closeBound = false
+	return &CheckoutRoot{path: resolved, root: bound}, nil
 }
 
 func (a *Adapter) resolveExternalRoot(sourceRoot, kind string) (string, error) {
