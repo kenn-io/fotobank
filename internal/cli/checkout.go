@@ -149,6 +149,7 @@ func runCheckoutCreate(
 	if err != nil {
 		return err
 	}
+	defer resolvedRoot.Close()
 	result, err := runtime.service.Create(ctx, runtime.owner, checkout.CreateRequest{
 		Root: resolvedRoot, Selection: selection, CapacityLimit: maxBytes,
 	})

@@ -147,10 +147,12 @@ recorded immutable Docbank version and publishes a verified ordinary copy with
 an atomic no-replace operation inside a root-bound filesystem view. It never
 hardlinks a writable file to a Docbank content-addressed object.
 
-The content adapter canonicalizes and checks a checkout root, then returns an
-opaque validated-root value. The checkout service accepts that value rather
-than a filesystem string, so transports cannot bypass the storage-overlap
-check. Once a checkout row exists, every later failure attempts the `error`
+The content adapter opens a checkout root, verifies that exact directory
+against the canonical path and storage boundaries, then returns an opaque
+single-use capability retaining the open directory. The checkout service
+transfers that same handle into materialization instead of reopening the path,
+so replacing the pathname after validation cannot redirect writes. Once a
+checkout row exists, every later failure attempts the `error`
 transition through a short cleanup context independent of caller cancellation;
 if that database write also fails, the returned error reports both failures.
 
