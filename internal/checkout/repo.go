@@ -62,6 +62,7 @@ func (r *Repo) ResolveSelection(
 	FROM assets a
 	JOIN media_files f ON f.asset_id = a.id
 	WHERE a.owner_hub = ? AND a.owner_user_id = ? AND a.state = 'ready'
+	  AND a.hidden_at IS NULL
 	  AND (` + strings.Join(conditions, " OR ") + `)
 	ORDER BY a.timestamp IS NULL, a.timestamp, a.id, f.role, f.id`
 	rows, err := r.ro.QueryContext(ctx, query, args...)
@@ -98,7 +99,8 @@ func (r *Repo) validateOwnedSelectors(
 	for _, id := range selection.AssetIDs {
 		var found int
 		err := r.ro.QueryRowContext(ctx, `SELECT 1 FROM assets
-			WHERE id = ? AND owner_hub = ? AND owner_user_id = ? AND state = 'ready'`,
+			WHERE id = ? AND owner_hub = ? AND owner_user_id = ?
+			  AND state = 'ready' AND hidden_at IS NULL`,
 			id, owner.Hub, owner.UserID).Scan(&found)
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("resolve checkout selection: %w: asset %s", errs.ErrNotFound, id)
