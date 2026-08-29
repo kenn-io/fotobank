@@ -27,7 +27,12 @@ func (r *Repo) ResolveSelection(
 	if err := validateSelection(selection); err != nil {
 		return nil, fmt.Errorf("resolve checkout selection: %w", err)
 	}
-	if err := r.validateOwnedSelectors(ctx, owner, selection); err != nil {
+	tx, err := r.ro.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("resolve checkout selection: begin read: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := r.validateOwnedSelectors(ctx, tx, owner, selection); err != nil {
 		return nil, err
 	}
 
@@ -65,7 +70,7 @@ func (r *Repo) ResolveSelection(
 	  AND a.hidden_at IS NULL
 	  AND (` + strings.Join(conditions, " OR ") + `)
 	ORDER BY a.timestamp IS NULL, a.timestamp, a.id, f.role, f.id`
-	rows, err := r.ro.QueryContext(ctx, query, args...)
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("resolve checkout selection: query: %w", err)
 	}
@@ -88,17 +93,24 @@ func (r *Repo) ResolveSelection(
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("resolve checkout selection: iterate: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("resolve checkout selection: close rows: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("resolve checkout selection: commit read: %w", err)
+	}
 	return candidates, nil
 }
 
 func (r *Repo) validateOwnedSelectors(
 	ctx context.Context,
+	tx *sql.Tx,
 	owner owners.Principal,
 	selection Selection,
 ) error {
 	for _, id := range selection.AssetIDs {
 		var found int
-		err := r.ro.QueryRowContext(ctx, `SELECT 1 FROM assets
+		err := tx.QueryRowContext(ctx, `SELECT 1 FROM assets
 			WHERE id = ? AND owner_hub = ? AND owner_user_id = ?
 			  AND state = 'ready' AND hidden_at IS NULL`,
 			id, owner.Hub, owner.UserID).Scan(&found)
@@ -111,7 +123,7 @@ func (r *Repo) validateOwnedSelectors(
 	}
 	for _, id := range selection.AlbumIDs {
 		var found int
-		err := r.ro.QueryRowContext(ctx, `SELECT 1 FROM albums
+		err := tx.QueryRowContext(ctx, `SELECT 1 FROM albums
 			WHERE id = ? AND owner_hub = ? AND owner_user_id = ?`,
 			id, owner.Hub, owner.UserID).Scan(&found)
 		if errors.Is(err, sql.ErrNoRows) {

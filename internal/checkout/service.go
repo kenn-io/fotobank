@@ -27,16 +27,24 @@ import (
 // callers reach it through internal/service, which remains the authorization
 // boundary.
 type Materializer struct {
-	repo     *Repo
-	resolver *contentresolver.Resolver
-	lockPath string
-	now      func() time.Time
-	newID    func() string
+	repo             *Repo
+	resolver         *contentresolver.Resolver
+	creationLockPath string
+	databaseLockPath string
+	now              func() time.Time
+	newID            func() string
 }
 
-func NewMaterializer(repo *Repo, resolver *contentresolver.Resolver, lockPath string) *Materializer {
+func NewMaterializer(
+	repo *Repo,
+	resolver *contentresolver.Resolver,
+	creationLockPath string,
+	databaseLockPath string,
+) *Materializer {
 	return &Materializer{
-		repo: repo, resolver: resolver, lockPath: lockPath, now: time.Now, newID: uuid.NewString,
+		repo: repo, resolver: resolver,
+		creationLockPath: creationLockPath, databaseLockPath: databaseLockPath,
+		now: time.Now, newID: uuid.NewString,
 	}
 }
 
@@ -85,10 +93,19 @@ func (s *Materializer) Create(
 		return CreateResult{}, fmt.Errorf("create checkout: %w: service is not configured", errs.ErrInvalidArgument)
 	}
 	defer request.Root.Close()
-	if s.lockPath == "" {
-		return CreateResult{}, fmt.Errorf("create checkout: %w: creation lock is not configured", errs.ErrInvalidArgument)
+	if s.creationLockPath == "" || s.databaseLockPath == "" {
+		return CreateResult{}, fmt.Errorf("create checkout: %w: process locks are not configured", errs.ErrInvalidArgument)
 	}
-	creationLock := flock.New(s.lockPath)
+	databaseLock := flock.New(s.databaseLockPath)
+	databaseLocked, err := databaseLock.TryRLock()
+	if err != nil {
+		return CreateResult{}, fmt.Errorf("create checkout: lock database lifetime: %w", err)
+	}
+	if !databaseLocked {
+		return CreateResult{}, fmt.Errorf("create checkout: %w: another process is replacing the database", errs.ErrAlreadyExists)
+	}
+	defer func() { _ = databaseLock.Unlock() }()
+	creationLock := flock.New(s.creationLockPath)
 	locked, err := creationLock.TryLock()
 	if err != nil {
 		return CreateResult{}, fmt.Errorf("create checkout: lock creation: %w", err)

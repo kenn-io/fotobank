@@ -34,9 +34,9 @@ type RestoreResult struct {
 }
 
 // Restore replaces dbPath with the contents of snapshotPath, holding a
-// non-blocking flock on lockPath for the duration to prevent races with
-// a live server. On success, the previous DB and its sidecars are
-// preserved at "{path}.pre-restore.{ns-timestamp}" — the operator
+// non-blocking exclusive flock on lockPath for the duration to prevent races
+// with a live server or checkout creator. On success, the previous DB and its
+// sidecars are preserved at "{path}.pre-restore.{ns-timestamp}" — the operator
 // deletes them when satisfied.
 //
 // Failure paths roll back: any post-move-aside failure restores the

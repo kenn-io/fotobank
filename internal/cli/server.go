@@ -172,23 +172,31 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 
 	dbPath := resolveDBPath(cfg)
 
-	// Lifetime advisory lock. Refuses two servers on the same DB and
-	// blocks `backup restore` while we're running. POSIX advisory locks
-	// release automatically on process exit, so a crash does not strand
-	// the lock.
+	// The server lock refuses two servers on the same DB. The shared lifetime
+	// lock lets ordinary database users coexist while blocking backup restore,
+	// which takes the same lock exclusively. Advisory locks release on exit.
 	lockPath := lockPathFor(dbPath)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return fmt.Errorf("mkdir lock dir: %w", err)
 	}
-	lockFile := flock.New(lockPath)
-	ok, err := lockFile.TryLock()
+	serverLock := flock.New(dbPath + ".server.lock")
+	ok, err := serverLock.TryLock()
 	if err != nil {
-		return fmt.Errorf("acquire lifetime lock: %w", err)
+		return fmt.Errorf("acquire server lock: %w", err)
 	}
 	if !ok {
 		return fmt.Errorf("another fotobank process is using %s", dbPath)
 	}
-	defer func() { _ = lockFile.Unlock() }()
+	defer func() { _ = serverLock.Unlock() }()
+	databaseLock := flock.New(lockPath)
+	ok, err = databaseLock.TryRLock()
+	if err != nil {
+		return fmt.Errorf("acquire database lifetime lock: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("another fotobank process is replacing %s", dbPath)
+	}
+	defer func() { _ = databaseLock.Unlock() }()
 
 	d, err := db.Open(dbPath)
 	if err != nil {

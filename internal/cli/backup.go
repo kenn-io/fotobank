@@ -209,7 +209,7 @@ func promptRestoreConfirmation(cmd *cobra.Command, snap, dbPath string) error {
 
 // restoreDryRun validates the snapshot's integrity and probes the
 // lifetime lock without moving any files. Surfacing a corrupt snapshot
-// or an in-flight server pre-emptively means an operator finds out
+// or another database user pre-emptively means an operator finds out
 // before any move-aside runs.
 func restoreDryRun(cmd *cobra.Command, snap, dbPath, lockPath string, asJSON bool) error {
 	if err := backup.ValidateSnapshot(cmd.Context(), snap); err != nil {

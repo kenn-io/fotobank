@@ -194,10 +194,12 @@ func newFixture(t *testing.T) fixture {
 	mediaRepo := media.NewRepo(database.WriteDB(), database.ReadDB())
 	checkoutRepo := checkout.NewRepo(database.WriteDB(), database.ReadDB())
 	resolver := contentresolver.New(mediaRepo, contentStore)
+	lockDir := t.TempDir()
 	return fixture{
 		db: database, owner: owner, content: contentStore, media: mediaRepo,
 		checkouts: checkoutRepo,
 		service: checkout.NewMaterializer(
-			checkoutRepo, resolver, filepath.Join(t.TempDir(), "checkout.lock")),
+			checkoutRepo, resolver,
+			filepath.Join(lockDir, "checkout.lock"), filepath.Join(lockDir, "database.lock")),
 	}
 }

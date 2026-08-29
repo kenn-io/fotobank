@@ -140,6 +140,8 @@ byte count selected by explicit assets, albums, inclusive capture-year ranges,
 or all ready visible assets. Hidden assets are excluded because the CLI has no
 hidden-media unlock session. An all-assets checkout requires a caller-supplied
 byte ceiling so a second full archive copy is never created implicitly.
+Selector validation and candidate loading share one SQLite read transaction,
+so an explicit asset cannot disappear between those two views.
 
 `fotobank checkout create` requires an existing empty directory outside the
 Docbank, NAS, and flash-managed roots. It resolves every selected file to its
@@ -155,11 +157,14 @@ so replacing the pathname after validation cannot redirect writes. Once a
 checkout row exists, every later failure attempts the `error`
 transition through a short cleanup context independent of caller cancellation;
 if that database write also fails, the returned error reports both failures.
-Checkout creation also holds a process lock beside the SQLite database. After
-acquiring that lock, the next creator marks any remaining `building` rows for
-its owner as interrupted; a live creator cannot be misclassified because it
-would still hold the lock. Only `building` and `active` rows reserve a root, so
-an operator can empty a partial interrupted directory and retry it.
+Checkout creation holds its exclusive creation lock and a shared database
+lifetime lock. The server holds the same database lock in shared mode, while
+restore requires it exclusively, so database replacement cannot overlap
+materialization. After acquiring the creation lock, the next creator marks any
+remaining `building` rows for its owner as interrupted; a live creator cannot
+be misclassified because it would still hold the lock. Only `building` and
+`active` rows reserve a root, so an operator can empty a partial interrupted
+directory and retry it.
 
 The `capture_date` layout keeps every asset's related files together beneath
 `YYYY/MM/DD/{asset-uuid}/`; assets without capture time use

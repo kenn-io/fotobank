@@ -55,6 +55,18 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 
 	root := filepath.Join(tmp, "checkout")
 	r.NoError(os.Mkdir(root, 0o700))
+	databaseReplacement := flock.New(dbPath + ".lock")
+	locked, err := databaseReplacement.TryLock()
+	r.NoError(err)
+	r.True(locked)
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
+		"checkout", "create", "--config", cfgPath, "--asset", item.ID, root,
+	}, &stdout, &stderr)
+	r.NotZero(code)
+	r.Contains(stderr.String(), "another process is replacing the database")
+	r.NoError(databaseReplacement.Unlock())
 	stdout.Reset()
 	stderr.Reset()
 	code = cli.RunContext(t.Context(), []string{

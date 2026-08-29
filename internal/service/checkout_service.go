@@ -16,9 +16,11 @@ type CheckoutService struct {
 func NewCheckoutService(
 	repo *checkout.Repo,
 	resolver *contentresolver.Resolver,
-	lockPath string,
+	creationLockPath string,
+	databaseLockPath string,
 ) *CheckoutService {
-	return &CheckoutService{materializer: checkout.NewMaterializer(repo, resolver, lockPath)}
+	return &CheckoutService{materializer: checkout.NewMaterializer(
+		repo, resolver, creationLockPath, databaseLockPath)}
 }
 
 func (s *CheckoutService) Estimate(
