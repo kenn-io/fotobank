@@ -58,6 +58,31 @@ func TestServiceMaterializesExactVersionAndRecordsEntry(t *testing.T) {
 	r.Equal(result.Checkout.Selection, stored.Selection)
 }
 
+func TestServiceRejectsCheckoutRootMovedAfterValidation(t *testing.T) {
+	r := require.New(t)
+	fixture := newFixture(t)
+	item := assetfixture.InsertContent(t, fixture.media, fixture.content, []byte("photo"), media.Media{
+		Owner: fixture.owner, OriginalFilename: "IMG_0042.JPG",
+	})
+	parent := t.TempDir()
+	root := filepath.Join(parent, "checkout")
+	r.NoError(os.Mkdir(root, 0o700))
+	validatedRoot, err := fixture.content.ResolveCheckoutRoot(root)
+	r.NoError(err)
+	if err := os.Rename(root, filepath.Join(parent, "moved-checkout")); err != nil {
+		t.Skipf("renaming an opened directory is unavailable: %v", err)
+	}
+	r.NoError(os.Mkdir(root, 0o700))
+
+	_, err = fixture.service.Create(t.Context(), fixture.owner, checkout.CreateRequest{
+		Root: validatedRoot, Selection: checkout.Selection{AssetIDs: []string{item.ID}},
+	})
+	r.ErrorIs(err, errs.ErrBadConfiguration)
+	var checkouts int
+	r.NoError(fixture.db.ReadDB().QueryRowContext(t.Context(), `SELECT count(*) FROM checkouts`).Scan(&checkouts))
+	r.Zero(checkouts)
+}
+
 func TestCheckoutRetainsBindingsAfterSourceDeletion(t *testing.T) {
 	r := require.New(t)
 	fixture := newFixture(t)

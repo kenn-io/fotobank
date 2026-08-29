@@ -80,7 +80,7 @@ func TestAdapterResolveCheckoutRootRejectsManagedStorageAlias(t *testing.T) {
 	r.ErrorIs(err, errs.ErrBadConfiguration)
 }
 
-func TestAdapterResolveCheckoutRootRetainsValidatedDirectory(t *testing.T) {
+func TestAdapterResolveCheckoutRootRejectsPathReplacementBeforeUse(t *testing.T) {
 	r := require.New(t)
 	managedRoot := t.TempDir()
 	adapter, err := content.Open(t.Context(), content.Config{
@@ -103,13 +103,8 @@ func TestAdapterResolveCheckoutRootRetainsValidatedDirectory(t *testing.T) {
 		t.Skipf("symlink creation unavailable: %v", err)
 	}
 
-	boundRoot, err := validated.Take()
-	r.NoError(err)
-	t.Cleanup(func() { r.NoError(boundRoot.Close()) })
-	r.NoError(boundRoot.WriteFile("proof", []byte("validated directory"), 0o644))
-	r.FileExists(filepath.Join(movedRoot, "proof"))
-	_, err = os.Stat(filepath.Join(managedRoot, "proof"))
-	r.ErrorIs(err, os.ErrNotExist)
+	_, err = validated.Take()
+	r.ErrorIs(err, errs.ErrBadConfiguration)
 }
 
 func TestAdapterCreate(t *testing.T) {

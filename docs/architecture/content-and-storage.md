@@ -152,8 +152,10 @@ hardlinks a writable file to a Docbank content-addressed object.
 The content adapter opens a checkout root, verifies that exact directory
 against the canonical path and storage boundaries, then returns an opaque
 single-use capability retaining the open directory. The checkout service
-transfers that same handle into materialization instead of reopening the path,
-so replacing the pathname after validation cannot redirect writes. Once a
+revalidates the catalog path against that retained directory immediately before
+insertion, then transfers the same handle into materialization instead of
+reopening the path. A renamed or replaced root is rejected rather than leaving
+the catalog pointed at a different directory from the materialized files. Once a
 checkout row exists, every later failure attempts the `error`
 transition through a short cleanup context independent of caller cancellation;
 if that database write also fails, the returned error reports both failures.

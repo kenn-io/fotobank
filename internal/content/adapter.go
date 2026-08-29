@@ -43,8 +43,9 @@ func (r *CheckoutRoot) Overlaps(other string) bool {
 	return r != nil && pathsOverlap(r.path, other)
 }
 
-// Take transfers ownership of the bound directory to the materializer. A
-// validated root is single-use so no later operation can reopen its path.
+// Take verifies that the catalog path still names the bound directory, then
+// transfers ownership to the materializer. A validated root is single-use so
+// no later operation can reopen its path.
 func (r *CheckoutRoot) Take() (*os.Root, error) {
 	if r == nil {
 		return nil, fmt.Errorf("%w: checkout root is not validated", errs.ErrInvalidArgument)
@@ -53,6 +54,17 @@ func (r *CheckoutRoot) Take() (*os.Root, error) {
 	defer r.mu.Unlock()
 	if r.root == nil {
 		return nil, fmt.Errorf("%w: checkout root is not validated or was already consumed", errs.ErrInvalidArgument)
+	}
+	boundInfo, err := r.root.Stat(".")
+	if err != nil {
+		return nil, fmt.Errorf("inspect bound checkout root: %w", err)
+	}
+	pathInfo, err := os.Stat(r.path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: checkout root path changed after validation: %w", errs.ErrBadConfiguration, err)
+	}
+	if !os.SameFile(boundInfo, pathInfo) {
+		return nil, fmt.Errorf("%w: checkout root path changed after validation", errs.ErrBadConfiguration)
 	}
 	root := r.root
 	r.root = nil

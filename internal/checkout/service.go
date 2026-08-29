@@ -123,6 +123,16 @@ func (s *Materializer) Create(
 		return CreateResult{}, fmt.Errorf(
 			"create checkout: %w: root overlaps live checkout", errs.ErrAlreadyExists)
 	}
+	candidates, err := s.repo.ResolveSelection(ctx, caller, request.Selection)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	estimate := estimateCandidates(candidates)
+	if request.CapacityLimit > 0 && estimate.Bytes > request.CapacityLimit {
+		return CreateResult{}, fmt.Errorf(
+			"create checkout: %w: selection needs %d bytes, limit is %d",
+			errs.ErrInvalidArgument, estimate.Bytes, request.CapacityLimit)
+	}
 	workingRoot, err := request.Root.Take()
 	if err != nil {
 		return CreateResult{}, fmt.Errorf("create checkout: open root: %w", err)
@@ -134,17 +144,6 @@ func (s *Materializer) Create(
 	}
 	if len(contents) != 0 {
 		return CreateResult{}, fmt.Errorf("create checkout: %w: root must be empty", errs.ErrAlreadyExists)
-	}
-
-	candidates, err := s.repo.ResolveSelection(ctx, caller, request.Selection)
-	if err != nil {
-		return CreateResult{}, err
-	}
-	estimate := estimateCandidates(candidates)
-	if request.CapacityLimit > 0 && estimate.Bytes > request.CapacityLimit {
-		return CreateResult{}, fmt.Errorf(
-			"create checkout: %w: selection needs %d bytes, limit is %d",
-			errs.ErrInvalidArgument, estimate.Bytes, request.CapacityLimit)
 	}
 	now := s.now().UTC()
 	checkout := Checkout{
