@@ -569,6 +569,73 @@ func (r *AssetRepo) FindContentReservation(
 	return reservation, nil
 }
 
+// ListContentOperations returns every durable content operation for an owner.
+// Recovery uses pending rows to adopt completed Docbank creates and all rows to
+// distinguish catalogued content from unmatched authority.
+func (r *AssetRepo) ListContentOperations(
+	ctx context.Context,
+	owner owners.Principal,
+) ([]ContentReservation, error) {
+	rows, err := r.ro.QueryContext(ctx, `
+		SELECT co.id, co.status, co.expected_sha256, co.expected_size,
+		       co.docbank_virtual_path, a.state,
+		       f.id, f.asset_id, f.owner_hub, f.owner_user_id, f.role,
+		       f.mime_type, f.original_filename, f.import_source_path, f.size,
+		       f.docbank_node_id, f.docbank_virtual_path,
+		       f.current_version_id, f.sha256
+		FROM content_operations AS co
+		JOIN assets AS a ON a.id = co.asset_id
+		JOIN media_files AS f ON f.id = co.file_id
+		WHERE co.owner_hub = ? AND co.owner_user_id = ?
+		ORDER BY co.asset_id, co.id`, owner.Hub, owner.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("list content operations: %w", err)
+	}
+	defer rows.Close()
+	var operations []ContentReservation
+	for rows.Next() {
+		operation, scanErr := scanContentReservation(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("list content operations: scan: %w", scanErr)
+		}
+		operations = append(operations, operation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list content operations: iterate: %w", err)
+	}
+	return operations, nil
+}
+
+func scanContentReservation(scanner rowScanner) (ContentReservation, error) {
+	var (
+		reservation ContentReservation
+		assetState  string
+		role        string
+		nodeID      sql.NullInt64
+		path        sql.NullString
+		versionID   sql.NullString
+		sha         sql.NullString
+	)
+	if err := scanner.Scan(
+		&reservation.OperationID, &reservation.Status, &reservation.SHA256,
+		&reservation.Size, &reservation.VirtualPath, &assetState,
+		&reservation.File.ID, &reservation.File.AssetID,
+		&reservation.File.Owner.Hub, &reservation.File.Owner.UserID, &role,
+		&reservation.File.MimeType, &reservation.File.OriginalFilename,
+		&reservation.File.ImportSourcePath, &reservation.File.Size, &nodeID,
+		&path, &versionID, &sha,
+	); err != nil {
+		return ContentReservation{}, err
+	}
+	reservation.AssetState = AssetState(assetState)
+	reservation.File.Role = FileRole(role)
+	reservation.File.DocbankNodeID = int64FromNull(nodeID)
+	reservation.File.DocbankVirtualPath = path.String
+	reservation.File.CurrentVersionID = versionID.String
+	reservation.File.SHA256 = sha.String
+	return reservation, nil
+}
+
 func scanAsset(scanner rowScanner) (Asset, error) {
 	var (
 		asset          Asset

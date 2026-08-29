@@ -71,8 +71,16 @@ The durable content-operation ledger, rather than a scan of NAS paths, is the
 source for Docbank recovery and orphan reporting. A pending operation means the
 cross-database import has not yet recorded a receipt; a conflict is terminal
 until an explicit resolution workflow is invoked. Re-running an import resumes
-matching pending identities with their recorded IDs and virtual paths. An
-operator-facing whole-vault recovery command has not been added yet.
+matching pending identities with their recorded IDs and virtual paths.
+
+`fotobank content recover` checks every registered owner. When a pending path
+already contains the reserved identity, it adopts the Docbank node and version
+and finishes the asset. Different authority at the path terminalizes the asset
+as a conflict. A missing path remains pending because only the original import
+source can supply those bytes; re-running that import retries the stable create.
+The command also walks each owner's Docbank media subtree through the bounded
+embedded traversal API and reports files with no operation-ledger row. It never
+deletes, moves, or overwrites unmatched authority.
 
 Garbage collection and destructive pruning are deliberate maintenance actions,
 not side effects of ordinary reads or cache eviction. Rebuildable caches may be
