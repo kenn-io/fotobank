@@ -180,31 +180,42 @@ func (a *Adapter) Close() error {
 // Discovery must use the returned path so validation and traversal observe the
 // same directory when the configured root is a symlink.
 func (a *Adapter) ResolveImportRoot(sourceRoot string) (string, error) {
+	return a.resolveExternalRoot(sourceRoot, "import")
+}
+
+// ResolveCheckoutRoot returns an existing canonical directory after rejecting
+// overlap with Docbank authority or Fotobank-managed storage. Materializers
+// use the returned path as the working-copy root.
+func (a *Adapter) ResolveCheckoutRoot(checkoutRoot string) (string, error) {
+	return a.resolveExternalRoot(checkoutRoot, "checkout")
+}
+
+func (a *Adapter) resolveExternalRoot(sourceRoot, kind string) (string, error) {
 	if a == nil || a.vault == nil {
 		return "", fmt.Errorf("%w: Docbank vault is not open", errs.ErrContentUnavailable)
 	}
 	resolved, err := filepath.EvalSymlinks(sourceRoot)
 	if err != nil {
-		return "", fmt.Errorf("resolve import root: %w", err)
+		return "", fmt.Errorf("resolve %s root: %w", kind, err)
 	}
 	resolved, err = filepath.Abs(resolved)
 	if err != nil {
-		return "", fmt.Errorf("make import root absolute: %w", err)
+		return "", fmt.Errorf("make %s root absolute: %w", kind, err)
 	}
 	resolved = filepath.Clean(resolved)
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return "", fmt.Errorf("stat import root: %w", err)
+		return "", fmt.Errorf("stat %s root: %w", kind, err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("%w: import root is not a directory", errs.ErrInvalidArgument)
+		return "", fmt.Errorf("%w: %s root is not a directory", errs.ErrInvalidArgument, kind)
 	}
 	if pathsOverlap(resolved, a.root) {
-		return "", fmt.Errorf("%w: import root overlaps Docbank vault", errs.ErrBadConfiguration)
+		return "", fmt.Errorf("%w: %s root overlaps Docbank vault", errs.ErrBadConfiguration, kind)
 	}
 	for _, managedRoot := range a.managedRoots {
 		if pathsOverlap(resolved, managedRoot) {
-			return "", fmt.Errorf("%w: import root overlaps managed storage", errs.ErrBadConfiguration)
+			return "", fmt.Errorf("%w: %s root overlaps managed storage", errs.ErrBadConfiguration, kind)
 		}
 	}
 	return resolved, nil
