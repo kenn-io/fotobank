@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"go.kenn.io/fotobank/internal/ai/embedding"
-	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/obs"
 	"go.kenn.io/fotobank/internal/storage"
@@ -28,7 +28,7 @@ const defaultSweepInterval = time.Minute
 // Defaults match the production values in the thumbnail plan.
 type Config struct {
 	// Content opens the exact immutable source version recorded on the asset.
-	Content *content.Adapter
+	Content *contentresolver.Resolver
 	// WorkerConcurrency caps how many rows are decoded/encoded
 	// concurrently inside drain. Each claim runs in its own goroutine
 	// bounded by a semaphore. Defaults to 4.
@@ -314,7 +314,7 @@ func (w *Worker) decodeSource(ctx context.Context, m media.Media) (image.Image, 
 	if w.cfg.Content == nil {
 		return nil, fmt.Errorf("read source: content adapter is not configured")
 	}
-	opened, err := w.cfg.Content.OpenVersion(ctx, m.CurrentVersionID)
+	opened, err := w.cfg.Content.OpenCurrent(ctx, m.ID, "", 0, -1)
 	if err != nil {
 		return nil, fmt.Errorf("read source: %w", err)
 	}
@@ -328,9 +328,6 @@ func (w *Worker) decodeSource(ctx context.Context, m media.Media) (image.Image, 
 		if _, err := io.Copy(io.Discard, rc); err != nil {
 			return nil, fmt.Errorf("drain source: %w", err)
 		}
-		if err := rc.Verify(); err != nil {
-			return nil, fmt.Errorf("verify source: %w", err)
-		}
 		return image, nil
 	}
 	image, err := Decode(m.MimeType, rc)
@@ -339,9 +336,6 @@ func (w *Worker) decodeSource(ctx context.Context, m media.Media) (image.Image, 
 	}
 	if _, err := io.Copy(io.Discard, rc); err != nil {
 		return nil, fmt.Errorf("drain source: %w", err)
-	}
-	if err := rc.Verify(); err != nil {
-		return nil, fmt.Errorf("verify source: %w", err)
 	}
 	return image, nil
 }

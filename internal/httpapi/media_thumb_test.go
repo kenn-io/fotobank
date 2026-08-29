@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
 	"go.kenn.io/fotobank/internal/media"
@@ -42,7 +43,7 @@ func newThumbAPITest(t *testing.T) (*httptest.Server, *media.Repo, owners.Princi
 	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, contentStore.Close()) })
-	mediaSvc := service.NewMediaService(repo, contentStore)
+	mediaSvc := service.NewMediaService(repo, contentresolver.New(repo, contentStore))
 	thumbSvc := service.NewThumbService(repo, q, store)
 	h, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: identity.NewStub(p, "Test User"),

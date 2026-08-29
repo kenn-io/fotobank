@@ -177,6 +177,23 @@ func TestAdapterOpenVersion(t *testing.T) {
 	require.ErrorIs(err, errs.ErrNotFound)
 }
 
+func TestAdapterOpenVersionRange(t *testing.T) {
+	require := require.New(t)
+	adapter, _, payload, receipt := createTestContent(t)
+
+	got, err := adapter.OpenVersionRange(t.Context(), receipt.Version.ID, 2, 5)
+	require.NoError(err)
+	require.Equal(receipt.Node.ID, got.NodeID)
+	require.Equal(receipt.Version.ID, got.VersionID)
+	require.Equal(receipt.Identity.SHA256, got.SHA256)
+	require.Equal(int64(2), got.Offset)
+	require.Equal(int64(5), got.Length)
+	bytesRead, err := io.ReadAll(got.Reader)
+	require.NoError(err)
+	require.Equal(payload[2:7], bytesRead)
+	require.NoError(got.Reader.Close())
+}
+
 func TestAdapterTranslatesReaderErrors(t *testing.T) {
 	require := require.New(t)
 	root := t.TempDir()

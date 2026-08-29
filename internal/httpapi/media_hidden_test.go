@@ -17,6 +17,7 @@ import (
 
 	"go.kenn.io/fotobank/internal/auth/hidden"
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
 	"go.kenn.io/fotobank/internal/media"
@@ -58,7 +59,7 @@ func newHiddenMediaFixture(t *testing.T) hiddenMediaFixture {
 	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, contentStore.Close()) })
-	mediaSvc := service.NewMediaService(mediaRepo, contentStore)
+	mediaSvc := service.NewMediaService(mediaRepo, contentresolver.New(mediaRepo, contentStore))
 
 	thumbQ := thumb.NewQueue(d.WriteDB(), d.ReadDB())
 	thumbSvc := service.NewThumbService(mediaRepo, thumbQ, store)
@@ -217,7 +218,7 @@ func newHiddenThumbFixture(t *testing.T) (hiddenMediaFixture, *thumb.Queue) {
 	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, contentStore.Close()) })
-	mediaSvc := service.NewMediaService(mediaRepo, contentStore)
+	mediaSvc := service.NewMediaService(mediaRepo, contentresolver.New(mediaRepo, contentStore))
 
 	thumbQ := thumb.NewQueue(d.WriteDB(), d.ReadDB())
 	thumbSvc := service.NewThumbService(mediaRepo, thumbQ, store)
@@ -554,7 +555,7 @@ func TestHideMediaBulkBubbles5xxOnDBError(t *testing.T) {
 	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
 	r.NoError(err)
 	defer contentStore.Close()
-	mediaSvc := service.NewMediaService(mediaRepo, contentStore)
+	mediaSvc := service.NewMediaService(mediaRepo, contentresolver.New(mediaRepo, contentStore))
 	thumbQ := thumb.NewQueue(d.WriteDB(), d.ReadDB())
 	thumbSvc := service.NewThumbService(mediaRepo, thumbQ, store)
 	hiddenRepo := hidden.NewRepo(d.WriteDB(), d.ReadDB())

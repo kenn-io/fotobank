@@ -33,6 +33,7 @@ internal/
 ├── cli/                   — cobra subcommands (serve, import, thumbs, …)
 ├── config/                — TOML config loader + defaults
 ├── content/               — embedded Docbank boundary
+├── contentresolver/       — asset/file/exact-version binding
 ├── db/                    — sqlx wrapper + migrations
 │   └── migrations/        — golang-migrate SQL files (up/down pairs)
 ├── errs/                  — cross-cutting sentinel errors

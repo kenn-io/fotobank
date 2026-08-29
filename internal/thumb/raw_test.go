@@ -262,7 +262,7 @@ func TestExtractPreviewHandlesNEF(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.resolve,
 		WorkerConcurrency: 1,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,

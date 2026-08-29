@@ -80,6 +80,7 @@ type Read struct {
 }
 
 type RangeRead struct {
+	NodeID    int64
 	VersionID string
 	SHA256    string
 	MediaType string
@@ -268,6 +269,7 @@ func (a *Adapter) OpenVersionRange(
 		return nil, translateError(err)
 	}
 	return &RangeRead{
+		NodeID:    opened.Version.NodeID,
 		VersionID: opened.Version.ID,
 		SHA256:    opened.Version.BlobHash,
 		MediaType: opened.Version.MediaType,

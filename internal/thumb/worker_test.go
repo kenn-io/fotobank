@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/obs"
 	"go.kenn.io/fotobank/internal/owners"
@@ -38,6 +39,7 @@ type workerFixture struct {
 	queue   *thumb.Queue
 	store   storage.Store
 	content *content.Adapter
+	resolve *contentresolver.Resolver
 	owner   owners.Principal
 }
 
@@ -56,7 +58,10 @@ func newWorkerFixture(t *testing.T) workerFixture {
 	contentStore, err := content.Open(context.Background(), content.Config{Root: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, contentStore.Close()) })
-	return workerFixture{rw: d.WriteDB(), repo: repo, queue: q, store: store, content: contentStore, owner: p}
+	return workerFixture{
+		rw: d.WriteDB(), repo: repo, queue: q, store: store, content: contentStore,
+		resolve: contentresolver.New(repo, contentStore), owner: p,
+	}
 }
 
 // seedPhotoRow inserts a pending photo row and writes real JPEG bytes to
@@ -170,7 +175,7 @@ func TestWorkerDrainsPendingRowToReady(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.resolve,
 		WorkerConcurrency: 2,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,
@@ -200,7 +205,7 @@ func TestWorkerSkipsVideoAsNoPreview(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.resolve,
 		WorkerConcurrency: 1,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,
@@ -226,7 +231,7 @@ func TestWorkerDrainsPNGPhotoToReady(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.resolve,
 		WorkerConcurrency: 1,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,
@@ -283,7 +288,7 @@ func TestWorkerStaleWriteDoesNotCorruptReclaim(t *testing.T) {
 	// tripping over the pre-existing v0 bytes.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.resolve,
 		WorkerConcurrency: 1,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,
@@ -340,7 +345,7 @@ func TestWorkerRunReturnsOnlyAfterDrainGoroutinesExit(t *testing.T) {
 	// parks on the semaphore before the whole batch is launched,
 	// giving cancel() a chance to trigger the early-return path.
 	ctx, cancel := context.WithCancel(context.Background())
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.resolve,
 		WorkerConcurrency: 2,
 		PollInterval:      10 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,
@@ -408,7 +413,7 @@ func TestWorkerEmitsResultMetricsAndLeaseSweep(t *testing.T) {
 	m := obs.NewTestMetrics()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.resolve,
 		WorkerConcurrency: 1,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      time.Minute,
@@ -446,7 +451,7 @@ func TestWorkerEmitsAllSizesPerClaim(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.resolve,
 		WorkerConcurrency: 2,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      5 * time.Minute,
@@ -498,7 +503,7 @@ func TestThumbWorkerLogsCarryComponent(t *testing.T) {
 	base := slog.New(slog.NewJSONHandler(&logBuf, nil))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.content,
+	w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.resolve,
 		WorkerConcurrency: 1,
 		PollInterval:      20 * time.Millisecond,
 		LeaseTimeout:      time.Minute,

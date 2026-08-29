@@ -17,6 +17,7 @@ import (
 
 	"go.kenn.io/fotobank/internal/album"
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
@@ -76,7 +77,10 @@ func setupSharedFxInputs(t *testing.T) sharedFxInputs {
 func buildSharedFx(in sharedFxInputs, grantee owners.Principal, scopes []string) http.Handler {
 	in.t.Helper()
 	resolver := share.NewScopeResolver(in.shares, func() time.Time { return in.now }, nil)
-	sharedSvc := service.NewSharedReadService(in.shares, in.mediaR, in.albumsR, in.store, in.content, resolver)
+	sharedSvc := service.NewSharedReadService(
+		in.shares, in.mediaR, in.albumsR, in.store,
+		contentresolver.New(in.mediaR, in.content), resolver,
+	)
 	h, err := httpapi.New(httpapi.Deps{
 		IdentityProvider: identity.NewStubWithScopes(grantee, "", scopes),
 		SharedRead:       sharedSvc,
