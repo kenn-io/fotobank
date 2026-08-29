@@ -41,6 +41,10 @@ func newBackupSnapshotCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			dbPath, err := resolveDBPath(cfg)
+			if err != nil {
+				return err
+			}
 			dst := out
 			if dst == "" {
 				dir := backupDirFor(cfg)
@@ -51,7 +55,7 @@ func newBackupSnapshotCmd() *cobra.Command {
 					time.Now().UTC().Format(backup.StampLayout)+backup.SnapshotExt)
 			}
 			start := time.Now()
-			if err := backup.SnapshotPath(cmd.Context(), resolveDBPath(cfg), dst); err != nil {
+			if err := backup.SnapshotPath(cmd.Context(), dbPath, dst); err != nil {
 				return err
 			}
 			elapsed := time.Since(start)
@@ -139,7 +143,10 @@ func newBackupRestoreCmd() *cobra.Command {
 				return err
 			}
 			snap := args[0]
-			dbPath := resolveDBPath(cfg)
+			dbPath, err := resolveDBPath(cfg)
+			if err != nil {
+				return err
+			}
 			lockPath := lockPathFor(dbPath)
 
 			if dryRun {

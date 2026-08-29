@@ -86,6 +86,33 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	r.Equal(body, got)
 }
 
+func TestCheckoutEstimateUsesCanonicalDatabaseLock(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	database, err := db.Open(dbPath)
+	r.NoError(err)
+	r.NoError(database.Close())
+	aliasPath := filepath.Join(tmp, "database-alias.sqlite")
+	if err := os.Symlink(dbPath, aliasPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Setenv("FOTOBANK_DB_PATH", aliasPath)
+	databaseReplacement := flock.New(dbPath + ".lock")
+	locked, err := databaseReplacement.TryLock()
+	r.NoError(err)
+	r.True(locked)
+	t.Cleanup(func() { _ = databaseReplacement.Unlock() })
+
+	var stdout, stderr bytes.Buffer
+	code := cli.RunContext(t.Context(), []string{
+		"checkout", "estimate", "--config", cfgPath, "--all",
+	}, &stdout, &stderr)
+	r.NotZero(code)
+	r.Contains(stderr.String(), "another process is replacing the database")
+}
+
 func TestCheckoutCreateRecoversInterruptedCheckoutAfterTakingLock(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()

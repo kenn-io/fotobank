@@ -184,7 +184,10 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 	if cfg.Identity.Mode != "stub" {
 		return nil, fmt.Errorf("fotobank checkout requires identity.mode = stub (got %q)", cfg.Identity.Mode)
 	}
-	dbPath := resolveDBPath(cfg)
+	dbPath, err := resolveDBPath(cfg)
+	if err != nil {
+		return nil, err
+	}
 	lockPath := lockPathFor(dbPath)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return nil, fmt.Errorf("create database lock directory: %w", err)

@@ -170,7 +170,10 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	// see at a glance which lines came through the implicit channel.
 	slog.SetDefault(logger.With("component", "legacy"))
 
-	dbPath := resolveDBPath(cfg)
+	dbPath, err := resolveDBPath(cfg)
+	if err != nil {
+		return err
+	}
 
 	// The server lock refuses two servers on the same DB. The shared lifetime
 	// lock lets ordinary database users coexist while blocking backup restore,

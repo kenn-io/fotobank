@@ -79,7 +79,11 @@ func runContentRecovery(ctx context.Context, opts contentRecoveryOpts) error {
 	if err != nil {
 		return err
 	}
-	d, err := db.Open(resolveDBPath(cfg))
+	dbPath, err := resolveDBPath(cfg)
+	if err != nil {
+		return err
+	}
+	d, err := db.Open(dbPath)
 	if err != nil {
 		return err
 	}
