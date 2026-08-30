@@ -32,6 +32,27 @@ Focus security findings on a concrete capability gained across an actual trust
 boundary. Focus other review findings on correctness, data integrity,
 portability, and maintainability.
 
+## Local filesystem namespace
+
+The local operator controls the host mount namespace and assigns the storage
+roles of the configured Docbank, NAS, flash, import, and checkout roots.
+Fotobank resolves symlinks and rejects ordinary path overlap, but it does not
+inventory or forbid bind mounts, volume aliases, or other administrator-created
+names for the same storage. Creating or retargeting one of those aliases is a
+storage-role change by the trusted operator, who can already access the target
+directly. Do not report a bind-mounted or administrator-created filesystem alias
+as a boundary bypass. Do flag overlap reachable through ordinary path and
+symlink resolution under a stable mount topology.
+
+Database lifetime locks are sibling files derived from the exact canonical
+database path. The database and its lock therefore use the same filesystem
+name-resolution rules: case-only variants name the same two files on a
+case-insensitive filesystem and genuinely distinct pairs on a case-sensitive
+filesystem. Do not require textual case folding or claim split locking from a
+case-only spelling unless a reproduced filesystem operation shows that the two
+database spellings resolve to one database while the two derived lock spellings
+resolve to different files.
+
 ## Local import trust boundary
 
 The operator who invokes an import is trusted, and the configured source tree
