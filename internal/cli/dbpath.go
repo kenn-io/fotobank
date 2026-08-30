@@ -34,7 +34,7 @@ func resolveDBPath(cfg *config.Config) (string, error) {
 // canonicalDBPath resolves existing symlinks before a database or its lock is
 // opened. Missing final components are retained beneath the resolved ancestor.
 func canonicalDBPath(p string) (string, error) {
-	target := p
+	target := filepath.FromSlash(p)
 	if !filepath.IsAbs(target) {
 		cwd, err := os.Getwd()
 		if err != nil {
