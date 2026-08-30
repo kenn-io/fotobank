@@ -227,6 +227,14 @@ func restoreDryRun(cmd *cobra.Command, snap, dbPath, lockPath string, asJSON boo
 	if err := backup.ValidateSnapshot(cmd.Context(), snap); err != nil {
 		return fmt.Errorf("validate snapshot: %w", err)
 	}
+	// A missing lock file cannot be held. Do not create it (or its parent)
+	// merely to probe it: --dry-run promises not to change the filesystem.
+	if _, err := os.Stat(lockPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return writeRestoreDryRunResult(cmd, snap, dbPath, asJSON)
+		}
+		return fmt.Errorf("inspect database lifetime lock: %w", err)
+	}
 	l := flock.New(lockPath)
 	ok, err := l.TryLock()
 	if err != nil {
@@ -236,6 +244,10 @@ func restoreDryRun(cmd *cobra.Command, snap, dbPath, lockPath string, asJSON boo
 		return fmt.Errorf("%w: %s", backup.ErrServerHoldsLock, dbPath)
 	}
 	_ = l.Unlock()
+	return writeRestoreDryRunResult(cmd, snap, dbPath, asJSON)
+}
+
+func writeRestoreDryRunResult(cmd *cobra.Command, snap, dbPath string, asJSON bool) error {
 	if asJSON {
 		type result struct {
 			DryRun       bool   `json:"dry_run"`

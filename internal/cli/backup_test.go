@@ -141,6 +141,38 @@ func TestBackupListCLI(t *testing.T) {
 	r.Len(got, 2)
 }
 
+func TestBackupRestoreDryRunAllowsMissingDatabaseDirectory(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBackupConfig(t, tmp)
+	srcDir := filepath.Join(tmp, "src-empty")
+	r.NoError(os.MkdirAll(srcDir, 0o700))
+
+	var stdout, stderr bytes.Buffer
+	code := cli.RunContext(t.Context(),
+		[]string{"import", "--config", cfgPath, srcDir}, &stdout, &stderr)
+	r.Equal(0, code, "import bootstrap failed: %s / %s", stdout.String(), stderr.String())
+
+	snapshot := filepath.Join(tmp, "snapshot.sqlite")
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(),
+		[]string{"backup", "snapshot", "--config", cfgPath, "--out", snapshot},
+		&stdout, &stderr)
+	r.Equal(0, code, "snapshot failed: %s / %s", stdout.String(), stderr.String())
+
+	databaseDir := filepath.Join(tmp, "missing", "database")
+	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(databaseDir, "fotobank.sqlite"))
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(),
+		[]string{"backup", "restore", "--config", cfgPath, "--dry-run", snapshot},
+		&stdout, &stderr)
+	r.Equal(0, code, "dry-run failed: %s / %s", stdout.String(), stderr.String())
+	r.Contains(stdout.String(), "dry-run ok")
+	r.NoDirExists(databaseDir, "dry-run must not create the database directory")
+}
+
 func TestBackupRestoreCLIRefusesWhileServerRuns(t *testing.T) {
 	// Spin up the server in stub mode; while it runs, attempt a restore
 	// against a different temp DB. The error must wrap ErrServerHoldsLock.
