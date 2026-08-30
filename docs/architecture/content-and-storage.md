@@ -200,7 +200,28 @@ deleting a source album or asset does not erase the checkout's saved selection
 or file bindings. A materialization failure makes the durable checkout `error`
 without pretending the partial working tree is usable.
 
-Checkouts are currently one-way materializations. Fotobank does not yet scan
-working files or commit Lightroom changes back as new Docbank versions. Until
-that lifecycle exists, an external edit after the recorded observation does not
-change an entry's state automatically.
+The server periodically walks every active checkout. A complete scan is the
+correctness path; filesystem notifications are not required. The scanner opens
+the cataloged root through the same Docbank and managed-storage boundary used
+for creation, then traverses it through a root-bound filesystem handle. It
+never follows a working-file symlink as media.
+
+Changed metadata starts or refreshes a durable settle observation. Size and
+modification time must remain unchanged across separate scans for at least
+`checkouts.settle_interval` before Fotobank opens and hashes the file. The
+observation survives restart. A stable hash equal to the base returns a tracked
+entry to `clean`, including timestamp-only edits; a different hash changes it
+to `pending`. A missing working file changes the entry to `missing` without
+deleting or modifying its Docbank version.
+
+Stable untracked files remain in `checkout_scan_candidates` with an empty file
+ID and `pending` state for the later new-file import lifecycle. The scanner
+always skips its reserved staging directory. Operator-supplied
+`checkouts.ignore_patterns` use Go `path.Match` syntax and apply only to
+untracked files, so they can exclude Lightroom lock files without hiding a
+tracked media edit.
+
+Scanning does not write new Docbank versions. A later checkout-commit boundary
+consumes tracked `pending` entries with an atomic base-version precondition;
+until then, Docbank remains unchanged and the durable queue records the local
+work that is waiting.

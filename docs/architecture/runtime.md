@@ -96,3 +96,8 @@ not only errors returned while opening a reader.
 Long-running operations honor `context.Context`. Background loops use bounded
 polling, concurrency, and shutdown waits; they do not start untracked
 goroutines from transports.
+
+The checkout scanner is one of those server-owned loops. It runs an immediate
+full scan at startup and repeats at `checkouts.scan_interval`. Per-checkout
+errors are logged without preventing other active roots from being scanned;
+the next interval retries from the durable settle observations in SQLite.

@@ -66,6 +66,11 @@ concurrent_workers = 2               # goroutines doing EXIF + hash inside a sin
 settle_interval = "2s"               # size and mtime must remain unchanged across two observations
 file_lock_path = ""                  # default: {flash.root}/.fotobank/import.lock
 
+[checkouts]
+scan_interval = "30s"                # full-tree scan cadence; missed notifications do not lose changes
+settle_interval = "2s"               # size and mtime must remain stable before hashing
+ignore_patterns = ["*.lrcat.lock"]   # optional path.Match patterns for untracked transient files
+
 [thumbs]
 worker_concurrency = 4               # goroutines generating thumbnails per server process
 poll_interval = "5s"                 # how often to scan for pending rows

@@ -75,8 +75,16 @@ selection tables retain explicit asset IDs, album IDs, and capture-year ranges;
 and immutable Docbank base version. The initial observation records size,
 modification time, and SHA-256. Entry paths and file IDs are unique within a
 checkout so two product files cannot silently claim the same working file.
-Checkout and entry states are durable inputs to later scanning, conflict, and
-rebuild work rather than an event log.
+The scanner updates that observation only after a file settles and is hashed.
+An unequal stable hash produces `pending`; an equal hash produces `clean`; an
+absent working file produces `missing` without changing content authority.
+
+`checkout_scan_candidates` persists the first and latest size/mtime observation
+used by the settle window. A tracked candidate has a composite foreign key to
+the checkout entry at the same relative path. An untracked candidate has no
+file ID and remains `pending` after hashing for the later new-file import flow.
+Candidate progress is durable queue state, not an event log, so a restart does
+not restart the settle decision or lose an already discovered local file.
 
 Checkout ledgers are retained independently from their source assets. An owner
 with any checkout cannot be removed until a future explicit checkout-deletion

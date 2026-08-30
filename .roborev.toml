@@ -82,11 +82,21 @@ detected move leaves an errored checkout rather than an active one.
 Checkout entry state is a point-in-time ledger observation. `clean` means the
 bytes matched the base version when Fotobank observed them; it is not a writer
 lock or a continuous guarantee after publication. External tools are expected
-to edit active checkout files, and filesystem scanning and write-back are not
-implemented yet. Do not require an advisory writer lock or repeated verification
-to eliminate mutations after the recorded observation. Do flag records whose
-stored observation did not come from the published file handle or activation
-that proceeds after Fotobank detects a materialization failure.
+to edit active checkout files. Periodic scanning now settles and hashes those
+edits, but write-back is not implemented yet. The scanner uses a retained
+root-bound filesystem handle, rechecks a file before and after hashing, and
+revalidates the catalog root before durable state changes. Do not require an
+advisory writer lock or repeated verification to eliminate mutations after the
+recorded observation. Do flag records whose stored observation did not come
+from the published or scanned file handle, or activation that proceeds after
+Fotobank detects a materialization failure.
+
+The working tree and its configured storage roles remain under the trusted
+operator's control during each scan. Normal Lightroom writes may race a scan;
+Fotobank detects changed size, modification time, or file identity and retries
+after another settle window. It does not claim to isolate the scanner from a
+hostile local process that can preserve metadata deliberately while changing
+bytes or can rewrite ancestor directories between filesystem calls.
 
 Fotobank does not claim to stop a hostile local actor who can rename an opened
 checkout directory into a managed root. Such an actor already needs write

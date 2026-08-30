@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -65,6 +66,7 @@ type Config struct {
 	Identity      Identity      `toml:"identity"`
 	HTTP          HTTP          `toml:"http"`
 	Imports       Imports       `toml:"imports"`
+	Checkouts     Checkouts     `toml:"checkouts"`
 	Thumbs        Thumbs        `toml:"thumbs"`
 	Broker        Broker        `toml:"broker"`
 	Backup        Backup        `toml:"backup"`
@@ -154,6 +156,12 @@ type Imports struct {
 	ConcurrentWorkers int           `toml:"concurrent_workers"`
 	FileLockPath      string        `toml:"file_lock_path"`
 	SettleInterval    time.Duration `toml:"settle_interval"`
+}
+
+type Checkouts struct {
+	ScanInterval   time.Duration `toml:"scan_interval"`
+	SettleInterval time.Duration `toml:"settle_interval"`
+	IgnorePatterns []string      `toml:"ignore_patterns"`
 }
 
 type Thumbs struct {
@@ -357,6 +365,20 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("%w: [storage].mode=%q (must be nas_only|flash_cache)",
 			errs.ErrBadConfiguration, c.Storage.Mode)
+	}
+	if c.Checkouts.ScanInterval <= 0 {
+		return fmt.Errorf("%w: [checkouts].scan_interval must be positive",
+			errs.ErrBadConfiguration)
+	}
+	if c.Checkouts.SettleInterval < 0 {
+		return fmt.Errorf("%w: [checkouts].settle_interval must not be negative",
+			errs.ErrBadConfiguration)
+	}
+	for _, pattern := range c.Checkouts.IgnorePatterns {
+		if _, err := path.Match(pattern, "candidate"); err != nil {
+			return fmt.Errorf("%w: invalid [checkouts].ignore_patterns entry %q: %v",
+				errs.ErrBadConfiguration, pattern, err)
+		}
 	}
 	for i, p := range c.Admin.Principals {
 		if strings.TrimSpace(p.Hub) == "" || strings.TrimSpace(p.UserID) == "" {
@@ -653,6 +675,12 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	}
 	if c.Imports.SettleInterval == 0 {
 		c.Imports.SettleInterval = 2 * time.Second
+	}
+	if c.Checkouts.ScanInterval == 0 {
+		c.Checkouts.ScanInterval = 30 * time.Second
+	}
+	if c.Checkouts.SettleInterval == 0 {
+		c.Checkouts.SettleInterval = 2 * time.Second
 	}
 	if c.Thumbs.WorkerConcurrency == 0 {
 		c.Thumbs.WorkerConcurrency = 4

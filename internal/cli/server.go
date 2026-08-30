@@ -37,6 +37,7 @@ import (
 	appsettingsstore "go.kenn.io/fotobank/internal/appsettings"
 	"go.kenn.io/fotobank/internal/auth/hidden"
 	"go.kenn.io/fotobank/internal/backup"
+	"go.kenn.io/fotobank/internal/checkout"
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/contentresolver"
@@ -195,7 +196,13 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	}
 	defer d.Close()
 
-	contentStore, err := content.Open(ctx, content.Config{Root: cfg.Docbank.Root})
+	contentStore, err := content.Open(ctx, content.Config{
+		Root: cfg.Docbank.Root,
+		ManagedRoots: []content.ManagedRoot{
+			{Path: cfg.NAS.Root},
+			{Path: cfg.Flash.Root, CreateIfMissing: true},
+		},
+	})
 	if err != nil {
 		return fmt.Errorf("open Docbank vault: %w", err)
 	}
@@ -235,6 +242,15 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	contentResolver := contentresolver.New(mediaRepo, contentStore)
 	mediaSvc := service.NewMediaService(mediaRepo, contentResolver)
+	checkoutScanner := checkout.NewScanner(
+		checkout.NewRepo(d.WriteDB(), d.ReadDB()),
+		contentStore,
+		checkout.ScannerConfig{
+			ScanInterval: cfg.Checkouts.ScanInterval, SettleInterval: cfg.Checkouts.SettleInterval,
+			IgnorePatterns: cfg.Checkouts.IgnorePatterns,
+			Logger:         logger.With("component", "checkout-scan"),
+		},
+	)
 
 	// F2.4 Hidden privacy. hiddenRepo and hiddenSvc are wired after
 	// mediaSvc because hidden.NewService takes MediaPrivacy which is
@@ -719,6 +735,12 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	}
 	bgWG.Go(func() {
 		runHiddenSweeper(sigCtx, hiddenSvc, hiddenSweepInterval, opts.stderr)
+	})
+
+	bgWG.Go(func() {
+		if err := checkoutScanner.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(opts.stderr, "checkout scanner exited:", err)
+		}
 	})
 
 	thumbWorker := thumb.NewWorker(thumbQueue, storeLayer, thumb.Config{

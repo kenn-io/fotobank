@@ -436,6 +436,48 @@ CREATE TABLE checkout_entries (
 CREATE INDEX checkout_entries_state_idx
   ON checkout_entries(checkout_id, state, relative_path);
 
+CREATE UNIQUE INDEX checkout_entries_binding_uq
+  ON checkout_entries(checkout_id, file_id, relative_path);
+
+-- Durable observations let the periodic scanner settle local changes across
+-- process restarts. A NULL file_id is an untracked working file; a non-NULL
+-- file_id must name the tracked checkout entry at the same path.
+CREATE TABLE checkout_scan_candidates (
+    checkout_id       UUID NOT NULL REFERENCES checkouts(id) ON DELETE CASCADE,
+    relative_path     TEXT NOT NULL,
+    file_id           UUID,
+    observed_size     INTEGER NOT NULL CHECK (observed_size >= 0),
+    observed_mtime    TIMESTAMP NOT NULL,
+    observed_sha256   TEXT CHECK (
+      observed_sha256 IS NULL OR (
+        length(observed_sha256) = 64 AND
+        observed_sha256 = lower(observed_sha256) AND
+        observed_sha256 NOT GLOB '*[^0-9a-f]*'
+      )
+    ),
+    state             TEXT NOT NULL CHECK (state IN ('settling', 'pending')),
+    first_observed_at TIMESTAMP NOT NULL,
+    last_observed_at  TIMESTAMP NOT NULL,
+    PRIMARY KEY (checkout_id, relative_path),
+    FOREIGN KEY (checkout_id, file_id, relative_path)
+      REFERENCES checkout_entries(checkout_id, file_id, relative_path) ON DELETE CASCADE,
+    CHECK (
+      length(relative_path) > 0 AND
+      substr(relative_path, 1, 1) <> '/' AND
+      instr(relative_path, char(0)) = 0 AND
+      instr(relative_path, char(92)) = 0 AND
+      relative_path NOT LIKE '%//%' AND
+      relative_path NOT LIKE '%/./%' AND
+      relative_path NOT LIKE '%/../%' AND
+      substr(relative_path, -2) <> '/.' AND
+      substr(relative_path, -3) <> '/..' AND
+      substr(relative_path, -1) <> '/'
+    )
+);
+
+CREATE INDEX checkout_scan_candidates_state_idx
+  ON checkout_scan_candidates(state, checkout_id, relative_path);
+
 -- Per-user, non-secret UI preferences.
 -- Keys are dotted strings (e.g. "theme", "density.library"); values are JSON.
 CREATE TABLE user_settings (
