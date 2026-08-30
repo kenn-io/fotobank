@@ -49,6 +49,28 @@ func TestAdapterManagedRootCreationPolicy(t *testing.T) {
 		t.Cleanup(func() { r.NoError(adapter.Close()) })
 		r.DirExists(managedRoot)
 	})
+
+	t.Run("external root availability may be deferred", func(t *testing.T) {
+		r := require.New(t)
+		managedRoot := filepath.Join(t.TempDir(), "nas")
+		adapter, err := content.Open(t.Context(), content.Config{
+			Root: t.TempDir(), ManagedRoots: []content.ManagedRoot{{
+				Path: managedRoot, AllowUnavailable: true,
+			}},
+		})
+		r.NoError(err)
+		t.Cleanup(func() { r.NoError(adapter.Close()) })
+		r.NoDirExists(managedRoot)
+
+		checkoutRoot := t.TempDir()
+		_, err = adapter.ResolveCheckoutRoot(checkoutRoot)
+		r.ErrorIs(err, errs.ErrBadConfiguration)
+
+		r.NoError(os.Mkdir(managedRoot, 0o700))
+		validated, err := adapter.ResolveCheckoutRoot(checkoutRoot)
+		r.NoError(err)
+		r.NoError(validated.Close())
+	})
 }
 
 func TestAdapterResolveImportRootReturnsSymlinkTarget(t *testing.T) {

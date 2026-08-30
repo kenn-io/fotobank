@@ -199,7 +199,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	contentStore, err := content.Open(ctx, content.Config{
 		Root: cfg.Docbank.Root,
 		ManagedRoots: []content.ManagedRoot{
-			{Path: cfg.NAS.Root},
+			{Path: cfg.NAS.Root, AllowUnavailable: true},
 			{Path: cfg.Flash.Root, CreateIfMissing: true},
 		},
 	})
