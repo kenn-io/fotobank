@@ -115,6 +115,17 @@ func TestNASOnlyDeleteIsIdempotent(t *testing.T) {
 	r.ErrorIs(err, os.ErrNotExist)
 }
 
+func TestNASOnlyDeleteFailsWhenRootIsMissing(t *testing.T) {
+	r := require.New(t)
+	nasRoot := filepath.Join(t.TempDir(), "missing-nas")
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	store := storage.NewNASOnly(nasRoot, storageKeyFor(p, "key1"))
+
+	err := store.Delete(t.Context(), p, "missing.bin")
+	r.ErrorIs(err, os.ErrNotExist)
+	r.NoDirExists(nasRoot)
+}
+
 func TestNASOnlyRejectsInvalidStorageKey(t *testing.T) {
 	// Storage keys are the per-owner subdirectory names. If the owners
 	// map is ever populated with a traversal or absolute value, every

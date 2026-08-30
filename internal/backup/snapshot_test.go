@@ -148,6 +148,29 @@ func TestSnapshotPathErrorsOnMissingSource(t *testing.T) {
 		"missing source must not be created by snapshot open path")
 }
 
+func TestSnapshotToRootStaysBoundAfterRootRename(t *testing.T) {
+	r := require.New(t)
+	parent := t.TempDir()
+	original := filepath.Join(parent, "nas")
+	moved := filepath.Join(parent, "nas-moved")
+	r.NoError(os.Mkdir(original, 0o700))
+	root, err := os.OpenRoot(original)
+	r.NoError(err)
+	defer root.Close()
+	if err := os.Rename(original, moved); err != nil {
+		t.Skipf("platform cannot rename an opened directory: %v", err)
+	}
+	r.NoError(os.Mkdir(original, 0o700))
+
+	sourcePath := filepath.Join(parent, "source.sqlite")
+	db := makeSourceDB(t, sourcePath)
+	relativeDst := filepath.Join("snapshots", "snapshot.sqlite")
+	r.NoError(SnapshotToRoot(t.Context(), db, root, relativeDst))
+	r.FileExists(filepath.Join(moved, relativeDst))
+	r.NoFileExists(filepath.Join(original, relativeDst))
+	r.True(integrityOk(t, filepath.Join(moved, relativeDst)))
+}
+
 func TestSnapshotSurfaceErrorFromSyncDir(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()

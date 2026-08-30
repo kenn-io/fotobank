@@ -94,9 +94,29 @@ func (w *Worker) tick(ctx context.Context) {
 	now := time.Now()
 	dst := filepath.Join(w.cfg.Dir, now.UTC().Format(StampLayout)+SnapshotExt)
 	start := now
-	if err := w.snapshot(ctx, dst); err != nil {
+	var (
+		root        *os.Root
+		relativeDst string
+		snapshotErr error
+	)
+	if w.cfg.RequiredRoot == "" {
+		snapshotErr = Snapshot(ctx, w.cfg.DB, dst)
+	} else {
+		root, snapshotErr = os.OpenRoot(w.cfg.RequiredRoot)
+		if snapshotErr == nil {
+			defer root.Close()
+			relativeDst, snapshotErr = filepath.Rel(w.cfg.RequiredRoot, dst)
+			if snapshotErr == nil && (!filepath.IsLocal(relativeDst) || relativeDst == ".") {
+				snapshotErr = fmt.Errorf("backup destination %q is outside required root", dst)
+			}
+			if snapshotErr == nil {
+				snapshotErr = SnapshotToRoot(ctx, w.cfg.DB, root, relativeDst)
+			}
+		}
+	}
+	if snapshotErr != nil {
 		w.cfg.Logger.Error("backup snapshot failed",
-			"err", err, "dst", dst,
+			"err", snapshotErr, "dst", dst,
 			"dur_ms", time.Since(start).Milliseconds())
 		if w.cfg.Metrics != nil {
 			w.cfg.Metrics.BackupSnapshots("failed").Inc()
@@ -113,11 +133,31 @@ func (w *Worker) tick(ctx context.Context) {
 		w.cfg.Metrics.SetBackupLastSuccess(w.lastSuccessAt.Unix())
 	}
 	var size int64
-	if info, err := os.Stat(dst); err == nil {
+	var info os.FileInfo
+	var statErr error
+	if root == nil {
+		info, statErr = os.Stat(dst)
+	} else {
+		info, statErr = root.Stat(relativeDst)
+	}
+	if statErr == nil {
 		size = info.Size()
 	}
 
-	res, sweepErr := Sweep(w.cfg.Dir, w.cfg.Policy, time.Now(), w.cfg.Logger)
+	var res SweepResult
+	var sweepErr error
+	if root == nil {
+		res, sweepErr = Sweep(w.cfg.Dir, w.cfg.Policy, time.Now(), w.cfg.Logger)
+	} else {
+		res, sweepErr = sweepRoot(
+			root,
+			filepath.Dir(relativeDst),
+			w.cfg.Dir,
+			w.cfg.Policy,
+			time.Now(),
+			w.cfg.Logger,
+		)
+	}
 	if sweepErr != nil {
 		w.cfg.Logger.Warn("backup retention sweep failed",
 			"err", sweepErr, "dir", w.cfg.Dir)
@@ -142,18 +182,6 @@ func (w *Worker) tick(ctx context.Context) {
 			"deleted", res.Deleted)
 	}
 	w.cfg.Logger.Debug("backup snapshot ok", attrs...)
-}
-
-func (w *Worker) snapshot(ctx context.Context, dst string) error {
-	if w.cfg.RequiredRoot == "" {
-		return Snapshot(ctx, w.cfg.DB, dst)
-	}
-	root, err := os.OpenRoot(w.cfg.RequiredRoot)
-	if err != nil {
-		return fmt.Errorf("open required backup root: %w", err)
-	}
-	defer root.Close()
-	return Snapshot(ctx, w.cfg.DB, dst)
 }
 
 func (w *Worker) maybeWarnStale(now time.Time) {

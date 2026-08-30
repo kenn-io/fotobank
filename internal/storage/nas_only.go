@@ -137,11 +137,16 @@ func (s *NASOnly) Write(_ context.Context, p owners.Principal, key string, src i
 }
 
 func (s *NASOnly) Delete(_ context.Context, p owners.Principal, key string) error {
-	full, err := s.ownerPath(p, key)
+	relative, err := s.ownerKey(p, key)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
+	root, err := os.OpenRoot(s.root)
+	if err != nil {
+		return fmt.Errorf("storage: open NAS root: %w", err)
+	}
+	defer root.Close()
+	if err := root.Remove(relative); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil

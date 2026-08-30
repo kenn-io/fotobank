@@ -52,20 +52,47 @@ func newBackupSnapshotCmd() *cobra.Command {
 			}
 			defer lifetime.Close()
 			dst := out
-			if dst == "" {
-				dir := backupDirFor(cfg)
-				if err := prepareBackupDir(cfg, dir); err != nil {
+			var (
+				root        *os.Root
+				relativeDst string
+			)
+			if dst == "" && cfg.Backup.Dir == "" {
+				root, err = openBackupNASRoot(cfg)
+				if err != nil {
+					return fmt.Errorf("open backup destination: %w", err)
+				}
+				defer root.Close()
+				relativeDst = filepath.Join(
+					".fotobank",
+					"snapshots",
+					time.Now().UTC().Format(backup.StampLayout)+backup.SnapshotExt,
+				)
+				dst = filepath.Join(cfg.NAS.Root, relativeDst)
+			} else if dst == "" {
+				if err := prepareBackupDir(cfg, cfg.Backup.Dir); err != nil {
 					return fmt.Errorf("mkdir backup dir: %w", err)
 				}
-				dst = filepath.Join(dir,
-					time.Now().UTC().Format(backup.StampLayout)+backup.SnapshotExt)
+				dst = filepath.Join(
+					cfg.Backup.Dir,
+					time.Now().UTC().Format(backup.StampLayout)+backup.SnapshotExt,
+				)
 			}
 			start := time.Now()
-			if err := backup.SnapshotPath(cmd.Context(), lifetime.path, dst); err != nil {
+			if root == nil {
+				err = backup.SnapshotPath(cmd.Context(), lifetime.path, dst)
+			} else {
+				err = backup.SnapshotPathToRoot(cmd.Context(), lifetime.path, root, relativeDst)
+			}
+			if err != nil {
 				return err
 			}
 			elapsed := time.Since(start)
-			info, err := os.Stat(dst)
+			var info os.FileInfo
+			if root == nil {
+				info, err = os.Stat(dst)
+			} else {
+				info, err = root.Stat(relativeDst)
+			}
 			if err != nil {
 				return fmt.Errorf("stat snapshot: %w", err)
 			}
@@ -277,15 +304,23 @@ func prepareBackupDir(cfg *config.Config, dir string) error {
 	if cfg.Backup.Dir != "" {
 		return os.MkdirAll(dir, 0o700)
 	}
-	root, err := os.OpenRoot(cfg.NAS.Root)
+	root, err := openBackupNASRoot(cfg)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("%w: NAS root is unavailable", errs.ErrContentUnavailable)
-		}
 		return err
 	}
 	defer root.Close()
 	return root.MkdirAll(filepath.Join(".fotobank", "snapshots"), 0o700)
+}
+
+func openBackupNASRoot(cfg *config.Config) (*os.Root, error) {
+	root, err := os.OpenRoot(cfg.NAS.Root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: NAS root is unavailable", errs.ErrContentUnavailable)
+		}
+		return nil, err
+	}
+	return root, nil
 }
 
 func backupRequiredRoot(cfg *config.Config) string {

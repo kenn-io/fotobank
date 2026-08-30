@@ -38,9 +38,13 @@ a filesystem-portable UTC format and the reader accepts the formats that may
 still be inside the configured retention window.
 
 SQLite backup uses SQLite's online backup behavior rather than copying a live
-database file without its WAL state. Publication uses a temporary file,
-durability sync, and rename. Retention never treats an unparseable file as a
-valid managed snapshot.
+database file without its WAL state. For the default NAS destination, SQLite
+first writes a private local staging snapshot because `VACUUM INTO` requires a
+pathname. Fotobank then copies, syncs, and atomically publishes that snapshot
+through one retained NAS root; stat and retention operations use the same root.
+This requires temporary local space equal to the metadata snapshot but prevents
+mount disappearance or replacement from redirecting backup writes. Retention
+never treats an unparseable file as a valid managed snapshot.
 
 Every CLI database user canonicalizes the SQLite path through existing
 symlinks—or through the deepest existing ancestor for a new database—before
