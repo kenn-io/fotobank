@@ -101,6 +101,8 @@ bytes or can rewrite ancestor directories between filesystem calls.
 Server startup deliberately tolerates an absent external NAS so readiness can
 report the outage. Import and checkout root validation continues to fail closed
 until every configured managed boundary resolves; scanner retries are expected.
+NAS artifact writes and backups using the default NAS path must open the
+externally managed root and must never create that root when it is missing.
 
 Fotobank does not claim to stop a hostile local actor who can rename an opened
 checkout directory into a managed root. Such an actor already needs write

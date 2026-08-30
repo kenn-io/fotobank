@@ -15,12 +15,15 @@ import (
 // Config configures a Worker. Production constructs one from
 // config.Backup; tests construct one directly.
 type Config struct {
-	DB       *sql.DB
-	Dir      string
-	Interval time.Duration
-	Policy   Policy
-	Logger   *slog.Logger
-	Metrics  *obs.Metrics
+	DB  *sql.DB
+	Dir string
+	// RequiredRoot is an externally managed directory that must already
+	// exist before a snapshot may create directories beneath it.
+	RequiredRoot string
+	Interval     time.Duration
+	Policy       Policy
+	Logger       *slog.Logger
+	Metrics      *obs.Metrics
 }
 
 // Worker takes periodic snapshots and runs retention sweeps. One
@@ -91,7 +94,7 @@ func (w *Worker) tick(ctx context.Context) {
 	now := time.Now()
 	dst := filepath.Join(w.cfg.Dir, now.UTC().Format(StampLayout)+SnapshotExt)
 	start := now
-	if err := Snapshot(ctx, w.cfg.DB, dst); err != nil {
+	if err := w.snapshot(ctx, dst); err != nil {
 		w.cfg.Logger.Error("backup snapshot failed",
 			"err", err, "dst", dst,
 			"dur_ms", time.Since(start).Milliseconds())
@@ -139,6 +142,18 @@ func (w *Worker) tick(ctx context.Context) {
 			"deleted", res.Deleted)
 	}
 	w.cfg.Logger.Debug("backup snapshot ok", attrs...)
+}
+
+func (w *Worker) snapshot(ctx context.Context, dst string) error {
+	if w.cfg.RequiredRoot == "" {
+		return Snapshot(ctx, w.cfg.DB, dst)
+	}
+	root, err := os.OpenRoot(w.cfg.RequiredRoot)
+	if err != nil {
+		return fmt.Errorf("open required backup root: %w", err)
+	}
+	defer root.Close()
+	return Snapshot(ctx, w.cfg.DB, dst)
 }
 
 func (w *Worker) maybeWarnStale(now time.Time) {

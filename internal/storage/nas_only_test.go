@@ -49,6 +49,17 @@ func TestNASOnlyWriteThenRead(t *testing.T) {
 	r.Equal("hello", string(got))
 }
 
+func TestNASOnlyWriteDoesNotCreateMissingRoot(t *testing.T) {
+	r := require.New(t)
+	nasRoot := filepath.Join(t.TempDir(), "missing-nas")
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	store := storage.NewNASOnly(nasRoot, storageKeyFor(p, "key1"))
+
+	_, err := store.Write(t.Context(), p, "2024/a.jpg", bytes.NewReader([]byte("hello")))
+	r.ErrorIs(err, os.ErrNotExist)
+	r.NoDirExists(nasRoot)
+}
+
 func TestNASOnlyReadRange(t *testing.T) {
 	r := require.New(t)
 	s, _, p := newNASStore(t)

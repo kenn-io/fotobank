@@ -16,6 +16,7 @@ import (
 
 	"go.kenn.io/fotobank/internal/backup"
 	"go.kenn.io/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/errs"
 )
 
 func newBackupCmd() *cobra.Command {
@@ -53,7 +54,7 @@ func newBackupSnapshotCmd() *cobra.Command {
 			dst := out
 			if dst == "" {
 				dir := backupDirFor(cfg)
-				if err := os.MkdirAll(dir, 0o700); err != nil {
+				if err := prepareBackupDir(cfg, dir); err != nil {
 					return fmt.Errorf("mkdir backup dir: %w", err)
 				}
 				dst = filepath.Join(dir,
@@ -270,4 +271,26 @@ func backupDirFor(cfg *config.Config) string {
 		return cfg.Backup.Dir
 	}
 	return filepath.Join(cfg.NAS.Root, ".fotobank", "snapshots")
+}
+
+func prepareBackupDir(cfg *config.Config, dir string) error {
+	if cfg.Backup.Dir != "" {
+		return os.MkdirAll(dir, 0o700)
+	}
+	root, err := os.OpenRoot(cfg.NAS.Root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: NAS root is unavailable", errs.ErrContentUnavailable)
+		}
+		return err
+	}
+	defer root.Close()
+	return root.MkdirAll(filepath.Join(".fotobank", "snapshots"), 0o700)
+}
+
+func backupRequiredRoot(cfg *config.Config) string {
+	if cfg.Backup.Dir == "" {
+		return cfg.NAS.Root
+	}
+	return ""
 }

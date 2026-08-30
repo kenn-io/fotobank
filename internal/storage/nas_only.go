@@ -30,7 +30,7 @@ func NewNASOnly(root string, storageKeys map[owners.Principal]string) *NASOnly {
 	return &NASOnly{root: root, storageKeys: storageKeys}
 }
 
-func (s *NASOnly) ownerPath(p owners.Principal, key string) (string, error) {
+func (s *NASOnly) ownerKey(p owners.Principal, key string) (string, error) {
 	if err := validateKey(key); err != nil {
 		return "", err
 	}
@@ -41,7 +41,15 @@ func (s *NASOnly) ownerPath(p owners.Principal, key string) (string, error) {
 	if err := ValidateStorageKey(sk); err != nil {
 		return "", err
 	}
-	return filepath.Join(s.root, sk, filepath.FromSlash(key)), nil
+	return filepath.Join(sk, filepath.FromSlash(key)), nil
+}
+
+func (s *NASOnly) ownerPath(p owners.Principal, key string) (string, error) {
+	relative, err := s.ownerKey(p, key)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(s.root, relative), nil
 }
 
 func (s *NASOnly) Stat(_ context.Context, p owners.Principal, key string) (StoreInfo, error) {
@@ -86,40 +94,45 @@ func (lrc *limitedReadCloser) Read(p []byte) (int, error) { return lrc.R.Read(p)
 func (lrc *limitedReadCloser) Close() error               { return lrc.C.Close() }
 
 func (s *NASOnly) Write(_ context.Context, p owners.Principal, key string, src io.Reader) (string, error) {
-	full, err := s.ownerPath(p, key)
+	relative, err := s.ownerKey(p, key)
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+	root, err := os.OpenRoot(s.root)
+	if err != nil {
+		return "", fmt.Errorf("storage: open NAS root: %w", err)
+	}
+	defer root.Close()
+	if err := root.MkdirAll(filepath.Dir(relative), 0o700); err != nil {
 		return "", fmt.Errorf("storage: mkdir: %w", err)
 	}
-	tmp := full + tmpSuffix()
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	tmp := relative + tmpSuffix()
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return "", fmt.Errorf("storage: open tmp: %w", err)
 	}
 	if _, err := io.Copy(f, src); err != nil {
 		_ = f.Close()
-		_ = os.Remove(tmp)
+		_ = root.Remove(tmp)
 		return "", fmt.Errorf("storage: write tmp: %w", err)
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
-		_ = os.Remove(tmp)
+		_ = root.Remove(tmp)
 		return "", fmt.Errorf("storage: sync tmp: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
+		_ = root.Remove(tmp)
 		return "", fmt.Errorf("storage: close tmp: %w", err)
 	}
-	if err := os.Link(tmp, full); err != nil {
-		_ = os.Remove(tmp)
+	if err := root.Link(tmp, relative); err != nil {
+		_ = root.Remove(tmp)
 		if errors.Is(err, os.ErrExist) {
 			return "", ErrPathOccupied
 		}
 		return "", fmt.Errorf("storage: link: %w", err)
 	}
-	_ = os.Remove(tmp)
+	_ = root.Remove(tmp)
 	return key, nil
 }
 

@@ -104,3 +104,5 @@ the next interval retries from the durable settle observations in SQLite.
 The server may start while the external NAS root is absent so `/readyz` can
 report the outage. Checkout and import root validation still fails closed until
 every managed boundary resolves; the scanner retries after the NAS returns.
+NAS artifact and default-backup writers open the externally managed root rather
+than creating it, so an absent mount cannot silently become a local directory.

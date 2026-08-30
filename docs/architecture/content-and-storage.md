@@ -111,7 +111,9 @@ and read the recorded immutable Docbank version.
 
 Storage keys are relative POSIX paths. Absolute paths, backslashes, empty
 segments, and traversal are rejected. Owner storage keys are one safe path
-component.
+component. Writers require the configured NAS root to exist and create only
+directories beneath an opened root-bound filesystem view; they never recreate
+the external root during an outage.
 
 This store carries only rebuildable thumbnails and other Fotobank artifacts.
 Thumbnail keys include the asset/media ID,

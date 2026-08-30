@@ -124,8 +124,6 @@ func TestServerStartsNotReadyWhenNASIsMissing(t *testing.T) {
 root = %q
 [flash]
 root = %q
-[backup]
-enabled = false
 [http]
 listen_address = "127.0.0.1:0"
 [observability]

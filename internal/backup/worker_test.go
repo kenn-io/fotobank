@@ -67,6 +67,19 @@ func TestWorkerRunsTickAndExitsOnContextCancel(t *testing.T) {
 	r.NoError(<-done, "Run must return nil after context cancel")
 }
 
+func TestWorkerDoesNotCreateMissingRequiredRoot(t *testing.T) {
+	r := require.New(t)
+	nasRoot := filepath.Join(t.TempDir(), "missing-nas")
+	w := NewWorker(Config{
+		Dir:          filepath.Join(nasRoot, ".fotobank", "snapshots"),
+		RequiredRoot: nasRoot,
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	w.tick(t.Context())
+	r.NoDirExists(nasRoot)
+}
+
 func TestWorkerDoesNotLogSnapshotSuccessAtInfo(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()

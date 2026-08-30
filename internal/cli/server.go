@@ -41,6 +41,7 @@ import (
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/contentresolver"
+	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
 	"go.kenn.io/fotobank/internal/media"
@@ -906,7 +907,8 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		// probe doesn't report 503 during the window between server
 		// start and the worker's first 15-minute tick. The retention
 		// worker would otherwise create it lazily on first Snapshot.
-		if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		if err := prepareBackupDir(cfg, backupDir); err != nil &&
+			!errors.Is(err, errs.ErrContentUnavailable) {
 			return fmt.Errorf("create backup dir: %w", err)
 		}
 		interval := 15 * time.Minute
@@ -926,9 +928,10 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 			}
 		}
 		bw := backup.NewWorker(backup.Config{
-			DB:       d.WriteDB(),
-			Dir:      backupDir,
-			Interval: interval,
+			DB:           d.WriteDB(),
+			Dir:          backupDir,
+			RequiredRoot: backupRequiredRoot(cfg),
+			Interval:     interval,
 			Policy: backup.Policy{
 				Keep15Min:  cfg.Backup.Keep15Min,
 				KeepHourly: cfg.Backup.KeepHourly,
