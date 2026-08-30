@@ -65,6 +65,23 @@ An unlock cookie permits owner access for a bounded session.
 This is not encryption. Media bytes remain readable to an operator with direct
 storage or database access.
 
+## Checkouts
+
+`checkouts` owns one canonical absolute working root and one owner. Separate
+selection tables retain explicit asset IDs, album IDs, and capture-year ranges;
+`include_all` represents the deliberately capacity-bounded whole-library case.
+
+`checkout_entries` binds each materialized file to its relative working path
+and immutable Docbank base version. The initial observation records size,
+modification time, and SHA-256. Entry paths and file IDs are unique within a
+checkout so two product files cannot silently claim the same working file.
+Checkout and entry states are durable inputs to later scanning, conflict, and
+rebuild work rather than an event log.
+
+Checkout ledgers are retained independently from their source assets. An owner
+with any checkout cannot be removed until a future explicit checkout-deletion
+lifecycle defines what happens to its working files and retained history.
+
 ## Derived state
 
 Thumbnail status and version live with the product media row. Claim timestamps

@@ -8,8 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -27,7 +25,6 @@ import (
 	"go.kenn.io/fotobank/internal/ai/skipped"
 	appsettingsstore "go.kenn.io/fotobank/internal/appsettings"
 	"go.kenn.io/fotobank/internal/config"
-	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/owners"
 	aiservice "go.kenn.io/fotobank/internal/service/ai"
@@ -76,11 +73,7 @@ func loadAICtx(cfgPath string) (*aiCtx, error) {
 			"fotobank ai requires identity.mode = stub (got %q)",
 			cfg.Identity.Mode)
 	}
-	dbPath := os.Getenv("FOTOBANK_DB_PATH")
-	if dbPath == "" {
-		dbPath = filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
-	}
-	d, err := db.Open(dbPath)
+	d, err := openDatabase(cfg)
 	if err != nil {
 		return nil, err
 	}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -15,7 +14,6 @@ import (
 
 	"go.kenn.io/fotobank/internal/auth/hidden"
 	"go.kenn.io/fotobank/internal/config"
-	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 )
@@ -39,11 +37,7 @@ func loadHiddenCtx(cfgPath string) (*hiddenCtx, *config.Config, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	dbPath := os.Getenv("FOTOBANK_DB_PATH")
-	if dbPath == "" {
-		dbPath = filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
-	}
-	d, err := db.Open(dbPath)
+	d, err := openDatabase(cfg)
 	if err != nil {
 		return nil, nil, err
 	}

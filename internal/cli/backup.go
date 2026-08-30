@@ -41,6 +41,15 @@ func newBackupSnapshotCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			dbPath, err := resolveDBPath(cfg)
+			if err != nil {
+				return err
+			}
+			lifetime, err := acquireDatabaseLifetime(dbPath)
+			if err != nil {
+				return err
+			}
+			defer lifetime.Close()
 			dst := out
 			if dst == "" {
 				dir := backupDirFor(cfg)
@@ -51,7 +60,7 @@ func newBackupSnapshotCmd() *cobra.Command {
 					time.Now().UTC().Format(backup.StampLayout)+backup.SnapshotExt)
 			}
 			start := time.Now()
-			if err := backup.SnapshotPath(cmd.Context(), resolveDBPath(cfg), dst); err != nil {
+			if err := backup.SnapshotPath(cmd.Context(), lifetime.path, dst); err != nil {
 				return err
 			}
 			elapsed := time.Since(start)
@@ -139,7 +148,10 @@ func newBackupRestoreCmd() *cobra.Command {
 				return err
 			}
 			snap := args[0]
-			dbPath := resolveDBPath(cfg)
+			dbPath, err := resolveDBPath(cfg)
+			if err != nil {
+				return err
+			}
 			lockPath := lockPathFor(dbPath)
 
 			if dryRun {
@@ -209,11 +221,19 @@ func promptRestoreConfirmation(cmd *cobra.Command, snap, dbPath string) error {
 
 // restoreDryRun validates the snapshot's integrity and probes the
 // lifetime lock without moving any files. Surfacing a corrupt snapshot
-// or an in-flight server pre-emptively means an operator finds out
+// or another database user pre-emptively means an operator finds out
 // before any move-aside runs.
 func restoreDryRun(cmd *cobra.Command, snap, dbPath, lockPath string, asJSON bool) error {
 	if err := backup.ValidateSnapshot(cmd.Context(), snap); err != nil {
 		return fmt.Errorf("validate snapshot: %w", err)
+	}
+	// A missing lock file cannot be held. Do not create it (or its parent)
+	// merely to probe it: --dry-run promises not to change the filesystem.
+	if _, err := os.Stat(lockPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return writeRestoreDryRunResult(cmd, snap, dbPath, asJSON)
+		}
+		return fmt.Errorf("inspect database lifetime lock: %w", err)
 	}
 	l := flock.New(lockPath)
 	ok, err := l.TryLock()
@@ -224,6 +244,10 @@ func restoreDryRun(cmd *cobra.Command, snap, dbPath, lockPath string, asJSON boo
 		return fmt.Errorf("%w: %s", backup.ErrServerHoldsLock, dbPath)
 	}
 	_ = l.Unlock()
+	return writeRestoreDryRunResult(cmd, snap, dbPath, asJSON)
+}
+
+func writeRestoreDryRunResult(cmd *cobra.Command, snap, dbPath string, asJSON bool) error {
 	if asJSON {
 		type result struct {
 			DryRun       bool   `json:"dry_run"`

@@ -145,12 +145,12 @@ func runGPSBackfill(ctx context.Context, opts *gpsBackfillOpts, stdout, stderr i
 	}
 	defer func() { _ = d.Close() }()
 
-	b, err := newBackfiller(ctx, d, cfg, opts, stderr)
+	b, err := newBackfiller(ctx, d.DB, cfg, opts, stderr)
 	if err != nil {
 		return err
 	}
 	defer b.content.Close()
-	principals, err := selectPrincipals(ctx, d, cfg, opts)
+	principals, err := selectPrincipals(ctx, d.DB, cfg, opts)
 	if err != nil {
 		return err
 	}

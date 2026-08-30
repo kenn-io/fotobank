@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -16,7 +14,6 @@ import (
 
 	"go.kenn.io/fotobank/internal/album"
 	"go.kenn.io/fotobank/internal/config"
-	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/service"
@@ -50,11 +47,7 @@ func loadShareCtx(cfgPath string) (*shareCtx, error) {
 	if cfg.Identity.Mode != "stub" {
 		return nil, fmt.Errorf("fotobank shares requires identity.mode = stub (got %q)", cfg.Identity.Mode)
 	}
-	dbPath := os.Getenv("FOTOBANK_DB_PATH")
-	if dbPath == "" {
-		dbPath = filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
-	}
-	d, err := db.Open(dbPath)
+	d, err := openDatabase(cfg)
 	if err != nil {
 		return nil, err
 	}

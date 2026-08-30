@@ -78,7 +78,7 @@ admin_listen = "127.0.0.1:0"
 
 	addrFile := filepath.Join(tmp, "addr")
 	t.Setenv("FOTOBANK_CONFIG", cfgPath)
-	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
+	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "state", "fotobank.sqlite"))
 	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
 
 	ctx, cancel := context.WithCancel(context.Background())

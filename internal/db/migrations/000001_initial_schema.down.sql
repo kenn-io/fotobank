@@ -20,6 +20,13 @@ DROP TABLE IF EXISTS scope_media;
 DROP TABLE IF EXISTS scopes;
 DROP TABLE IF EXISTS app_settings;
 DROP TABLE IF EXISTS user_settings;
+-- Drop checkout-owned historical snapshots before their parent rows.
+DROP TABLE IF EXISTS checkout_entries;
+DROP TABLE IF EXISTS checkout_year_selections;
+DROP TABLE IF EXISTS checkout_album_selections;
+DROP TABLE IF EXISTS checkout_asset_selections;
+DROP INDEX IF EXISTS checkouts_live_root_uq;
+DROP TABLE IF EXISTS checkouts;
 DROP TRIGGER IF EXISTS album_media_owner_consistency_update;
 DROP TRIGGER IF EXISTS album_media_owner_consistency_insert;
 DROP TABLE IF EXISTS album_media;

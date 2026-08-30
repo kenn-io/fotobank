@@ -132,7 +132,75 @@ import source. Discovery traverses that canonical root and rejects supported
 media paths that are symbolic links instead of following them beyond the
 validated tree.
 
-Writable checkouts for Lightroom are not implemented yet. Their architectural
-boundary is already fixed: a checkout is a materialized working copy, never
-authority, and must never hardlink writable files to Docbank's content-addressed
-objects.
+## Writable checkouts
+
+A checkout is a materialized working copy for tools such as Lightroom, never
+content authority. `fotobank checkout estimate` reports the distinct file and
+byte count selected by explicit assets, albums, inclusive capture-year ranges,
+or all ready visible assets. Hidden assets are excluded because the CLI has no
+hidden-media unlock session. An all-assets checkout requires a caller-supplied
+byte ceiling so a second full archive copy is never created implicitly.
+Selector validation and candidate loading share one SQLite read transaction,
+so an explicit asset cannot disappear between those two views.
+
+`fotobank checkout create` requires an existing empty directory outside the
+Docbank, NAS, and flash-managed roots. It resolves every selected file to its
+recorded immutable Docbank version and publishes a verified ordinary copy with
+an atomic no-replace operation inside a root-bound filesystem view. It never
+hardlinks a writable file to a Docbank content-addressed object. Temporary
+copies use a reserved top-level staging directory rather than a user filename
+directory. Fotobank removes it before activation and syncs the checkout root on
+platforms that support directory synchronization.
+
+The content adapter opens a checkout root, verifies that exact directory
+against the canonical path and storage boundaries, then returns an opaque
+single-use capability retaining the open directory. Immediately before
+transfer, the capability resolves the catalog path again, reapplies the Docbank,
+NAS, and flash boundaries, and checks that the path still names the retained
+directory at its original canonical path. Materialization uses that same handle
+instead of reopening the root. A renamed, replaced, or newly aliased root is
+rejected rather than leaving the catalog pointed at a different directory from
+the materialized files. Once a checkout row exists, every later failure attempts
+the `error`
+transition through a short cleanup context independent of caller cancellation;
+if that database write also fails, the returned error reports both failures.
+Materialization repeats the retained-directory check before recording each
+entry and before activation. A root moved during creation therefore leaves an
+explicit errored checkout instead of an active ledger for a different path.
+Every checkout command acquires a shared database lifetime lock before opening
+or migrating SQLite and retains it until the connection pools close. Restore
+requires the same lock exclusively, so database replacement cannot overlap an
+estimate or materialization. Creation also holds its exclusive creation lock.
+After acquiring the creation lock, the next creator marks any
+remaining `building` rows for its owner as interrupted; a live creator cannot
+be misclassified because it would still hold the lock. A `building` or `active`
+checkout reserves its entire root tree: another checkout cannot use that root,
+an ancestor, or a descendant. An operator can empty a partial interrupted
+directory and retry it after recovery moves the old row to `error`.
+
+The `capture_date` layout keeps every asset's related files together beneath
+`YYYY/MM/DD/{asset-uuid}/`; assets without capture time use
+`undated/{asset-uuid}/`. Original filenames must also be portable to Windows:
+checkout rejects reserved device names, reserved characters, control
+characters, and trailing dots or spaces on every host. It does not silently
+rename originals because normalization can change Lightroom-visible names or
+collapse distinct source names onto one working path.
+
+Each entry records its relative path, exact base version, SHA-256, size, and
+initial filesystem observation. Fotobank reopens the final root-bound path and
+derives that observation from one file handle; a file replaced during
+publication cannot be recorded as a clean entry. Here `clean` means the last
+Fotobank observation matched the base version; it is not a continuous claim
+about a writable file after that observation. The operator must not open or
+edit the working root until checkout creation returns.
+
+Checkout creation is `building` until every entry is published and then becomes
+`active`. Selector and file identifiers are detached historical snapshots, so
+deleting a source album or asset does not erase the checkout's saved selection
+or file bindings. A materialization failure makes the durable checkout `error`
+without pretending the partial working tree is usable.
+
+Checkouts are currently one-way materializations. Fotobank does not yet scan
+working files or commit Lightroom changes back as new Docbank versions. Until
+that lifecycle exists, an external edit after the recorded observation does not
+change an entry's state automatically.

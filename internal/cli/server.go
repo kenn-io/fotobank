@@ -40,7 +40,6 @@ import (
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/contentresolver"
-	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
 	"go.kenn.io/fotobank/internal/media"
@@ -170,27 +169,27 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	// see at a glance which lines came through the implicit channel.
 	slog.SetDefault(logger.With("component", "legacy"))
 
-	dbPath := resolveDBPath(cfg)
-
-	// Lifetime advisory lock. Refuses two servers on the same DB and
-	// blocks `backup restore` while we're running. POSIX advisory locks
-	// release automatically on process exit, so a crash does not strand
-	// the lock.
-	lockPath := lockPathFor(dbPath)
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
-		return fmt.Errorf("mkdir lock dir: %w", err)
-	}
-	lockFile := flock.New(lockPath)
-	ok, err := lockFile.TryLock()
+	dbPath, err := resolveDBPath(cfg)
 	if err != nil {
-		return fmt.Errorf("acquire lifetime lock: %w", err)
+		return err
+	}
+
+	// The server lock refuses two servers on the same DB. openDatabasePath
+	// holds the shared database lifetime lock before opening SQLite, so backup
+	// restore cannot replace the files until shutdown closes the handle.
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		return fmt.Errorf("create database directory: %w", err)
+	}
+	serverLock := flock.New(dbPath + ".server.lock")
+	ok, err := serverLock.TryLock()
+	if err != nil {
+		return fmt.Errorf("acquire server lock: %w", err)
 	}
 	if !ok {
 		return fmt.Errorf("another fotobank process is using %s", dbPath)
 	}
-	defer func() { _ = lockFile.Unlock() }()
-
-	d, err := db.Open(dbPath)
+	defer func() { _ = serverLock.Unlock() }()
+	d, err := openDatabasePath(dbPath)
 	if err != nil {
 		return err
 	}
@@ -267,7 +266,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		album.NewRepo(d.WriteDB(), d.ReadDB()),
 		mediaRepo,
 		sharesRepo,
-		d,
+		d.DB,
 	)
 	shareSvc := service.NewShareService(
 		sharesRepo,

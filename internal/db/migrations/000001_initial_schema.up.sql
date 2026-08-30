@@ -352,6 +352,90 @@ CREATE TABLE album_media (
 CREATE INDEX album_media_album_added_idx
     ON album_media(album_id, added_at DESC);
 
+-- Writable working copies materialized from exact Docbank versions.
+CREATE TABLE checkouts (
+    id              UUID PRIMARY KEY,
+    owner_hub       TEXT NOT NULL,
+    owner_user_id   TEXT NOT NULL,
+    root            TEXT NOT NULL,
+    layout          TEXT NOT NULL CHECK (layout IN ('capture_date')),
+    include_all     INTEGER NOT NULL DEFAULT 0 CHECK (include_all IN (0, 1)),
+    state           TEXT NOT NULL CHECK (state IN ('building', 'active', 'error')),
+    last_error      TEXT,
+    created_at      TIMESTAMP NOT NULL,
+    updated_at      TIMESTAMP NOT NULL,
+    FOREIGN KEY (owner_hub, owner_user_id)
+      REFERENCES owners(hub, user_id)
+);
+
+CREATE INDEX checkouts_owner_idx
+  ON checkouts(owner_hub, owner_user_id, created_at, id);
+
+CREATE UNIQUE INDEX checkouts_live_root_uq ON checkouts(root)
+  WHERE state IN ('building', 'active');
+
+-- Source identifiers below are historical snapshots, not ownership links.
+-- Deleting an asset, album, or media file must not erase a checkout ledger.
+CREATE TABLE checkout_asset_selections (
+    checkout_id     UUID NOT NULL REFERENCES checkouts(id) ON DELETE CASCADE,
+    asset_id        UUID NOT NULL,
+    PRIMARY KEY (checkout_id, asset_id)
+);
+
+CREATE TABLE checkout_album_selections (
+    checkout_id     UUID NOT NULL REFERENCES checkouts(id) ON DELETE CASCADE,
+    album_id        UUID NOT NULL,
+    PRIMARY KEY (checkout_id, album_id)
+);
+
+CREATE TABLE checkout_year_selections (
+    checkout_id     UUID NOT NULL REFERENCES checkouts(id) ON DELETE CASCADE,
+    start_year      INTEGER NOT NULL CHECK (start_year BETWEEN 1 AND 9999),
+    end_year        INTEGER NOT NULL CHECK (end_year BETWEEN start_year AND 9999),
+    PRIMARY KEY (checkout_id, start_year, end_year)
+);
+
+CREATE TABLE checkout_entries (
+    checkout_id       UUID NOT NULL REFERENCES checkouts(id) ON DELETE CASCADE,
+    file_id           UUID NOT NULL,
+    relative_path     TEXT NOT NULL,
+    base_version_id   TEXT NOT NULL,
+    base_sha256       TEXT NOT NULL CHECK (
+      length(base_sha256) = 64 AND base_sha256 = lower(base_sha256) AND
+      base_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    base_size         INTEGER NOT NULL CHECK (base_size >= 0),
+    observed_size     INTEGER NOT NULL CHECK (observed_size >= 0),
+    observed_mtime    TIMESTAMP NOT NULL,
+    observed_sha256   TEXT NOT NULL CHECK (
+      length(observed_sha256) = 64 AND observed_sha256 = lower(observed_sha256) AND
+      observed_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    state             TEXT NOT NULL CHECK (
+      state IN ('clean', 'pending', 'conflict', 'missing', 'error')
+    ),
+    last_error        TEXT,
+    created_at        TIMESTAMP NOT NULL,
+    updated_at        TIMESTAMP NOT NULL,
+    PRIMARY KEY (checkout_id, file_id),
+    UNIQUE (checkout_id, relative_path),
+    CHECK (
+      length(relative_path) > 0 AND
+      substr(relative_path, 1, 1) <> '/' AND
+      instr(relative_path, char(0)) = 0 AND
+      instr(relative_path, char(92)) = 0 AND
+      relative_path NOT LIKE '%//%' AND
+      relative_path NOT LIKE '%/./%' AND
+      relative_path NOT LIKE '%/../%' AND
+      substr(relative_path, -2) <> '/.' AND
+      substr(relative_path, -3) <> '/..' AND
+      substr(relative_path, -1) <> '/'
+    )
+);
+
+CREATE INDEX checkout_entries_state_idx
+  ON checkout_entries(checkout_id, state, relative_path);
+
 -- Per-user, non-secret UI preferences.
 -- Keys are dotted strings (e.g. "theme", "density.library"); values are JSON.
 CREATE TABLE user_settings (

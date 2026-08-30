@@ -32,6 +32,27 @@ Focus security findings on a concrete capability gained across an actual trust
 boundary. Focus other review findings on correctness, data integrity,
 portability, and maintainability.
 
+## Local filesystem namespace
+
+The local operator controls the host mount namespace and assigns the storage
+roles of the configured Docbank, NAS, flash, import, and checkout roots.
+Fotobank resolves symlinks and rejects ordinary path overlap, but it does not
+inventory or forbid bind mounts, volume aliases, or other administrator-created
+names for the same storage. Creating or retargeting one of those aliases is a
+storage-role change by the trusted operator, who can already access the target
+directly. Do not report a bind-mounted or administrator-created filesystem alias
+as a boundary bypass. Do flag overlap reachable through ordinary path and
+symlink resolution under a stable mount topology.
+
+Database lifetime locks are sibling files derived from the exact canonical
+database path. The database and its lock therefore use the same filesystem
+name-resolution rules: case-only variants name the same two files on a
+case-insensitive filesystem and genuinely distinct pairs on a case-sensitive
+filesystem. Do not require textual case folding or claim split locking from a
+case-only spelling unless a reproduced filesystem operation shows that the two
+database spellings resolve to one database while the two derived lock spellings
+resolve to different files.
+
 ## Local import trust boundary
 
 The operator who invokes an import is trusted, and the configured source tree
@@ -47,4 +68,31 @@ Do not require descriptor-relative traversal, no-follow opens, or defenses
 against adversarial source-tree replacement. Do flag direct symlink following,
 managed-storage overlap, or ordinary source changes that can bypass content
 identity validation under the stated trusted-local-source model.
+
+## Local checkout trust boundary
+
+The operator who invokes checkout creation is trusted. The checkout root and
+the parent directories of the checkout, Docbank, NAS, and flash roots must
+remain under that operator's control and keep their storage roles for the
+duration of creation. The operator must not open or edit the working root until
+the command returns. Fotobank retains an opened checkout-directory handle and
+revalidates its catalog path before durable ledger writes and activation. A
+detected move leaves an errored checkout rather than an active one.
+
+Checkout entry state is a point-in-time ledger observation. `clean` means the
+bytes matched the base version when Fotobank observed them; it is not a writer
+lock or a continuous guarantee after publication. External tools are expected
+to edit active checkout files, and filesystem scanning and write-back are not
+implemented yet. Do not require an advisory writer lock or repeated verification
+to eliminate mutations after the recorded observation. Do flag records whose
+stored observation did not come from the published file handle or activation
+that proceeds after Fotobank detects a materialization failure.
+
+Fotobank does not claim to stop a hostile local actor who can rename an opened
+checkout directory into a managed root. Such an actor already needs write
+permission on that managed root's parent and can write there directly. Do not
+report this adversarial rename as a filesystem-isolation vulnerability. Do
+flag a path controlled through Fotobank's supported inputs that escapes the
+opened checkout root, replaces an existing working file, or lets a changed root
+be recorded as active.
 """

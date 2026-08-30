@@ -5,15 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/fotobank/internal/album"
 	"go.kenn.io/fotobank/internal/config"
-	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/service"
@@ -47,11 +44,7 @@ func loadAlbumCtx(cfgPath string) (*albumCtx, error) {
 			"fotobank albums requires identity.mode = stub (got %q)",
 			cfg.Identity.Mode)
 	}
-	dbPath := os.Getenv("FOTOBANK_DB_PATH")
-	if dbPath == "" {
-		dbPath = filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
-	}
-	d, err := db.Open(dbPath)
+	d, err := openDatabase(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +53,7 @@ func loadAlbumCtx(cfgPath string) (*albumCtx, error) {
 			album.NewRepo(d.WriteDB(), d.ReadDB()),
 			media.NewRepo(d.WriteDB(), d.ReadDB()),
 			share.NewRepo(d.WriteDB(), d.ReadDB()),
-			d,
+			d.DB,
 		),
 		caller: owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID},
 		close:  func() { _ = d.Close() },

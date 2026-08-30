@@ -6,9 +6,23 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/fotobank/internal/cli/clictx"
+	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/service"
 )
+
+func loadOwnerService() (*service.OwnerService, func(), error) {
+	cfg, err := config.Load(config.DefaultConfigPath())
+	if err != nil {
+		return nil, nil, fmt.Errorf("load config: %w", err)
+	}
+	database, err := openDatabase(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	svc := service.NewOwnerService(owners.NewRepo(database.WriteDB(), database.ReadDB()))
+	return svc, func() { _ = database.Close() }, nil
+}
 
 func newOwnersCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -36,7 +50,7 @@ func newOwnersAddCmd() *cobra.Command {
 			if hub == "" || userID == "" {
 				return newUsageError("--hub and --user-id are required")
 			}
-			svc, cleanup, err := clictx.LoadOwnerService()
+			svc, cleanup, err := loadOwnerService()
 			if err != nil {
 				return err
 			}
@@ -70,7 +84,7 @@ func newOwnersListCmd() *cobra.Command {
 		Short: "List registered owners",
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			svc, cleanup, err := clictx.LoadOwnerService()
+			svc, cleanup, err := loadOwnerService()
 			if err != nil {
 				return err
 			}
@@ -117,7 +131,7 @@ func newOwnersRemoveCmd() *cobra.Command {
 			if hub == "" || userID == "" {
 				return newUsageError("--hub and --user-id are required")
 			}
-			svc, cleanup, err := clictx.LoadOwnerService()
+			svc, cleanup, err := loadOwnerService()
 			if err != nil {
 				return err
 			}

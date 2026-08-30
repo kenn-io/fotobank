@@ -17,7 +17,177 @@ import (
 
 type Config struct {
 	Root         string
-	ManagedRoots []string
+	ManagedRoots []ManagedRoot
+}
+
+type ManagedRoot struct {
+	Path            string
+	CreateIfMissing bool
+}
+
+// CheckoutRoot is an existing canonical working directory that the opened
+// adapter verified does not overlap Docbank or Fotobank-managed storage. Its
+// path cannot be constructed outside this package.
+type CheckoutRoot struct {
+	mu           sync.Mutex
+	path         string
+	root         *os.Root
+	taken        bool
+	docbankRoot  string
+	managedRoots []string
+}
+
+// Path returns the canonical path recorded in Fotobank's checkout catalog.
+func (r *CheckoutRoot) Path() string {
+	if r == nil {
+		return ""
+	}
+	return r.path
+}
+
+// Overlaps reports whether another path currently names, contains, or is
+// contained by this checkout root. It compares filesystem identities as well
+// as path strings so a live checkout cannot be reused through a later alias.
+// An unresolved live root remains reserved because distinct trees cannot be
+// proven without its filesystem identity.
+func (r *CheckoutRoot) Overlaps(other string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.root == nil {
+		return false
+	}
+	if pathsOverlap(r.path, other) {
+		return true
+	}
+	resolved, err := filepath.EvalSymlinks(other)
+	if err != nil {
+		return true
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return true
+	}
+	resolved = filepath.Clean(resolved)
+	if pathsOverlap(r.path, resolved) {
+		return true
+	}
+	boundInfo, err := r.root.Stat(".")
+	if err != nil {
+		return true
+	}
+	otherInfo, err := os.Stat(resolved)
+	if err != nil {
+		return true
+	}
+	return pathTreeContainsFile(resolved, boundInfo) || pathTreeContainsFile(r.path, otherInfo)
+}
+
+func pathTreeContainsFile(current string, target os.FileInfo) bool {
+	for {
+		info, err := os.Stat(current)
+		if err != nil {
+			return true
+		}
+		if os.SameFile(info, target) {
+			return true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
+}
+
+// Take verifies that the catalog path still names the bound directory, then
+// transfers ownership to the materializer. A validated root is single-use so
+// no later operation can reopen its path.
+func (r *CheckoutRoot) Take() (*os.Root, error) {
+	if r == nil {
+		return nil, fmt.Errorf("%w: checkout root is not validated", errs.ErrInvalidArgument)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.root == nil || r.taken {
+		return nil, fmt.Errorf("%w: checkout root is not validated or was already consumed", errs.ErrInvalidArgument)
+	}
+	if err := r.validateLocked(); err != nil {
+		return nil, err
+	}
+	r.taken = true
+	return r.root, nil
+}
+
+// Revalidate confirms that the catalog path still names the retained working
+// directory and remains outside Docbank and Fotobank-managed storage.
+func (r *CheckoutRoot) Revalidate() error {
+	if r == nil {
+		return fmt.Errorf("%w: checkout root is not validated", errs.ErrInvalidArgument)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.root == nil {
+		return fmt.Errorf("%w: checkout root is not validated", errs.ErrInvalidArgument)
+	}
+	return r.validateLocked()
+}
+
+func (r *CheckoutRoot) validateLocked() error {
+	boundInfo, err := r.root.Stat(".")
+	if err != nil {
+		return fmt.Errorf("inspect bound checkout root: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(r.path)
+	if err != nil {
+		return fmt.Errorf("%w: resolve checkout root again: %w", errs.ErrBadConfiguration, err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return fmt.Errorf("make checkout root absolute again: %w", err)
+	}
+	resolved = filepath.Clean(resolved)
+	if resolved != r.path {
+		return fmt.Errorf("%w: checkout root canonical path changed after validation", errs.ErrBadConfiguration)
+	}
+	docbankRoot, managedRoots, err := resolveBoundaryRoots(r.docbankRoot, r.managedRoots)
+	if err != nil {
+		return err
+	}
+	if pathsOverlap(resolved, docbankRoot) {
+		return fmt.Errorf("%w: checkout root now overlaps Docbank vault", errs.ErrBadConfiguration)
+	}
+	for _, managedRoot := range managedRoots {
+		if pathsOverlap(resolved, managedRoot) {
+			return fmt.Errorf("%w: checkout root now overlaps managed storage", errs.ErrBadConfiguration)
+		}
+	}
+	pathInfo, err := os.Stat(resolved)
+	if err != nil {
+		return fmt.Errorf("%w: checkout root path changed after validation: %w", errs.ErrBadConfiguration, err)
+	}
+	if !os.SameFile(boundInfo, pathInfo) {
+		return fmt.Errorf("%w: checkout root path changed after validation", errs.ErrBadConfiguration)
+	}
+	return nil
+}
+
+// Close releases a validated root that was not transferred to a materializer.
+// It is safe to call after Take or more than once.
+func (r *CheckoutRoot) Close() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.root == nil || r.taken {
+		return nil
+	}
+	err := r.root.Close()
+	r.root = nil
+	return err
 }
 
 type Identity struct {
@@ -142,16 +312,29 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 	}
 	managedRoots := make([]string, len(cfg.ManagedRoots))
 	for i, managedRoot := range cfg.ManagedRoots {
-		if !filepath.IsAbs(managedRoot) {
+		if !filepath.IsAbs(managedRoot.Path) {
 			_ = vault.Close()
 			return nil, fmt.Errorf("%w: managed root must be absolute", errs.ErrBadConfiguration)
 		}
-		resolvedManagedRoot := managedRoot
-		if evaluated, evalErr := filepath.EvalSymlinks(managedRoot); evalErr == nil {
-			resolvedManagedRoot = evaluated
-		} else if !os.IsNotExist(evalErr) {
+		if managedRoot.CreateIfMissing {
+			if err := os.MkdirAll(managedRoot.Path, 0o700); err != nil {
+				_ = vault.Close()
+				return nil, fmt.Errorf("create local managed root: %w", err)
+			}
+		}
+		resolvedManagedRoot, evalErr := filepath.EvalSymlinks(managedRoot.Path)
+		if evalErr != nil {
 			_ = vault.Close()
-			return nil, fmt.Errorf("resolve managed root: %w", evalErr)
+			return nil, fmt.Errorf("%w: resolve managed root: %w", errs.ErrBadConfiguration, evalErr)
+		}
+		info, statErr := os.Stat(resolvedManagedRoot)
+		if statErr != nil {
+			_ = vault.Close()
+			return nil, fmt.Errorf("%w: inspect managed root: %w", errs.ErrBadConfiguration, statErr)
+		}
+		if !info.IsDir() {
+			_ = vault.Close()
+			return nil, fmt.Errorf("%w: managed root is not a directory", errs.ErrBadConfiguration)
 		}
 		resolvedManagedRoot, err := filepath.Abs(resolvedManagedRoot)
 		if err != nil {
@@ -180,34 +363,130 @@ func (a *Adapter) Close() error {
 // Discovery must use the returned path so validation and traversal observe the
 // same directory when the configured root is a symlink.
 func (a *Adapter) ResolveImportRoot(sourceRoot string) (string, error) {
+	return a.resolveExternalRoot(sourceRoot, "import")
+}
+
+// ResolveCheckoutRoot binds an existing canonical directory after rejecting
+// overlap with Docbank authority or Fotobank-managed storage. Materializers
+// consume the returned capability as the working-copy root.
+func (a *Adapter) ResolveCheckoutRoot(checkoutRoot string) (*CheckoutRoot, error) {
+	if a == nil || a.vault == nil {
+		return nil, fmt.Errorf("%w: Docbank vault is not open", errs.ErrContentUnavailable)
+	}
+	bound, err := os.OpenRoot(checkoutRoot)
+	if err != nil {
+		return nil, fmt.Errorf("open checkout root: %w", err)
+	}
+	closeBound := true
+	defer func() {
+		if closeBound {
+			_ = bound.Close()
+		}
+	}()
+	openedInfo, err := bound.Stat(".")
+	if err != nil {
+		return nil, fmt.Errorf("inspect opened checkout root: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(checkoutRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve checkout root: %w", err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("make checkout root absolute: %w", err)
+	}
+	resolved = filepath.Clean(resolved)
+	resolvedInfo, err := os.Stat(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("stat checkout root: %w", err)
+	}
+	if !os.SameFile(openedInfo, resolvedInfo) {
+		return nil, fmt.Errorf("%w: checkout root changed during validation", errs.ErrBadConfiguration)
+	}
+	if !openedInfo.IsDir() {
+		return nil, fmt.Errorf("%w: checkout root is not a directory", errs.ErrInvalidArgument)
+	}
+	docbankRoot, managedRoots, err := resolveBoundaryRoots(a.root, a.managedRoots)
+	if err != nil {
+		return nil, err
+	}
+	if pathsOverlap(resolved, docbankRoot) {
+		return nil, fmt.Errorf("%w: checkout root overlaps Docbank vault", errs.ErrBadConfiguration)
+	}
+	for _, managedRoot := range managedRoots {
+		if pathsOverlap(resolved, managedRoot) {
+			return nil, fmt.Errorf("%w: checkout root overlaps managed storage", errs.ErrBadConfiguration)
+		}
+	}
+	closeBound = false
+	return &CheckoutRoot{
+		path: resolved, root: bound, docbankRoot: a.root,
+		managedRoots: append([]string(nil), a.managedRoots...),
+	}, nil
+}
+
+func (a *Adapter) resolveExternalRoot(sourceRoot, kind string) (string, error) {
 	if a == nil || a.vault == nil {
 		return "", fmt.Errorf("%w: Docbank vault is not open", errs.ErrContentUnavailable)
 	}
 	resolved, err := filepath.EvalSymlinks(sourceRoot)
 	if err != nil {
-		return "", fmt.Errorf("resolve import root: %w", err)
+		return "", fmt.Errorf("resolve %s root: %w", kind, err)
 	}
 	resolved, err = filepath.Abs(resolved)
 	if err != nil {
-		return "", fmt.Errorf("make import root absolute: %w", err)
+		return "", fmt.Errorf("make %s root absolute: %w", kind, err)
 	}
 	resolved = filepath.Clean(resolved)
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return "", fmt.Errorf("stat import root: %w", err)
+		return "", fmt.Errorf("stat %s root: %w", kind, err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("%w: import root is not a directory", errs.ErrInvalidArgument)
+		return "", fmt.Errorf("%w: %s root is not a directory", errs.ErrInvalidArgument, kind)
 	}
-	if pathsOverlap(resolved, a.root) {
-		return "", fmt.Errorf("%w: import root overlaps Docbank vault", errs.ErrBadConfiguration)
+	docbankRoot, managedRoots, err := resolveBoundaryRoots(a.root, a.managedRoots)
+	if err != nil {
+		return "", err
 	}
-	for _, managedRoot := range a.managedRoots {
+	if pathsOverlap(resolved, docbankRoot) {
+		return "", fmt.Errorf("%w: %s root overlaps Docbank vault", errs.ErrBadConfiguration, kind)
+	}
+	for _, managedRoot := range managedRoots {
 		if pathsOverlap(resolved, managedRoot) {
-			return "", fmt.Errorf("%w: import root overlaps managed storage", errs.ErrBadConfiguration)
+			return "", fmt.Errorf("%w: %s root overlaps managed storage", errs.ErrBadConfiguration, kind)
 		}
 	}
 	return resolved, nil
+}
+
+func resolveBoundaryRoots(docbankRoot string, managedRoots []string) (string, []string, error) {
+	resolvedDocbank, err := resolveBoundaryRoot(docbankRoot)
+	if err != nil {
+		return "", nil, fmt.Errorf("%w: resolve current Docbank root: %w",
+			errs.ErrBadConfiguration, err)
+	}
+	resolvedManaged := make([]string, len(managedRoots))
+	for i, managedRoot := range managedRoots {
+		resolvedManaged[i], err = resolveBoundaryRoot(managedRoot)
+		if err != nil {
+			return "", nil, fmt.Errorf("%w: resolve current managed root: %w",
+				errs.ErrBadConfiguration, err)
+		}
+	}
+	return resolvedDocbank, resolvedManaged, nil
+}
+
+func resolveBoundaryRoot(root string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(resolved), nil
 }
 
 func pathsOverlap(left, right string) bool {

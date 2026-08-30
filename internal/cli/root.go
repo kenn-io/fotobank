@@ -113,6 +113,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newOwnersCmd())
 	root.AddCommand(newImportCmd())
 	root.AddCommand(newContentCmd())
+	root.AddCommand(newCheckoutCmd())
 	root.AddCommand(newThumbsCmd())
 	root.AddCommand(newGPSCmd())
 	root.AddCommand(newAlbumsCmd())
