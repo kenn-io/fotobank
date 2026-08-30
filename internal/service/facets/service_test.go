@@ -173,7 +173,7 @@ func TestAggregate_MediaTypes(t *testing.T) {
 	}, resp.MediaTypes)
 }
 
-// TestAggregate_ExcludeSelfRule_Cameras asserts the Lightroom
+// TestAggregate_ExcludeSelfRule_Cameras asserts the
 // exclude-self rule. When the caller selects Cameras=["Sony A7R IV"],
 // the camera facet itself MUST still surface every camera in the
 // caller's library so the user can switch selection. The other facets

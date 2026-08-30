@@ -209,7 +209,7 @@ concurrent_workers = 8
 [checkouts]
 scan_interval = "45s"
 settle_interval = "3s"
-ignore_patterns = ["*.lrcat.lock"]
+ignore_patterns = ["*.catalog.lock"]
 [thumbs]
 worker_concurrency = 1
 poll_interval = "1s"
@@ -241,7 +241,7 @@ keep_daily = 14
 	r.Equal(8, cfg.Imports.ConcurrentWorkers)
 	r.Equal(45*time.Second, cfg.Checkouts.ScanInterval)
 	r.Equal(3*time.Second, cfg.Checkouts.SettleInterval)
-	r.Equal([]string{"*.lrcat.lock"}, cfg.Checkouts.IgnorePatterns)
+	r.Equal([]string{"*.catalog.lock"}, cfg.Checkouts.IgnorePatterns)
 	r.Equal(1, cfg.Thumbs.WorkerConcurrency)
 	r.Equal(time.Second, cfg.Thumbs.PollInterval)
 	r.Equal(2*time.Minute, cfg.Thumbs.LeaseTimeout)

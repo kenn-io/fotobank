@@ -68,8 +68,8 @@ file_lock_path = ""                  # default: {flash.root}/.fotobank/import.lo
 
 [checkouts]
 scan_interval = "30s"                # full-tree scan cadence; missed notifications do not lose changes
-settle_interval = "2s"               # size and mtime must remain stable before hashing
-ignore_patterns = ["*.lrcat.lock"]   # optional path.Match patterns for untracked transient files
+settle_interval = "2s"               # size, mtime, and file identity must remain stable before hashing
+ignore_patterns = ["*.catalog.lock"] # optional path.Match patterns for untracked transient files
 
 [thumbs]
 worker_concurrency = 4               # goroutines generating thumbnails per server process

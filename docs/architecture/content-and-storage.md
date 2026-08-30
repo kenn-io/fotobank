@@ -134,10 +134,10 @@ validated tree.
 
 ## Writable checkouts
 
-A checkout is a materialized working copy for tools such as Lightroom, never
-content authority. `fotobank checkout estimate` reports the distinct file and
-byte count selected by explicit assets, albums, inclusive capture-year ranges,
-or all ready visible assets. Hidden assets are excluded because the CLI has no
+A checkout is a materialized working copy for external tools, never content
+authority. `fotobank checkout estimate` reports the distinct file and byte
+count selected by explicit assets, albums, inclusive capture-year ranges, or
+all ready visible assets. Hidden assets are excluded because the CLI has no
 hidden-media unlock session. An all-assets checkout requires a caller-supplied
 byte ceiling so a second full archive copy is never created implicitly.
 Selector validation and candidate loading share one SQLite read transaction,
@@ -183,16 +183,16 @@ The `capture_date` layout keeps every asset's related files together beneath
 `undated/{asset-uuid}/`. Original filenames must also be portable to Windows:
 checkout rejects reserved device names, reserved characters, control
 characters, and trailing dots or spaces on every host. It does not silently
-rename originals because normalization can change Lightroom-visible names or
+rename originals because normalization can change tool-visible names or
 collapse distinct source names onto one working path.
 
-Each entry records its relative path, exact base version, SHA-256, size, and
-initial filesystem observation. Fotobank reopens the final root-bound path and
-derives that observation from one file handle; a file replaced during
-publication cannot be recorded as a clean entry. Here `clean` means the last
-Fotobank observation matched the base version; it is not a continuous claim
-about a writable file after that observation. The operator must not open or
-edit the working root until checkout creation returns.
+Each entry records its relative path, exact base version, SHA-256, size,
+modification time, and platform file identity. Fotobank reopens the final
+root-bound path and derives that observation from one file handle; a file
+replaced during publication cannot be recorded as a clean entry. Here `clean`
+means the last Fotobank observation matched the base version; it is not a
+continuous claim about a writable file after that observation. The operator
+must not open or edit the working root until checkout creation returns.
 
 Checkout creation is `building` until every entry is published and then becomes
 `active`. Selector and file identifiers are detached historical snapshots, so
@@ -207,19 +207,23 @@ for creation, then traverses it through a root-bound filesystem handle. It
 never follows a working-file symlink as media.
 
 Changed metadata starts or refreshes a durable settle observation. Size and
-modification time must remain unchanged across separate scans for at least
-`checkouts.settle_interval` before Fotobank opens and hashes the file. The
-observation survives restart. A stable hash equal to the base returns a tracked
-entry to `clean`, including timestamp-only edits; a different hash changes it
-to `pending`. A missing working file changes the entry to `missing` without
-deleting or modifying its Docbank version.
+modification time and platform file identity must remain unchanged across
+separate scans for at least `checkouts.settle_interval` before Fotobank opens
+and hashes the file. The observation survives restart. The unchanged fast path
+also requires a non-empty matching file identity; on a platform where identity
+is unavailable, Fotobank hashes instead. A stable hash equal to the base
+returns a tracked entry to `clean`, including timestamp-only edits; a different
+hash changes it to `pending`. A missing working file changes the entry to
+`missing` without deleting or modifying its Docbank version. Hashing observes
+scan cancellation, while permission and I/O failures become visible entry
+errors rather than being treated as concurrent edits.
 
 Stable untracked files remain in `checkout_scan_candidates` with an empty file
 ID and `pending` state for the later new-file import lifecycle. The scanner
 always skips its reserved staging directory. Operator-supplied
 `checkouts.ignore_patterns` use Go `path.Match` syntax and apply only to
-untracked files, so they can exclude Lightroom lock files without hiding a
-tracked media edit.
+untracked files, so they can exclude tool-specific transient files without
+hiding a tracked media edit.
 
 Scanning does not write new Docbank versions. A later checkout-commit boundary
 consumes tracked `pending` entries with an atomic base-version precondition;

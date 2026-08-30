@@ -40,7 +40,7 @@ func (r *Repo) ListActive(ctx context.Context) ([]Checkout, error) {
 
 func (r *Repo) ListScanCandidates(ctx context.Context, checkoutID string) ([]ScanCandidate, error) {
 	rows, err := r.ro.QueryContext(ctx, `SELECT checkout_id, relative_path,
-		file_id, observed_size, observed_mtime, observed_sha256, state,
+		file_id, observed_size, observed_mtime, observed_identity, observed_sha256, state,
 		first_observed_at, last_observed_at
 		FROM checkout_scan_candidates WHERE checkout_id = ? ORDER BY relative_path`, checkoutID)
 	if err != nil {
@@ -83,7 +83,7 @@ func (r *Repo) ObserveScanCandidate(
 	defer func() { _ = tx.Rollback() }()
 
 	existing, err := scanScanCandidate(tx.QueryRowContext(ctx, `SELECT checkout_id,
-		relative_path, file_id, observed_size, observed_mtime, observed_sha256,
+		relative_path, file_id, observed_size, observed_mtime, observed_identity, observed_sha256,
 		state, first_observed_at, last_observed_at
 		FROM checkout_scan_candidates WHERE checkout_id = ? AND relative_path = ?`,
 		candidate.CheckoutID, candidate.RelativePath))
@@ -91,10 +91,10 @@ func (r *Repo) ObserveScanCandidate(
 	case errors.Is(err, sql.ErrNoRows):
 		_, err = tx.ExecContext(ctx, `INSERT INTO checkout_scan_candidates (
 			checkout_id, relative_path, file_id, observed_size, observed_mtime,
-			observed_sha256, state, first_observed_at, last_observed_at
-		) VALUES (?, ?, NULLIF(?, ''), ?, ?, NULL, ?, ?, ?)`,
+			observed_identity, observed_sha256, state, first_observed_at, last_observed_at
+		) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, NULL, ?, ?, ?)`,
 			candidate.CheckoutID, candidate.RelativePath, candidate.FileID,
-			candidate.ObservedSize, candidate.ObservedMTime,
+			candidate.ObservedSize, candidate.ObservedMTime, candidate.ObservedIdentity,
 			string(ScanCandidateSettling), now, now)
 		if err != nil {
 			return false, fmt.Errorf("observe checkout scan candidate: insert: %w", err)
@@ -121,10 +121,11 @@ func (r *Repo) ObserveScanCandidate(
 	default:
 		_, err = tx.ExecContext(ctx, `UPDATE checkout_scan_candidates SET
 			file_id = NULLIF(?, ''), observed_size = ?, observed_mtime = ?,
-			observed_sha256 = NULL, state = ?, first_observed_at = ?,
+			observed_identity = ?, observed_sha256 = NULL, state = ?, first_observed_at = ?,
 			last_observed_at = ?
 			WHERE checkout_id = ? AND relative_path = ?`,
 			candidate.FileID, candidate.ObservedSize, candidate.ObservedMTime,
+			candidate.ObservedIdentity,
 			string(ScanCandidateSettling), now, now,
 			candidate.CheckoutID, candidate.RelativePath)
 		if err != nil {
@@ -149,7 +150,7 @@ func (r *Repo) FinalizeTrackedScanCandidate(
 	}
 	defer func() { _ = tx.Rollback() }()
 	res, err := tx.ExecContext(ctx, `UPDATE checkout_entries SET
-		observed_size = ?, observed_mtime = ?, observed_sha256 = ?,
+		observed_size = ?, observed_mtime = ?, observed_identity = ?, observed_sha256 = ?,
 		state = CASE WHEN base_sha256 = ? THEN ? ELSE ? END,
 		last_error = NULL, updated_at = ?
 		WHERE checkout_id = ? AND file_id = ? AND relative_path = ?
@@ -159,12 +160,14 @@ func (r *Repo) FinalizeTrackedScanCandidate(
 			  AND c.relative_path = checkout_entries.relative_path
 			  AND c.file_id = checkout_entries.file_id
 			  AND c.state = ?
-			  AND c.observed_size = ? AND c.observed_mtime = ?
+		  AND c.observed_size = ? AND c.observed_mtime = ? AND c.observed_identity = ?
 		)`,
-		candidate.ObservedSize, candidate.ObservedMTime.UTC(), sha256, sha256,
+		candidate.ObservedSize, candidate.ObservedMTime.UTC(), candidate.ObservedIdentity,
+		sha256, sha256,
 		string(EntryClean), string(EntryPending), now.UTC(),
 		candidate.CheckoutID, candidate.FileID, candidate.RelativePath,
-		string(ScanCandidateSettling), candidate.ObservedSize, candidate.ObservedMTime.UTC())
+		string(ScanCandidateSettling), candidate.ObservedSize, candidate.ObservedMTime.UTC(),
+		candidate.ObservedIdentity)
 	if err != nil {
 		return "", fmt.Errorf("finalize tracked checkout change: update entry: %w", err)
 	}
@@ -201,10 +204,11 @@ func (r *Repo) FinalizeUntrackedScanCandidate(
 	res, err := r.rw.ExecContext(ctx, `UPDATE checkout_scan_candidates SET
 		observed_sha256 = ?, state = ?, last_observed_at = ?
 		WHERE checkout_id = ? AND relative_path = ? AND file_id IS NULL
-		  AND state = ? AND observed_size = ? AND observed_mtime = ?`,
+		  AND state = ? AND observed_size = ? AND observed_mtime = ?
+		  AND observed_identity = ?`,
 		sha256, string(ScanCandidatePending), now.UTC(),
 		candidate.CheckoutID, candidate.RelativePath, string(ScanCandidateSettling),
-		candidate.ObservedSize, candidate.ObservedMTime.UTC())
+		candidate.ObservedSize, candidate.ObservedMTime.UTC(), candidate.ObservedIdentity)
 	if err != nil {
 		return fmt.Errorf("finalize untracked checkout change: %w", err)
 	}
@@ -294,7 +298,8 @@ func scanScanCandidate(row rowScanner) (ScanCandidate, error) {
 	var state string
 	err := row.Scan(
 		&candidate.CheckoutID, &candidate.RelativePath, &fileID,
-		&candidate.ObservedSize, &candidate.ObservedMTime, &sha256, &state,
+		&candidate.ObservedSize, &candidate.ObservedMTime, &candidate.ObservedIdentity,
+		&sha256, &state,
 		&candidate.FirstObserved, &candidate.LastObserved,
 	)
 	candidate.FileID = fileID.String
@@ -306,5 +311,6 @@ func scanScanCandidate(row rowScanner) (ScanCandidate, error) {
 func sameScanObservation(left, right ScanCandidate) bool {
 	return left.FileID == right.FileID &&
 		left.ObservedSize == right.ObservedSize &&
-		left.ObservedMTime.Equal(right.ObservedMTime)
+		left.ObservedMTime.Equal(right.ObservedMTime) &&
+		left.ObservedIdentity == right.ObservedIdentity
 }

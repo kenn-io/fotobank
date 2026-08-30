@@ -149,7 +149,7 @@ func TestCheckoutRetainsBindingsAfterSourceDeletion(t *testing.T) {
 	albumID := uuid.NewString()
 	albums := album.NewRepo(fixture.db.WriteDB(), fixture.db.ReadDB())
 	r.NoError(albums.Insert(t.Context(), album.Album{
-		ID: albumID, Owner: fixture.owner, Name: "Lightroom", CreatedAt: now, UpdatedAt: now,
+		ID: albumID, Owner: fixture.owner, Name: "Working Copy", CreatedAt: now, UpdatedAt: now,
 	}))
 	added, present, err := albums.AddMedia(t.Context(), albumID, []string{item.ID}, now)
 	r.NoError(err)
@@ -200,7 +200,7 @@ func TestRepoResolveSelectionSupportsAlbumsYearsAndAll(t *testing.T) {
 	albumID := uuid.NewString()
 	albums := album.NewRepo(fixture.db.WriteDB(), fixture.db.ReadDB())
 	r.NoError(albums.Insert(t.Context(), album.Album{
-		ID: albumID, Owner: fixture.owner, Name: "Lightroom", CreatedAt: now, UpdatedAt: now,
+		ID: albumID, Owner: fixture.owner, Name: "Working Copy", CreatedAt: now, UpdatedAt: now,
 	}))
 	added, present, err := albums.AddMedia(t.Context(), albumID, []string{byAlbum.ID}, now)
 	r.NoError(err)

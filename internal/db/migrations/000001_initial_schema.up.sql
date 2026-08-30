@@ -407,6 +407,7 @@ CREATE TABLE checkout_entries (
     base_size         INTEGER NOT NULL CHECK (base_size >= 0),
     observed_size     INTEGER NOT NULL CHECK (observed_size >= 0),
     observed_mtime    TIMESTAMP NOT NULL,
+    observed_identity TEXT NOT NULL,
     observed_sha256   TEXT NOT NULL CHECK (
       length(observed_sha256) = 64 AND observed_sha256 = lower(observed_sha256) AND
       observed_sha256 NOT GLOB '*[^0-9a-f]*'
@@ -448,6 +449,7 @@ CREATE TABLE checkout_scan_candidates (
     file_id           UUID,
     observed_size     INTEGER NOT NULL CHECK (observed_size >= 0),
     observed_mtime    TIMESTAMP NOT NULL,
+    observed_identity TEXT NOT NULL,
     observed_sha256   TEXT CHECK (
       observed_sha256 IS NULL OR (
         length(observed_sha256) = 64 AND

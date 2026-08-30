@@ -92,7 +92,7 @@ from the published or scanned file handle, or activation that proceeds after
 Fotobank detects a materialization failure.
 
 The working tree and its configured storage roles remain under the trusted
-operator's control during each scan. Normal Lightroom writes may race a scan;
+operator's control during each scan. Normal external-tool writes may race a scan;
 Fotobank detects changed size, modification time, or file identity and retries
 after another settle window. It does not claim to isolate the scanner from a
 hostile local process that can preserve metadata deliberately while changing

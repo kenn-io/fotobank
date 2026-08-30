@@ -192,23 +192,34 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 		}
 		info, err := root.Lstat(relativePath)
 		if err != nil {
-			return err
+			observationErr := scanObservationError("inspect checkout file", err)
+			if errors.Is(observationErr, errScanObservationChanged) {
+				return nil
+			}
+			return observationErr
 		}
 		if !info.Mode().IsRegular() {
 			if tracked {
-				if err := validatedRoot.Revalidate(); err != nil {
-					return err
-				}
-				message := "checkout path is not a regular file"
-				if err := s.repo.MarkEntryScanError(
-					ctx, checkout.ID, entry.FileID, message, s.now()); err != nil {
-					return err
-				}
+				return s.markTrackedError(ctx, validatedRoot, checkout.ID, entry.FileID,
+					errors.New("checkout path is not a regular file"))
 			}
 			return nil
 		}
+		observedIdentity, err := observeFileIdentity(root, relativePath, info)
+		if errors.Is(err, errScanObservationChanged) {
+			return nil
+		}
+		if err != nil {
+			if tracked {
+				return s.markTrackedError(
+					ctx, validatedRoot, checkout.ID, entry.FileID, err)
+			}
+			return err
+		}
 		if tracked && entry.State != EntryMissing && entry.State != EntryError &&
-			entry.ObservedSize == info.Size() && entry.ObservedMTime.Equal(info.ModTime()) {
+			entry.ObservedSize == info.Size() && entry.ObservedMTime.Equal(info.ModTime()) &&
+			entry.ObservedIdentity != "" && observedIdentity != "" &&
+			entry.ObservedIdentity == observedIdentity {
 			if _, exists := candidatesByPath[relativePath]; exists {
 				if err := validatedRoot.Revalidate(); err != nil {
 					return err
@@ -222,6 +233,7 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 		candidate := ScanCandidate{
 			CheckoutID: checkout.ID, RelativePath: relativePath,
 			ObservedSize: info.Size(), ObservedMTime: info.ModTime().UTC(),
+			ObservedIdentity: observedIdentity,
 		}
 		if tracked {
 			candidate.FileID = entry.FileID
@@ -234,14 +246,14 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 		if err != nil || !settled {
 			return err
 		}
-		sha, err := hashSettledFile(root, candidate)
+		sha, err := hashSettledFile(ctx, root, candidate)
 		if errors.Is(err, errScanObservationChanged) {
 			return nil
 		}
 		if err != nil {
 			if tracked {
-				return s.repo.MarkEntryScanError(
-					ctx, checkout.ID, entry.FileID, err.Error(), s.now())
+				return s.markTrackedError(
+					ctx, validatedRoot, checkout.ID, entry.FileID, err)
 			}
 			return err
 		}
@@ -300,6 +312,19 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 	return result, nil
 }
 
+func (s *Scanner) markTrackedError(
+	ctx context.Context,
+	root *content.CheckoutRoot,
+	checkoutID string,
+	fileID string,
+	cause error,
+) error {
+	if err := root.Revalidate(); err != nil {
+		return errors.Join(cause, err)
+	}
+	return s.repo.MarkEntryScanError(ctx, checkoutID, fileID, cause.Error(), s.now())
+}
+
 func (s *Scanner) ignored(relativePath string) bool {
 	for _, pattern := range s.config.IgnorePatterns {
 		matched, _ := path.Match(pattern, relativePath)
@@ -314,10 +339,37 @@ func (s *Scanner) ignored(relativePath string) bool {
 	return false
 }
 
-func hashSettledFile(root *os.Root, candidate ScanCandidate) (string, error) {
+func observeFileIdentity(root *os.Root, relativePath string, expected os.FileInfo) (string, error) {
+	file, err := root.Open(relativePath)
+	if err != nil {
+		return "", scanObservationError("open checkout file", err)
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return "", fmt.Errorf("inspect opened checkout file: %w", err)
+	}
+	pathInfo, err := root.Lstat(relativePath)
+	if err != nil {
+		return "", scanObservationError("inspect checkout path again", err)
+	}
+	if !os.SameFile(expected, openedInfo) || !os.SameFile(openedInfo, pathInfo) {
+		return "", errScanObservationChanged
+	}
+	identity, err := filesystemIdentity(file)
+	if err != nil {
+		return "", fmt.Errorf("identify checkout file: %w", err)
+	}
+	return identity, nil
+}
+
+func hashSettledFile(ctx context.Context, root *os.Root, candidate ScanCandidate) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	pathInfo, err := root.Lstat(candidate.RelativePath)
 	if err != nil {
-		return "", errScanObservationChanged
+		return "", scanObservationError("inspect settled checkout file", err)
 	}
 	if !pathInfo.Mode().IsRegular() || pathInfo.Size() != candidate.ObservedSize ||
 		!pathInfo.ModTime().Equal(candidate.ObservedMTime) {
@@ -325,29 +377,69 @@ func hashSettledFile(root *os.Root, candidate ScanCandidate) (string, error) {
 	}
 	file, err := root.Open(candidate.RelativePath)
 	if err != nil {
-		return "", errScanObservationChanged
+		return "", scanObservationError("open settled checkout file", err)
 	}
 	defer file.Close()
+	stopCancel := context.AfterFunc(ctx, func() { _ = file.Close() })
+	defer stopCancel()
 	before, err := file.Stat()
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
 		return "", fmt.Errorf("stat settled checkout file: %w", err)
 	}
 	if !os.SameFile(pathInfo, before) || before.Size() != candidate.ObservedSize ||
 		!before.ModTime().Equal(candidate.ObservedMTime) {
 		return "", errScanObservationChanged
 	}
+	identity, err := filesystemIdentity(file)
+	if err != nil {
+		return "", fmt.Errorf("identify settled checkout file: %w", err)
+	}
+	if candidate.ObservedIdentity != "" && identity != candidate.ObservedIdentity {
+		return "", errScanObservationChanged
+	}
 	digest := sha256.New()
-	if _, err := io.Copy(digest, file); err != nil {
+	if _, err := io.Copy(digest, contextReader{ctx: ctx, reader: file}); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
 		return "", fmt.Errorf("hash settled checkout file: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	after, err := file.Stat()
 	if err != nil {
 		return "", fmt.Errorf("stat hashed checkout file: %w", err)
 	}
-	finalPathInfo, err := root.Stat(candidate.RelativePath)
-	if err != nil || !os.SameFile(before, after) || !os.SameFile(after, finalPathInfo) ||
+	finalPathInfo, err := root.Lstat(candidate.RelativePath)
+	if err != nil {
+		return "", scanObservationError("inspect hashed checkout path", err)
+	}
+	if !os.SameFile(before, after) || !os.SameFile(after, finalPathInfo) ||
 		after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
 		return "", errScanObservationChanged
 	}
 	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(buffer []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(buffer)
+}
+
+func scanObservationError(operation string, err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return errScanObservationChanged
+	}
+	return fmt.Errorf("%s: %w", operation, err)
 }

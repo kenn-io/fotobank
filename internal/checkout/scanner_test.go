@@ -1,9 +1,11 @@
 package checkout
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,7 +23,7 @@ import (
 func TestScannerQueuesSettledTrackedChangeAcrossRestart(t *testing.T) {
 	r := require.New(t)
 	fixture := newScannerFixture(t)
-	changed := []byte("lightroom changed the xmp metadata")
+	changed := []byte("external editor changed the xmp metadata")
 	fixture.writeTracked(t, changed, fixture.now.Add(time.Minute))
 
 	result, err := fixture.scanner().Scan(t.Context())
@@ -58,6 +60,34 @@ func TestScannerKeepsTimestampOnlyChangeClean(t *testing.T) {
 	r.True(entry.ObservedMTime.Equal(changedMTime))
 }
 
+func TestScannerDetectsReplacementWithSameSizeAndMTime(t *testing.T) {
+	r := require.New(t)
+	fixture := newScannerFixture(t)
+	entry := fixture.entry(t)
+	if entry.ObservedIdentity == "" {
+		t.Skip("filesystem does not expose a stable file identity")
+	}
+	replacement := bytes.Repeat([]byte("x"), len(fixture.base))
+	temporary := filepath.Join(fixture.root, "replacement.tmp")
+	r.NoError(os.WriteFile(temporary, replacement, 0o600))
+	r.NoError(os.Chtimes(temporary, entry.ObservedMTime, entry.ObservedMTime))
+	r.NoError(os.Remove(fixture.trackedPath()))
+	r.NoError(os.Rename(temporary, fixture.trackedPath()))
+	replacedInfo, err := os.Stat(fixture.trackedPath())
+	r.NoError(err)
+	r.Equal(entry.ObservedSize, replacedInfo.Size())
+	r.True(entry.ObservedMTime.Equal(replacedInfo.ModTime()))
+
+	result, err := fixture.scanner().Scan(t.Context())
+	r.NoError(err)
+	r.Zero(result.Pending)
+	fixture.now = fixture.now.Add(3 * time.Second)
+	result, err = fixture.scanner().Scan(t.Context())
+	r.NoError(err)
+	r.Equal(1, result.Pending)
+	r.Equal(digestOf(replacement), fixture.entry(t).ObservedSHA256)
+}
+
 func TestScannerRecordsMissingWithoutChangingAuthorityBinding(t *testing.T) {
 	r := require.New(t)
 	fixture := newScannerFixture(t)
@@ -78,7 +108,7 @@ func TestScannerQueuesSettledUntrackedFileAndIgnoresTransientPaths(t *testing.T)
 	untracked := []byte("new xmp sidecar")
 	untrackedPath := filepath.Join(fixture.root, "new-sidecar.xmp")
 	r.NoError(os.WriteFile(untrackedPath, untracked, 0o600))
-	r.NoError(os.WriteFile(filepath.Join(fixture.root, "catalog.lrcat.lock"), []byte("lock"), 0o600))
+	r.NoError(os.WriteFile(filepath.Join(fixture.root, "editor.catalog.lock"), []byte("lock"), 0o600))
 	r.NoError(os.Mkdir(filepath.Join(fixture.root, stagingDirectory), 0o700))
 	r.NoError(os.WriteFile(
 		filepath.Join(fixture.root, stagingDirectory, "partial.tmp"), []byte("partial"), 0o600))
@@ -96,6 +126,34 @@ func TestScannerQueuesSettledUntrackedFileAndIgnoresTransientPaths(t *testing.T)
 	r.Empty(candidates[0].FileID)
 	r.Equal(ScanCandidatePending, candidates[0].State)
 	r.Equal(digestOf(untracked), candidates[0].ObservedSHA256)
+}
+
+func TestHashSettledFileHonorsCanceledContext(t *testing.T) {
+	r := require.New(t)
+	fixture := newScannerFixture(t)
+	root, err := os.OpenRoot(fixture.root)
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(root.Close()) })
+	info, err := root.Lstat(fixture.entryRow.RelativePath)
+	r.NoError(err)
+	identity, err := observeFileIdentity(root, fixture.entryRow.RelativePath, info)
+	r.NoError(err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = hashSettledFile(ctx, root, ScanCandidate{
+		RelativePath: fixture.entryRow.RelativePath,
+		ObservedSize: info.Size(), ObservedMTime: info.ModTime().UTC(),
+		ObservedIdentity: identity,
+	})
+	r.ErrorIs(err, context.Canceled)
+}
+
+func TestScanObservationErrorRetriesOnlyMissingPaths(t *testing.T) {
+	permissionErr := scanObservationError("open", fs.ErrPermission)
+	require.ErrorIs(t, permissionErr, fs.ErrPermission)
+	require.NotErrorIs(t, permissionErr, errScanObservationChanged)
+	require.ErrorIs(t,
+		scanObservationError("open", fs.ErrNotExist), errScanObservationChanged)
 }
 
 type scannerFixture struct {
@@ -132,6 +190,11 @@ func newScannerFixture(t *testing.T) *scannerFixture {
 	require.NoError(t, os.Chtimes(absolutePath, now, now))
 	info, err := os.Stat(absolutePath)
 	require.NoError(t, err)
+	opened, err := os.Open(absolutePath)
+	require.NoError(t, err)
+	observedIdentity, err := filesystemIdentity(opened)
+	require.NoError(t, err)
+	require.NoError(t, opened.Close())
 	repo := NewRepo(database.WriteDB(), database.ReadDB())
 	checkout := Checkout{
 		ID: checkoutID, Owner: owner, Root: root, Layout: "capture_date",
@@ -143,7 +206,7 @@ func newScannerFixture(t *testing.T) *scannerFixture {
 		CheckoutID: checkoutID, FileID: fileID, RelativePath: relativePath,
 		BaseVersionID: "version-1", BaseSHA256: digestOf(base), BaseSize: int64(len(base)),
 		ObservedSize: info.Size(), ObservedMTime: info.ModTime().UTC(),
-		ObservedSHA256: digestOf(base), State: EntryClean,
+		ObservedIdentity: observedIdentity, ObservedSHA256: digestOf(base), State: EntryClean,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	require.NoError(t, repo.InsertEntry(t.Context(), entry))
@@ -156,7 +219,7 @@ func newScannerFixture(t *testing.T) *scannerFixture {
 func (f *scannerFixture) scanner() *Scanner {
 	scanner := NewScanner(f.repo, f.content, ScannerConfig{
 		ScanInterval: time.Hour, SettleInterval: 2 * time.Second,
-		IgnorePatterns: []string{"*.lrcat.lock"},
+		IgnorePatterns: []string{"*.catalog.lock"},
 	})
 	scanner.now = func() time.Time { return f.now }
 	return scanner
