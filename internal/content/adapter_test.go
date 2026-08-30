@@ -107,6 +107,35 @@ func TestAdapterResolveCheckoutRootRejectsPathReplacementBeforeUse(t *testing.T)
 	r.ErrorIs(err, errs.ErrBadConfiguration)
 }
 
+func TestCheckoutRootRevalidateRejectsMoveAfterTake(t *testing.T) {
+	r := require.New(t)
+	managedRoot := t.TempDir()
+	adapter, err := content.Open(t.Context(), content.Config{
+		Root: t.TempDir(), ManagedRoots: []string{managedRoot},
+	})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+	parent := t.TempDir()
+	checkoutRoot := filepath.Join(parent, "checkout")
+	r.NoError(os.Mkdir(checkoutRoot, 0o755))
+	validated, err := adapter.ResolveCheckoutRoot(checkoutRoot)
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(validated.Close()) })
+	workingRoot, err := validated.Take()
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(workingRoot.Close()) })
+
+	movedRoot := filepath.Join(managedRoot, "checkout")
+	if err := os.Rename(checkoutRoot, movedRoot); err != nil {
+		t.Skipf("renaming an opened directory is unavailable: %v", err)
+	}
+	if err := os.Symlink(movedRoot, checkoutRoot); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	r.ErrorIs(validated.Revalidate(), errs.ErrBadConfiguration)
+}
+
 func TestAdapterCreate(t *testing.T) {
 	require := require.New(t)
 	adapter, err := content.Open(t.Context(), content.Config{Root: t.TempDir()})

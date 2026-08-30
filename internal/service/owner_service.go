@@ -120,7 +120,7 @@ func (s *OwnerService) List(ctx context.Context) ([]owners.Owner, error) {
 }
 
 // Remove deletes the owner row for p. With purge=false, it refuses if
-// any media or asset rows still reference the owner. Purge=true is reserved
+// any asset or checkout rows still reference the owner. Purge=true is reserved
 // for a future operation that also deletes owned content, and is rejected here.
 func (s *OwnerService) Remove(ctx context.Context, p owners.Principal, purge bool) error {
 	if purge {
@@ -136,6 +136,17 @@ func (s *OwnerService) Remove(ctx context.Context, p owners.Principal, purge boo
 	if assetCount > 0 {
 		return fmt.Errorf("%w: owner %s has %d assets (use --purge)",
 			errs.ErrInvalidArgument, p, assetCount)
+	}
+	var checkoutCount int
+	row = s.repo.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM checkouts WHERE owner_hub=? AND owner_user_id=?`,
+		p.Hub, p.UserID)
+	if err := row.Scan(&checkoutCount); err != nil {
+		return fmt.Errorf("count checkouts for owner: %w", err)
+	}
+	if checkoutCount > 0 {
+		return fmt.Errorf("%w: owner %s has %d checkouts",
+			errs.ErrInvalidArgument, p, checkoutCount)
 	}
 	return s.repo.Delete(ctx, p)
 }

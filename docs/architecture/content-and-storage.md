@@ -160,6 +160,9 @@ catalog pointed at a different directory from the materialized files. Once a
 checkout row exists, every later failure attempts the `error`
 transition through a short cleanup context independent of caller cancellation;
 if that database write also fails, the returned error reports both failures.
+Materialization repeats the retained-directory check before recording each
+entry and before activation. A root moved during creation therefore leaves an
+explicit errored checkout instead of an active ledger for a different path.
 Every checkout command acquires a shared database lifetime lock before opening
 or migrating SQLite and retains it until the connection pools close. Restore
 requires the same lock exclusively, so database replacement cannot overlap an

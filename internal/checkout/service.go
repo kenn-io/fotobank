@@ -167,9 +167,13 @@ func (s *Materializer) Create(
 			return CreateResult{}, s.fail(ctx, checkout.ID, err)
 		}
 		paths[relativePath] = candidate.FileID
-		if err := s.materialize(ctx, workingRoot, checkout, candidate, relativePath); err != nil {
+		if err := s.materialize(ctx, request.Root, workingRoot, checkout, candidate, relativePath); err != nil {
 			return CreateResult{}, s.fail(ctx, checkout.ID, err)
 		}
+	}
+	if err := request.Root.Revalidate(); err != nil {
+		return CreateResult{}, s.fail(ctx, checkout.ID,
+			fmt.Errorf("activate checkout: root changed during materialization: %w", err))
 	}
 	if err := s.repo.SetState(ctx, checkout.ID, StateActive, "", s.now().UTC()); err != nil {
 		return CreateResult{}, s.fail(ctx, checkout.ID, fmt.Errorf("activate checkout: %w", err))
@@ -188,6 +192,7 @@ func (s *Materializer) fail(ctx context.Context, checkoutID string, cause error)
 
 func (s *Materializer) materialize(
 	ctx context.Context,
+	checkoutRoot *content.CheckoutRoot,
 	workingRoot *os.Root,
 	checkout Checkout,
 	candidate Candidate,
@@ -273,6 +278,10 @@ func (s *Materializer) materialize(
 		BaseVersionID: candidate.VersionID, BaseSHA256: candidate.SHA256, BaseSize: candidate.Size,
 		ObservedSize: info.Size(), ObservedMTime: info.ModTime().UTC(), ObservedSHA256: observedSHA,
 		State: EntryClean, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := checkoutRoot.Revalidate(); err != nil {
+		return fmt.Errorf("materialize %s: checkout root changed before recording: %w",
+			relativePath, err)
 	}
 	if err := s.repo.InsertEntry(ctx, entry); err != nil {
 		return fmt.Errorf("materialize %s: record entry: %w", relativePath, err)

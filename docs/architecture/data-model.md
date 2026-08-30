@@ -78,6 +78,10 @@ checkout so two product files cannot silently claim the same working file.
 Checkout and entry states are durable inputs to later scanning, conflict, and
 rebuild work rather than an event log.
 
+Checkout ledgers are retained independently from their source assets. An owner
+with any checkout cannot be removed until a future explicit checkout-deletion
+lifecycle defines what happens to its working files and retained history.
+
 ## Derived state
 
 Thumbnail status and version live with the product media row. Claim timestamps

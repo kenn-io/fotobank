@@ -27,6 +27,7 @@ type CheckoutRoot struct {
 	mu           sync.Mutex
 	path         string
 	root         *os.Root
+	taken        bool
 	docbankRoot  string
 	managedRoots []string
 }
@@ -54,40 +55,60 @@ func (r *CheckoutRoot) Take() (*os.Root, error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.root == nil {
+	if r.root == nil || r.taken {
 		return nil, fmt.Errorf("%w: checkout root is not validated or was already consumed", errs.ErrInvalidArgument)
 	}
+	if err := r.validateLocked(); err != nil {
+		return nil, err
+	}
+	r.taken = true
+	return r.root, nil
+}
+
+// Revalidate confirms that the catalog path still names the retained working
+// directory and remains outside Docbank and Fotobank-managed storage.
+func (r *CheckoutRoot) Revalidate() error {
+	if r == nil {
+		return fmt.Errorf("%w: checkout root is not validated", errs.ErrInvalidArgument)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.root == nil {
+		return fmt.Errorf("%w: checkout root is not validated", errs.ErrInvalidArgument)
+	}
+	return r.validateLocked()
+}
+
+func (r *CheckoutRoot) validateLocked() error {
 	boundInfo, err := r.root.Stat(".")
 	if err != nil {
-		return nil, fmt.Errorf("inspect bound checkout root: %w", err)
+		return fmt.Errorf("inspect bound checkout root: %w", err)
 	}
 	resolved, err := filepath.EvalSymlinks(r.path)
 	if err != nil {
-		return nil, fmt.Errorf("%w: resolve checkout root again: %w", errs.ErrBadConfiguration, err)
+		return fmt.Errorf("%w: resolve checkout root again: %w", errs.ErrBadConfiguration, err)
 	}
 	resolved, err = filepath.Abs(resolved)
 	if err != nil {
-		return nil, fmt.Errorf("make checkout root absolute again: %w", err)
+		return fmt.Errorf("make checkout root absolute again: %w", err)
 	}
 	resolved = filepath.Clean(resolved)
 	if pathsOverlap(resolved, r.docbankRoot) {
-		return nil, fmt.Errorf("%w: checkout root now overlaps Docbank vault", errs.ErrBadConfiguration)
+		return fmt.Errorf("%w: checkout root now overlaps Docbank vault", errs.ErrBadConfiguration)
 	}
 	for _, managedRoot := range r.managedRoots {
 		if pathsOverlap(resolved, managedRoot) {
-			return nil, fmt.Errorf("%w: checkout root now overlaps managed storage", errs.ErrBadConfiguration)
+			return fmt.Errorf("%w: checkout root now overlaps managed storage", errs.ErrBadConfiguration)
 		}
 	}
 	pathInfo, err := os.Stat(resolved)
 	if err != nil {
-		return nil, fmt.Errorf("%w: checkout root path changed after validation: %w", errs.ErrBadConfiguration, err)
+		return fmt.Errorf("%w: checkout root path changed after validation: %w", errs.ErrBadConfiguration, err)
 	}
 	if !os.SameFile(boundInfo, pathInfo) {
-		return nil, fmt.Errorf("%w: checkout root path changed after validation", errs.ErrBadConfiguration)
+		return fmt.Errorf("%w: checkout root path changed after validation", errs.ErrBadConfiguration)
 	}
-	root := r.root
-	r.root = nil
-	return root, nil
+	return nil
 }
 
 // Close releases a validated root that was not transferred to a materializer.
@@ -98,7 +119,7 @@ func (r *CheckoutRoot) Close() error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.root == nil {
+	if r.root == nil || r.taken {
 		return nil
 	}
 	err := r.root.Close()
