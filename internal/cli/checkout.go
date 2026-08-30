@@ -95,7 +95,9 @@ func newCheckoutCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <empty-root>",
 		Short: "Materialize an exact-version writable checkout",
-		Args:  usageArgs(cobra.ExactArgs(1)),
+		Long: "Materialize an exact-version writable checkout. " +
+			"Do not open or edit the checkout root until this command finishes.",
+		Args: usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			selection, err := flags.selection()
 			if err != nil {

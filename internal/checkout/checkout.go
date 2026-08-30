@@ -23,6 +23,9 @@ const (
 type EntryState string
 
 const (
+	// EntryClean means the last Fotobank observation matched the base version.
+	// It is not a live lock or a claim that an external editor has not changed
+	// the writable file since that observation.
 	EntryClean    EntryState = "clean"
 	EntryPending  EntryState = "pending"
 	EntryConflict EntryState = "conflict"
