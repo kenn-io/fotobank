@@ -43,6 +43,24 @@ func TestResolveDBPathCanonicalizesExistingParent(t *testing.T) {
 	require.Equal(t, filepath.Join(canonicalExistingPath(t, realParent), "fotobank.sqlite"), got)
 }
 
+func TestResolveDBPathResolvesSymlinkBeforeParentTraversal(t *testing.T) {
+	r := require.New(t)
+	base := t.TempDir()
+	realParent := filepath.Join(base, "real")
+	realChild := filepath.Join(realParent, "child")
+	r.NoError(os.MkdirAll(realChild, 0o700))
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(realChild, alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Setenv("FOTOBANK_DB_PATH", alias+string(os.PathSeparator)+".."+
+		string(os.PathSeparator)+"fotobank.sqlite")
+
+	got, err := resolveDBPath(&config.Config{})
+	r.NoError(err)
+	r.Equal(filepath.Join(canonicalExistingPath(t, realParent), "fotobank.sqlite"), got)
+}
+
 func TestLockPathForDerivesFromDBPath(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "fotobank.sqlite")
 	require.Equal(t, dbPath+".lock", lockPathFor(dbPath))

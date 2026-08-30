@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -32,25 +34,35 @@ func resolveDBPath(cfg *config.Config) (string, error) {
 // canonicalDBPath resolves existing symlinks before a database or its lock is
 // opened. Missing final components are retained beneath the resolved ancestor.
 func canonicalDBPath(p string) (string, error) {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return "", fmt.Errorf("make database path absolute: %w", err)
+	target := p
+	if !filepath.IsAbs(target) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("get working directory: %w", err)
+		}
+		target = cwd + string(os.PathSeparator) + target
 	}
-	current := abs
+	current := strings.TrimRight(target, string(os.PathSeparator))
+	if current == "" {
+		current = string(os.PathSeparator)
+	}
 	var missing []string
 	for {
 		_, err := os.Lstat(current)
 		if err == nil {
 			break
 		}
-		if !os.IsNotExist(err) {
+		if !errors.Is(err, os.ErrNotExist) {
 			return "", fmt.Errorf("inspect database path: %w", err)
 		}
-		parent := filepath.Dir(current)
+		parent, component := rawDBPathParent(current)
 		if parent == current {
 			return "", fmt.Errorf("find existing database path ancestor: %w", err)
 		}
-		missing = append(missing, filepath.Base(current))
+		if component == "." || component == ".." {
+			return "", fmt.Errorf("database path traverses %q after a missing component", component)
+		}
+		missing = append(missing, component)
 		current = parent
 	}
 	resolved, err := filepath.EvalSymlinks(current)
@@ -61,6 +73,25 @@ func canonicalDBPath(p string) (string, error) {
 		resolved = filepath.Join(resolved, m)
 	}
 	return resolved, nil
+}
+
+// rawDBPathParent splits one path component without cleaning the path first.
+// Cleaning would give ".." lexical semantics before the operating system has
+// resolved a preceding symlink.
+func rawDBPathParent(value string) (string, string) {
+	volume := filepath.VolumeName(value)
+	remainder := value[len(volume):]
+	remainder = strings.TrimRight(remainder, string(os.PathSeparator))
+	index := strings.LastIndex(remainder, string(os.PathSeparator))
+	if index < 0 {
+		return value, ""
+	}
+	component := remainder[index+1:]
+	parentRemainder := strings.TrimRight(remainder[:index], string(os.PathSeparator))
+	if parentRemainder == "" {
+		parentRemainder = string(os.PathSeparator)
+	}
+	return volume + parentRemainder, component
 }
 
 // lockPathFor returns the canonical lock-file path for a given dbPath.
