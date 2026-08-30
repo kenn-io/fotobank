@@ -2,6 +2,7 @@ package content
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -93,10 +94,14 @@ func (r *CheckoutRoot) validateLocked() error {
 		return fmt.Errorf("make checkout root absolute again: %w", err)
 	}
 	resolved = filepath.Clean(resolved)
-	if pathsOverlap(resolved, r.docbankRoot) {
+	docbankRoot, managedRoots, err := resolveBoundaryRoots(r.docbankRoot, r.managedRoots)
+	if err != nil {
+		return err
+	}
+	if pathsOverlap(resolved, docbankRoot) {
 		return fmt.Errorf("%w: checkout root now overlaps Docbank vault", errs.ErrBadConfiguration)
 	}
-	for _, managedRoot := range r.managedRoots {
+	for _, managedRoot := range managedRoots {
 		if pathsOverlap(resolved, managedRoot) {
 			return fmt.Errorf("%w: checkout root now overlaps managed storage", errs.ErrBadConfiguration)
 		}
@@ -330,10 +335,14 @@ func (a *Adapter) ResolveCheckoutRoot(checkoutRoot string) (*CheckoutRoot, error
 	if !openedInfo.IsDir() {
 		return nil, fmt.Errorf("%w: checkout root is not a directory", errs.ErrInvalidArgument)
 	}
-	if pathsOverlap(resolved, a.root) {
+	docbankRoot, managedRoots, err := resolveBoundaryRoots(a.root, a.managedRoots)
+	if err != nil {
+		return nil, err
+	}
+	if pathsOverlap(resolved, docbankRoot) {
 		return nil, fmt.Errorf("%w: checkout root overlaps Docbank vault", errs.ErrBadConfiguration)
 	}
-	for _, managedRoot := range a.managedRoots {
+	for _, managedRoot := range managedRoots {
 		if pathsOverlap(resolved, managedRoot) {
 			return nil, fmt.Errorf("%w: checkout root overlaps managed storage", errs.ErrBadConfiguration)
 		}
@@ -365,15 +374,49 @@ func (a *Adapter) resolveExternalRoot(sourceRoot, kind string) (string, error) {
 	if !info.IsDir() {
 		return "", fmt.Errorf("%w: %s root is not a directory", errs.ErrInvalidArgument, kind)
 	}
-	if pathsOverlap(resolved, a.root) {
+	docbankRoot, managedRoots, err := resolveBoundaryRoots(a.root, a.managedRoots)
+	if err != nil {
+		return "", err
+	}
+	if pathsOverlap(resolved, docbankRoot) {
 		return "", fmt.Errorf("%w: %s root overlaps Docbank vault", errs.ErrBadConfiguration, kind)
 	}
-	for _, managedRoot := range a.managedRoots {
+	for _, managedRoot := range managedRoots {
 		if pathsOverlap(resolved, managedRoot) {
 			return "", fmt.Errorf("%w: %s root overlaps managed storage", errs.ErrBadConfiguration, kind)
 		}
 	}
 	return resolved, nil
+}
+
+func resolveBoundaryRoots(docbankRoot string, managedRoots []string) (string, []string, error) {
+	resolvedDocbank, err := resolveBoundaryRoot(docbankRoot)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve current Docbank root: %w", err)
+	}
+	resolvedManaged := make([]string, len(managedRoots))
+	for i, managedRoot := range managedRoots {
+		resolvedManaged[i], err = resolveBoundaryRoot(managedRoot)
+		if err != nil {
+			return "", nil, fmt.Errorf("resolve current managed root: %w", err)
+		}
+	}
+	return resolvedDocbank, resolvedManaged, nil
+}
+
+func resolveBoundaryRoot(root string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return filepath.Clean(root), nil
+		}
+		return "", err
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(resolved), nil
 }
 
 func pathsOverlap(left, right string) bool {

@@ -246,6 +246,11 @@ func (s *Materializer) materialize(
 		return fmt.Errorf("materialize %s: %w", relativePath, err)
 	}
 	removeTemp = false
+	if err := syncCheckoutDirectories(workingRoot, directory); err != nil {
+		return errors.Join(
+			fmt.Errorf("materialize %s: sync published path: %w", relativePath, err),
+			published.Close())
+	}
 	digest.Reset()
 	if _, err := io.Copy(digest, published); err != nil {
 		return errors.Join(
