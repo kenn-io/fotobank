@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofrs/flock"
 	"github.com/google/uuid"
@@ -323,15 +324,52 @@ func publish(workingRoot *os.Root, tempName, destination string) (*os.File, erro
 
 func workingPath(candidate Candidate) (string, error) {
 	name := candidate.OriginalFilename
-	if name == "" || name == "." || name == ".." ||
-		strings.ContainsAny(name, "/\\\x00") {
-		return "", fmt.Errorf("checkout path: %w: invalid original filename", errs.ErrInvalidArgument)
+	if err := validateCheckoutFilename(name); err != nil {
+		return "", fmt.Errorf("checkout path: %w", err)
 	}
 	directory := "undated"
 	if candidate.CapturedAt != nil {
 		directory = candidate.CapturedAt.Format("2006/01/02")
 	}
 	return path.Join(directory, candidate.AssetID, name), nil
+}
+
+func validateCheckoutFilename(name string) error {
+	switch {
+	case !utf8.ValidString(name), name == "", name == ".", name == "..":
+		return fmt.Errorf("%w: invalid original filename", errs.ErrInvalidArgument)
+	case strings.ContainsAny(name, `<>:"/\|?*`+"\x00"):
+		return fmt.Errorf("%w: original filename is not portable to Windows", errs.ErrInvalidArgument)
+	case strings.HasSuffix(name, ".") || strings.HasSuffix(name, " "):
+		return fmt.Errorf("%w: original filename ends in a dot or space", errs.ErrInvalidArgument)
+	case isWindowsDeviceName(name):
+		return fmt.Errorf("%w: original filename uses a reserved Windows device name", errs.ErrInvalidArgument)
+	}
+	for _, r := range name {
+		if r >= 1 && r <= 31 {
+			return fmt.Errorf("%w: original filename contains a control character", errs.ErrInvalidArgument)
+		}
+	}
+	return nil
+}
+
+func isWindowsDeviceName(name string) bool {
+	base, _, _ := strings.Cut(name, ".")
+	base = strings.TrimRight(base, " ")
+	upper := strings.ToUpper(base)
+	switch upper {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		return true
+	}
+	if !strings.HasPrefix(upper, "COM") && !strings.HasPrefix(upper, "LPT") {
+		return false
+	}
+	switch upper[3:] {
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³":
+		return true
+	default:
+		return false
+	}
 }
 
 func estimateCandidates(candidates []Candidate) Estimate {

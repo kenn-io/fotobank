@@ -176,15 +176,21 @@ directory and retry it after recovery moves the old row to `error`.
 
 The `capture_date` layout keeps every asset's related files together beneath
 `YYYY/MM/DD/{asset-uuid}/`; assets without capture time use
-`undated/{asset-uuid}/`. Each entry records its relative path, exact base
-version, SHA-256, size, and initial filesystem observation. Fotobank reopens
-the final root-bound path and derives that observation from one file handle; a
-file replaced during publication cannot be recorded as a clean entry. Checkout
-creation is `building` until every entry is published and then becomes `active`.
-Selector and file identifiers are detached historical snapshots, so deleting
-a source album or asset does not erase the checkout's saved selection or file
-bindings. A materialization failure makes the durable checkout `error` without
-pretending the partial working tree is usable.
+`undated/{asset-uuid}/`. Original filenames must also be portable to Windows:
+checkout rejects reserved device names, reserved characters, control
+characters, and trailing dots or spaces on every host. It does not silently
+rename originals because normalization can change Lightroom-visible names or
+collapse distinct source names onto one working path.
+
+Each entry records its relative path, exact base version, SHA-256, size, and
+initial filesystem observation. Fotobank reopens the final root-bound path and
+derives that observation from one file handle; a file replaced during
+publication cannot be recorded as a clean entry. Checkout creation is
+`building` until every entry is published and then becomes `active`. Selector
+and file identifiers are detached historical snapshots, so deleting a source
+album or asset does not erase the checkout's saved selection or file bindings.
+A materialization failure makes the durable checkout `error` without pretending
+the partial working tree is usable.
 
 Checkouts are currently one-way materializations. Fotobank does not yet scan
 working files or commit Lightroom changes back as new Docbank versions.
