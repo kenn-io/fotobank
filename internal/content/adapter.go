@@ -44,6 +44,8 @@ func (r *CheckoutRoot) Path() string {
 // Overlaps reports whether another path currently names, contains, or is
 // contained by this checkout root. It compares filesystem identities as well
 // as path strings so a live checkout cannot be reused through a later alias.
+// An unresolved live root remains reserved because distinct trees cannot be
+// proven without its filesystem identity.
 func (r *CheckoutRoot) Overlaps(other string) bool {
 	if r == nil {
 		return false
@@ -58,11 +60,11 @@ func (r *CheckoutRoot) Overlaps(other string) bool {
 	}
 	resolved, err := filepath.EvalSymlinks(other)
 	if err != nil {
-		return false
+		return true
 	}
 	resolved, err = filepath.Abs(resolved)
 	if err != nil {
-		return false
+		return true
 	}
 	resolved = filepath.Clean(resolved)
 	if pathsOverlap(r.path, resolved) {
@@ -70,11 +72,11 @@ func (r *CheckoutRoot) Overlaps(other string) bool {
 	}
 	boundInfo, err := r.root.Stat(".")
 	if err != nil {
-		return false
+		return true
 	}
 	otherInfo, err := os.Stat(resolved)
 	if err != nil {
-		return false
+		return true
 	}
 	return pathTreeContainsFile(resolved, boundInfo) || pathTreeContainsFile(r.path, otherInfo)
 }
@@ -83,7 +85,7 @@ func pathTreeContainsFile(current string, target os.FileInfo) bool {
 	for {
 		info, err := os.Stat(current)
 		if err != nil {
-			return false
+			return true
 		}
 		if os.SameFile(info, target) {
 			return true
