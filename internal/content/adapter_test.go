@@ -136,9 +136,10 @@ func TestCheckoutRootRevalidateRejectsMoveAfterTake(t *testing.T) {
 	r.ErrorIs(validated.Revalidate(), errs.ErrBadConfiguration)
 }
 
-func TestCheckoutRootRevalidateRefreshesManagedRoot(t *testing.T) {
+func TestCheckoutRootRevalidateRejectsMissingManagedRoot(t *testing.T) {
 	r := require.New(t)
 	managedRoot := filepath.Join(t.TempDir(), "managed")
+	r.NoError(os.Mkdir(managedRoot, 0o700))
 	adapter, err := content.Open(t.Context(), content.Config{
 		Root: t.TempDir(), ManagedRoots: []string{managedRoot},
 	})
@@ -151,9 +152,7 @@ func TestCheckoutRootRevalidateRefreshesManagedRoot(t *testing.T) {
 	workingRoot, err := validated.Take()
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(workingRoot.Close()) })
-	if err := os.Symlink(checkoutRoot, managedRoot); err != nil {
-		t.Skipf("symlink creation unavailable: %v", err)
-	}
+	r.NoError(os.Rename(managedRoot, managedRoot+"-moved"))
 
 	r.ErrorIs(validated.Revalidate(), errs.ErrBadConfiguration)
 }

@@ -2,7 +2,6 @@ package content
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -309,10 +308,12 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 			_ = vault.Close()
 			return nil, fmt.Errorf("%w: managed root must be absolute", errs.ErrBadConfiguration)
 		}
-		resolvedManagedRoot := managedRoot
-		if evaluated, evalErr := filepath.EvalSymlinks(managedRoot); evalErr == nil {
-			resolvedManagedRoot = evaluated
-		} else if !os.IsNotExist(evalErr) {
+		if err := os.MkdirAll(managedRoot, 0o700); err != nil {
+			_ = vault.Close()
+			return nil, fmt.Errorf("create managed root: %w", err)
+		}
+		resolvedManagedRoot, evalErr := filepath.EvalSymlinks(managedRoot)
+		if evalErr != nil {
 			_ = vault.Close()
 			return nil, fmt.Errorf("resolve managed root: %w", evalErr)
 		}
@@ -443,13 +444,15 @@ func (a *Adapter) resolveExternalRoot(sourceRoot, kind string) (string, error) {
 func resolveBoundaryRoots(docbankRoot string, managedRoots []string) (string, []string, error) {
 	resolvedDocbank, err := resolveBoundaryRoot(docbankRoot)
 	if err != nil {
-		return "", nil, fmt.Errorf("resolve current Docbank root: %w", err)
+		return "", nil, fmt.Errorf("%w: resolve current Docbank root: %w",
+			errs.ErrBadConfiguration, err)
 	}
 	resolvedManaged := make([]string, len(managedRoots))
 	for i, managedRoot := range managedRoots {
 		resolvedManaged[i], err = resolveBoundaryRoot(managedRoot)
 		if err != nil {
-			return "", nil, fmt.Errorf("resolve current managed root: %w", err)
+			return "", nil, fmt.Errorf("%w: resolve current managed root: %w",
+				errs.ErrBadConfiguration, err)
 		}
 	}
 	return resolvedDocbank, resolvedManaged, nil
@@ -458,9 +461,6 @@ func resolveBoundaryRoots(docbankRoot string, managedRoots []string) (string, []
 func resolveBoundaryRoot(root string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return filepath.Clean(root), nil
-		}
 		return "", err
 	}
 	resolved, err = filepath.Abs(resolved)
