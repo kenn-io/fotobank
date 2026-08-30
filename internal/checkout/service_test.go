@@ -58,6 +58,33 @@ func TestServiceMaterializesExactVersionAndRecordsEntry(t *testing.T) {
 	r.Equal(result.Checkout.Selection, stored.Selection)
 }
 
+func TestServiceKeepsTemporaryFilesSeparateFromOriginalNames(t *testing.T) {
+	r := require.New(t)
+	fixture := newFixture(t)
+	body := []byte("authoritative photo bytes")
+	item := assetfixture.InsertContent(t, fixture.media, fixture.content, body, media.Media{
+		Owner: fixture.owner, OriginalFilename: "initial.jpg",
+	})
+	collidingName := ".fotobank-" + item.PrimaryFileID + ".tmp"
+	_, err := fixture.db.WriteDB().ExecContext(t.Context(),
+		`UPDATE media_files SET original_filename = ? WHERE id = ?`,
+		collidingName, item.PrimaryFileID)
+	r.NoError(err)
+	root := t.TempDir()
+	validatedRoot, err := fixture.content.ResolveCheckoutRoot(root)
+	r.NoError(err)
+
+	result, err := fixture.service.Create(t.Context(), fixture.owner, checkout.CreateRequest{
+		Root: validatedRoot, Selection: checkout.Selection{AssetIDs: []string{item.ID}},
+	})
+	r.NoError(err)
+	r.Equal(checkout.StateActive, result.Checkout.State)
+	materialized, err := os.ReadFile(filepath.Join(root, "undated", item.ID, collidingName))
+	r.NoError(err)
+	r.Equal(body, materialized)
+	r.NoDirExists(filepath.Join(root, ".fotobank-staging"))
+}
+
 func TestServiceRejectsCheckoutRootMovedAfterValidation(t *testing.T) {
 	r := require.New(t)
 	fixture := newFixture(t)

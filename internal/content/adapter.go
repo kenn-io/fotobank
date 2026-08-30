@@ -149,6 +149,9 @@ func (r *CheckoutRoot) validateLocked() error {
 		return fmt.Errorf("make checkout root absolute again: %w", err)
 	}
 	resolved = filepath.Clean(resolved)
+	if resolved != r.path {
+		return fmt.Errorf("%w: checkout root canonical path changed after validation", errs.ErrBadConfiguration)
+	}
 	docbankRoot, managedRoots, err := resolveBoundaryRoots(r.docbankRoot, r.managedRoots)
 	if err != nil {
 		return err

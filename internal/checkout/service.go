@@ -155,6 +155,17 @@ func (s *Materializer) Create(
 	if err := s.repo.Insert(ctx, checkout); err != nil {
 		return CreateResult{}, err
 	}
+	const stagingDirectory = ".fotobank-staging"
+	if err := workingRoot.Mkdir(stagingDirectory, 0o700); err != nil {
+		return CreateResult{}, s.fail(ctx, checkout.ID,
+			fmt.Errorf("create checkout: create staging directory: %w", err))
+	}
+	removeStaging := true
+	defer func() {
+		if removeStaging {
+			_ = workingRoot.Remove(stagingDirectory)
+		}
+	}()
 
 	paths := make(map[string]string, len(candidates))
 	for _, candidate := range candidates {
@@ -168,9 +179,20 @@ func (s *Materializer) Create(
 			return CreateResult{}, s.fail(ctx, checkout.ID, err)
 		}
 		paths[relativePath] = candidate.FileID
-		if err := s.materialize(ctx, request.Root, workingRoot, checkout, candidate, relativePath); err != nil {
+		if err := s.materialize(
+			ctx, request.Root, workingRoot, checkout, candidate, relativePath, stagingDirectory,
+		); err != nil {
 			return CreateResult{}, s.fail(ctx, checkout.ID, err)
 		}
+	}
+	if err := workingRoot.Remove(stagingDirectory); err != nil {
+		return CreateResult{}, s.fail(ctx, checkout.ID,
+			fmt.Errorf("activate checkout: remove staging directory: %w", err))
+	}
+	removeStaging = false
+	if err := syncCheckoutDirectories(workingRoot, "."); err != nil {
+		return CreateResult{}, s.fail(ctx, checkout.ID,
+			fmt.Errorf("activate checkout: sync staging removal: %w", err))
 	}
 	if err := request.Root.Revalidate(); err != nil {
 		return CreateResult{}, s.fail(ctx, checkout.ID,
@@ -198,6 +220,7 @@ func (s *Materializer) materialize(
 	checkout Checkout,
 	candidate Candidate,
 	relativePath string,
+	stagingDirectory string,
 ) error {
 	ref, err := s.resolver.ResolveVersion(
 		ctx, candidate.AssetID, candidate.FileID, candidate.VersionID)
@@ -217,7 +240,7 @@ func (s *Materializer) materialize(
 	if err := workingRoot.MkdirAll(directory, 0o700); err != nil {
 		return errors.Join(fmt.Errorf("materialize %s: create directory: %w", relativePath, err), opened.Reader.Close())
 	}
-	tempName := filepath.Join(directory, ".fotobank-"+candidate.FileID+".tmp")
+	tempName := filepath.Join(stagingDirectory, candidate.FileID+".tmp")
 	temp, err := workingRoot.OpenFile(tempName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return errors.Join(fmt.Errorf("materialize %s: create temporary file: %w", relativePath, err), opened.Reader.Close())

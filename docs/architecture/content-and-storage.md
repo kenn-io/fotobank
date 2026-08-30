@@ -147,17 +147,21 @@ so an explicit asset cannot disappear between those two views.
 Docbank, NAS, and flash-managed roots. It resolves every selected file to its
 recorded immutable Docbank version and publishes a verified ordinary copy with
 an atomic no-replace operation inside a root-bound filesystem view. It never
-hardlinks a writable file to a Docbank content-addressed object.
+hardlinks a writable file to a Docbank content-addressed object. Temporary
+copies use a reserved top-level staging directory rather than a user filename
+directory. Fotobank removes it before activation and syncs the checkout root on
+platforms that support directory synchronization.
 
 The content adapter opens a checkout root, verifies that exact directory
 against the canonical path and storage boundaries, then returns an opaque
 single-use capability retaining the open directory. Immediately before
 transfer, the capability resolves the catalog path again, reapplies the Docbank,
 NAS, and flash boundaries, and checks that the path still names the retained
-directory. Materialization uses that same handle instead of reopening the root.
-A renamed, replaced, or newly aliased root is rejected rather than leaving the
-catalog pointed at a different directory from the materialized files. Once a
-checkout row exists, every later failure attempts the `error`
+directory at its original canonical path. Materialization uses that same handle
+instead of reopening the root. A renamed, replaced, or newly aliased root is
+rejected rather than leaving the catalog pointed at a different directory from
+the materialized files. Once a checkout row exists, every later failure attempts
+the `error`
 transition through a short cleanup context independent of caller cancellation;
 if that database write also fails, the returned error reports both failures.
 Materialization repeats the retained-directory check before recording each
