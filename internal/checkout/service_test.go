@@ -84,6 +84,33 @@ func TestServiceRejectsCheckoutRootMovedAfterValidation(t *testing.T) {
 	r.Zero(checkouts)
 }
 
+func TestServiceRejectsAssetHiddenAfterSelection(t *testing.T) {
+	r := require.New(t)
+	fixture := newFixture(t)
+	item := assetfixture.InsertContent(t, fixture.media, fixture.content, []byte("photo"), media.Media{
+		Owner: fixture.owner, OriginalFilename: "IMG_0042.JPG",
+	})
+	_, err := fixture.db.WriteDB().ExecContext(t.Context(), `
+		CREATE TRIGGER hide_assets_after_checkout_insert
+		AFTER INSERT ON checkouts
+		BEGIN
+			UPDATE assets SET hidden_at = CURRENT_TIMESTAMP;
+		END`)
+	r.NoError(err)
+	root := t.TempDir()
+	validatedRoot, err := fixture.content.ResolveCheckoutRoot(root)
+	r.NoError(err)
+
+	_, err = fixture.service.Create(t.Context(), fixture.owner, checkout.CreateRequest{
+		Root: validatedRoot, Selection: checkout.Selection{AssetIDs: []string{item.ID}},
+	})
+	r.ErrorIs(err, errs.ErrNotFound)
+	var state checkout.State
+	r.NoError(fixture.db.ReadDB().QueryRowContext(t.Context(),
+		`SELECT state FROM checkouts`).Scan(&state))
+	r.Equal(checkout.StateError, state)
+}
+
 func TestCheckoutRetainsBindingsAfterSourceDeletion(t *testing.T) {
 	r := require.New(t)
 	fixture := newFixture(t)

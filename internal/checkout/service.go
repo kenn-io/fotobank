@@ -203,6 +203,10 @@ func (s *Materializer) materialize(
 	if err != nil {
 		return fmt.Errorf("materialize %s: resolve version: %w", relativePath, err)
 	}
+	if ref.Asset.Owner != checkout.Owner || ref.Asset.HiddenAt != nil {
+		return fmt.Errorf("materialize %s: %w: asset is no longer available",
+			relativePath, errs.ErrNotFound)
+	}
 	opened, err := s.resolver.Open(ctx, ref, 0, -1)
 	if err != nil {
 		return fmt.Errorf("materialize %s: open version: %w", relativePath, err)
