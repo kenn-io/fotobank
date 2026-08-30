@@ -605,21 +605,33 @@ admin_listen = "127.0.0.1:0"
 	defer cancel()
 
 	errCh := make(chan int, 1)
+	var stderr lockedBuffer
 	go func() {
-		var out, eout bytes.Buffer
-		errCh <- cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &out, &eout)
+		errCh <- cli.RunContext(
+			ctx, []string{"server", "--config", cfgPath}, io.Discard, &stderr)
 	}()
 
-	// Poll until the socket file appears (server has bound).
-	var bound bool
-	for range 100 {
+	// Wait for the socket while also surfacing a real startup failure
+	// immediately. The full suite starts many packages concurrently, so a
+	// fixed two-second polling loop is too tight on loaded CI hosts.
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(20 * time.Millisecond)
+	defer poll.Stop()
+	for {
 		if _, err := os.Stat(sockPath); err == nil {
-			bound = true
 			break
 		}
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case code := <-errCh:
+			r.FailNow("server exited before binding the Unix socket",
+				"exit code %d; stderr: %s", code, stderr.String())
+		case <-deadline.C:
+			r.FailNow("server never bound the Unix socket",
+				"path %s; stderr: %s", sockPath, stderr.String())
+		case <-poll.C:
+		}
 	}
-	r.True(bound, "server never bound the Unix socket at %s", sockPath)
 
 	// Issue a request over the socket and confirm /healthz responds.
 	tr := &http.Transport{
@@ -636,7 +648,7 @@ admin_listen = "127.0.0.1:0"
 	cancel()
 	select {
 	case code := <-errCh:
-		r.Equal(0, code)
+		r.Equal(0, code, "server stderr: %s", stderr.String())
 	case <-time.After(5 * time.Second):
 		r.Fail("server did not shut down within 5s")
 	}
