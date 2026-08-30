@@ -26,6 +26,31 @@ func TestAdapterLifecycle(t *testing.T) {
 	require.ErrorIs(err, errs.ErrContentUnavailable)
 }
 
+func TestAdapterManagedRootCreationPolicy(t *testing.T) {
+	t.Run("external root must exist", func(t *testing.T) {
+		r := require.New(t)
+		managedRoot := filepath.Join(t.TempDir(), "nas")
+		_, err := content.Open(t.Context(), content.Config{
+			Root: t.TempDir(), ManagedRoots: []content.ManagedRoot{{Path: managedRoot}},
+		})
+		r.ErrorIs(err, errs.ErrBadConfiguration)
+		r.NoDirExists(managedRoot)
+	})
+
+	t.Run("local root may be created", func(t *testing.T) {
+		r := require.New(t)
+		managedRoot := filepath.Join(t.TempDir(), "flash")
+		adapter, err := content.Open(t.Context(), content.Config{
+			Root: t.TempDir(), ManagedRoots: []content.ManagedRoot{{
+				Path: managedRoot, CreateIfMissing: true,
+			}},
+		})
+		r.NoError(err)
+		t.Cleanup(func() { r.NoError(adapter.Close()) })
+		r.DirExists(managedRoot)
+	})
+}
+
 func TestAdapterResolveImportRootReturnsSymlinkTarget(t *testing.T) {
 	r := require.New(t)
 	adapter, err := content.Open(t.Context(), content.Config{Root: t.TempDir()})
@@ -50,7 +75,7 @@ func TestAdapterResolveImportRootRejectsManagedStorageAlias(t *testing.T) {
 	r := require.New(t)
 	managedRoot := t.TempDir()
 	adapter, err := content.Open(t.Context(), content.Config{
-		Root: t.TempDir(), ManagedRoots: []string{managedRoot},
+		Root: t.TempDir(), ManagedRoots: []content.ManagedRoot{{Path: managedRoot}},
 	})
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(adapter.Close()) })
@@ -67,7 +92,7 @@ func TestAdapterResolveCheckoutRootRejectsManagedStorageAlias(t *testing.T) {
 	r := require.New(t)
 	managedRoot := t.TempDir()
 	adapter, err := content.Open(t.Context(), content.Config{
-		Root: t.TempDir(), ManagedRoots: []string{managedRoot},
+		Root: t.TempDir(), ManagedRoots: []content.ManagedRoot{{Path: managedRoot}},
 	})
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(adapter.Close()) })
@@ -84,7 +109,7 @@ func TestAdapterResolveCheckoutRootRejectsPathReplacementBeforeUse(t *testing.T)
 	r := require.New(t)
 	managedRoot := t.TempDir()
 	adapter, err := content.Open(t.Context(), content.Config{
-		Root: t.TempDir(), ManagedRoots: []string{managedRoot},
+		Root: t.TempDir(), ManagedRoots: []content.ManagedRoot{{Path: managedRoot}},
 	})
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(adapter.Close()) })
@@ -111,7 +136,7 @@ func TestCheckoutRootRevalidateRejectsMoveAfterTake(t *testing.T) {
 	r := require.New(t)
 	managedRoot := t.TempDir()
 	adapter, err := content.Open(t.Context(), content.Config{
-		Root: t.TempDir(), ManagedRoots: []string{managedRoot},
+		Root: t.TempDir(), ManagedRoots: []content.ManagedRoot{{Path: managedRoot}},
 	})
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(adapter.Close()) })
@@ -141,7 +166,7 @@ func TestCheckoutRootRevalidateRejectsMissingManagedRoot(t *testing.T) {
 	managedRoot := filepath.Join(t.TempDir(), "managed")
 	r.NoError(os.Mkdir(managedRoot, 0o700))
 	adapter, err := content.Open(t.Context(), content.Config{
-		Root: t.TempDir(), ManagedRoots: []string{managedRoot},
+		Root: t.TempDir(), ManagedRoots: []content.ManagedRoot{{Path: managedRoot}},
 	})
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(adapter.Close()) })

@@ -199,7 +199,11 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 		return runtime, nil
 	}
 	contentStore, err := content.Open(ctx, content.Config{
-		Root: cfg.Docbank.Root, ManagedRoots: []string{cfg.NAS.Root, cfg.Flash.Root},
+		Root: cfg.Docbank.Root,
+		ManagedRoots: []content.ManagedRoot{
+			{Path: cfg.NAS.Root},
+			{Path: cfg.Flash.Root, CreateIfMissing: true},
+		},
 	})
 	if err != nil {
 		runtime.close()

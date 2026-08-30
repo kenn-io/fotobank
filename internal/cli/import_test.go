@@ -311,6 +311,7 @@ hub = "local"
 user_id = "alice"
 storage_key = "550e8400-e29b-41d4-a716-446655440000"
 `), 0o600))
+	r.NoError(os.MkdirAll(filepath.Join(home, "fotobank"), 0o700))
 
 	var out, eout bytes.Buffer
 	code := cli.RunContext(context.Background(),

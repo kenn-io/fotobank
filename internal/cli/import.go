@@ -126,9 +126,9 @@ func runImport(ctx context.Context, opts importOpts) error {
 	assetRepo := media.NewAssetRepo(d.WriteDB(), d.ReadDB())
 	contentStore, err := content.Open(ctx, content.Config{
 		Root: cfg.Docbank.Root,
-		ManagedRoots: []string{
-			cfg.NAS.Root,
-			cfg.Flash.Root,
+		ManagedRoots: []content.ManagedRoot{
+			{Path: cfg.NAS.Root},
+			{Path: cfg.Flash.Root, CreateIfMissing: true},
 		},
 	})
 	if err != nil {

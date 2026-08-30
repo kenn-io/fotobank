@@ -17,7 +17,12 @@ import (
 
 type Config struct {
 	Root         string
-	ManagedRoots []string
+	ManagedRoots []ManagedRoot
+}
+
+type ManagedRoot struct {
+	Path            string
+	CreateIfMissing bool
 }
 
 // CheckoutRoot is an existing canonical working directory that the opened
@@ -304,18 +309,29 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 	}
 	managedRoots := make([]string, len(cfg.ManagedRoots))
 	for i, managedRoot := range cfg.ManagedRoots {
-		if !filepath.IsAbs(managedRoot) {
+		if !filepath.IsAbs(managedRoot.Path) {
 			_ = vault.Close()
 			return nil, fmt.Errorf("%w: managed root must be absolute", errs.ErrBadConfiguration)
 		}
-		if err := os.MkdirAll(managedRoot, 0o700); err != nil {
-			_ = vault.Close()
-			return nil, fmt.Errorf("create managed root: %w", err)
+		if managedRoot.CreateIfMissing {
+			if err := os.MkdirAll(managedRoot.Path, 0o700); err != nil {
+				_ = vault.Close()
+				return nil, fmt.Errorf("create local managed root: %w", err)
+			}
 		}
-		resolvedManagedRoot, evalErr := filepath.EvalSymlinks(managedRoot)
+		resolvedManagedRoot, evalErr := filepath.EvalSymlinks(managedRoot.Path)
 		if evalErr != nil {
 			_ = vault.Close()
-			return nil, fmt.Errorf("resolve managed root: %w", evalErr)
+			return nil, fmt.Errorf("%w: resolve managed root: %w", errs.ErrBadConfiguration, evalErr)
+		}
+		info, statErr := os.Stat(resolvedManagedRoot)
+		if statErr != nil {
+			_ = vault.Close()
+			return nil, fmt.Errorf("%w: inspect managed root: %w", errs.ErrBadConfiguration, statErr)
+		}
+		if !info.IsDir() {
+			_ = vault.Close()
+			return nil, fmt.Errorf("%w: managed root is not a directory", errs.ErrBadConfiguration)
 		}
 		resolvedManagedRoot, err := filepath.Abs(resolvedManagedRoot)
 		if err != nil {
