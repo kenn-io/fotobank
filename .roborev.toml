@@ -47,4 +47,21 @@ Do not require descriptor-relative traversal, no-follow opens, or defenses
 against adversarial source-tree replacement. Do flag direct symlink following,
 managed-storage overlap, or ordinary source changes that can bypass content
 identity validation under the stated trusted-local-source model.
+
+## Local checkout trust boundary
+
+The operator who invokes checkout creation is trusted. The checkout root and
+the parent directories of the checkout, Docbank, NAS, and flash roots must
+remain under that operator's control and keep their storage roles for the
+duration of creation. Fotobank retains an opened checkout-directory handle and
+revalidates its catalog path before durable ledger writes and activation. A
+detected move leaves an errored checkout rather than an active one.
+
+Fotobank does not claim to stop a hostile local actor who can rename an opened
+checkout directory into a managed root. Such an actor already needs write
+permission on that managed root's parent and can write there directly. Do not
+report this adversarial rename as a filesystem-isolation vulnerability. Do
+flag a path controlled through Fotobank's supported inputs that escapes the
+opened checkout root, replaces an existing working file, or lets a changed root
+be recorded as active.
 """
