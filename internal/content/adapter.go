@@ -41,10 +41,59 @@ func (r *CheckoutRoot) Path() string {
 	return r.path
 }
 
-// Overlaps reports whether another canonical path is equal to, contains, or is
-// contained by this checkout root.
+// Overlaps reports whether another path currently names, contains, or is
+// contained by this checkout root. It compares filesystem identities as well
+// as path strings so a live checkout cannot be reused through a later alias.
 func (r *CheckoutRoot) Overlaps(other string) bool {
-	return r != nil && pathsOverlap(r.path, other)
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.root == nil {
+		return false
+	}
+	if pathsOverlap(r.path, other) {
+		return true
+	}
+	resolved, err := filepath.EvalSymlinks(other)
+	if err != nil {
+		return false
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return false
+	}
+	resolved = filepath.Clean(resolved)
+	if pathsOverlap(r.path, resolved) {
+		return true
+	}
+	boundInfo, err := r.root.Stat(".")
+	if err != nil {
+		return false
+	}
+	otherInfo, err := os.Stat(resolved)
+	if err != nil {
+		return false
+	}
+	return pathTreeContainsFile(resolved, boundInfo) || pathTreeContainsFile(r.path, otherInfo)
+}
+
+func pathTreeContainsFile(current string, target os.FileInfo) bool {
+	for {
+		info, err := os.Stat(current)
+		if err != nil {
+			return false
+		}
+		if os.SameFile(info, target) {
+			return true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
 }
 
 // Take verifies that the catalog path still names the bound directory, then

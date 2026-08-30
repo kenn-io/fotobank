@@ -263,6 +263,40 @@ func TestServiceRejectsCheckoutRootsOverlappingLiveCheckout(t *testing.T) {
 	}
 }
 
+func TestServiceRejectsRenamedLiveCheckoutRootAlias(t *testing.T) {
+	r := require.New(t)
+	fixture := newFixture(t)
+	item := assetfixture.InsertContent(t, fixture.media, fixture.content, []byte("photo"), media.Media{
+		Owner: fixture.owner, OriginalFilename: "IMG_0042.JPG",
+	})
+	parent := t.TempDir()
+	liveRoot := filepath.Join(parent, "live")
+	r.NoError(os.Mkdir(liveRoot, 0o700))
+	validatedLiveRoot, err := fixture.content.ResolveCheckoutRoot(liveRoot)
+	r.NoError(err)
+	canonicalLiveRoot := validatedLiveRoot.Path()
+	r.NoError(validatedLiveRoot.Close())
+	now := time.Now().UTC()
+	r.NoError(fixture.checkouts.Insert(t.Context(), checkout.Checkout{
+		ID: uuid.NewString(), Owner: fixture.owner, Root: canonicalLiveRoot, Layout: "capture_date",
+		Selection: checkout.Selection{All: true}, State: checkout.StateActive,
+		CreatedAt: now, UpdatedAt: now,
+	}))
+	movedRoot := filepath.Join(parent, "moved")
+	r.NoError(os.Rename(liveRoot, movedRoot))
+	if err := os.Symlink(movedRoot, liveRoot); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	requestedRoot, err := fixture.content.ResolveCheckoutRoot(movedRoot)
+	r.NoError(err)
+
+	_, err = fixture.service.Create(t.Context(), fixture.owner, checkout.CreateRequest{
+		Root: requestedRoot, Selection: checkout.Selection{AssetIDs: []string{item.ID}},
+	})
+	r.ErrorIs(err, errs.ErrAlreadyExists)
+	r.Contains(err.Error(), "overlaps live checkout")
+}
+
 type fixture struct {
 	db        *db.DB
 	owner     owners.Principal
