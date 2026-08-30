@@ -60,7 +60,6 @@ func Sweep(dir string, policy Policy, now time.Time, logger *slog.Logger) (Sweep
 func sweepRoot(
 	root *os.Root,
 	relativeDir string,
-	displayDir string,
 	policy Policy,
 	now time.Time,
 	logger *slog.Logger,
@@ -68,14 +67,14 @@ func sweepRoot(
 	if logger == nil {
 		logger = slog.Default()
 	}
-	files, err := listRoot(root, relativeDir, displayDir)
+	files, err := ListRoot(root, relativeDir)
 	if err != nil {
 		return SweepResult{}, fmt.Errorf("list snapshots: %w", err)
 	}
 	res := sweepSnapshots(files, policy, now, logger, func(snapshot SnapshotInfo) error {
 		return root.Remove(filepath.Join(relativeDir, filepath.Base(snapshot.Path)))
 	})
-	if err := cleanStalePartialsRoot(root, relativeDir, displayDir, now, logger); err != nil {
+	if err := cleanStalePartialsRoot(root, relativeDir, now, logger); err != nil {
 		return res, err
 	}
 	return res, nil
@@ -148,7 +147,6 @@ func sweepSnapshots(
 func cleanStalePartialsRoot(
 	root *os.Root,
 	relativeDir string,
-	displayDir string,
 	now time.Time,
 	logger *slog.Logger,
 ) error {
@@ -174,7 +172,7 @@ func cleanStalePartialsRoot(
 			continue
 		}
 		relativePath := filepath.Join(relativeDir, entry.Name())
-		displayPath := filepath.Join(displayDir, entry.Name())
+		displayPath := filepath.Join(root.Name(), relativeDir, entry.Name())
 		if err := root.Remove(relativePath); err != nil {
 			logger.Warn("partial cleanup failed", "path", displayPath, "err", err)
 			continue

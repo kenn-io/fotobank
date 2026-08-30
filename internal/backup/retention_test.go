@@ -157,7 +157,6 @@ func TestSweepRootStaysBoundAfterRootRename(t *testing.T) {
 	res, err := sweepRoot(
 		root,
 		"snapshots",
-		replacementDir,
 		Policy{Keep15Min: 4, KeepHourly: 24, KeepDaily: 7},
 		now,
 		quietLogger(),

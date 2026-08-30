@@ -53,7 +53,10 @@ func List(dir string) ([]SnapshotInfo, error) {
 	return listEntries(entries, absDir), nil
 }
 
-func listRoot(root *os.Root, relativeDir, displayDir string) ([]SnapshotInfo, error) {
+// ListRoot enumerates snapshots beneath an opened filesystem root. Returned
+// paths use the name through which root was opened, while enumeration remains
+// bound to the opened directory if that pathname changes afterward.
+func ListRoot(root *os.Root, relativeDir string) ([]SnapshotInfo, error) {
 	dir, err := root.Open(relativeDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -66,7 +69,7 @@ func listRoot(root *os.Root, relativeDir, displayDir string) ([]SnapshotInfo, er
 	if err != nil {
 		return nil, fmt.Errorf("readdir rooted snapshots: %w", err)
 	}
-	return listEntries(entries, displayDir), nil
+	return listEntries(entries, filepath.Join(root.Name(), relativeDir)), nil
 }
 
 func listEntries(entries []fs.DirEntry, displayDir string) []SnapshotInfo {

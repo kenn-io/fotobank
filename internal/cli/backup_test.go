@@ -96,6 +96,21 @@ func TestBackupSnapshotDoesNotCreateMissingDefaultNASRoot(t *testing.T) {
 	r.NoDirExists(nasRoot)
 }
 
+func TestBackupListDoesNotTreatMissingDefaultNASRootAsEmpty(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBackupConfig(t, tmp)
+	nasRoot := filepath.Join(tmp, "nas")
+	r.NoError(os.Remove(nasRoot))
+
+	var stdout, stderr bytes.Buffer
+	code := cli.RunContext(t.Context(),
+		[]string{"backup", "list", "--config", cfgPath}, &stdout, &stderr)
+	r.NotEqual(0, code)
+	r.Contains(stderr.String(), "NAS root is unavailable")
+	r.NoDirExists(nasRoot)
+}
+
 func TestBackupSnapshotCLIJSON(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()

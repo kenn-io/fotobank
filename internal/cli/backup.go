@@ -132,7 +132,17 @@ func newBackupListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			snaps, err := backup.List(backupDirFor(cfg))
+			var snaps []backup.SnapshotInfo
+			if cfg.Backup.Dir == "" {
+				root, rootErr := openBackupNASRoot(cfg)
+				if rootErr != nil {
+					return fmt.Errorf("open backup source: %w", rootErr)
+				}
+				defer root.Close()
+				snaps, err = backup.ListRoot(root, filepath.Join(".fotobank", "snapshots"))
+			} else {
+				snaps, err = backup.List(cfg.Backup.Dir)
+			}
 			if err != nil {
 				return err
 			}

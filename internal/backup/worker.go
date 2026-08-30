@@ -152,7 +152,6 @@ func (w *Worker) tick(ctx context.Context) {
 		res, sweepErr = sweepRoot(
 			root,
 			filepath.Dir(relativeDst),
-			w.cfg.Dir,
 			w.cfg.Policy,
 			time.Now(),
 			w.cfg.Logger,
