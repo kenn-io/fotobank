@@ -102,6 +102,25 @@ func TestScannerRecordsMissingWithoutChangingAuthorityBinding(t *testing.T) {
 	r.Equal(digestOf(fixture.base), entry.BaseSHA256)
 }
 
+func TestScannerMarksTrackedDirectoryAsErrorWithoutScanningChildren(t *testing.T) {
+	r := require.New(t)
+	fixture := newScannerFixture(t)
+	r.NoError(os.Remove(fixture.trackedPath()))
+	r.NoError(os.Mkdir(fixture.trackedPath(), 0o700))
+	r.NoError(os.WriteFile(filepath.Join(fixture.trackedPath(), "child.xmp"), []byte("child"), 0o600))
+
+	result, err := fixture.scanner().Scan(t.Context())
+	r.NoError(err)
+	r.Zero(result.Missing)
+	r.Zero(result.Untracked)
+	entry := fixture.entry(t)
+	r.Equal(EntryError, entry.State)
+	r.Contains(entry.LastError, "not a regular file")
+	candidates, err := fixture.repo.ListScanCandidates(t.Context(), fixture.checkout.ID)
+	r.NoError(err)
+	r.Empty(candidates)
+}
+
 func TestScannerQueuesSettledUntrackedFileAndIgnoresTransientPaths(t *testing.T) {
 	r := require.New(t)
 	fixture := newScannerFixture(t)

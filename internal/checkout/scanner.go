@@ -177,11 +177,22 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 			}
 			return nil
 		}
-		if dirEntry.IsDir() {
-			return nil
-		}
 		relativePath = path.Clean(strings.TrimPrefix(relativePath, "./"))
 		entry, tracked := entriesByPath[relativePath]
+		if dirEntry.IsDir() {
+			if !tracked {
+				return nil
+			}
+			seen[relativePath] = struct{}{}
+			result.Files++
+			if entry.State != EntryConflict {
+				if err := s.markTrackedError(ctx, validatedRoot, checkout.ID, entry.FileID,
+					errors.New("checkout path is not a regular file")); err != nil {
+					return err
+				}
+			}
+			return fs.SkipDir
+		}
 		if !tracked && s.ignored(relativePath) {
 			return nil
 		}
