@@ -113,7 +113,8 @@ func (r *Repo) ObserveScanCandidate(
 			return false, fmt.Errorf("observe checkout scan candidate: commit refresh: %w", err)
 		}
 		return !now.Before(existing.FirstObserved.Add(settleInterval)), nil
-	case sameScanObservation(existing, candidate) && existing.State == ScanCandidatePending:
+	case existing.ObservedIdentity != "" && sameScanObservation(existing, candidate) &&
+		existing.State == ScanCandidatePending:
 		if err := tx.Commit(); err != nil {
 			return false, fmt.Errorf("observe checkout scan candidate: commit pending: %w", err)
 		}

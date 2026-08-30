@@ -147,6 +147,35 @@ func TestScannerQueuesSettledUntrackedFileAndIgnoresTransientPaths(t *testing.T)
 	r.Equal(digestOf(untracked), candidates[0].ObservedSHA256)
 }
 
+func TestPendingUntrackedCandidateWithoutIdentityReentersSettling(t *testing.T) {
+	r := require.New(t)
+	fixture := newScannerFixture(t)
+	candidate := ScanCandidate{
+		CheckoutID: fixture.checkout.ID, RelativePath: "new-sidecar.xmp",
+		ObservedSize: 4, ObservedMTime: fixture.now, ObservedIdentity: "",
+	}
+	settled, err := fixture.repo.ObserveScanCandidate(
+		t.Context(), candidate, 2*time.Second, fixture.now)
+	r.NoError(err)
+	r.False(settled)
+	settled, err = fixture.repo.ObserveScanCandidate(
+		t.Context(), candidate, 2*time.Second, fixture.now.Add(3*time.Second))
+	r.NoError(err)
+	r.True(settled)
+	r.NoError(fixture.repo.FinalizeUntrackedScanCandidate(
+		t.Context(), candidate, digestOf([]byte("body")), fixture.now.Add(3*time.Second)))
+
+	settled, err = fixture.repo.ObserveScanCandidate(
+		t.Context(), candidate, 2*time.Second, fixture.now.Add(4*time.Second))
+	r.NoError(err)
+	r.False(settled)
+	candidates, err := fixture.repo.ListScanCandidates(t.Context(), fixture.checkout.ID)
+	r.NoError(err)
+	r.Len(candidates, 1)
+	r.Equal(ScanCandidateSettling, candidates[0].State)
+	r.Empty(candidates[0].ObservedSHA256)
+}
+
 func TestHashSettledFileHonorsCanceledContext(t *testing.T) {
 	r := require.New(t)
 	fixture := newScannerFixture(t)
