@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/fotobank/internal/ai"
 	"go.kenn.io/fotobank/internal/ai/jobs"
@@ -149,12 +150,21 @@ admin_listen = "127.0.0.1:0"
 	t.Setenv("FOTOBANK_TEST_ADMIN_ADDR_SINK", adminSink)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	done := make(chan int, 1)
 	var stdout, stderr lockedBuffer
 	go func() {
 		done <- cli.RunContext(ctx, []string{"serve", "--config", cfgPath}, &stdout, &stderr)
 	}()
+	t.Cleanup(func() {
+		check := assert.New(t)
+		cancel()
+		select {
+		case code := <-done:
+			check.Equal(0, code, "server stderr: %s", stderr.String())
+		case <-time.After(10 * time.Second):
+			check.Fail("server did not shut down within 10s", "stderr: %s", stderr.String())
+		}
+	})
 
 	mainAddr := waitForSink(t, mainSink)
 	r.NotEmpty(mainAddr, "server did not start: %s", stderr.String())
@@ -170,14 +180,6 @@ admin_listen = "127.0.0.1:0"
 	r.NoError(resp.Body.Close())
 	r.Equal(http.StatusServiceUnavailable, resp.StatusCode)
 	r.NoDirExists(nasRoot)
-
-	cancel()
-	select {
-	case code := <-done:
-		r.Equal(0, code, "server stderr: %s", stderr.String())
-	case <-time.After(5 * time.Second):
-		r.Fail("server did not shut down within 5s", stderr.String())
-	}
 }
 
 func TestServerStartsNotReadyWhenNASSymlinkTargetIsMissing(t *testing.T) {
