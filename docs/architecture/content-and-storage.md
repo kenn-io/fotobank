@@ -226,7 +226,9 @@ reading untracked files are reported and retained for retry without preventing
 missing-file reconciliation elsewhere. A traversal failure is contained to its
 affected subtree: tracked files there become errors and pending untracked
 candidates remain available for retry, while accessible parts of the checkout
-still complete reconciliation.
+still complete reconciliation. Untracked paths that cannot use the catalog's
+portable slash-separated form are reported without entering the durable queue
+or stopping reconciliation.
 
 Stable untracked files remain in `checkout_scan_candidates` with an empty file
 ID and `pending` state for the later new-file import lifecycle. The scanner

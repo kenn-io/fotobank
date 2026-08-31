@@ -17,6 +17,7 @@ import (
 
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil"
 )
@@ -173,6 +174,24 @@ func TestScannerContinuesMissingReconciliationAfterUnreadableUntrackedFile(t *te
 	r.ErrorIs(err, fs.ErrPermission)
 	r.Equal(1, result.Missing)
 	r.Equal(EntryMissing, fixture.entry(t).State)
+}
+
+func TestScannerContinuesMissingReconciliationAfterInvalidUntrackedPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows treats a backslash as a path separator")
+	}
+	r := require.New(t)
+	fixture := newScannerFixture(t)
+	r.NoError(os.Remove(fixture.trackedPath()))
+	r.NoError(os.WriteFile(filepath.Join(fixture.root, `invalid\name.xmp`), []byte("metadata"), 0o600))
+
+	result, err := fixture.scanner().Scan(t.Context())
+	r.ErrorIs(err, errs.ErrInvalidArgument)
+	r.Equal(1, result.Missing)
+	r.Equal(EntryMissing, fixture.entry(t).State)
+	candidates, err := fixture.repo.ListScanCandidates(t.Context(), fixture.checkout.ID)
+	r.NoError(err)
+	r.Empty(candidates)
 }
 
 func TestScannerQueuesSettledUntrackedFileAndIgnoresTransientPaths(t *testing.T) {

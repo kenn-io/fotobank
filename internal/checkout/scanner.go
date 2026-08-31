@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/errs"
 )
 
 const stagingDirectory = ".fotobank-staging"
@@ -226,6 +227,12 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 		seen[relativePath] = struct{}{}
 		result.Files++
 		if tracked && entry.State == EntryConflict {
+			return nil
+		}
+		if !tracked && strings.ContainsRune(relativePath, '\\') {
+			scanErrors = append(scanErrors, fmt.Errorf(
+				"%w: untracked checkout path %q contains a backslash",
+				errs.ErrInvalidArgument, relativePath))
 			return nil
 		}
 		info, err := root.Lstat(relativePath)
