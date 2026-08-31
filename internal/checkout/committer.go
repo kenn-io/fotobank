@@ -2,8 +2,11 @@ package checkout
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"time"
@@ -122,8 +125,8 @@ func (c *Committer) commitEntry(
 		},
 		Reader: file,
 	})
-	stopCancel()
 	if replaceErr != nil {
+		stopCancel()
 		closeErr := file.Close()
 		if errors.Is(replaceErr, errs.ErrContentConflict) {
 			marked, markErr := c.repo.MarkCommitConflict(ctx, entry, replaceErr, c.now())
@@ -131,7 +134,8 @@ func (c *Committer) commitEntry(
 		}
 		return false, false, errors.Join(replaceErr, closeErr)
 	}
-	clean, observationErr := commitSourceStillCurrent(root, file, target.Entry)
+	clean, observationErr := commitSourceStillCurrent(ctx, root, file, target.Entry)
+	stopCancel()
 	closeErr := file.Close()
 	rootErr := validatedRoot.Revalidate()
 	if observationErr != nil || closeErr != nil || rootErr != nil {
@@ -142,6 +146,10 @@ func (c *Committer) commitEntry(
 		SHA256: receipt.Identity.SHA256, Size: receipt.Identity.Size,
 	}, clean, c.now())
 	if applyErr != nil {
+		if errors.Is(applyErr, errs.ErrContentConflict) {
+			marked, markErr := c.repo.MarkCommitConflict(ctx, target.Entry, applyErr, c.now())
+			return false, marked, errors.Join(observationErr, closeErr, rootErr, markErr)
+		}
 		return false, false, errors.Join(observationErr, closeErr, rootErr, applyErr)
 	}
 	return true, false, errors.Join(observationErr, closeErr, rootErr)
@@ -178,8 +186,13 @@ func openCommitSource(root *os.Root, entry Entry) (*os.File, error) {
 	return file, nil
 }
 
-func commitSourceStillCurrent(root *os.Root, file *os.File, entry Entry) (bool, error) {
-	openedInfo, err := file.Stat()
+func commitSourceStillCurrent(
+	ctx context.Context,
+	root *os.Root,
+	file *os.File,
+	entry Entry,
+) (bool, error) {
+	before, err := file.Stat()
 	if err != nil {
 		return false, fmt.Errorf("inspect committed checkout file: %w", err)
 	}
@@ -190,8 +203,8 @@ func commitSourceStillCurrent(root *os.Root, file *os.File, entry Entry) (bool, 
 		}
 		return false, fmt.Errorf("inspect committed checkout path: %w", err)
 	}
-	if !os.SameFile(openedInfo, pathInfo) || openedInfo.Size() != entry.ObservedSize ||
-		!openedInfo.ModTime().Equal(entry.ObservedMTime) {
+	if !os.SameFile(before, pathInfo) || before.Size() != entry.ObservedSize ||
+		!before.ModTime().Equal(entry.ObservedMTime) {
 		return false, nil
 	}
 	identity, err := filesystemIdentity(file)
@@ -201,5 +214,30 @@ func commitSourceStillCurrent(root *os.Root, file *os.File, entry Entry) (bool, 
 	if entry.ObservedIdentity != "" && identity != entry.ObservedIdentity {
 		return false, nil
 	}
-	return true, nil
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return false, fmt.Errorf("rewind committed checkout file: %w", err)
+	}
+	digest := sha256.New()
+	if _, err := io.Copy(digest, contextReader{ctx: ctx, reader: file}); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
+		return false, fmt.Errorf("hash committed checkout file: %w", err)
+	}
+	after, err := file.Stat()
+	if err != nil {
+		return false, fmt.Errorf("inspect rehashed checkout file: %w", err)
+	}
+	finalPathInfo, err := root.Lstat(entry.RelativePath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect rehashed checkout path: %w", err)
+	}
+	if !os.SameFile(before, after) || !os.SameFile(after, finalPathInfo) ||
+		after.Size() != entry.ObservedSize || !after.ModTime().Equal(entry.ObservedMTime) {
+		return false, nil
+	}
+	return hex.EncodeToString(digest.Sum(nil)) == entry.ObservedSHA256, nil
 }

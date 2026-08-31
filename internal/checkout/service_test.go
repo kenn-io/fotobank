@@ -224,6 +224,67 @@ func TestCommitterAdoptsExpectedDocbankHeadAfterInterruptedReceipt(t *testing.T)
 	r.Equal(receipt.Version.ID, entries[0].BaseVersionID)
 }
 
+func TestCommitterRejectsDuplicateOwnerContentBeforeDocbankWrite(t *testing.T) {
+	r := require.New(t)
+	fixture := newFixture(t)
+	original := []byte("original checkout bytes")
+	replacement := []byte("bytes already owned by another file")
+	_, checkoutID, entry := createPendingEdit(t, fixture, original, replacement)
+	target, err := fixture.checkouts.GetCommitTarget(t.Context(), checkoutID, entry.FileID)
+	r.NoError(err)
+	assetfixture.InsertContent(t, fixture.media, fixture.content, replacement, media.Media{
+		Owner: fixture.owner, OriginalFilename: "duplicate.jpg",
+	})
+
+	result, err := fixture.committer.Commit(t.Context(), fixture.owner, checkoutID)
+	r.NoError(err)
+	r.Equal(checkout.CommitResult{Pending: 1, Conflicts: 1}, result)
+	stored, err := fixture.content.Stat(t.Context(), target.VirtualPath)
+	r.NoError(err)
+	r.Equal(entry.BaseVersionID, stored.CurrentVersionID)
+}
+
+func TestCommitterRecordsConflictWhenIdentityBecomesDuplicateAfterDocbankWrite(t *testing.T) {
+	r := require.New(t)
+	fixture := newFixture(t)
+	original := []byte("original checkout bytes")
+	replacement := []byte("edited checkout bytes")
+	item, checkoutID, entry := createPendingEdit(t, fixture, original, replacement)
+	target, err := fixture.checkouts.GetCommitTarget(t.Context(), checkoutID, entry.FileID)
+	r.NoError(err)
+	other := assetfixture.InsertContent(
+		t, fixture.media, fixture.content, []byte("other file bytes"), media.Media{
+			Owner: fixture.owner, OriginalFilename: "other.jpg",
+		})
+	_, err = fixture.db.WriteDB().ExecContext(t.Context(), `CREATE TABLE checkout_commit_collision (
+		source_file_id TEXT NOT NULL, collision_file_id TEXT NOT NULL
+	)`)
+	r.NoError(err)
+	_, err = fixture.db.WriteDB().ExecContext(t.Context(),
+		`INSERT INTO checkout_commit_collision VALUES (?, ?)`, item.PrimaryFileID, other.PrimaryFileID)
+	r.NoError(err)
+	_, err = fixture.db.WriteDB().ExecContext(t.Context(), `CREATE TRIGGER collide_checkout_commit
+		BEFORE UPDATE OF sha256 ON media_files
+		WHEN OLD.id = (SELECT source_file_id FROM checkout_commit_collision)
+		BEGIN
+			UPDATE media_files SET sha256 = NEW.sha256
+			WHERE id = (SELECT collision_file_id FROM checkout_commit_collision);
+		END`)
+	r.NoError(err)
+
+	result, err := fixture.committer.Commit(t.Context(), fixture.owner, checkoutID)
+	r.NoError(err)
+	r.Equal(checkout.CommitResult{Pending: 1, Conflicts: 1}, result)
+	stored, err := fixture.content.Stat(t.Context(), target.VirtualPath)
+	r.NoError(err)
+	r.NotEqual(entry.BaseVersionID, stored.CurrentVersionID)
+	r.Equal(entry.ObservedSHA256, stored.SHA256)
+	entries, err := fixture.checkouts.ListEntries(t.Context(), checkoutID)
+	r.NoError(err)
+	r.Len(entries, 1)
+	r.Equal(checkout.EntryConflict, entries[0].State)
+}
+
 func TestServiceKeepsTemporaryFilesSeparateFromOriginalNames(t *testing.T) {
 	r := require.New(t)
 	fixture := newFixture(t)

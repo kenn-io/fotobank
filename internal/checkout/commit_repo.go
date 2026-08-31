@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mattn/go-sqlite3"
 
 	"go.kenn.io/fotobank/internal/ai"
 	"go.kenn.io/fotobank/internal/ai/embedding"
@@ -55,7 +56,14 @@ func (r *Repo) GetCommitTarget(ctx context.Context, checkoutID, fileID string) (
 		JOIN assets a ON a.id = f.asset_id AND a.state = 'ready' AND a.hidden_at IS NULL
 		WHERE e.checkout_id = ? AND e.file_id = ?
 		  AND f.current_version_id = e.base_version_id
-		  AND f.sha256 = e.base_sha256 AND f.size = e.base_size`, checkoutID, fileID)
+		  AND f.sha256 = e.base_sha256 AND f.size = e.base_size
+		  AND NOT EXISTS (
+			SELECT 1 FROM media_files duplicate
+			WHERE duplicate.owner_hub = c.owner_hub
+			  AND duplicate.owner_user_id = c.owner_user_id
+			  AND duplicate.sha256 = e.observed_sha256
+			  AND duplicate.id <> f.id
+		  )`, checkoutID, fileID)
 	var target CommitTarget
 	var state string
 	var lastError sql.NullString
@@ -128,6 +136,11 @@ func (r *Repo) ApplyCommit(
 		target.Entry.FileID, target.NodeID, target.VirtualPath,
 		target.Entry.BaseVersionID, target.Entry.BaseSHA256, target.Entry.BaseSize)
 	if err != nil {
+		var sqliteErr sqlite3.Error
+		if errors.As(err, &sqliteErr) && sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique {
+			return fmt.Errorf("apply checkout commit: %w: content identity is already recorded",
+				errs.ErrContentConflict)
+		}
 		return fmt.Errorf("apply checkout commit: update source file: %w", err)
 	}
 	if changed, err := res.RowsAffected(); err != nil {
