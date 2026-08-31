@@ -264,6 +264,23 @@ type CreateReceipt struct {
 	Created  bool
 }
 
+type ReplaceRequest struct {
+	VirtualPath   string
+	NodeID        int64
+	BaseVersionID string
+	Base          Identity
+	MediaType     string
+	Expected      Identity
+	Reader        io.Reader
+}
+
+type ReplaceReceipt struct {
+	Node     Node
+	Version  Version
+	Identity Identity
+	Adopted  bool
+}
+
 type VerifiedReadCloser interface {
 	io.ReadCloser
 	Verify() error
@@ -659,6 +676,62 @@ func (a *Adapter) Create(ctx context.Context, request CreateRequest) (CreateRece
 		Version:  projectVersion(receipt.Version),
 		Identity: Identity{SHA256: receipt.Computed.SHA256, Size: receipt.Computed.Size},
 		Created:  receipt.Created,
+	}, nil
+}
+
+// Replace appends one immutable version only while the requested base remains
+// current. An exact current head matching Expected is adopted so a caller can
+// recover after Docbank committed but its receipt was not recorded locally.
+func (a *Adapter) Replace(ctx context.Context, request ReplaceRequest) (ReplaceReceipt, error) {
+	if request.NodeID <= 0 || request.BaseVersionID == "" || request.Reader == nil {
+		return ReplaceReceipt{}, fmt.Errorf("replace content: %w: incomplete request", errs.ErrInvalidArgument)
+	}
+	a.mutation.Lock()
+	defer a.mutation.Unlock()
+	node, err := a.vault.Stat(ctx, request.VirtualPath)
+	if err != nil {
+		return ReplaceReceipt{}, translateError(err)
+	}
+	if node.ID != request.NodeID || node.Kind != "file" {
+		return ReplaceReceipt{}, fmt.Errorf("replace content: %w: virtual path no longer names the recorded file",
+			errs.ErrContentConflict)
+	}
+	if node.CurrentVersionID != request.BaseVersionID {
+		if node.BlobHash == request.Expected.SHA256 && node.Size == request.Expected.Size &&
+			node.MediaType == request.MediaType {
+			return ReplaceReceipt{
+				Node: projectNode(node, request.VirtualPath),
+				Version: Version{
+					ID: node.CurrentVersionID, NodeID: node.ID, SHA256: node.BlobHash,
+					Size: node.Size, MediaType: node.MediaType,
+				},
+				Identity: request.Expected,
+				Adopted:  true,
+			}, nil
+		}
+		return ReplaceReceipt{}, fmt.Errorf("replace content: %w: base version is no longer current",
+			errs.ErrContentConflict)
+	}
+	if node.BlobHash != request.Base.SHA256 || node.Size != request.Base.Size ||
+		node.MediaType != request.MediaType {
+		return ReplaceReceipt{}, fmt.Errorf("replace content: %w: base identity differs from Docbank",
+			errs.ErrContentConflict)
+	}
+	receipt, err := a.vault.Put(ctx, request.VirtualPath, request.Reader, docbank.PutOptions{
+		MediaType: request.MediaType,
+		Expected: &docbank.ContentIdentity{
+			SHA256: request.Expected.SHA256,
+			Size:   request.Expected.Size,
+		},
+		IfRevision: node.Revision,
+	})
+	if err != nil {
+		return ReplaceReceipt{}, translateError(err)
+	}
+	return ReplaceReceipt{
+		Node:     projectNode(receipt.Node, request.VirtualPath),
+		Version:  projectVersion(receipt.Version),
+		Identity: Identity{SHA256: receipt.Computed.SHA256, Size: receipt.Computed.Size},
 	}, nil
 }
 

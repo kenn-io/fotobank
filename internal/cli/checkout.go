@@ -25,6 +25,7 @@ func newCheckoutCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newCheckoutEstimateCmd())
 	cmd.AddCommand(newCheckoutCreateCmd())
+	cmd.AddCommand(newCheckoutCommitCmd())
 	return cmd
 }
 
@@ -114,6 +115,20 @@ func newCheckoutCreateCmd() *cobra.Command {
 	return cmd
 }
 
+func newCheckoutCommitCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "commit <checkout-id>",
+		Short: "Commit settled tracked edits to Docbank",
+		Args:  usageArgs(cobra.ExactArgs(1)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfgPath, _ := cmd.Flags().GetString("config")
+			return runCheckoutCommit(cmd.Context(), cfgPath, args[0], cmd.OutOrStdout())
+		},
+	}
+	cmd.Flags().String("config", "", "path to config file")
+	return cmd
+}
+
 func runCheckoutEstimate(
 	ctx context.Context,
 	configPath string,
@@ -162,6 +177,23 @@ func runCheckoutCreate(
 	return nil
 }
 
+func runCheckoutCommit(
+	ctx context.Context,
+	configPath string,
+	checkoutID string,
+	stdout io.Writer,
+) error {
+	runtime, err := openCheckoutRuntime(ctx, configPath, true)
+	if err != nil {
+		return err
+	}
+	defer runtime.close()
+	result, commitErr := runtime.service.Commit(ctx, runtime.owner, checkoutID)
+	fmt.Fprintf(stdout, "pending=%d\tcommitted=%d\tconflicts=%d\n",
+		result.Pending, result.Committed, result.Conflicts)
+	return commitErr
+}
+
 type checkoutRuntime struct {
 	db      *databaseHandle
 	content *content.Adapter
@@ -197,7 +229,7 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 	}
 	checkoutRepo := checkout.NewRepo(database.WriteDB(), database.ReadDB())
 	if !withContent {
-		runtime.service = service.NewCheckoutService(checkoutRepo, nil, "")
+		runtime.service = service.NewCheckoutService(checkoutRepo, nil, nil, "")
 		return runtime, nil
 	}
 	contentStore, err := content.Open(ctx, content.Config{
@@ -213,7 +245,8 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 	}
 	runtime.content = contentStore
 	resolver := contentresolver.New(media.NewRepo(database.WriteDB(), database.ReadDB()), contentStore)
-	runtime.service = service.NewCheckoutService(checkoutRepo, resolver, dbPath+".checkout.lock")
+	runtime.service = service.NewCheckoutService(
+		checkoutRepo, resolver, contentStore, dbPath+".checkout.lock")
 	return runtime, nil
 }
 

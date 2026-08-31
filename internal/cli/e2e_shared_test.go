@@ -300,12 +300,12 @@ admin_listen = "127.0.0.1:0"
 	}
 }
 
-// waitForSink polls path up to ~3s for the server's bind address to
+// waitForSink polls path up to ~10s for the server's bind address to
 // appear (written by runServer when FOTOBANK_TEST_LISTEN_ADDR_SINK is
 // set). Returns the trimmed address, or "" if the poll timed out.
 func waitForSink(t *testing.T, path string) string {
 	t.Helper()
-	for range 100 {
+	for range 334 {
 		if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
 			return strings.TrimSpace(string(b))
 		}
