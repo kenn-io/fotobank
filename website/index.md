@@ -3,9 +3,6 @@
 Fotobank keeps exact originals and immutable versions in Docbank, then adds the
 relationships, curation, and working-file experience a photographer needs.
 
-**Development status:** Fotobank is pre-alpha. Core archive workflows are
-taking shape, but this is not yet a supported photo product.
-
 ## Your library is more than a folder
 
 A photo archive must preserve the bytes, explain which files belong together,
@@ -60,3 +57,9 @@ belong in Docbank; photographer decisions about an asset belong in Fotobank.
 
 Continue with the [photo authority guide](/guide/) or the [technical
 documentation](/docs/).
+
+## Project status
+
+Fotobank is pre-alpha software. Core archive workflows are taking shape, but
+this is not yet a supported photo product. The source is licensed under
+Apache-2.0.
