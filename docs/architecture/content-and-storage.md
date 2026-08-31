@@ -123,9 +123,12 @@ old source projection.
 ## Root isolation
 
 The Docbank root must not overlap NAS or flash-managed trees in either
-direction. Configuration canonicalizes existing symlinks, rejects unresolved
-symlink ancestors and symlink-plus-`..` aliases, and compares case-insensitively
-for portable safety.
+direction. Configuration canonicalizes existing symlinks, rejects
+symlink-plus-`..` aliases, and compares case-insensitively for portable safety.
+Normal commands reject unresolved symlink ancestors. Server validation may
+resolve a NAS symlink through its missing external target so health endpoints
+remain reachable, while still checking the intended target for overlap before
+startup.
 
 The import command applies the same canonical, symlink-aware comparison to its
 source root before discovery. The source cannot overlap the vault, NAS, or

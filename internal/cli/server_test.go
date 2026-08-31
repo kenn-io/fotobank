@@ -180,6 +180,64 @@ admin_listen = "127.0.0.1:0"
 	}
 }
 
+func TestServerStartsNotReadyWhenNASSymlinkTargetIsMissing(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	nasTarget := filepath.Join(tmp, "missing-nas")
+	nasRoot := filepath.Join(tmp, "nas-link")
+	if err := os.Symlink(nasTarget, nasRoot); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	cfgPath := filepath.Join(tmp, "config.toml")
+	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
+[nas]
+root = %q
+[flash]
+root = %q
+[http]
+listen_address = "127.0.0.1:0"
+[observability]
+admin_listen = "127.0.0.1:0"
+`, nasRoot, filepath.Join(tmp, "flash")), 0o600))
+
+	mainSink := filepath.Join(tmp, "main-addr")
+	adminSink := filepath.Join(tmp, "admin-addr")
+	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "state", "fotobank.sqlite"))
+	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", mainSink)
+	t.Setenv("FOTOBANK_TEST_ADMIN_ADDR_SINK", adminSink)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan int, 1)
+	var stdout, stderr lockedBuffer
+	go func() {
+		done <- cli.RunContext(ctx, []string{"serve", "--config", cfgPath}, &stdout, &stderr)
+	}()
+
+	mainAddr := waitForSink(t, mainSink)
+	r.NotEmpty(mainAddr, "server did not start: %s", stderr.String())
+	adminAddr := waitForSink(t, adminSink)
+	r.NotEmpty(adminAddr, "admin listener did not start: %s", stderr.String())
+
+	resp, err := http.Get("http://" + mainAddr + "/api/v1/healthz")
+	r.NoError(err)
+	r.NoError(resp.Body.Close())
+	r.Equal(http.StatusOK, resp.StatusCode)
+	resp, err = http.Get("http://" + adminAddr + "/readyz")
+	r.NoError(err)
+	r.NoError(resp.Body.Close())
+	r.Equal(http.StatusServiceUnavailable, resp.StatusCode)
+	r.NoDirExists(nasTarget)
+
+	cancel()
+	select {
+	case code := <-done:
+		r.Equal(0, code, "server stderr: %s", stderr.String())
+	case <-time.After(5 * time.Second):
+		r.Fail("server did not shut down within 5s", stderr.String())
+	}
+}
+
 func TestRunServerOwnsDocbankVaultForLifetime(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()

@@ -138,8 +138,12 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	if path == "" {
 		path = config.DefaultConfigPath()
 	}
-	cfg, err := config.Load(path)
+	cfg, err := config.LoadUnchecked(path)
 	if err != nil {
+		return err
+	}
+	validationOptions := config.ValidationOptions{AllowUnavailableNAS: true}
+	if err := cfg.ValidateWithOptions(validationOptions); err != nil {
 		return err
 	}
 	if opts.listen != "" {
@@ -147,7 +151,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		// public bind that Validate would have rejected; re-run it so
 		// the CLI override stays as strict as the file-only path.
 		cfg.HTTP.ListenAddress = opts.listen
-		if err := cfg.Validate(); err != nil {
+		if err := cfg.ValidateWithOptions(validationOptions); err != nil {
 			return err
 		}
 	}

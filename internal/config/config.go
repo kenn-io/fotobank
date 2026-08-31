@@ -204,6 +204,14 @@ type ObservabilityLogging struct {
 	AddSource bool   `toml:"add_source"`
 }
 
+// ValidationOptions controls runtime-specific availability policy while
+// preserving the same configuration invariants.
+type ValidationOptions struct {
+	// AllowUnavailableNAS lets the server expose health endpoints while a
+	// configured external NAS symlink has no reachable target.
+	AllowUnavailableNAS bool
+}
+
 // Load reads the file at path, parses it as TOML, applies defaults,
 // and returns the config. Returns an error if the file is missing or
 // malformed; callers decide whether to exit.
@@ -311,6 +319,12 @@ func applyEnvOverrides(c *Config) {
 // Validate returns ErrBadConfiguration (wrapped with detail) if any
 // required setting is missing or any enum field holds an unknown value.
 func (c *Config) Validate() error {
+	return c.ValidateWithOptions(ValidationOptions{})
+}
+
+// ValidateWithOptions validates configuration with an explicit runtime
+// availability policy.
+func (c *Config) ValidateWithOptions(options ValidationOptions) error {
 	if c.NAS.Root == "" {
 		return fmt.Errorf("%w: [nas].root is required", errs.ErrBadConfiguration)
 	}
@@ -323,7 +337,13 @@ func (c *Config) Validate() error {
 	}
 	nasRoot, err := canonicalConfigPath(c.NAS.Root)
 	if err != nil {
-		return fmt.Errorf("%w: canonicalize [nas].root: %v", errs.ErrBadConfiguration, err)
+		if !options.AllowUnavailableNAS || !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: canonicalize [nas].root: %v", errs.ErrBadConfiguration, err)
+		}
+		nasRoot, err = canonicalUnavailableConfigPath(c.NAS.Root)
+		if err != nil {
+			return fmt.Errorf("%w: resolve unavailable [nas].root: %v", errs.ErrBadConfiguration, err)
+		}
 	}
 	flashRoot, err := canonicalConfigPath(c.Flash.Root)
 	if err != nil {
@@ -456,6 +476,14 @@ func (c *Config) Validate() error {
 }
 
 func canonicalConfigPath(value string) (string, error) {
+	return canonicalConfigPathMode(value, false, 0)
+}
+
+func canonicalUnavailableConfigPath(value string) (string, error) {
+	return canonicalConfigPathMode(value, true, 0)
+}
+
+func canonicalConfigPathMode(value string, allowDanglingSymlink bool, symlinkDepth int) (string, error) {
 	target := value
 	if !filepath.IsAbs(target) {
 		cwd, err := os.Getwd()
@@ -489,7 +517,23 @@ func canonicalConfigPath(value string) (string, error) {
 	}
 	resolved, err := filepath.EvalSymlinks(current)
 	if err != nil {
-		return "", err
+		if !allowDanglingSymlink || !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		if symlinkDepth >= 255 {
+			return "", fmt.Errorf("too many symbolic links while resolving %q", value)
+		}
+		linkTarget, readlinkErr := os.Readlink(current)
+		if readlinkErr != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(linkTarget) {
+			linkTarget = filepath.Join(filepath.Dir(current), linkTarget)
+		}
+		resolved, err = canonicalConfigPathMode(linkTarget, true, symlinkDepth+1)
+		if err != nil {
+			return "", err
+		}
 	}
 	slices.Reverse(missing)
 	return filepath.Join(append([]string{resolved}, missing...)...), nil

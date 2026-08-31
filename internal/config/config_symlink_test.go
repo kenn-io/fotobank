@@ -114,6 +114,34 @@ root = %q
 	require.ErrorIs(t, err, errs.ErrBadConfiguration)
 }
 
+func TestServerValidationRejectsDanglingNASTargetInsideDocbank(t *testing.T) {
+	require := require.New(t)
+	tmp := t.TempDir()
+	docbankRoot := filepath.Join(tmp, "vault")
+	require.NoError(os.Mkdir(docbankRoot, 0o700))
+	nasAlias := filepath.Join(tmp, "nas-link")
+	if err := os.Symlink(filepath.Join(docbankRoot, "missing-nas"), nasAlias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	p := filepath.Join(tmp, "config.toml")
+	require.NoError(os.WriteFile(p, []byte(fmt.Sprintf(`
+[flash]
+root = %q
+[nas]
+root = %q
+[docbank]
+root = %q
+`, filepath.Join(tmp, "flash"), nasAlias, docbankRoot)), 0o600))
+
+	_, err := config.Load(p)
+	require.ErrorIs(err, errs.ErrBadConfiguration)
+	cfg, err := config.LoadUnchecked(p)
+	require.NoError(err)
+	err = cfg.ValidateWithOptions(config.ValidationOptions{AllowUnavailableNAS: true})
+	require.ErrorIs(err, errs.ErrBadConfiguration)
+}
+
 func TestValidateDocbankRootSymlinkParentOverlap(t *testing.T) {
 	require := require.New(t)
 	tmp := t.TempDir()
