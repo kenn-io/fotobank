@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -119,6 +120,38 @@ func TestScannerMarksTrackedDirectoryAsErrorWithoutScanningChildren(t *testing.T
 	candidates, err := fixture.repo.ListScanCandidates(t.Context(), fixture.checkout.ID)
 	r.NoError(err)
 	r.Empty(candidates)
+}
+
+func TestScannerContinuesMissingReconciliationAfterUnreadableSubtree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows permission bits do not make a directory unreadable")
+	}
+	r := require.New(t)
+	fixture := newScannerFixture(t)
+	missing := fixture.entryRow
+	missing.FileID = uuid.NewString()
+	missing.RelativePath = "missing.xmp"
+	r.NoError(fixture.repo.InsertEntry(t.Context(), missing))
+
+	unreadable := filepath.Join(fixture.root, "2026")
+	r.NoError(os.Chmod(unreadable, 0))
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o700) })
+	result, err := fixture.scanner().Scan(t.Context())
+	if err == nil {
+		t.Skip("current user can traverse a directory without permission bits")
+	}
+	r.ErrorIs(err, fs.ErrPermission)
+	r.Equal(1, result.Missing)
+
+	entries, err := fixture.repo.ListEntries(t.Context(), fixture.checkout.ID)
+	r.NoError(err)
+	r.Len(entries, 2)
+	states := make(map[string]EntryState, len(entries))
+	for _, entry := range entries {
+		states[entry.RelativePath] = entry.State
+	}
+	r.Equal(EntryError, states[fixture.entryRow.RelativePath])
+	r.Equal(EntryMissing, states[missing.RelativePath])
 }
 
 func TestScannerQueuesSettledUntrackedFileAndIgnoresTransientPaths(t *testing.T) {

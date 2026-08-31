@@ -161,12 +161,39 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 	}
 	seen := make(map[string]struct{}, len(entries)+len(candidates))
 	result := ScanResult{}
+	var traversalErrors []error
 	err = fs.WalkDir(root.FS(), ".", func(relativePath string, dirEntry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if walkErr != nil {
+			relativePath = cleanWalkPath(relativePath)
+			if errors.Is(walkErr, fs.ErrNotExist) {
+				return nil
+			}
+			traversalErrors = append(traversalErrors,
+				fmt.Errorf("walk checkout path %q: %w", relativePath, walkErr))
+			for _, entry := range entries {
+				if !inWalkSubtree(relativePath, entry.RelativePath) {
+					continue
+				}
+				if _, exists := seen[entry.RelativePath]; !exists {
+					seen[entry.RelativePath] = struct{}{}
+					result.Files++
+				}
+				if entry.State != EntryConflict {
+					if err := s.markTrackedError(
+						ctx, validatedRoot, checkout.ID, entry.FileID, walkErr); err != nil {
+						return err
+					}
+				}
+			}
+			for _, candidate := range candidates {
+				if inWalkSubtree(relativePath, candidate.RelativePath) {
+					seen[candidate.RelativePath] = struct{}{}
+				}
+			}
+			return nil
 		}
 		if relativePath == "." {
 			return nil
@@ -177,7 +204,7 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 			}
 			return nil
 		}
-		relativePath = path.Clean(strings.TrimPrefix(relativePath, "./"))
+		relativePath = cleanWalkPath(relativePath)
 		entry, tracked := entriesByPath[relativePath]
 		if dirEntry.IsDir() {
 			if !tracked {
@@ -320,7 +347,19 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 			return result, err
 		}
 	}
-	return result, nil
+	return result, errors.Join(traversalErrors...)
+}
+
+func cleanWalkPath(relativePath string) string {
+	if relativePath == "." {
+		return relativePath
+	}
+	return path.Clean(strings.TrimPrefix(relativePath, "./"))
+}
+
+func inWalkSubtree(subtree, relativePath string) bool {
+	return subtree == "." || relativePath == subtree ||
+		strings.HasPrefix(relativePath, subtree+"/")
 }
 
 func (s *Scanner) markTrackedError(

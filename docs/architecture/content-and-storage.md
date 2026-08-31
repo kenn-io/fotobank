@@ -218,7 +218,10 @@ returns a tracked entry to `clean`, including timestamp-only edits; a different
 hash changes it to `pending`. A missing working file changes the entry to
 `missing` without deleting or modifying its Docbank version. Hashing observes
 scan cancellation, while permission and I/O failures become visible entry
-errors rather than being treated as concurrent edits.
+errors rather than being treated as concurrent edits. A traversal failure is
+contained to its affected subtree: tracked files there become errors and
+pending untracked candidates remain available for retry, while accessible
+parts of the checkout still complete missing-file reconciliation.
 
 Stable untracked files remain in `checkout_scan_candidates` with an empty file
 ID and `pending` state for the later new-file import lifecycle. The scanner
