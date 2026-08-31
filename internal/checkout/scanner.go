@@ -234,6 +234,10 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 			if errors.Is(observationErr, errScanObservationChanged) {
 				return nil
 			}
+			if tracked {
+				return s.markTrackedError(
+					ctx, validatedRoot, checkout.ID, entry.FileID, observationErr)
+			}
 			return observationErr
 		}
 		if !info.Mode().IsRegular() {
