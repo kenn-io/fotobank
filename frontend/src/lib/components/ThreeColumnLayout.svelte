@@ -41,16 +41,16 @@
     --rail-width: 64px;
   }
   .sidebar {
-    background: var(--surface);
-    border-right: 1px solid var(--border);
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border-default);
     overflow-y: auto;
     /* Relief — top-edge highlight matches AppHeader so the chrome reads
        as a unified raised plane stepping down from the header. */
-    box-shadow: inset 0 1px 0 var(--rim-highlight);
+    box-shadow: inset 0 1px 0 var(--fb-rim-highlight);
   }
   .main {
     overflow: auto;
-    background: var(--bg);
+    background: var(--bg-primary);
     /* Right-side rail: padding-right reserves the gutter that
        YearScrubber lives in. The browser places the overflow
        scrollbar at .main's outer right edge (outside the padding),
@@ -66,9 +66,9 @@
     scrollbar-gutter: stable;
   }
   .detail {
-    background: var(--surface);
-    border-left: 1px solid var(--border);
+    background: var(--bg-surface);
+    border-left: 1px solid var(--border-default);
     overflow-y: auto;
-    box-shadow: inset 0 1px 0 var(--rim-highlight);
+    box-shadow: inset 0 1px 0 var(--fb-rim-highlight);
   }
 </style>

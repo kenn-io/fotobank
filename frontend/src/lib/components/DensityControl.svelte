@@ -34,23 +34,23 @@
   .density {
     display: inline-flex;
     gap: 0;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-default);
     overflow: hidden;
   }
   .density button {
     background: transparent;
     border: none;
     padding: 4px 10px;
-    color: var(--ink-2);
+    color: var(--text-secondary);
     font-size: 12px;
     cursor: pointer;
   }
   .density button.active {
-    background: var(--amber);
-    /* Dark foreground on the amber pill — `var(--ink)` is the light
+    background: var(--accent-blue);
+    /* Dark foreground on the amber pill — `var(--text-primary)` is the light
        body color and pairs poorly with the warm-orange background.
-       Using `var(--bg)` (the dark canvas) gives the active label
+       Using `var(--bg-primary)` (the dark canvas) gives the active label
        enough contrast to remain readable. */
-    color: var(--bg);
+    color: var(--bg-primary);
   }
 </style>

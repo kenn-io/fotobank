@@ -139,7 +139,7 @@
   .map-pin-label {
     margin-top: 4px;
     font-size: 12px;
-    color: var(--ink-2);
+    color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -148,7 +148,7 @@
     display: inline-block;
     margin-top: 4px;
     font-size: 12px;
-    color: var(--amber);
+    color: var(--accent-blue);
     text-decoration: none;
   }
   .map-pin-link:hover {

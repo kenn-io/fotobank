@@ -85,7 +85,7 @@
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-3) var(--space-4);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-default);
   }
   /* Leading 2px amber rule replaces the old "Filters:" word —
      a film-strip mark at the left edge of the annotation. */
@@ -93,7 +93,7 @@
     flex: 0 0 auto;
     width: 2px;
     align-self: stretch;
-    background: var(--amber);
+    background: var(--accent-blue);
   }
   .chip {
     display: inline-flex;
@@ -102,32 +102,32 @@
     padding: var(--space-2) var(--space-3);
     background: transparent;
     border: 1px solid transparent;
-    color: var(--ink);
+    color: var(--text-primary);
     font-family: var(--font-mono);
-    font-size: var(--text-sm);
+    font-size: var(--font-size-xs);
     cursor: pointer;
     transition: border-color 100ms, background 100ms;
   }
-  .chip:hover { border-color: var(--amber-deep); }
+  .chip:hover { border-color: var(--fb-accent-deep); }
   .bracket {
-    color: var(--amber);
+    color: var(--accent-blue);
     margin: 0 var(--space-2);
   }
   .tag-prefix {
     font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    color: var(--ink-3);
+    font-size: var(--font-size-2xs);
+    color: var(--text-muted);
     margin-right: var(--space-2);
     text-transform: lowercase;
   }
   .display {
-    font-family: var(--font-ui);
+    font-family: var(--font-sans);
     font-variant: small-caps;
-    letter-spacing: var(--label-track);
-    color: var(--ink);
+    letter-spacing: var(--letter-spacing-label);
+    color: var(--text-primary);
   }
   .chip-x {
-    color: var(--amber);
+    color: var(--accent-blue);
     margin-left: var(--space-2);
     font-family: var(--font-mono);
   }
@@ -140,14 +140,14 @@
     padding: 0 var(--space-3);
     background: transparent;
     border: 0;
-    color: var(--ink-3);
+    color: var(--text-muted);
     font-family: var(--font-mono);
-    font-size: var(--text-xs);
+    font-size: var(--font-size-2xs);
     text-transform: lowercase;
     cursor: pointer;
     transition: color 100ms;
   }
   .clear-all::before { content: "\2500\2500 "; }
   .clear-all::after  { content: " \2500\2500"; }
-  .clear-all:hover { color: var(--amber); }
+  .clear-all:hover { color: var(--accent-blue); }
 </style>

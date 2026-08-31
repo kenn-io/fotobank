@@ -82,22 +82,22 @@
     min-height: 22px;
     background: transparent;
     border: 0;
-    color: var(--ink);
+    color: var(--text-primary);
     cursor: pointer;
   }
   /* Rule runs full width behind the label + right group; both
-     paint var(--bg) so the line is interrupted on the masked edges
+     paint var(--bg-primary) so the line is interrupted on the masked edges
      ("── cameras ──────────  845"). */
   .rule {
     position: absolute;
     left: 0;
     right: 0;
     top: 50%;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--border-default);
     pointer-events: none;
     transition: border-top-color 100ms;
   }
-  .header:hover .rule { border-top-color: var(--ink-3); }
+  .header:hover .rule { border-top-color: var(--text-muted); }
   /* Label text starts at x=var(--space-4) (8px) so it aligns with
      FacetList rows, which use padding-left: var(--space-4). The label
      gets symmetric inline padding (8px L + R) so the bg interrupting
@@ -106,16 +106,16 @@
     position: relative;
     z-index: 1;
     padding: 0 var(--space-4);
-    background: var(--bg);
+    background: var(--bg-primary);
     font-family: var(--font-mono);
     font-weight: 500;
-    font-size: var(--text-xs);
-    color: var(--ink-2);
+    font-size: var(--font-size-2xs);
+    color: var(--text-secondary);
     text-transform: uppercase;
-    letter-spacing: var(--label-track);
+    letter-spacing: var(--letter-spacing-label);
     transition: color 100ms;
   }
-  .header.expanded .label { color: var(--ink); }
+  .header.expanded .label { color: var(--text-primary); }
   .right {
     position: relative;
     z-index: 1;
@@ -128,7 +128,7 @@
        header's total count and the per-row counts share a vertical
        guideline at the right edge. */
     padding-right: var(--space-3);
-    background: var(--bg);
+    background: var(--bg-primary);
   }
   /* Bracketed mono token "[2]" — brackets are pseudo-element
      content so the textContent of .active-badge stays "2" and
@@ -136,16 +136,16 @@
   .active-badge {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    font-size: var(--text-xs);
-    color: var(--amber);
+    font-size: var(--font-size-2xs);
+    color: var(--accent-blue);
   }
-  .active-badge::before { content: "["; color: var(--amber); }
-  .active-badge::after  { content: "]"; color: var(--amber); }
+  .active-badge::before { content: "["; color: var(--accent-blue); }
+  .active-badge::after  { content: "]"; color: var(--accent-blue); }
   .total {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    font-size: var(--text-xs);
-    color: var(--ink-3);
+    font-size: var(--font-size-2xs);
+    color: var(--text-muted);
   }
   .body {
     padding-block: var(--space-3);

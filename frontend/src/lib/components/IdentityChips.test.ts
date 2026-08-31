@@ -60,10 +60,10 @@ describe("IdentityChips", () => {
     const errStyle = (errDot as HTMLElement).style.background;
 
     expect(okStyle).not.toBe(errStyle);
-    // The component sets the dot via inline style: var(--ok) by default
-    // and var(--danger) on error. Assert the token names directly so
+    // The component sets the dot via the shared semantic tokens. Assert
+    // the token names directly so
     // the test fails loudly if the contract drifts off either token.
-    expect(okStyle).toContain("--ok");
-    expect(errStyle).toContain("--danger");
+    expect(okStyle).toContain("--accent-green");
+    expect(errStyle).toContain("--accent-red");
   });
 });

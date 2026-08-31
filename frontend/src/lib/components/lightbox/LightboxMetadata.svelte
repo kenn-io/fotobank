@@ -144,17 +144,17 @@
      with a tracked uppercase label. The dl/dt/dd structure inside
      stays unchanged so test selectors and a11y semantics survive. */
   .meta-section {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--border-default);
     padding-top: var(--space-5);
     margin-bottom: var(--space-6);
   }
   .meta-section:first-of-type { border-top: none; padding-top: 0; }
   .meta-label {
-    font-size: var(--text-xs);
+    font-size: var(--font-size-2xs);
     font-weight: 600;
-    color: var(--ink-3);
+    color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: var(--label-track);
+    letter-spacing: var(--letter-spacing-label);
     margin-bottom: 10px;
   }
   /* Inherit color from parent so this content reads correctly on
@@ -162,16 +162,16 @@
      the same dark token palette so the metadata reads cleanly with
      the default text color. */
   .lb-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0; }
-  .lb-meta dt { font-weight: 600; color: var(--ink-2); }
+  .lb-meta dt { font-weight: 600; color: var(--text-secondary); }
   .lb-meta a { color: inherit; }
   /* Numeric/technical values render in monospace with tabular-nums so
      vertical columns (file size, coords, search relevance) line up. */
   .lb-meta .numeric {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    color: var(--ink);
+    color: var(--text-primary);
   }
-  .lb-meta .coord { display: block; color: var(--ink-2); font-size: 0.85em; }
+  .lb-meta .coord { display: block; color: var(--text-secondary); font-size: 0.85em; }
   .relevance {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
@@ -181,7 +181,7 @@
   .relevance .rel-label {
     display: inline-block;
     min-width: 56px;
-    color: var(--ink-2);
+    color: var(--text-secondary);
   }
-  .relevance .rel-num { color: var(--ink); }
+  .relevance .rel-num { color: var(--text-primary); }
 </style>

@@ -9,11 +9,11 @@
   const dot = $derived(deriveDot(aiHealthStore.health));
 
   const colorByState: Record<AIDotState, string> = {
-    idle: "var(--ok, #22c55e)",
-    backlog: "var(--warn, #facc15)",
-    failing: "var(--danger-soft, #f97316)",
-    unreachable: "var(--danger, #ef4444)",
-    paused: "var(--warn, #facc15)",
+    idle: "var(--accent-green)",
+    backlog: "var(--accent-amber)",
+    failing: "var(--fb-ai-orange)",
+    unreachable: "var(--accent-red)",
+    paused: "var(--accent-amber)",
     hidden: "transparent",
   };
 
@@ -59,6 +59,6 @@
   }
   .icon {
     font-size: 9px;
-    color: var(--ink-3);
+    color: var(--text-muted);
   }
 </style>

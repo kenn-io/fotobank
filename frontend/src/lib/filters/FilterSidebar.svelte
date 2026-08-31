@@ -130,7 +130,7 @@
 <style>
   .filter-sidebar {
     padding: 18px 20px;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--border-default);
   }
   .group-header {
     position: relative;
@@ -148,7 +148,7 @@
     left: 0;
     right: 0;
     top: 50%;
-    border-top: 1px solid var(--amber);
+    border-top: 1px solid var(--accent-blue);
     pointer-events: none;
     z-index: 0;
   }
@@ -161,15 +161,15 @@
     z-index: 1;
     display: inline-block;
     padding: 0 var(--space-4);
-    background: var(--bg);
+    background: var(--bg-primary);
   }
   .title-display {
     font-family: var(--font-mono);
     font-weight: 600;
-    font-size: var(--text-xs);
-    color: var(--ink);
+    font-size: var(--font-size-2xs);
+    color: var(--text-primary);
     text-transform: uppercase;
-    letter-spacing: var(--label-track);
+    letter-spacing: var(--letter-spacing-label);
   }
   .title-a11y {
     position: absolute;
@@ -187,17 +187,17 @@
     z-index: 1;
     margin-left: auto;
     padding: 0 0 0 var(--space-3);
-    background: var(--bg);
+    background: var(--bg-primary);
     border: 0;
-    color: var(--ink-3);
+    color: var(--text-muted);
     cursor: pointer;
     font-family: var(--font-mono);
-    font-size: var(--text-xs);
+    font-size: var(--font-size-2xs);
     text-transform: lowercase;
     letter-spacing: 0;
     transition: color 100ms;
   }
-  .clear:hover { color: var(--amber); }
+  .clear:hover { color: var(--accent-blue); }
   .clear-glyph {
     margin-left: 2px;
   }

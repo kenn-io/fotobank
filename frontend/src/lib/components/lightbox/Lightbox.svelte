@@ -770,7 +770,7 @@
 <style>
   .lb-loading,
   .lb-not-found {
-    color: var(--ink);
+    color: var(--text-primary);
     padding: 2rem;
     text-align: center;
   }
@@ -787,12 +787,12 @@
     overflow: hidden;
   }
   .lb-thumb-terminal {
-    background: var(--surface-2);
-    color: var(--ink-3);
+    background: var(--bg-inset);
+    color: var(--text-muted);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: var(--text-base);
+    font-size: var(--font-size-sm);
   }
   .lb-thumb-terminal p { margin: 0; }
   .lb-shimmer {
@@ -801,9 +801,9 @@
     border-radius: 6px;
     background: linear-gradient(
       110deg,
-      var(--surface-2) 30%,
-      color-mix(in srgb, var(--surface-2) 70%, var(--ink-3)) 50%,
-      var(--surface-2) 70%
+      var(--bg-inset) 30%,
+      color-mix(in srgb, var(--bg-inset) 70%, var(--text-muted)) 50%,
+      var(--bg-inset) 70%
     );
     background-size: 220% 100%;
     animation: lb-shimmer 1.6s linear infinite;

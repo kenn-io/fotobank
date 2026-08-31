@@ -25,19 +25,19 @@
 <style>
   .group-select {
     background: transparent;
-    border: 1px solid var(--border);
-    color: var(--ink-3);
+    border: 1px solid var(--border-default);
+    color: var(--text-muted);
     padding: 2px 8px;
     font-size: 11px;
     border-radius: 4px;
     cursor: pointer;
   }
   .group-select:hover {
-    color: var(--ink);
-    border-color: var(--ink-3);
+    color: var(--text-primary);
+    border-color: var(--text-muted);
   }
   .group-select:focus-visible {
-    outline: 2px solid var(--amber);
+    outline: 2px solid var(--accent-blue);
     outline-offset: 2px;
   }
 </style>

@@ -52,77 +52,81 @@
 }
 
 :root {
-  /* Palette */
-  --bg:        #0a0a0d;
-  --surface:   #14141a;
-  --surface-2: #1d1d24;
-  --border:    #25252c;
-  --border-2:  #2e2e36;
+  /*
+    Fotobank's darkroom identity expressed through kit-ui's shared tokens.
+    App-only tokens use an --fb- prefix; shared control tokens use kit-ui's
+    names directly so there is one vocabulary throughout the frontend.
+  */
+  --bg-primary:       #0a0a0d; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --bg-surface:       #14141a; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --bg-inset:         #1d1d24; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --bg-surface-hover: #25252c; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --border-default:   #25252c; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --border-muted:     #2e2e36; /* kit-ui-check-ignore -- Fotobank theme palette */
 
-  --ink:   #ecebe6;
-  --ink-2: #99968d;
-  --ink-3: #5a5751;
-  --ink-4: #3a3833;
+  --text-primary:   #ecebe6; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --text-secondary: #99968d; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --text-muted:     #5a5751; /* kit-ui-check-ignore -- Fotobank theme palette */
 
-  --amber:      #e8a44b;
-  --amber-deep: #c98935;
-  --amber-glow: rgba(232, 164, 75, 0.45);
+  --accent-blue:  #e8a44b; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --accent-green: #4aaa6a; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --accent-red:   #d04545; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --accent-amber: #d68a3a; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --accent-purple: #9b7fc4; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --accent-teal:   #4aa3a3; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --status-waiting: var(--accent-amber);
 
-  --ok:     #4aaa6a;
-  --danger: #d04545;
-  --warn:   #d68a3a;
-  --orange: #d97706;  /* preserved for AI status dot */
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", "SF Mono", Menlo, monospace;
 
   /* Type */
-  --font-display: "Fraunces", "Iowan Old Style", "Cambria", serif;
-  --font-ui:      "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono:    "IBM Plex Mono", "JetBrains Mono", "SF Mono", Menlo, monospace;
+  --font-size-2xs: 0.65625rem;
+  --font-size-xs:  0.6875rem;
+  --font-size-sm:  0.78125rem;
+  --font-size-md:  0.8125rem;
+  --font-size-lg:  0.9375rem;
+  --font-size-2xl: 1.5rem;
+  --font-size-root: var(--font-size-md);
+  --letter-spacing-label: 0.085em;
 
-  --text-xs:   10.5px;
-  --text-sm:   11px;
-  --text-base: 12.5px;
-  --text-md:   13px;
-  --text-lg:   15px;
-  --text-xl:   24px;
-
-  --label-track: 0.085em;
-
-  /* Spacing (carry forward) */
-  --space-1: 2px;
-  --space-2: 4px;
-  --space-3: 6px;
-  --space-4: 8px;
-  --space-5: 12px;
-  --space-6: 16px;
-  --space-7: 24px;
-  --space-8: 32px;
+  /* Fotobank-only display and darkroom accents. */
+  --fb-font-display: "Fraunces", "Iowan Old Style", "Cambria", serif;
+  --fb-text-faint: #3a3833; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --fb-accent-deep: #c98935; /* kit-ui-check-ignore -- Fotobank theme palette */
+  --fb-accent-glow: rgba(232, 164, 75, 0.45); /* kit-ui-check-ignore -- Fotobank theme palette */
+  --fb-ai-orange: #d97706; /* kit-ui-check-ignore -- Fotobank theme palette */
 
   /*
     Relief — subtle "light from above" cue that gives chrome surfaces a
     sense of being slightly raised planes without resorting to drop
     shadows. Two 1px lines: a near-white inset on the TOP edge (reads as
     a darkroom safelight grazing the surface) and a deeper black hairline
-    just BELOW. Composes with the existing `border: 1px solid --border`
+    just BELOW. Composes with the existing `border: 1px solid
+    --border-default`
     on most chrome — relief is the depth cue, the border is the edge.
   */
-  --rim-highlight: rgba(255, 255, 255, 0.05);
-  --rim-shadow:    rgba(0, 0, 0, 0.45);
-  --shadow-relief: inset 0 1px 0 var(--rim-highlight),
-                   0 1px 0 var(--rim-shadow);
-  --shadow-relief-strong: inset 0 1px 0 var(--rim-highlight),
-                          0 1px 2px rgba(0, 0, 0, 0.4),
-                          0 1px 0 var(--rim-shadow);
+  --fb-rim-highlight: rgba(255, 255, 255, 0.05); /* kit-ui-check-ignore -- Fotobank relief */
+  --fb-rim-shadow:    rgba(0, 0, 0, 0.45); /* kit-ui-check-ignore -- Fotobank relief */
+  --fb-shadow-relief: inset 0 1px 0 var(--fb-rim-highlight),
+                      0 1px 0 var(--fb-rim-shadow);
+  --fb-shadow-relief-strong: inset 0 1px 0 var(--fb-rim-highlight),
+                             0 1px 2px rgba(0, 0, 0, 0.4), /* kit-ui-check-ignore -- Fotobank relief */
+                             0 1px 0 var(--fb-rim-shadow);
 
   color-scheme: dark;
 }
 
-html, body {
+html,
+body {
   height: 100%;
   margin: 0;
-  background: var(--bg);
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: var(--text-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+
+body {
+  font-size: var(--font-size-md);
   line-height: 1.45;
   letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;

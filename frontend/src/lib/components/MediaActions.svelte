@@ -68,5 +68,5 @@
 
 <style>
   .media-actions { display: flex; gap: 8px; }
-  .danger { color: var(--danger); border-color: var(--danger); }
+  .danger { color: var(--accent-red); border-color: var(--accent-red); }
 </style>

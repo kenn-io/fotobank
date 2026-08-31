@@ -221,25 +221,25 @@
 <style>
   .ai-panel { padding: 16px; max-width: 720px; }
   .panel-header { display: flex; justify-content: space-between; align-items: baseline; }
-  .admin-link { font-size: 12px; color: var(--accent); text-decoration: none; }
-  .config-locked { font-size: 11px; color: var(--ink-3); }
+  .admin-link { font-size: 12px; color: var(--accent-blue); text-decoration: none; }
+  .config-locked { font-size: 11px; color: var(--text-muted); }
   .banner { padding: 10px; border-radius: 6px; background: rgba(250, 204, 21, 0.1); border: 1px solid rgba(250, 204, 21, 0.4); margin: 12px 0; font-size: 11px; }
-  .ack-modal { padding: 14px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); margin: 12px 0; }
+  .ack-modal { padding: 14px; border-radius: 6px; background: var(--bg-surface); border: 1px solid var(--border-default); margin: 12px 0; }
   .ack-modal h3 { margin: 0 0 8px 0; font-size: 13px; }
   .vision { display: flex; align-items: center; gap: 6px; font-size: 11px; margin: 6px 0 12px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger, #ef4444); }
-  .dot[data-reachable="true"] { background: var(--ok, #22c55e); }
-  .task-card { background: var(--surface); border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-red); }
+  .dot[data-reachable="true"] { background: var(--accent-green); }
+  .task-card { background: var(--bg-surface); border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
   .task-header { display: flex; gap: 8px; align-items: center; }
-  .meta { font-size: 10px; color: var(--ink-3); flex: 1; }
+  .meta { font-size: 10px; color: var(--text-muted); flex: 1; }
   .counters { list-style: none; padding: 0; margin: 8px 0 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; font-size: 10px; }
-  .counters li { color: var(--ink-3); }
-  .counters strong { color: var(--ink); display: block; font-size: 14px; }
-  button.link { font-size: 9px; background: none; border: none; color: var(--ink-2); text-decoration: underline; padding: 0; cursor: pointer; }
+  .counters li { color: var(--text-muted); }
+  .counters strong { color: var(--text-primary); display: block; font-size: 14px; }
+  button.link { font-size: 9px; background: none; border: none; color: var(--text-secondary); text-decoration: underline; padding: 0; cursor: pointer; }
   .failures ul { list-style: none; padding: 0; font-size: 10px; line-height: 1.6; }
-  .badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 9px; background: var(--surface-2); color: var(--ink-3); margin-right: 6px; }
-  .inspection { margin-top: 16px; padding: 10px 12px; background: var(--surface); border-radius: 6px; }
+  .badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 9px; background: var(--bg-inset); color: var(--text-muted); margin-right: 6px; }
+  .inspection { margin-top: 16px; padding: 10px 12px; background: var(--bg-surface); border-radius: 6px; }
   .inspection h4 { margin: 0 0 4px 0; font-size: 12px; }
-  .inspection .muted { font-size: 10px; color: var(--ink-3); margin: 0 0 8px 0; line-height: 1.5; }
+  .inspection .muted { font-size: 10px; color: var(--text-muted); margin: 0 0 8px 0; line-height: 1.5; }
   .toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer; }
 </style>

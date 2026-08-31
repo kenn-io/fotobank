@@ -103,21 +103,21 @@
     display: flex; align-items: flex-end; justify-content: center;
   }
   .bs-sheet {
-    background: var(--surface);
-    border-top: 1px solid var(--border);
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border-default);
     width: 100%;
     max-height: 50vh;
     display: flex; flex-direction: column;
     /* Relief — top-edge highlight reads as the sheet sitting forward of
        the dimmed page, matching the rim treatment on header/sidebar. */
-    box-shadow: inset 0 1px 0 var(--rim-highlight);
+    box-shadow: inset 0 1px 0 var(--fb-rim-highlight);
     transition: transform 120ms ease-out, max-height 200ms ease-out;
   }
   .bs-sheet.full { max-height: 90vh; }
   .bs-handle {
     align-self: center;
     width: 40px; height: 4px;
-    background: var(--border-2);
+    background: var(--border-muted);
     margin: var(--space-4) 0 var(--space-5);
     border: none;
     padding: 0;

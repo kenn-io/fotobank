@@ -127,10 +127,10 @@
     align-items: center;
     gap: 4px;
     padding: 2px 4px 2px 8px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-default);
     border-radius: 12px;
-    background: var(--surface);
-    color: var(--ink);
+    background: var(--bg-surface);
+    color: var(--text-primary);
     font-size: 12px;
   }
   .chip-text {
@@ -146,13 +146,13 @@
     border: none;
     border-radius: 50%;
     background: transparent;
-    color: var(--ink-2);
+    color: var(--text-secondary);
     font-size: 14px;
     line-height: 1;
     cursor: pointer;
   }
   .chip-remove:hover {
-    background: var(--surface-2);
-    color: var(--ink);
+    background: var(--bg-inset);
+    color: var(--text-primary);
   }
 </style>

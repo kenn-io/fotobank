@@ -78,9 +78,9 @@
     position: fixed; inset: 0; background: rgba(0,0,0,0.5);
     display: flex; align-items: center; justify-content: center; z-index: 100;
   }
-  .modal { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; min-width: 320px; }
+  .modal { background: var(--bg-inset); border: 1px solid var(--border-default); border-radius: 8px; padding: 16px; min-width: 320px; }
   .modal h2 { margin-top: 0; }
   label { display: flex; flex-direction: column; gap: 4px; }
-  .error { color: var(--danger); font-size: 13px; margin-top: 8px; }
+  .error { color: var(--accent-red); font-size: 13px; margin-top: 8px; }
   .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
 </style>

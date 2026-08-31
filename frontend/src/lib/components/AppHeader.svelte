@@ -43,18 +43,18 @@
     gap: 24px;
     padding: 0 22px;
     height: 46px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-default);
     background: linear-gradient(180deg, #101015 0%, #0c0c11 100%);
     /* Relief — top-edge highlight reads as light grazing a panel that
        sits forward of the page; bottom rim deepens the existing border. */
-    box-shadow: var(--shadow-relief);
+    box-shadow: var(--fb-shadow-relief);
   }
 
   .brand {
     font-family: var(--font-mono);
     font-weight: 500;
     font-size: 15px;
-    color: var(--ink);
+    color: var(--text-primary);
     letter-spacing: 0;
     display: inline-flex;
     align-items: baseline;
@@ -65,8 +65,8 @@
     display: inline-block;
     width: 5px;
     height: 5px;
-    background: var(--amber);
-    box-shadow: 0 0 9px var(--amber-glow);
+    background: var(--accent-blue);
+    box-shadow: 0 0 9px var(--fb-accent-glow);
     transform: translateY(-1px);
   }
 

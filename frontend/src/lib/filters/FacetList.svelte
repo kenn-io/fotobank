@@ -74,20 +74,20 @@
     padding: var(--space-2) 0;
     background: transparent;
     border: 0;
-    border-bottom: 1px solid var(--border);
-    color: var(--ink);
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
+    border-bottom: 1px solid var(--border-default);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-xs);
     outline: none;
   }
   .facet-search:focus {
-    border-bottom: 2px solid var(--amber);
+    border-bottom: 2px solid var(--accent-blue);
     padding-bottom: calc(var(--space-2) - 1px);
   }
   .facet-search::placeholder {
-    font-family: var(--font-ui);
+    font-family: var(--font-sans);
     font-weight: 400;
-    color: var(--ink-4);
+    color: var(--fb-text-faint);
   }
   .rows {
     display: flex;
@@ -105,23 +105,23 @@
     height: 28px;
     padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
     background: transparent;
-    color: var(--ink-2);
+    color: var(--text-secondary);
     border: 0;
     box-shadow: inset 2px 0 0 0 transparent;
     text-align: left;
     cursor: pointer;
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-xs);
     transition:
       background 100ms,
       color 100ms,
       box-shadow 100ms;
   }
-  .row:hover { color: var(--ink); }
+  .row:hover { color: var(--text-primary); }
   .row.selected {
-    color: var(--amber);
-    background: color-mix(in srgb, var(--amber) 6%, transparent);
-    box-shadow: inset 2px 0 0 0 var(--amber);
+    color: var(--accent-blue);
+    background: color-mix(in srgb, var(--accent-blue) 6%, transparent);
+    box-shadow: inset 2px 0 0 0 var(--accent-blue);
   }
   .name {
     flex: 0 1 auto;
@@ -137,7 +137,7 @@
     flex: 1;
     min-width: var(--space-3);
     align-self: baseline;
-    border-bottom: 1px dotted var(--ink-4);
+    border-bottom: 1px dotted var(--fb-text-faint);
     margin: 0 var(--space-3);
     transform: translateY(-3px);
   }
@@ -145,15 +145,15 @@
     flex: 0 0 auto;
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    font-size: var(--text-xs);
-    color: var(--ink-3);
+    font-size: var(--font-size-2xs);
+    color: var(--text-muted);
   }
-  .row.selected .count { color: var(--amber); }
+  .row.selected .count { color: var(--accent-blue); }
   .empty {
     padding: var(--space-5) 0;
-    color: var(--ink-3);
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-xs);
     text-align: center;
   }
 </style>

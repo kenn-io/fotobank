@@ -49,9 +49,9 @@
     font-size: 12px;
     border: 1px solid currentColor;
   }
-  .pill.warn { color: var(--warn); }
-  .pill.ok { color: var(--ok, #16a34a); }
-  .pill.danger { color: var(--danger); }
-  .pill.orange { color: var(--orange, #d97706); }
-  .pill.muted { color: var(--ink-3); }
+  .pill.warn { color: var(--accent-amber); }
+  .pill.ok { color: var(--accent-green); }
+  .pill.danger { color: var(--accent-red); }
+  .pill.orange { color: var(--fb-ai-orange); }
+  .pill.muted { color: var(--text-muted); }
 </style>

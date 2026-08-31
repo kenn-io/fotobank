@@ -50,8 +50,8 @@
       to bottom,
       transparent 0,
       transparent 4px,
-      var(--ink-4) 4px,
-      var(--ink-4) 6px,
+      var(--fb-text-faint) 4px,
+      var(--fb-text-faint) 6px,
       transparent 6px,
       transparent 10px
     );
@@ -60,9 +60,9 @@
     background-position: 4px 0;
   }
   .scrubber button {
-    background: var(--bg);
+    background: var(--bg-primary);
     border: none;
-    color: var(--ink-3);
+    color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: 10px;
     letter-spacing: 0.04em;
@@ -75,12 +75,12 @@
     transition: color 120ms, background 120ms;
   }
   .scrubber button:hover {
-    background: var(--surface-2);
-    color: var(--amber);
+    background: var(--bg-inset);
+    color: var(--accent-blue);
   }
   .scrubber button:focus-visible {
-    outline: 1px solid var(--amber);
+    outline: 1px solid var(--accent-blue);
     outline-offset: 1px;
-    color: var(--amber);
+    color: var(--accent-blue);
   }
 </style>

@@ -78,14 +78,14 @@
     height: 100%;
   }
   a.selected {
-    outline: 2px solid var(--amber);
+    outline: 2px solid var(--accent-blue);
     outline-offset: -2px;
     border-radius: 2px;
   }
   .placeholder {
     width: 100%;
     height: 100%;
-    background: var(--surface-2);
+    background: var(--bg-inset);
     border-radius: 2px;
   }
   /* Shimmer reads as "in flight" without spinning. A diagonal sheen
@@ -98,9 +98,9 @@
     border-radius: 2px;
     background: linear-gradient(
       110deg,
-      var(--surface-2) 30%,
-      color-mix(in srgb, var(--surface-2) 70%, var(--ink-3)) 50%,
-      var(--surface-2) 70%
+      var(--bg-inset) 30%,
+      color-mix(in srgb, var(--bg-inset) 70%, var(--text-muted)) 50%,
+      var(--bg-inset) 70%
     );
     background-size: 220% 100%;
     animation: shimmer 1.6s linear infinite;

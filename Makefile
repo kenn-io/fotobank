@@ -60,7 +60,7 @@ frontend-dev: ## Run vite dev server (use with `make dev`)
 # Lint + typecheck + unit-test the frontend.
 # TODO: re-enable lint once eslint config lands (Task 5 deferred it).
 frontend-check: ## Lint + typecheck + unit-test the frontend
-	cd frontend && bun install && bun run typecheck && bun run test
+	cd frontend && bun install && bun run check:kit-ui && bun run typecheck && bun run test
 
 # Install air for backend live reload.
 air-install: ## go install github.com/air-verse/air@latest

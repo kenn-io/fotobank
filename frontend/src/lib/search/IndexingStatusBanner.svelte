@@ -139,9 +139,9 @@
     gap: 8px;
     margin: 8px 0;
     padding: 8px 12px;
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--ink-2);
+    border: 1px solid var(--border-default);
+    background: var(--bg-inset);
+    color: var(--text-secondary);
     font-size: 13px;
     line-height: 1.4;
   }
@@ -149,9 +149,9 @@
     margin-left: auto;
     height: 24px;
     padding: 0 8px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--ink);
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    color: var(--text-primary);
     font-size: 12px;
     cursor: pointer;
   }

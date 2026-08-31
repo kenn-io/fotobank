@@ -62,36 +62,36 @@
     align-items: center;
     gap: 12px;
     padding: 6px 16px;
-    background: var(--surface-2);
-    border-bottom: 1px solid var(--border);
+    background: var(--bg-inset);
+    border-bottom: 1px solid var(--border-default);
     font-size: 13px;
-    color: var(--ink-2);
+    color: var(--text-secondary);
   }
 
   .lock-strip-label {
     font-weight: 500;
-    color: var(--ink);
+    color: var(--text-primary);
   }
 
   .lock-strip-countdown {
     font-variant-numeric: tabular-nums;
-    color: var(--warn);
+    color: var(--accent-amber);
     font-weight: 600;
   }
 
   button {
     margin-left: auto;
     padding: 4px 10px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--ink);
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    color: var(--text-primary);
     font-size: 13px;
     cursor: pointer;
   }
 
   button:hover {
-    background: var(--surface-2);
-    border-color: var(--amber);
-    color: var(--amber);
+    background: var(--bg-inset);
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
   }
 </style>

@@ -233,10 +233,10 @@
 </div>
 
 {#if mediaStore.loading}
-  <div style="padding:12px; color: var(--ink-3)">Loading…</div>
+  <div style="padding:12px; color: var(--text-muted)">Loading…</div>
 {/if}
 {#if mediaStore.months.length === 0 && !mediaStore.loading}
-  <div style="padding:24px; color: var(--ink-2)">No photos yet.</div>
+  <div style="padding:24px; color: var(--text-secondary)">No photos yet.</div>
 {/if}
 
 {#if addOpen}

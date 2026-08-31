@@ -92,14 +92,14 @@
     padding: 18px 20px;
   }
   .group + .group {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--border-default);
   }
   .group-header {
-    font-size: var(--text-xs);
+    font-size: var(--font-size-2xs);
     font-weight: 600;
-    color: var(--ink-3);
+    color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: var(--label-track);
+    letter-spacing: var(--letter-spacing-label);
     margin-bottom: 10px;
   }
   .entry {
@@ -107,18 +107,18 @@
     justify-content: space-between;
     align-items: center;
     padding: 5px 0;
-    color: var(--ink-2);
-    font-size: var(--text-base);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
     text-decoration: none;
     transition: color 100ms;
   }
-  .entry:hover { color: var(--ink); }
-  .entry.active { color: var(--amber); }
+  .entry:hover { color: var(--text-primary); }
+  .entry.active { color: var(--accent-blue); }
   .entry :global(.count) {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     font-size: 11px;
-    color: var(--ink-4);
+    color: var(--fb-text-faint);
   }
-  .entry.active :global(.count) { color: var(--amber-deep); }
+  .entry.active :global(.count) { color: var(--fb-accent-deep); }
 </style>

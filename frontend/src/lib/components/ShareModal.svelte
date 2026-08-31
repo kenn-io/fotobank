@@ -160,55 +160,55 @@
     z-index: 200;
   }
   .modal {
-    background: var(--surface);
-    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
     padding: var(--space-6);
     min-width: 400px;
     max-width: 480px;
-    color: var(--ink);
+    color: var(--text-primary);
     /* Relief — same elevated-panel treatment as ConfirmModal. */
-    box-shadow: var(--shadow-relief-strong);
+    box-shadow: var(--fb-shadow-relief-strong);
   }
   .modal h2 { margin-top: 0; }
   .summary {
-    color: var(--ink-3);
-    font-size: var(--text-base);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
     margin-bottom: var(--space-5);
   }
   form { display: flex; flex-direction: column; gap: var(--space-5); }
   label { display: flex; flex-direction: column; gap: var(--space-2); }
   label.checkbox { flex-direction: row; align-items: center; gap: var(--space-4); }
   .grantee { font-family: var(--font-mono); }
-  .helper { font-size: var(--text-sm); color: var(--ink-3); }
-  .warn { color: var(--warn); font-size: var(--text-base); }
-  .error { color: var(--danger); font-size: var(--text-base); }
+  .helper { font-size: var(--font-size-xs); color: var(--text-muted); }
+  .warn { color: var(--accent-amber); font-size: var(--font-size-sm); }
+  .error { color: var(--accent-red); font-size: var(--font-size-sm); }
   .actions { display: flex; gap: var(--space-4); justify-content: flex-end; }
   .btn-ghost {
     background: transparent;
-    color: var(--ink-2);
-    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-default);
     padding: var(--space-3) var(--space-5);
     cursor: pointer;
   }
   .btn-ghost:hover:not(:disabled) {
-    background: var(--surface-2);
-    color: var(--ink);
-    border-color: var(--border-2);
+    background: var(--bg-inset);
+    color: var(--text-primary);
+    border-color: var(--border-muted);
   }
   .btn-ghost:disabled { cursor: not-allowed; opacity: 0.6; }
   .btn-primary {
-    background: var(--amber);
-    /* Dark foreground on amber so the label stays readable; --ink
+    background: var(--accent-blue);
+    /* Dark foreground on amber so the label stays readable; --text-primary
        (light body color) was too low-contrast against the warm fill. */
-    color: var(--bg);
-    border: 1px solid var(--amber);
+    color: var(--bg-primary);
+    border: 1px solid var(--accent-blue);
     padding: var(--space-3) var(--space-5);
     cursor: pointer;
     font-weight: 500;
   }
   .btn-primary:hover:not(:disabled) {
-    background: var(--amber-deep);
-    border-color: var(--amber-deep);
+    background: var(--fb-accent-deep);
+    border-color: var(--fb-accent-deep);
   }
   .btn-primary:disabled { cursor: not-allowed; opacity: 0.6; }
 </style>

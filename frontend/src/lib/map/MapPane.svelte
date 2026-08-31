@@ -354,8 +354,8 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: var(--amber);
-    border: 1px solid var(--amber-deep);
+    background: var(--accent-blue);
+    border: 1px solid var(--fb-accent-deep);
     box-shadow:
       0 0 0 2px rgba(232, 164, 75, 0.18),
       inset 0 1px 0 rgba(255, 255, 255, 0.18);
@@ -372,16 +372,16 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: color-mix(in srgb, var(--amber) 18%, var(--surface));
-    border: 1px solid var(--amber);
+    background: color-mix(in srgb, var(--accent-blue) 18%, var(--bg-surface));
+    border: 1px solid var(--accent-blue);
     border-radius: 50%;
     box-shadow:
       0 0 0 3px rgba(232, 164, 75, 0.15),
       inset 0 1px 0 rgba(255, 255, 255, 0.12);
-    color: var(--ink);
+    color: var(--text-primary);
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    font-size: var(--text-sm);
+    font-size: var(--font-size-xs);
     font-weight: 500;
   }
 
@@ -391,9 +391,9 @@
      on .leaflet-popup-content-wrapper and the connector tail on
      .leaflet-popup-tip. */
   :global(.map-cluster-popup-shell .leaflet-popup-content-wrapper) {
-    background: var(--surface);
-    color: var(--ink);
-    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
     border-radius: 0;
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.05),
@@ -406,15 +406,15 @@
     width: auto !important;
   }
   :global(.map-cluster-popup-shell .leaflet-popup-tip) {
-    background: var(--surface);
-    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
   }
   :global(.map-cluster-popup-shell a.leaflet-popup-close-button) {
-    color: var(--ink-2);
+    color: var(--text-secondary);
     padding: 6px 8px 0 0;
   }
   :global(.map-cluster-popup-shell a.leaflet-popup-close-button:hover) {
-    color: var(--ink);
+    color: var(--text-primary);
   }
 
   :global(.map-cluster-popup) {
@@ -422,23 +422,23 @@
     flex-direction: column;
     min-width: 240px;
     max-width: 260px;
-    font-family: var(--font-ui);
+    font-family: var(--font-sans);
   }
   :global(.map-cluster-popup__header) {
     padding: 8px 12px 6px;
     font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    letter-spacing: var(--label-track);
+    font-size: var(--font-size-2xs);
+    letter-spacing: var(--letter-spacing-label);
     text-transform: uppercase;
-    color: var(--ink-2);
-    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-default);
   }
   :global(.map-cluster-popup__grid) {
     display: grid;
     grid-template-columns: repeat(4, 56px);
     grid-auto-rows: 56px;
     gap: 1px;
-    background: var(--border);
+    background: var(--border-default);
     padding: 1px;
     max-height: 228px; /* ~4 rows × 56 + 4×1 gap */
     overflow-y: auto;
@@ -446,7 +446,7 @@
   :global(.map-cluster-popup__cell) {
     width: 56px;
     height: 56px;
-    background-color: var(--surface-2);
+    background-color: var(--bg-inset);
     background-size: cover;
     background-position: center;
     border: 0;
@@ -454,21 +454,21 @@
     cursor: pointer;
   }
   :global(.map-cluster-popup__cell:hover) {
-    outline: 1px solid var(--amber);
+    outline: 1px solid var(--accent-blue);
     outline-offset: -1px;
   }
   :global(.map-cluster-popup__footer) {
     padding: 8px 12px;
     background: transparent;
     border: 0;
-    border-top: 1px solid var(--border);
-    color: var(--ink-3);
+    border-top: 1px solid var(--border-default);
+    color: var(--text-muted);
     font-family: var(--font-mono);
-    font-size: var(--text-xs);
+    font-size: var(--font-size-2xs);
     text-align: left;
     cursor: pointer;
   }
   :global(.map-cluster-popup__footer:hover) {
-    color: var(--ink-2);
+    color: var(--text-secondary);
   }
 </style>

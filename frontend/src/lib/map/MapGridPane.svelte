@@ -67,19 +67,19 @@
     flex-direction: column;
     height: 100%;
     overflow: hidden;
-    border-left: 1px solid var(--border, #e5e7eb);
+    border-left: 1px solid var(--border-default);
   }
   header {
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 8px 12px;
-    border-bottom: 1px solid var(--border, #e5e7eb);
+    border-bottom: 1px solid var(--border-default);
   }
   .clear-chip {
     margin-left: auto;
     background: transparent;
-    border: 1px solid var(--border, #e5e7eb);
+    border: 1px solid var(--border-default);
     border-radius: 12px;
     padding: 2px 10px;
     cursor: pointer;
@@ -87,6 +87,6 @@
   }
   .empty {
     padding: 24px;
-    color: var(--ink-2);
+    color: var(--text-secondary);
   }
 </style>
