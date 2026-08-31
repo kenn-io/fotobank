@@ -285,6 +285,52 @@ func TestCommitterRecordsConflictWhenIdentityBecomesDuplicateAfterDocbankWrite(t
 	r.Equal(checkout.EntryConflict, entries[0].State)
 }
 
+func TestNonCleanCommitForcesFreshCheckoutObservation(t *testing.T) {
+	r := require.New(t)
+	fixture := newFixture(t)
+	original := []byte("original checkout bytes")
+	committedEdit := []byte("first edit bytes")
+	laterEdit := []byte("other edit bytes")
+	r.Len(laterEdit, len(committedEdit))
+	_, checkoutID, entry := createPendingEdit(t, fixture, original, committedEdit)
+	target, err := fixture.checkouts.GetCommitTarget(t.Context(), checkoutID, entry.FileID)
+	r.NoError(err)
+	receipt, err := fixture.content.Replace(t.Context(), content.ReplaceRequest{
+		VirtualPath: target.VirtualPath,
+		NodeID:      target.NodeID, BaseVersionID: entry.BaseVersionID,
+		Base:      content.Identity{SHA256: entry.BaseSHA256, Size: entry.BaseSize},
+		MediaType: target.MediaType,
+		Expected: content.Identity{
+			SHA256: entry.ObservedSHA256, Size: entry.ObservedSize,
+		},
+		Reader: bytes.NewReader(committedEdit),
+	})
+	r.NoError(err)
+	storedCheckout, err := fixture.checkouts.Get(t.Context(), checkoutID)
+	r.NoError(err)
+	workingPath := filepath.Join(storedCheckout.Root, filepath.FromSlash(entry.RelativePath))
+	r.NoError(os.WriteFile(workingPath, laterEdit, 0o600))
+	r.NoError(os.Chtimes(workingPath, entry.ObservedMTime, entry.ObservedMTime))
+	r.NoError(fixture.checkouts.ApplyCommit(t.Context(), target, checkout.CommitReceipt{
+		NodeID: receipt.Node.ID, VersionID: receipt.Version.ID,
+		SHA256: receipt.Identity.SHA256, Size: receipt.Identity.Size,
+	}, false, time.Now().UTC()))
+
+	scanner := checkout.NewScanner(fixture.checkouts, fixture.content, checkout.ScannerConfig{
+		ScanInterval: time.Second, SettleInterval: 0,
+	})
+	_, err = scanner.Scan(t.Context())
+	r.NoError(err)
+	_, err = scanner.Scan(t.Context())
+	r.NoError(err)
+	entries, err := fixture.checkouts.ListEntries(t.Context(), checkoutID)
+	r.NoError(err)
+	r.Len(entries, 1)
+	digest := sha256.Sum256(laterEdit)
+	r.Equal(hex.EncodeToString(digest[:]), entries[0].ObservedSHA256)
+	r.Equal(checkout.EntryPending, entries[0].State)
+}
+
 func TestServiceKeepsTemporaryFilesSeparateFromOriginalNames(t *testing.T) {
 	r := require.New(t)
 	fixture := newFixture(t)

@@ -175,6 +175,19 @@ func (r *Repo) ApplyCommit(
 	} else if changed != 1 {
 		return fmt.Errorf("apply checkout commit: %w: checkout observation changed", errs.ErrContentConflict)
 	}
+	if !clean {
+		if _, err := tx.ExecContext(ctx, `UPDATE checkout_entries
+			SET observed_identity = ''
+			WHERE checkout_id = ? AND file_id = ?`,
+			target.Entry.CheckoutID, target.Entry.FileID); err != nil {
+			return fmt.Errorf("apply checkout commit: invalidate checkout observation: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM checkout_scan_candidates
+			WHERE checkout_id = ? AND relative_path = ?`,
+			target.Entry.CheckoutID, target.Entry.RelativePath); err != nil {
+			return fmt.Errorf("apply checkout commit: reset checkout observation: %w", err)
+		}
+	}
 
 	if role == "primary" {
 		if err := invalidatePrimaryProjections(ctx, tx, assetID, now.UTC()); err != nil {
