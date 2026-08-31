@@ -32,6 +32,15 @@ Focus security findings on a concrete capability gained across an actual trust
 boundary. Focus other review findings on correctness, data integrity,
 portability, and maintainability.
 
+## Go toolchain
+
+Fotobank pins Go 1.27 through `go.mod`, and CI installs the version declared
+there. Go 1.27 includes the standard-library `uuid` package. A bare `"uuid"`
+import is valid in this repository; confirm package availability with the
+pinned toolchain before reporting it as a compile failure. The repository also
+uses `github.com/google/uuid` in older code, but that dependency does not make
+the standard package invalid or require new code to use it.
+
 ## Local filesystem namespace
 
 The local operator controls the host mount namespace and assigns the storage
