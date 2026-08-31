@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"uuid"
 
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
@@ -37,9 +38,11 @@ import (
 	appsettingsstore "go.kenn.io/fotobank/internal/appsettings"
 	"go.kenn.io/fotobank/internal/auth/hidden"
 	"go.kenn.io/fotobank/internal/backup"
+	"go.kenn.io/fotobank/internal/checkout"
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/contentresolver"
+	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
 	"go.kenn.io/fotobank/internal/media"
@@ -135,8 +138,12 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	if path == "" {
 		path = config.DefaultConfigPath()
 	}
-	cfg, err := config.Load(path)
+	cfg, err := config.LoadUnchecked(path)
 	if err != nil {
+		return err
+	}
+	validationOptions := config.ValidationOptions{AllowUnavailableNAS: true}
+	if err := cfg.ValidateWithOptions(validationOptions); err != nil {
 		return err
 	}
 	if opts.listen != "" {
@@ -144,7 +151,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		// public bind that Validate would have rejected; re-run it so
 		// the CLI override stays as strict as the file-only path.
 		cfg.HTTP.ListenAddress = opts.listen
-		if err := cfg.Validate(); err != nil {
+		if err := cfg.ValidateWithOptions(validationOptions); err != nil {
 			return err
 		}
 	}
@@ -195,7 +202,13 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	}
 	defer d.Close()
 
-	contentStore, err := content.Open(ctx, content.Config{Root: cfg.Docbank.Root})
+	contentStore, err := content.Open(ctx, content.Config{
+		Root: cfg.Docbank.Root,
+		ManagedRoots: []content.ManagedRoot{
+			{Path: cfg.NAS.Root, AllowUnavailable: true},
+			{Path: cfg.Flash.Root, CreateIfMissing: true},
+		},
+	})
 	if err != nil {
 		return fmt.Errorf("open Docbank vault: %w", err)
 	}
@@ -235,6 +248,15 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	contentResolver := contentresolver.New(mediaRepo, contentStore)
 	mediaSvc := service.NewMediaService(mediaRepo, contentResolver)
+	checkoutScanner := checkout.NewScanner(
+		checkout.NewRepo(d.WriteDB(), d.ReadDB()),
+		contentStore,
+		checkout.ScannerConfig{
+			ScanInterval: cfg.Checkouts.ScanInterval, SettleInterval: cfg.Checkouts.SettleInterval,
+			IgnorePatterns: cfg.Checkouts.IgnorePatterns,
+			Logger:         logger.With("component", "checkout-scan"),
+		},
+	)
 
 	// F2.4 Hidden privacy. hiddenRepo and hiddenSvc are wired after
 	// mediaSvc because hidden.NewService takes MediaPrivacy which is
@@ -721,6 +743,12 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		runHiddenSweeper(sigCtx, hiddenSvc, hiddenSweepInterval, opts.stderr)
 	})
 
+	bgWG.Go(func() {
+		if err := checkoutScanner.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(opts.stderr, "checkout scanner exited:", err)
+		}
+	})
+
 	thumbWorker := thumb.NewWorker(thumbQueue, storeLayer, thumb.Config{
 		Content:           contentResolver,
 		WorkerConcurrency: cfg.Thumbs.WorkerConcurrency,
@@ -884,7 +912,8 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		// probe doesn't report 503 during the window between server
 		// start and the worker's first 15-minute tick. The retention
 		// worker would otherwise create it lazily on first Snapshot.
-		if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		if err := prepareBackupDir(cfg, backupDir); err != nil &&
+			!errors.Is(err, errs.ErrContentUnavailable) {
 			return fmt.Errorf("create backup dir: %w", err)
 		}
 		interval := 15 * time.Minute
@@ -904,9 +933,10 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 			}
 		}
 		bw := backup.NewWorker(backup.Config{
-			DB:       d.WriteDB(),
-			Dir:      backupDir,
-			Interval: interval,
+			DB:           d.WriteDB(),
+			Dir:          backupDir,
+			RequiredRoot: backupRequiredRoot(cfg),
+			Interval:     interval,
 			Policy: backup.Policy{
 				Keep15Min:  cfg.Backup.Keep15Min,
 				KeepHourly: cfg.Backup.KeepHourly,
@@ -1072,20 +1102,47 @@ func obsBackupCheck(cfg *config.Config, dir string) obs.ReadyCheck {
 	}
 	return obs.ReadyCheck{
 		Name: "snapshot_dir",
-		Fn: func(_ context.Context) error {
-			// O_TRUNC (not O_EXCL): a leftover .readyz-probe from a
-			// crashed prior check would otherwise wedge readiness in
-			// permanent failure. The probe is a write-permission test,
-			// not a uniqueness contract.
-			probe := filepath.Join(dir, ".readyz-probe")
-			f, err := os.OpenFile(probe, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+		Fn: func(_ context.Context) (retErr error) {
+			root, relativeDir, err := openBackupReadyRoot(cfg, dir)
 			if err != nil {
 				return err
 			}
-			_ = f.Close()
-			return os.Remove(probe)
+			defer func() { retErr = errors.Join(retErr, root.Close()) }()
+			probe := filepath.Join(relativeDir, ".readyz-probe-"+uuid.New().String())
+			f, err := root.OpenFile(probe, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+			if err != nil {
+				return err
+			}
+			_, writeErr := f.Write([]byte{0})
+			closeErr := f.Close()
+			removeErr := root.Remove(probe)
+			return errors.Join(writeErr, closeErr, removeErr)
 		},
 	}
+}
+
+func openBackupReadyRoot(cfg *config.Config, dir string) (*os.Root, string, error) {
+	if cfg.Backup.Dir != "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, "", err
+		}
+		root, err := os.OpenRoot(dir)
+		return root, ".", err
+	}
+	root, err := openBackupNASRoot(cfg)
+	if err != nil {
+		return nil, "", err
+	}
+	relativeDir, err := filepath.Rel(cfg.NAS.Root, dir)
+	if err != nil || !filepath.IsLocal(relativeDir) || relativeDir == "." {
+		_ = root.Close()
+		return nil, "", fmt.Errorf("backup directory %q is outside NAS root", dir)
+	}
+	if err := root.MkdirAll(relativeDir, 0o700); err != nil {
+		_ = root.Close()
+		return nil, "", err
+	}
+	return root, relativeDir, nil
 }
 
 // bindListener dispatches on the "unix:" prefix: addresses starting

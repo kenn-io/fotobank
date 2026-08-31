@@ -23,6 +23,9 @@ type Config struct {
 type ManagedRoot struct {
 	Path            string
 	CreateIfMissing bool
+	// AllowUnavailable defers only a missing-path check at Open. Import and
+	// checkout root validation still requires every managed root to resolve.
+	AllowUnavailable bool
 }
 
 // CheckoutRoot is an existing canonical working directory that the opened
@@ -324,11 +327,19 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 		}
 		resolvedManagedRoot, evalErr := filepath.EvalSymlinks(managedRoot.Path)
 		if evalErr != nil {
+			if managedRoot.AllowUnavailable && os.IsNotExist(evalErr) {
+				managedRoots[i] = filepath.Clean(managedRoot.Path)
+				continue
+			}
 			_ = vault.Close()
 			return nil, fmt.Errorf("%w: resolve managed root: %w", errs.ErrBadConfiguration, evalErr)
 		}
 		info, statErr := os.Stat(resolvedManagedRoot)
 		if statErr != nil {
+			if managedRoot.AllowUnavailable && os.IsNotExist(statErr) {
+				managedRoots[i] = filepath.Clean(managedRoot.Path)
+				continue
+			}
 			_ = vault.Close()
 			return nil, fmt.Errorf("%w: inspect managed root: %w", errs.ErrBadConfiguration, statErr)
 		}

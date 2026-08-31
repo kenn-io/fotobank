@@ -47,6 +47,46 @@ func Sweep(dir string, policy Policy, now time.Time, logger *slog.Logger) (Sweep
 		return SweepResult{}, fmt.Errorf("list snapshots: %w", err)
 	}
 
+	res := sweepSnapshots(files, policy, now, logger, func(snapshot SnapshotInfo) error {
+		return os.Remove(snapshot.Path)
+	})
+
+	if err := cleanStalePartials(dir, now, logger); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+func sweepRoot(
+	root *os.Root,
+	relativeDir string,
+	policy Policy,
+	now time.Time,
+	logger *slog.Logger,
+) (SweepResult, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	files, err := ListRoot(root, relativeDir)
+	if err != nil {
+		return SweepResult{}, fmt.Errorf("list snapshots: %w", err)
+	}
+	res := sweepSnapshots(files, policy, now, logger, func(snapshot SnapshotInfo) error {
+		return root.Remove(filepath.Join(relativeDir, filepath.Base(snapshot.Path)))
+	})
+	if err := cleanStalePartialsRoot(root, relativeDir, now, logger); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+func sweepSnapshots(
+	files []SnapshotInfo,
+	policy Policy,
+	now time.Time,
+	logger *slog.Logger,
+	remove func(SnapshotInfo) error,
+) SweepResult {
 	seen15 := map[time.Time]bool{}
 	seenH := map[time.Time]bool{}
 	seenD := map[time.Time]bool{}
@@ -55,7 +95,7 @@ func Sweep(dir string, policy Policy, now time.Time, logger *slog.Logger) (Sweep
 	for _, f := range files {
 		age := now.Sub(f.Timestamp)
 		if age < 0 {
-			if rmErr := os.Remove(f.Path); rmErr != nil {
+			if rmErr := remove(f); rmErr != nil {
 				logger.Warn("future snapshot delete failed",
 					"path", f.Path, "err", rmErr)
 				continue
@@ -92,7 +132,7 @@ func Sweep(dir string, policy Policy, now time.Time, logger *slog.Logger) (Sweep
 		}
 
 		if !keep {
-			if rmErr := os.Remove(f.Path); rmErr != nil {
+			if rmErr := remove(f); rmErr != nil {
 				logger.Warn("retention delete failed",
 					"path", f.Path, "err", rmErr)
 				continue
@@ -101,10 +141,46 @@ func Sweep(dir string, policy Policy, now time.Time, logger *slog.Logger) (Sweep
 		}
 	}
 
-	if err := cleanStalePartials(dir, now, logger); err != nil {
-		return res, err
+	return res
+}
+
+func cleanStalePartialsRoot(
+	root *os.Root,
+	relativeDir string,
+	now time.Time,
+	logger *slog.Logger,
+) error {
+	dir, err := root.Open(relativeDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("readdir for rooted partials: %w", err)
 	}
-	return res, nil
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return fmt.Errorf("readdir for rooted partials: %w", err)
+	}
+	const partialAgeCutoff = 24 * time.Hour
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), SnapshotExt+".partial") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || now.Sub(info.ModTime()) <= partialAgeCutoff {
+			continue
+		}
+		relativePath := filepath.Join(relativeDir, entry.Name())
+		displayPath := filepath.Join(root.Name(), relativeDir, entry.Name())
+		if err := root.Remove(relativePath); err != nil {
+			logger.Warn("partial cleanup failed", "path", displayPath, "err", err)
+			continue
+		}
+		logger.Info("partial cleanup", "path", displayPath,
+			"age_hours", now.Sub(info.ModTime()).Hours())
+	}
+	return nil
 }
 
 func cleanStalePartials(dir string, now time.Time, logger *slog.Logger) error {

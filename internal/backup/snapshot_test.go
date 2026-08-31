@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -146,6 +147,75 @@ func TestSnapshotPathErrorsOnMissingSource(t *testing.T) {
 	_, statErr := os.Stat(missing)
 	r.True(os.IsNotExist(statErr),
 		"missing source must not be created by snapshot open path")
+}
+
+func TestSnapshotToRootStaysBoundAfterRootRename(t *testing.T) {
+	r := require.New(t)
+	parent := t.TempDir()
+	original := filepath.Join(parent, "nas")
+	moved := filepath.Join(parent, "nas-moved")
+	r.NoError(os.Mkdir(original, 0o700))
+	root, err := os.OpenRoot(original)
+	r.NoError(err)
+	defer root.Close()
+	if err := os.Rename(original, moved); err != nil {
+		t.Skipf("platform cannot rename an opened directory: %v", err)
+	}
+	r.NoError(os.Mkdir(original, 0o700))
+
+	sourcePath := filepath.Join(parent, "source.sqlite")
+	db := makeSourceDB(t, sourcePath)
+	relativeDst := filepath.Join("snapshots", "snapshot.sqlite")
+	r.NoError(SnapshotToRoot(t.Context(), db, root, relativeDst))
+	r.FileExists(filepath.Join(moved, relativeDst))
+	r.NoFileExists(filepath.Join(original, relativeDst))
+	r.True(integrityOk(t, filepath.Join(moved, relativeDst)))
+}
+
+func TestCopySnapshotContextInterruptsBlockedTransfer(t *testing.T) {
+	r := require.New(t)
+	destination := newBlockingWriteCloser()
+	source := io.NopCloser(strings.NewReader(strings.Repeat("x", 128*1024)))
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := copySnapshotContext(ctx, destination, source)
+		done <- err
+	}()
+
+	<-destination.started
+	cancel()
+	select {
+	case err := <-done:
+		r.ErrorIs(err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		r.Fail("snapshot copy did not stop after cancellation")
+	}
+}
+
+type blockingWriteCloser struct {
+	started chan struct{}
+	closed  chan struct{}
+	start   sync.Once
+	close   sync.Once
+}
+
+func newBlockingWriteCloser() *blockingWriteCloser {
+	return &blockingWriteCloser{
+		started: make(chan struct{}),
+		closed:  make(chan struct{}),
+	}
+}
+
+func (w *blockingWriteCloser) Write([]byte) (int, error) {
+	w.start.Do(func() { close(w.started) })
+	<-w.closed
+	return 0, os.ErrClosed
+}
+
+func (w *blockingWriteCloser) Close() error {
+	w.close.Do(func() { close(w.closed) })
+	return nil
 }
 
 func TestSnapshotSurfaceErrorFromSyncDir(t *testing.T) {

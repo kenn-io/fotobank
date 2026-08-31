@@ -20,6 +20,7 @@ func TestEndToEndServerStubPrincipal(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
 	cfg := filepath.Join(tmp, "c.toml")
+	r.NoError(os.Mkdir(filepath.Join(tmp, "nas"), 0o700))
 	r.NoError(os.WriteFile(cfg, fmt.Appendf(nil, `
 [nas]
 root = %q

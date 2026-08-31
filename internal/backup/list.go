@@ -3,6 +3,7 @@ package backup
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,6 +50,29 @@ func List(dir string) ([]SnapshotInfo, error) {
 		}
 		return nil, fmt.Errorf("readdir %s: %w", absDir, err)
 	}
+	return listEntries(entries, absDir), nil
+}
+
+// ListRoot enumerates snapshots beneath an opened filesystem root. Returned
+// paths use the name through which root was opened, while enumeration remains
+// bound to the opened directory if that pathname changes afterward.
+func ListRoot(root *os.Root, relativeDir string) ([]SnapshotInfo, error) {
+	dir, err := root.Open(relativeDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("readdir rooted snapshots: %w", err)
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return nil, fmt.Errorf("readdir rooted snapshots: %w", err)
+	}
+	return listEntries(entries, filepath.Join(root.Name(), relativeDir)), nil
+}
+
+func listEntries(entries []fs.DirEntry, displayDir string) []SnapshotInfo {
 	var out []SnapshotInfo
 	for _, e := range entries {
 		if e.IsDir() {
@@ -68,7 +92,7 @@ func List(dir string) ([]SnapshotInfo, error) {
 			continue
 		}
 		out = append(out, SnapshotInfo{
-			Path:      filepath.Join(absDir, name),
+			Path:      filepath.Join(displayDir, name),
 			Timestamp: ts,
 			Size:      info.Size(),
 		})
@@ -76,5 +100,5 @@ func List(dir string) ([]SnapshotInfo, error) {
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Timestamp.After(out[j].Timestamp)
 	})
-	return out, nil
+	return out
 }

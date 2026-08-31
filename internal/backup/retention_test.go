@@ -133,3 +133,36 @@ func TestSweepNilLoggerOK(t *testing.T) {
 	_, err := Sweep(dir, policy, time.Now(), nil)
 	require.NoError(t, err)
 }
+
+func TestSweepRootStaysBoundAfterRootRename(t *testing.T) {
+	r := require.New(t)
+	parent := t.TempDir()
+	original := filepath.Join(parent, "nas")
+	moved := filepath.Join(parent, "nas-moved")
+	snapshotDir := filepath.Join(original, "snapshots")
+	r.NoError(os.MkdirAll(snapshotDir, 0o700))
+	now := time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC)
+	oldName := filepath.Base(mkSnap(t, snapshotDir, now.Add(-8*24*time.Hour)))
+	root, err := os.OpenRoot(original)
+	r.NoError(err)
+	defer root.Close()
+	if err := os.Rename(original, moved); err != nil {
+		t.Skipf("platform cannot rename an opened directory: %v", err)
+	}
+	replacementDir := filepath.Join(original, "snapshots")
+	r.NoError(os.MkdirAll(replacementDir, 0o700))
+	replacement := filepath.Join(replacementDir, oldName)
+	r.NoError(os.WriteFile(replacement, []byte("replacement"), 0o600))
+
+	res, err := sweepRoot(
+		root,
+		"snapshots",
+		Policy{Keep15Min: 4, KeepHourly: 24, KeepDaily: 7},
+		now,
+		quietLogger(),
+	)
+	r.NoError(err)
+	r.Equal(1, res.Deleted)
+	r.NoFileExists(filepath.Join(moved, "snapshots", oldName))
+	r.FileExists(replacement)
+}

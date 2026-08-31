@@ -21,6 +21,9 @@ DROP TABLE IF EXISTS scopes;
 DROP TABLE IF EXISTS app_settings;
 DROP TABLE IF EXISTS user_settings;
 -- Drop checkout-owned historical snapshots before their parent rows.
+DROP INDEX IF EXISTS checkout_scan_candidates_state_idx;
+DROP TABLE IF EXISTS checkout_scan_candidates;
+DROP INDEX IF EXISTS checkout_entries_binding_uq;
 DROP TABLE IF EXISTS checkout_entries;
 DROP TABLE IF EXISTS checkout_year_selections;
 DROP TABLE IF EXISTS checkout_album_selections;

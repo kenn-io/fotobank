@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -65,6 +66,7 @@ type Config struct {
 	Identity      Identity      `toml:"identity"`
 	HTTP          HTTP          `toml:"http"`
 	Imports       Imports       `toml:"imports"`
+	Checkouts     Checkouts     `toml:"checkouts"`
 	Thumbs        Thumbs        `toml:"thumbs"`
 	Broker        Broker        `toml:"broker"`
 	Backup        Backup        `toml:"backup"`
@@ -156,6 +158,12 @@ type Imports struct {
 	SettleInterval    time.Duration `toml:"settle_interval"`
 }
 
+type Checkouts struct {
+	ScanInterval   time.Duration `toml:"scan_interval"`
+	SettleInterval time.Duration `toml:"settle_interval"`
+	IgnorePatterns []string      `toml:"ignore_patterns"`
+}
+
 type Thumbs struct {
 	WorkerConcurrency int           `toml:"worker_concurrency"`
 	PollInterval      time.Duration `toml:"poll_interval"`
@@ -194,6 +202,14 @@ type ObservabilityLogging struct {
 	Format    string `toml:"format"`
 	Level     string `toml:"level"`
 	AddSource bool   `toml:"add_source"`
+}
+
+// ValidationOptions controls runtime-specific availability policy while
+// preserving the same configuration invariants.
+type ValidationOptions struct {
+	// AllowUnavailableNAS lets the server expose health endpoints while a
+	// configured external NAS symlink has no reachable target.
+	AllowUnavailableNAS bool
 }
 
 // Load reads the file at path, parses it as TOML, applies defaults,
@@ -303,6 +319,12 @@ func applyEnvOverrides(c *Config) {
 // Validate returns ErrBadConfiguration (wrapped with detail) if any
 // required setting is missing or any enum field holds an unknown value.
 func (c *Config) Validate() error {
+	return c.ValidateWithOptions(ValidationOptions{})
+}
+
+// ValidateWithOptions validates configuration with an explicit runtime
+// availability policy.
+func (c *Config) ValidateWithOptions(options ValidationOptions) error {
 	if c.NAS.Root == "" {
 		return fmt.Errorf("%w: [nas].root is required", errs.ErrBadConfiguration)
 	}
@@ -315,7 +337,13 @@ func (c *Config) Validate() error {
 	}
 	nasRoot, err := canonicalConfigPath(c.NAS.Root)
 	if err != nil {
-		return fmt.Errorf("%w: canonicalize [nas].root: %v", errs.ErrBadConfiguration, err)
+		if !options.AllowUnavailableNAS || !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: canonicalize [nas].root: %v", errs.ErrBadConfiguration, err)
+		}
+		nasRoot, err = canonicalUnavailableConfigPath(c.NAS.Root)
+		if err != nil {
+			return fmt.Errorf("%w: resolve unavailable [nas].root: %v", errs.ErrBadConfiguration, err)
+		}
 	}
 	flashRoot, err := canonicalConfigPath(c.Flash.Root)
 	if err != nil {
@@ -357,6 +385,20 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("%w: [storage].mode=%q (must be nas_only|flash_cache)",
 			errs.ErrBadConfiguration, c.Storage.Mode)
+	}
+	if c.Checkouts.ScanInterval <= 0 {
+		return fmt.Errorf("%w: [checkouts].scan_interval must be positive",
+			errs.ErrBadConfiguration)
+	}
+	if c.Checkouts.SettleInterval < 0 {
+		return fmt.Errorf("%w: [checkouts].settle_interval must not be negative",
+			errs.ErrBadConfiguration)
+	}
+	for _, pattern := range c.Checkouts.IgnorePatterns {
+		if _, err := path.Match(pattern, "candidate"); err != nil {
+			return fmt.Errorf("%w: invalid [checkouts].ignore_patterns entry %q: %v",
+				errs.ErrBadConfiguration, pattern, err)
+		}
 	}
 	for i, p := range c.Admin.Principals {
 		if strings.TrimSpace(p.Hub) == "" || strings.TrimSpace(p.UserID) == "" {
@@ -434,6 +476,14 @@ func (c *Config) Validate() error {
 }
 
 func canonicalConfigPath(value string) (string, error) {
+	return canonicalConfigPathMode(value, false, 0)
+}
+
+func canonicalUnavailableConfigPath(value string) (string, error) {
+	return canonicalConfigPathMode(value, true, 0)
+}
+
+func canonicalConfigPathMode(value string, allowDanglingSymlink bool, symlinkDepth int) (string, error) {
 	target := value
 	if !filepath.IsAbs(target) {
 		cwd, err := os.Getwd()
@@ -467,7 +517,23 @@ func canonicalConfigPath(value string) (string, error) {
 	}
 	resolved, err := filepath.EvalSymlinks(current)
 	if err != nil {
-		return "", err
+		if !allowDanglingSymlink || !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		if symlinkDepth >= 255 {
+			return "", fmt.Errorf("too many symbolic links while resolving %q", value)
+		}
+		linkTarget, readlinkErr := os.Readlink(current)
+		if readlinkErr != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(linkTarget) {
+			linkTarget = filepath.Join(filepath.Dir(current), linkTarget)
+		}
+		resolved, err = canonicalConfigPathMode(linkTarget, true, symlinkDepth+1)
+		if err != nil {
+			return "", err
+		}
 	}
 	slices.Reverse(missing)
 	return filepath.Join(append([]string{resolved}, missing...)...), nil
@@ -653,6 +719,12 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	}
 	if c.Imports.SettleInterval == 0 {
 		c.Imports.SettleInterval = 2 * time.Second
+	}
+	if c.Checkouts.ScanInterval == 0 {
+		c.Checkouts.ScanInterval = 30 * time.Second
+	}
+	if c.Checkouts.SettleInterval == 0 {
+		c.Checkouts.SettleInterval = 2 * time.Second
 	}
 	if c.Thumbs.WorkerConcurrency == 0 {
 		c.Thumbs.WorkerConcurrency = 4

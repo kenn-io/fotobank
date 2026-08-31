@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -57,25 +58,143 @@ func Snapshot(ctx context.Context, db *sql.DB, dst string) error {
 	return nil
 }
 
+// SnapshotToRoot creates the SQLite snapshot in a private local staging
+// directory, then atomically publishes it through root. SQLite VACUUM INTO
+// accepts only a pathname, so staging is required to keep NAS publication
+// bound to an already-open external root.
+func SnapshotToRoot(ctx context.Context, db *sql.DB, root *os.Root, relativeDst string) error {
+	if root == nil || !filepath.IsLocal(relativeDst) || relativeDst == "." {
+		return fmt.Errorf("snapshot destination must be local to an open root")
+	}
+	directory := filepath.Dir(relativeDst)
+	if err := root.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("mkdir rooted snapshot dir: %w", err)
+	}
+	scratch, err := os.MkdirTemp("", "fotobank-snapshot-")
+	if err != nil {
+		return fmt.Errorf("create snapshot staging dir: %w", err)
+	}
+	defer os.RemoveAll(scratch)
+	staged := filepath.Join(scratch, "snapshot.sqlite")
+	if err := Snapshot(ctx, db, staged); err != nil {
+		return fmt.Errorf("stage rooted snapshot: %w", err)
+	}
+	source, err := os.Open(staged)
+	if err != nil {
+		return fmt.Errorf("open staged snapshot: %w", err)
+	}
+	defer source.Close()
+	partial := relativeDst + ".partial"
+	destination, err := root.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("open rooted snapshot partial: %w", err)
+	}
+	if _, err := copySnapshotContext(ctx, destination, source); err != nil {
+		_ = destination.Close()
+		_ = root.Remove(partial)
+		return fmt.Errorf("copy rooted snapshot partial: %w", err)
+	}
+	if err := destination.Sync(); err != nil {
+		_ = destination.Close()
+		_ = root.Remove(partial)
+		return fmt.Errorf("sync rooted snapshot partial: %w", err)
+	}
+	if err := destination.Close(); err != nil {
+		_ = root.Remove(partial)
+		return fmt.Errorf("close rooted snapshot partial: %w", err)
+	}
+	if err := root.Link(partial, relativeDst); err != nil {
+		_ = root.Remove(partial)
+		return fmt.Errorf("link rooted snapshot to destination: %w", err)
+	}
+	if err := root.Remove(partial); err != nil {
+		return fmt.Errorf("remove rooted snapshot partial: %w", err)
+	}
+	if err := syncRootDir(root, directory); err != nil {
+		return fmt.Errorf("fsync rooted snapshot dir: %w", err)
+	}
+	return nil
+}
+
+func copySnapshotContext(
+	ctx context.Context,
+	destination io.WriteCloser,
+	source io.ReadCloser,
+) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	cancelDone := make(chan struct{})
+	stopCancel := context.AfterFunc(ctx, func() {
+		defer close(cancelDone)
+		_ = source.Close()
+		_ = destination.Close()
+	})
+	copied, err := io.Copy(destination, snapshotContextReader{ctx: ctx, reader: source})
+	if !stopCancel() {
+		<-cancelDone
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return copied, ctxErr
+	}
+	return copied, err
+}
+
+type snapshotContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r snapshotContextReader) Read(buffer []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(buffer)
+}
+
 // SnapshotPath opens its own writable SQLite connection at srcDB
 // (without running migrations) and runs Snapshot. Used by the CLI when
 // the caller has only a path, not an existing pool.
 func SnapshotPath(ctx context.Context, srcDB, dst string) error {
+	conn, err := openSnapshotSource(srcDB)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return Snapshot(ctx, conn, dst)
+}
+
+// SnapshotPathToRoot opens srcDB without migrations and publishes its snapshot
+// through an already-open filesystem root.
+func SnapshotPathToRoot(
+	ctx context.Context,
+	srcDB string,
+	root *os.Root,
+	relativeDst string,
+) error {
+	conn, err := openSnapshotSource(srcDB)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return SnapshotToRoot(ctx, conn, root, relativeDst)
+}
+
+func openSnapshotSource(srcDB string) (*sql.DB, error) {
 	// The source DB may carry vec0 schema objects; register the
 	// sqlite-vec extension before opening so SQLite can resolve
 	// vec0 virtual tables when CLI tools drive snapshots without
 	// going through db.Open first.
 	db.RegisterSqliteVec()
 	if _, err := os.Stat(srcDB); err != nil {
-		return fmt.Errorf("stat source DB: %w", err)
+		return nil, fmt.Errorf("stat source DB: %w", err)
 	}
 	dsn := buildDSN(srcDB)
 	conn, err := sql.Open("sqlite3", dsn)
 	if err != nil {
-		return fmt.Errorf("open source DB: %w", err)
+		return nil, fmt.Errorf("open source DB: %w", err)
 	}
-	defer conn.Close()
-	return Snapshot(ctx, conn, dst)
+	return conn, nil
 }
 
 // buildDSN returns a writable file: URI for path with the project's

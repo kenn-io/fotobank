@@ -206,12 +206,13 @@ func (r *Repo) LiveRoots(ctx context.Context) ([]string, error) {
 func (r *Repo) InsertEntry(ctx context.Context, entry Entry) error {
 	_, err := r.rw.ExecContext(ctx, `INSERT INTO checkout_entries (
 		checkout_id, file_id, relative_path, base_version_id, base_sha256,
-		base_size, observed_size, observed_mtime, observed_sha256, state,
+		base_size, observed_size, observed_mtime, observed_identity, observed_sha256, state,
 		last_error, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
 		entry.CheckoutID, entry.FileID, entry.RelativePath, entry.BaseVersionID,
 		entry.BaseSHA256, entry.BaseSize, entry.ObservedSize, entry.ObservedMTime,
-		entry.ObservedSHA256, string(entry.State), entry.CreatedAt, entry.UpdatedAt)
+		entry.ObservedIdentity, entry.ObservedSHA256, string(entry.State),
+		entry.CreatedAt, entry.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert checkout entry: %w", err)
 	}
@@ -330,7 +331,7 @@ func (r *Repo) Get(ctx context.Context, id string) (Checkout, error) {
 func (r *Repo) ListEntries(ctx context.Context, checkoutID string) ([]Entry, error) {
 	rows, err := r.ro.QueryContext(ctx, `SELECT checkout_id, file_id,
 		relative_path, base_version_id, base_sha256, base_size, observed_size,
-		observed_mtime, observed_sha256, state, last_error, created_at, updated_at
+		observed_mtime, observed_identity, observed_sha256, state, last_error, created_at, updated_at
 		FROM checkout_entries WHERE checkout_id = ? ORDER BY relative_path`, checkoutID)
 	if err != nil {
 		return nil, fmt.Errorf("list checkout entries: %w", err)
@@ -344,7 +345,8 @@ func (r *Repo) ListEntries(ctx context.Context, checkoutID string) ([]Entry, err
 		if err := rows.Scan(
 			&entry.CheckoutID, &entry.FileID, &entry.RelativePath,
 			&entry.BaseVersionID, &entry.BaseSHA256, &entry.BaseSize,
-			&entry.ObservedSize, &entry.ObservedMTime, &entry.ObservedSHA256,
+			&entry.ObservedSize, &entry.ObservedMTime, &entry.ObservedIdentity,
+			&entry.ObservedSHA256,
 			&state, &lastError, &entry.CreatedAt, &entry.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("list checkout entries: scan: %w", err)

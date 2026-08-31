@@ -293,12 +293,20 @@ func (s *Materializer) materialize(
 			fmt.Errorf("materialize %s: stat final checkout path: %w", relativePath, err),
 			published.Close())
 	}
+	if !os.SameFile(info, pathInfo) {
+		return errors.Join(
+			fmt.Errorf("materialize %s: %w: published file was replaced during observation",
+				relativePath, errs.ErrContentConflict),
+			published.Close())
+	}
+	observedIdentity, err := filesystemIdentity(published)
+	if err != nil {
+		return errors.Join(
+			fmt.Errorf("materialize %s: identify published file: %w", relativePath, err),
+			published.Close())
+	}
 	if err := published.Close(); err != nil {
 		return fmt.Errorf("materialize %s: close published file: %w", relativePath, err)
-	}
-	if !os.SameFile(info, pathInfo) {
-		return fmt.Errorf("materialize %s: %w: published file was replaced during observation",
-			relativePath, errs.ErrContentConflict)
 	}
 	observedSHA = hex.EncodeToString(digest.Sum(nil))
 	if observedSHA != candidate.SHA256 {
@@ -309,7 +317,8 @@ func (s *Materializer) materialize(
 	entry := Entry{
 		CheckoutID: checkout.ID, FileID: candidate.FileID, RelativePath: relativePath,
 		BaseVersionID: candidate.VersionID, BaseSHA256: candidate.SHA256, BaseSize: candidate.Size,
-		ObservedSize: info.Size(), ObservedMTime: info.ModTime().UTC(), ObservedSHA256: observedSHA,
+		ObservedSize: info.Size(), ObservedMTime: info.ModTime().UTC(),
+		ObservedIdentity: observedIdentity, ObservedSHA256: observedSHA,
 		State: EntryClean, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := checkoutRoot.Revalidate(); err != nil {

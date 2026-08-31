@@ -6,8 +6,8 @@ albums, sharing, privacy, thumbnails, and search—while Docbank is becoming the
 authority for imported photos, videos, RAW files, sidecars, and their versions.
 
 Import copies source files and leaves them untouched. Writable, partial
-checkouts will provide ordinary files for Lightroom Classic and filesystem
-tools without making a working directory the archive authority.
+checkouts will provide ordinary files for photo editors, file managers, and
+shell tools without making a working directory the archive authority.
 
 Fotobank is not trying to be every photo product for every household. It is a
 small, inspectable archive manager optimized for my own storage topology,
@@ -32,8 +32,8 @@ project is headed, not to promise a stable install experience today.
 Fotobank is built around a few opinions:
 
 - **Working files matter.** Selected media should be available as ordinary
-  writable files for Lightroom Classic, Finder, and shell tools. Those files
-  are explicit checkouts, not hidden storage internals.
+  writable files for external photo tools, file managers, and shell tools.
+  Those files are explicit checkouts, not hidden storage internals.
 - **Docbank is content authority.** Imported media and immutable versions live
   in Docbank. NAS can host Docbank and durable backups; local flash and
   Fotobank thumbnails remain disposable performance layers.
@@ -85,7 +85,8 @@ system where:
 - writable filesystem checkouts remain explicit and rebuildable;
 - Docbank is the authoritative media archive and local flash remains
   disposable;
-- Lightroom Classic can continue to watch the same organized tree;
+- external tools can work with ordinary files without becoming the archive
+  authority;
 - one Go binary owns both the CLI and server write paths;
 - SQLite is the primary metadata store;
 - sharing can be mediated by an external identity/grant broker; and

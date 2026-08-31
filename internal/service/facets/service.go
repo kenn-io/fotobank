@@ -1,7 +1,7 @@
 // Package facets is the auth boundary for the FilterSidebar's five
 // facet aggregations: Cameras, Lenses, Tags, Places (with/without
 // GPS), and Media Types. Each facet runs its own query built from a
-// hybrid.Resolve CTE; the Lightroom exclude-self rule clears the
+// hybrid.Resolve CTE; the exclude-self rule clears the
 // caller's selection of THAT facet before resolving so the dropdown
 // continues to surface every option in the caller's library while
 // the others honour the active scope.
@@ -143,7 +143,7 @@ func New(ro *sql.DB, hiddenChecker HiddenChecker) *Service {
 // bundle. Each query reuses hybrid.ResolveWhere to apply the same
 // predicate set directly on `media`; the matching facet's own
 // selection is cleared first so the dropdown still surfaces every
-// option in the library (the Lightroom exclude-self rule). The five
+// option in the library (the exclude-self rule). The five
 // queries run concurrently via errgroup — they are independent reads
 // and SQLite WAL allows concurrent readers, so wall time is bounded
 // by the slowest query rather than their sum. Errors from any one

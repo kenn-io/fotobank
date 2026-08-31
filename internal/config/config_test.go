@@ -31,6 +31,8 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	r.Equal(30*time.Second, cfg.HTTP.RequestTimeout)
 	r.Equal(60*time.Second, cfg.HTTP.WriteTimeout)
 	r.Equal(2, cfg.Imports.ConcurrentWorkers)
+	r.Equal(30*time.Second, cfg.Checkouts.ScanInterval)
+	r.Equal(2*time.Second, cfg.Checkouts.SettleInterval)
 	r.Equal(4, cfg.Thumbs.WorkerConcurrency)
 	r.Equal("stub", cfg.Broker.Mode)
 }
@@ -204,6 +206,10 @@ request_timeout = "15s"
 write_timeout = "45s"
 [imports]
 concurrent_workers = 8
+[checkouts]
+scan_interval = "45s"
+settle_interval = "3s"
+ignore_patterns = ["*.catalog.lock"]
 [thumbs]
 worker_concurrency = 1
 poll_interval = "1s"
@@ -233,6 +239,9 @@ keep_daily = 14
 	r.Equal(15*time.Second, cfg.HTTP.RequestTimeout)
 	r.Equal(45*time.Second, cfg.HTTP.WriteTimeout)
 	r.Equal(8, cfg.Imports.ConcurrentWorkers)
+	r.Equal(45*time.Second, cfg.Checkouts.ScanInterval)
+	r.Equal(3*time.Second, cfg.Checkouts.SettleInterval)
+	r.Equal([]string{"*.catalog.lock"}, cfg.Checkouts.IgnorePatterns)
 	r.Equal(1, cfg.Thumbs.WorkerConcurrency)
 	r.Equal(time.Second, cfg.Thumbs.PollInterval)
 	r.Equal(2*time.Minute, cfg.Thumbs.LeaseTimeout)
@@ -894,6 +903,19 @@ root = "/tmp/nas"
 		_, err := config.Load(p)
 		require.ErrorIs(t, err, errs.ErrBadConfiguration, "body=%q must reject", body)
 	}
+}
+
+func TestCheckoutsRejectInvalidIgnorePattern(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[nas]
+root = "/tmp/nas"
+[checkouts]
+ignore_patterns = ["["]
+`), 0o600))
+	_, err := config.Load(p)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
 }
 
 // TestLoadExpandsTildeInPaths covers the regression that wrote a

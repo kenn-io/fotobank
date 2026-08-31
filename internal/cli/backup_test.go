@@ -73,6 +73,44 @@ func TestBackupSnapshotCLIWritesFile(t *testing.T) {
 	r.FileExists(out)
 }
 
+func TestBackupSnapshotDoesNotCreateMissingDefaultNASRoot(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBackupConfig(t, tmp)
+	srcDir := filepath.Join(tmp, "src-empty")
+	r.NoError(os.Mkdir(srcDir, 0o700))
+
+	var stdout, stderr bytes.Buffer
+	code := cli.RunContext(t.Context(),
+		[]string{"import", "--config", cfgPath, srcDir}, &stdout, &stderr)
+	r.Equal(0, code, "import bootstrap failed: %s / %s", stdout.String(), stderr.String())
+	nasRoot := filepath.Join(tmp, "nas")
+	r.NoError(os.Remove(nasRoot))
+
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(),
+		[]string{"backup", "snapshot", "--config", cfgPath}, &stdout, &stderr)
+	r.NotEqual(0, code)
+	r.Contains(stderr.String(), "NAS root is unavailable")
+	r.NoDirExists(nasRoot)
+}
+
+func TestBackupListDoesNotTreatMissingDefaultNASRootAsEmpty(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBackupConfig(t, tmp)
+	nasRoot := filepath.Join(tmp, "nas")
+	r.NoError(os.Remove(nasRoot))
+
+	var stdout, stderr bytes.Buffer
+	code := cli.RunContext(t.Context(),
+		[]string{"backup", "list", "--config", cfgPath}, &stdout, &stderr)
+	r.NotEqual(0, code)
+	r.Contains(stderr.String(), "NAS root is unavailable")
+	r.NoDirExists(nasRoot)
+}
+
 func TestBackupSnapshotCLIJSON(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()

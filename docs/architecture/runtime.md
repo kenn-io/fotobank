@@ -96,3 +96,14 @@ not only errors returned while opening a reader.
 Long-running operations honor `context.Context`. Background loops use bounded
 polling, concurrency, and shutdown waits; they do not start untracked
 goroutines from transports.
+
+The checkout scanner is one of those server-owned loops. It runs an immediate
+full scan at startup and repeats at `checkouts.scan_interval`. Per-checkout
+errors are logged without preventing other active roots from being scanned;
+the next interval retries from the durable settle observations in SQLite.
+The server may start while the external NAS root is absent, including when a
+configured NAS symlink has no reachable target, so `/readyz` can report the
+outage. Checkout and import root validation still fails closed until every
+managed boundary resolves; the scanner retries after the NAS returns.
+NAS artifact and default-backup writers open the externally managed root rather
+than creating it, so an absent mount cannot silently become a local directory.

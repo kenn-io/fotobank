@@ -5,7 +5,7 @@
   import SearchBar from "./SearchBar.svelte";
   import type { Principal } from "../app/appConfig.svelte";
 
-  // Lightroom-pattern header: brand mark + search + identity. Section
+  // Library header: brand mark + search + identity. Section
   // navigation lives entirely in the sidebar — keeping a second nav
   // surface here only created visual redundancy. This header is the
   // SPA's identity strip and global search affordance, nothing more.

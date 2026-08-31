@@ -33,6 +33,13 @@ const (
 	EntryError    EntryState = "error"
 )
 
+type ScanCandidateState string
+
+const (
+	ScanCandidateSettling ScanCandidateState = "settling"
+	ScanCandidatePending  ScanCandidateState = "pending"
+)
+
 type YearRange struct {
 	Start int
 	End   int
@@ -73,19 +80,35 @@ type Estimate struct {
 }
 
 type Entry struct {
-	CheckoutID     string
-	FileID         string
-	RelativePath   string
-	BaseVersionID  string
-	BaseSHA256     string
-	BaseSize       int64
-	ObservedSize   int64
-	ObservedMTime  time.Time
-	ObservedSHA256 string
-	State          EntryState
-	LastError      string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	CheckoutID       string
+	FileID           string
+	RelativePath     string
+	BaseVersionID    string
+	BaseSHA256       string
+	BaseSize         int64
+	ObservedSize     int64
+	ObservedMTime    time.Time
+	ObservedIdentity string
+	ObservedSHA256   string
+	State            EntryState
+	LastError        string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+// ScanCandidate is a durable local-file observation. FileID is empty for a
+// newly discovered working file and identifies an Entry for a tracked change.
+type ScanCandidate struct {
+	CheckoutID       string
+	RelativePath     string
+	FileID           string
+	ObservedSize     int64
+	ObservedMTime    time.Time
+	ObservedIdentity string
+	ObservedSHA256   string
+	State            ScanCandidateState
+	FirstObserved    time.Time
+	LastObserved     time.Time
 }
 
 func validateSelection(selection Selection) error {

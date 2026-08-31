@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -48,6 +49,7 @@ func newThumbServiceFixture(t *testing.T) thumbServiceFixture {
 	)
 	require.NoError(t, err)
 	root := filepath.Join(t.TempDir(), "nas")
+	require.NoError(t, os.Mkdir(root, 0o700))
 	store := storage.NewNASOnly(root, map[owners.Principal]string{p: "550e8400-e29b-41d4-a716-446655440000"})
 	svc := service.NewThumbService(repo, q, store)
 	return thumbServiceFixture{
