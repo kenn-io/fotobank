@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fotobank — a photo system of record you control</title>
+    <meta name="description" content="Fotobank keeps exact originals and versions in Docbank, then adds the asset relationships and photographer workflows a photo library needs.">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles/site.css">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="A photo system of record you control.">
+    <meta property="og:description" content="Exact originals. Explicit versions. Photographer workflows built on a durable Docbank foundation.">
+    <meta property="og:site_name" content="Fotobank">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="wordmark" href="/" aria-label="Fotobank home">
+        <span class="aperture" aria-hidden="true"></span>
+        Fotobank
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="/guide/">Guide</a>
+        <a href="/docs/">Docs</a>
+        <a href="https://github.com/kenn-io/fotobank">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Self-hosted · Pre-alpha · Apache-2.0</p>
+          <h1>A photo system of record <em>you control.</em></h1>
+          <p class="lede">Fotobank keeps exact originals and immutable versions in Docbank, then adds the relationships, curation, and working-file experience a photographer needs.</p>
+          <div class="actions">
+            <a class="button primary" href="/guide/">Follow a photo</a>
+            <a class="button" href="/docs/">Read the technical docs</a>
+          </div>
+          <p class="status"><strong>Development status:</strong> core archive workflows are taking shape. This is not yet a supported photo product.</p>
+        </div>
+        <div class="contact-sheet" aria-label="An abstract contact sheet showing related photo files">
+          <span class="frame tall warm"><b>RAW</b></span>
+          <span class="frame wide dusk"><b>JPEG</b></span>
+          <span class="frame small amber"><b>XMP</b></span>
+          <span class="frame wide cool"><b>v2</b></span>
+          <span class="frame tall field"><b>CHECKOUT</b></span>
+          <span class="frame small ink"><b>SHA-256</b></span>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="record-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">01 / The record</p>
+            <h2 id="record-title">Your library is more than a folder.</h2>
+          </div>
+          <p>A photo archive must preserve the bytes, explain which files belong together, and let tools edit ordinary files without quietly becoming the authority.</p>
+        </div>
+        <ol class="record-flow">
+          <li><span>01</span><strong>Ingest</strong><p>Copy a settled source without changing it.</p></li>
+          <li><span>02</span><strong>Preserve</strong><p>Keep exact bytes and immutable versions in Docbank.</p></li>
+          <li><span>03</span><strong>Relate</strong><p>Model JPEG, RAW, sidecar, and edited files as one asset.</p></li>
+          <li><span>04</span><strong>Work</strong><p>Materialize selected versions as explicit writable checkouts.</p></li>
+          <li><span>05</span><strong>Recover</strong><p>Verify the content authority and restore the catalog deliberately.</p></li>
+        </ol>
+      </section>
+
+      <section class="site-section split" aria-labelledby="authority-title">
+        <div>
+          <p class="section-index">02 / Clear authority</p>
+          <h2 id="authority-title">Two systems. One clean line.</h2>
+          <p class="section-lede">Docbank answers “what exact content do we have?” Fotobank answers “what does it mean in a photo library?”</p>
+        </div>
+        <div class="layer-stack">
+          <article class="layer photo">
+            <p>Photographer layer</p>
+            <h3>Fotobank</h3>
+            <ul><li>Assets and file relationships</li><li>Albums, privacy, and sharing</li><li>Timeline, map, review, and checkout workflows</li></ul>
+          </article>
+          <div class="version-seam"><span>exact content version</span></div>
+          <article class="layer record">
+            <p>Content authority</p>
+            <h3>Docbank</h3>
+            <ul><li>Content-addressed originals</li><li>Immutable versions and provenance</li><li>Integrity, storage, and recovery</li></ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="asset-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">03 / Photo-native meaning</p>
+            <h2 id="asset-title">One photograph may be several files.</h2>
+          </div>
+          <p>Fotobank keeps those files related without inventing a new copy of the original or flattening the relationship into a filename convention.</p>
+        </div>
+        <div class="asset-graph" role="img" aria-label="A photo asset connected to a primary JPEG, camera RAW, and XMP sidecar">
+          <div class="asset-node"><small>ASSET</small><strong>Summer field</strong><span>stable photo identity</span></div>
+          <div class="graph-line"></div>
+          <div class="file-nodes">
+            <div><small>PRIMARY</small><strong>IMG_1042.JPG</strong><span>display and sharing</span></div>
+            <div><small>CAMERA SOURCE</small><strong>IMG_1042.CR3</strong><span>original sensor data</span></div>
+            <div><small>SIDECAR</small><strong>IMG_1042.CR3.XMP</strong><span>portable edit metadata</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="site-section proof-section" aria-labelledby="proof-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">04 / Operating principles</p>
+            <h2 id="proof-title">The archive stays understandable.</h2>
+          </div>
+        </div>
+        <div class="proof-grid">
+          <article><p class="proof-tag">Exact originals</p><h3>Imports do not mutate the source.</h3><p>Content identity is computed before Docbank accepts the bytes. Retries either find the same record or stop on a conflict.</p></article>
+          <article><p class="proof-tag">Ordinary working files</p><h3>Tools work through explicit checkouts.</h3><p>Selected versions become normal files. Settled edits commit as new immutable versions instead of rewriting the archive behind its back.</p></article>
+          <article><p class="proof-tag">Rebuildable views</p><h3>Indexes and previews are not authority.</h3><p>Thumbnails, extracted metadata, and search projections can be regenerated from a known content version.</p></article>
+          <article><p class="proof-tag">Visible boundaries</p><h3>Privacy and sharing stay in the product layer.</h3><p>Fotobank checks ownership and visibility before it lists, serves, exports, or shares a record.</p></article>
+        </div>
+      </section>
+
+      <section class="site-section direction" aria-labelledby="direction-title">
+        <div>
+          <p class="section-index">05 / Direction</p>
+          <p class="future-label">Planned — not available yet</p>
+          <h2 id="direction-title">Understand photos once, use that intelligence everywhere.</h2>
+          <p>Docbank is growing a shared processing layer for retained renditions, metadata, embeddings, and retrieval. Fotobank will use that layer instead of maintaining a second generic AI stack.</p>
+        </div>
+        <div class="direction-flow">
+          <div><strong>Exact version</strong><span>photo · video · RAW</span></div>
+          <i aria-hidden="true">→</i>
+          <div><strong>Docbank intelligence</strong><span>metadata · preview · embedding</span></div>
+          <i aria-hidden="true">→</i>
+          <div><strong>Fotobank experience</strong><span>find · review · organize</span></div>
+        </div>
+        <p class="direction-note">The governing rule will stay the same: generic facts about one content version belong in Docbank; photographer decisions about an asset belong in Fotobank.</p>
+      </section>
+
+      <section class="closing">
+        <p class="eyebrow">Build from the record outward</p>
+        <h2>Keep the original exact.<br>Make the library useful.</h2>
+        <div class="actions">
+          <a class="button primary" href="/guide/">Read the authority guide</a>
+          <a class="button" href="https://github.com/kenn-io/fotobank">View the source</a>
+        </div>
+      </section>
+    </main>
+
+    <footer><span>Fotobank</span><span>Copyright © 2026 Kenn Software LLC · Apache-2.0</span></footer>
+  </body>
+</html>

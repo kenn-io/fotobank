@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>The photo authority lifecycle — Fotobank</title>
+    <meta name="description" content="Follow a photograph from source import through exact storage, asset relationships, working checkouts, and recovery.">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="wordmark" href="/"><span class="aperture" aria-hidden="true"></span>Fotobank</a>
+      <nav aria-label="Primary navigation">
+        <a aria-current="page" href="/guide/">Guide</a>
+        <a href="/docs/">Docs</a>
+        <a href="https://github.com/kenn-io/fotobank">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <header class="guide-hero">
+        <p class="eyebrow">Photo authority guide</p>
+        <h1>Follow one photograph through the system.</h1>
+        <p class="lede">The original remains exact while each layer adds explicit, replaceable meaning around it.</p>
+        <ol class="guide-nav" aria-label="Guide stops">
+          <li><a href="#observe">01 Observe</a></li>
+          <li><a href="#preserve">02 Preserve</a></li>
+          <li><a href="#relate">03 Relate</a></li>
+          <li><a href="#project">04 Project</a></li>
+          <li><a href="#work">05 Work</a></li>
+          <li><a href="#curate">06 Curate</a></li>
+          <li><a href="#recover">07 Recover</a></li>
+        </ol>
+      </header>
+
+      <ol class="guide-stops">
+        <li id="observe">
+          <div class="stop-number">01</div>
+          <div class="stop-copy"><p class="eyebrow">Source boundary</p><h2>Observe a settled source.</h2><p>Fotobank waits until size and modification time stop changing, then reads the exact bytes. The source is never renamed, rearranged, or edited in place.</p></div>
+          <div class="stop-card"><small>IMPORT SOURCE</small><strong>/camera/DCIM/IMG_1042.CR3</strong><span>read-only observation</span></div>
+        </li>
+        <li id="preserve">
+          <div class="stop-number">02</div>
+          <div class="stop-copy"><p class="eyebrow">Docbank authority</p><h2>Preserve exact content.</h2><p>Fotobank supplies the expected SHA-256 and size. Docbank accepts those bytes into content-addressed storage and creates an immutable version under a stable node.</p><a href="/docs/architecture/content-and-storage/">Content and storage</a></div>
+          <div class="stop-card code"><small>CONTENT RECEIPT</small><strong>node 481 · version 7</strong><span>sha256: 71b8…09e4</span></div>
+        </li>
+        <li id="relate">
+          <div class="stop-number">03</div>
+          <div class="stop-copy"><p class="eyebrow">Fotobank meaning</p><h2>Relate the files as one photo.</h2><p>The product catalog records which file is primary, which is the camera source, and which sidecar belongs to it. Each relationship points to an exact Docbank version.</p><a href="/docs/architecture/data-model/">Asset data model</a></div>
+          <div class="mini-graph"><strong>ASSET</strong><span>↳ JPEG · primary</span><span>↳ RAW · camera source</span><span>↳ XMP · sidecar</span></div>
+        </li>
+        <li id="project">
+          <div class="stop-number">04</div>
+          <div class="stop-copy"><p class="eyebrow">Rebuildable outputs</p><h2>Project useful views.</h2><p>Fotobank extracts photo metadata and generates thumbnails from the recorded version. These outputs speed up browsing, but they can be discarded and rebuilt without changing the record.</p></div>
+          <div class="projection-grid"><span>EXIF</span><span>GPS</span><span>THUMB</span><span>SEARCH</span></div>
+        </li>
+        <li id="work">
+          <div class="stop-number">05</div>
+          <div class="stop-copy"><p class="eyebrow">Working files</p><h2>Check out ordinary files.</h2><p>A checkout materializes selected exact versions into a deliberate working directory. External editors, file managers, and shell tools can use normal files there.</p><p>When a settled tracked file changes, Fotobank commits it as a new immutable Docbank version. The checkout never becomes the silent archive authority.</p></div>
+          <div class="stop-card"><small>WRITABLE CHECKOUT</small><strong>2026 / selects / field-study</strong><span>tracked · explicit · recoverable</span></div>
+        </li>
+        <li id="curate">
+          <div class="stop-number">06</div>
+          <div class="stop-copy"><p class="eyebrow">Photographer decisions</p><h2>Organize without rewriting the record.</h2><p>Albums, visibility, sharing, and other catalog choices stay in Fotobank. They can change without copying the original or changing what a Docbank version means.</p></div>
+          <div class="curation"><span>ALBUM</span><span>HIDDEN</span><span>SHARE</span><span>MAP</span></div>
+        </li>
+        <li id="recover">
+          <div class="stop-number">07</div>
+          <div class="stop-copy"><p class="eyebrow">Recovery</p><h2>Prove the archive still holds.</h2><p>Docbank verifies retained content. Fotobank snapshots and restores its product catalog under a coordinated database lock. Checkouts and projections can be reconstructed from those authorities.</p><a href="/docs/architecture/operations/">Operations and recovery</a></div>
+          <div class="stop-card code"><small>RECOVERY ORDER</small><strong>content → catalog → projections</strong><span>verify before trust</span></div>
+        </li>
+      </ol>
+
+      <section class="guide-direction">
+        <p class="future-label">Planned — not available yet</p>
+        <h2>The next boundary: shared intelligence.</h2>
+        <p>Photo metadata, canonical previews, embeddings, and retrieval that describe one exact file version belong in Docbank. Ratings, picks, albums, people identities, and other photographer decisions belong in Fotobank.</p>
+        <p>This avoids building the same generic intelligence twice while keeping the photo-library experience focused.</p>
+      </section>
+    </main>
+
+    <footer><span>Fotobank</span><span><a href="/">Overview</a> · <a href="/docs/">Technical docs</a></span></footer>
+  </body>
+</html>

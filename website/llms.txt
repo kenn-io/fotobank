@@ -1,0 +1,20 @@
+# Fotobank
+
+> Fotobank is a self-hosted photo system of record built on Docbank's content-addressed storage. The project is pre-alpha.
+
+## Product overview
+
+- [Website Markdown](/index.md): Product position, authority boundary, and current status.
+- [Photo authority guide](/guide.md): The lifecycle from source observation through recovery.
+
+## Technical documentation
+
+- [Documentation](/docs/): Current architecture and operational boundaries.
+- [System map](/docs/architecture/): Package ownership and system invariants.
+- [Content and storage](/docs/architecture/content-and-storage/): Docbank, NAS, thumbnails, imports, and checkouts.
+- [Data model](/docs/architecture/data-model/): Assets, files, albums, shares, and ownership.
+- [Search and AI](/docs/architecture/search-and-ai/): Current search and optional AI implementation.
+
+## Status
+
+The repository contains working archive components but is not yet a supported photo product. Material labeled “planned” or “direction” is not implemented product behavior.
