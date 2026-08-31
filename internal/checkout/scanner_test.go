@@ -154,6 +154,27 @@ func TestScannerContinuesMissingReconciliationAfterUnreadableSubtree(t *testing.
 	r.Equal(EntryMissing, states[missing.RelativePath])
 }
 
+func TestScannerContinuesMissingReconciliationAfterUnreadableUntrackedFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows permission bits do not make a file unreadable")
+	}
+	r := require.New(t)
+	fixture := newScannerFixture(t)
+	r.NoError(os.Remove(fixture.trackedPath()))
+	unreadable := filepath.Join(fixture.root, "unreadable.xmp")
+	r.NoError(os.WriteFile(unreadable, []byte("metadata"), 0o600))
+	r.NoError(os.Chmod(unreadable, 0))
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o600) })
+
+	result, err := fixture.scanner().Scan(t.Context())
+	if err == nil {
+		t.Skip("current user can read a file without permission bits")
+	}
+	r.ErrorIs(err, fs.ErrPermission)
+	r.Equal(1, result.Missing)
+	r.Equal(EntryMissing, fixture.entry(t).State)
+}
+
 func TestScannerQueuesSettledUntrackedFileAndIgnoresTransientPaths(t *testing.T) {
 	r := require.New(t)
 	fixture := newScannerFixture(t)
@@ -217,13 +238,13 @@ func TestHashSettledFileHonorsCanceledContext(t *testing.T) {
 	t.Cleanup(func() { r.NoError(root.Close()) })
 	info, err := root.Lstat(fixture.entryRow.RelativePath)
 	r.NoError(err)
-	identity, err := observeFileIdentity(root, fixture.entryRow.RelativePath, info)
+	observedInfo, identity, err := observeFileIdentity(root, fixture.entryRow.RelativePath, info)
 	r.NoError(err)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = hashSettledFile(ctx, root, ScanCandidate{
 		RelativePath: fixture.entryRow.RelativePath,
-		ObservedSize: info.Size(), ObservedMTime: info.ModTime().UTC(),
+		ObservedSize: observedInfo.Size(), ObservedMTime: observedInfo.ModTime().UTC(),
 		ObservedIdentity: identity,
 	})
 	r.ErrorIs(err, context.Canceled)

@@ -161,7 +161,7 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 	}
 	seen := make(map[string]struct{}, len(entries)+len(candidates))
 	result := ScanResult{}
-	var traversalErrors []error
+	var scanErrors []error
 	err = fs.WalkDir(root.FS(), ".", func(relativePath string, dirEntry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -171,7 +171,7 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 			if errors.Is(walkErr, fs.ErrNotExist) {
 				return nil
 			}
-			traversalErrors = append(traversalErrors,
+			scanErrors = append(scanErrors,
 				fmt.Errorf("walk checkout path %q: %w", relativePath, walkErr))
 			for _, entry := range entries {
 				if !inWalkSubtree(relativePath, entry.RelativePath) {
@@ -238,7 +238,9 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 				return s.markTrackedError(
 					ctx, validatedRoot, checkout.ID, entry.FileID, observationErr)
 			}
-			return observationErr
+			scanErrors = append(scanErrors,
+				fmt.Errorf("inspect untracked checkout file %q: %w", relativePath, observationErr))
+			return nil
 		}
 		if !info.Mode().IsRegular() {
 			if tracked {
@@ -247,7 +249,7 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 			}
 			return nil
 		}
-		observedIdentity, err := observeFileIdentity(root, relativePath, info)
+		observedInfo, observedIdentity, err := observeFileIdentity(root, relativePath, info)
 		if errors.Is(err, errScanObservationChanged) {
 			return nil
 		}
@@ -256,10 +258,13 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 				return s.markTrackedError(
 					ctx, validatedRoot, checkout.ID, entry.FileID, err)
 			}
-			return err
+			scanErrors = append(scanErrors,
+				fmt.Errorf("observe untracked checkout file %q: %w", relativePath, err))
+			return nil
 		}
 		if tracked && entry.State != EntryMissing && entry.State != EntryError &&
-			entry.ObservedSize == info.Size() && entry.ObservedMTime.Equal(info.ModTime()) &&
+			entry.ObservedSize == observedInfo.Size() &&
+			entry.ObservedMTime.Equal(observedInfo.ModTime()) &&
 			entry.ObservedIdentity != "" && observedIdentity != "" &&
 			entry.ObservedIdentity == observedIdentity {
 			if _, exists := candidatesByPath[relativePath]; exists {
@@ -274,7 +279,7 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 		}
 		candidate := ScanCandidate{
 			CheckoutID: checkout.ID, RelativePath: relativePath,
-			ObservedSize: info.Size(), ObservedMTime: info.ModTime().UTC(),
+			ObservedSize: observedInfo.Size(), ObservedMTime: observedInfo.ModTime().UTC(),
 			ObservedIdentity: observedIdentity,
 		}
 		if tracked {
@@ -297,7 +302,9 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 				return s.markTrackedError(
 					ctx, validatedRoot, checkout.ID, entry.FileID, err)
 			}
-			return err
+			scanErrors = append(scanErrors,
+				fmt.Errorf("hash untracked checkout file %q: %w", relativePath, err))
+			return nil
 		}
 		if err := validatedRoot.Revalidate(); err != nil {
 			return err
@@ -351,7 +358,7 @@ func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResu
 			return result, err
 		}
 	}
-	return result, errors.Join(traversalErrors...)
+	return result, errors.Join(scanErrors...)
 }
 
 func cleanWalkPath(relativePath string) string {
@@ -393,28 +400,32 @@ func (s *Scanner) ignored(relativePath string) bool {
 	return false
 }
 
-func observeFileIdentity(root *os.Root, relativePath string, expected os.FileInfo) (string, error) {
+func observeFileIdentity(
+	root *os.Root,
+	relativePath string,
+	expected os.FileInfo,
+) (os.FileInfo, string, error) {
 	file, err := root.Open(relativePath)
 	if err != nil {
-		return "", scanObservationError("open checkout file", err)
+		return nil, "", scanObservationError("open checkout file", err)
 	}
 	defer file.Close()
 	openedInfo, err := file.Stat()
 	if err != nil {
-		return "", fmt.Errorf("inspect opened checkout file: %w", err)
+		return nil, "", fmt.Errorf("inspect opened checkout file: %w", err)
 	}
 	pathInfo, err := root.Lstat(relativePath)
 	if err != nil {
-		return "", scanObservationError("inspect checkout path again", err)
+		return nil, "", scanObservationError("inspect checkout path again", err)
 	}
 	if !os.SameFile(expected, openedInfo) || !os.SameFile(openedInfo, pathInfo) {
-		return "", errScanObservationChanged
+		return nil, "", errScanObservationChanged
 	}
 	identity, err := filesystemIdentity(file)
 	if err != nil {
-		return "", fmt.Errorf("identify checkout file: %w", err)
+		return nil, "", fmt.Errorf("identify checkout file: %w", err)
 	}
-	return identity, nil
+	return openedInfo, identity, nil
 }
 
 func hashSettledFile(ctx context.Context, root *os.Root, candidate ScanCandidate) (string, error) {
