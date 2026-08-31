@@ -4,21 +4,18 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Fotobank — a photo system of record you control</title>
-    <meta name="description" content="Fotobank keeps exact originals and versions in Docbank, then adds the asset relationships and photographer workflows a photo library needs.">
+    <meta name="description" content="Fotobank is a self-hosted photo archive that stores exact file versions in Docbank and keeps the photo catalog around them.">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/styles/site.css">
     <meta property="og:type" content="website">
     <meta property="og:title" content="A photo system of record you control.">
-    <meta property="og:description" content="Exact originals. Explicit versions. Photographer workflows built on a durable Docbank foundation.">
+    <meta property="og:description" content="Store exact file versions in Docbank and keep photo relationships, albums, sharing, and working copies in Fotobank.">
     <meta property="og:site_name" content="Fotobank">
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
-      <a class="wordmark" href="/" aria-label="Fotobank home">
-        <span class="aperture" aria-hidden="true"></span>
-        Fotobank
-      </a>
+      <a class="wordmark" href="/" aria-label="Fotobank home">Fotobank</a>
       <nav aria-label="Primary navigation">
         <a href="/guide/">Guide</a>
         <a href="/docs/">Docs</a>
@@ -29,11 +26,10 @@
     <main id="main">
       <section class="hero">
         <div class="hero-copy">
-          <p class="eyebrow">Exact originals · Explicit versions · Ordinary working files</p>
           <h1>A photo system of record <em>you control.</em></h1>
-          <p class="lede">Fotobank keeps exact originals and immutable versions in Docbank, then adds the relationships, curation, and working-file experience a photographer needs.</p>
+          <p class="lede">Fotobank is a self-hosted photo archive. Docbank stores the exact files and their version history. Fotobank groups related files into photographs and provides the catalog around them.</p>
           <div class="actions">
-            <a class="button primary" href="/guide/">Follow a photo</a>
+            <a class="button primary" href="/guide/">How it works</a>
             <a class="button" href="/docs/">Read the technical docs</a>
           </div>
         </div>
@@ -50,36 +46,32 @@
       <section class="site-section" aria-labelledby="record-title">
         <div class="section-heading">
           <div>
-            <p class="section-index">01 / The record</p>
-            <h2 id="record-title">Your library is more than a folder.</h2>
+            <h2 id="record-title">A photo archive needs more than a directory tree.</h2>
           </div>
-          <p>A photo archive must preserve the bytes, explain which files belong together, and let tools edit ordinary files without quietly becoming the authority.</p>
+          <p>It must preserve each file, record which files belong to the same photograph, and support external editors without treating a working directory as the archive.</p>
         </div>
         <ol class="record-flow">
-          <li><span>01</span><strong>Ingest</strong><p>Copy a settled source without changing it.</p></li>
-          <li><span>02</span><strong>Preserve</strong><p>Keep exact bytes and immutable versions in Docbank.</p></li>
-          <li><span>03</span><strong>Relate</strong><p>Model JPEG, RAW, sidecar, and edited files as one asset.</p></li>
-          <li><span>04</span><strong>Work</strong><p>Materialize selected versions as explicit writable checkouts.</p></li>
-          <li><span>05</span><strong>Recover</strong><p>Verify the content authority and restore the catalog deliberately.</p></li>
+          <li><strong>Import</strong><p>Read a settled source without changing it.</p></li>
+          <li><strong>Store</strong><p>Keep exact bytes and immutable versions in Docbank.</p></li>
+          <li><strong>Link</strong><p>Group JPEG, RAW, sidecar, and edited files as one photograph.</p></li>
+          <li><strong>Edit</strong><p>Put selected versions in a writable checkout.</p></li>
+          <li><strong>Recover</strong><p>Verify stored content before rebuilding the catalog and its derived data.</p></li>
         </ol>
       </section>
 
       <section class="site-section split" aria-labelledby="authority-title">
         <div>
-          <p class="section-index">02 / Clear authority</p>
-          <h2 id="authority-title">Two systems. One clean line.</h2>
-          <p class="section-lede">Docbank answers “what exact content do we have?” Fotobank answers “what does it mean in a photo library?”</p>
+          <h2 id="authority-title">Docbank stores files. Fotobank models photographs.</h2>
+          <p class="section-lede">Each Fotobank file record points to one exact Docbank version. That reference is the boundary between the archive and the photo catalog.</p>
         </div>
         <div class="layer-stack">
           <article class="layer photo">
-            <p>Photographer layer</p>
-            <h3>Fotobank</h3>
+            <h3>Fotobank photo catalog</h3>
             <ul><li>Assets and file relationships</li><li>Albums, privacy, and sharing</li><li>Timeline, map, review, and checkout workflows</li></ul>
           </article>
-          <div class="version-seam"><span>exact content version</span></div>
+          <div class="version-seam" aria-hidden="true"></div>
           <article class="layer record">
-            <p>Content authority</p>
-            <h3>Docbank</h3>
+            <h3>Docbank file authority</h3>
             <ul><li>Content-addressed originals</li><li>Immutable versions and provenance</li><li>Integrity, storage, and recovery</li></ul>
           </article>
         </div>
@@ -88,18 +80,17 @@
       <section class="site-section" aria-labelledby="asset-title">
         <div class="section-heading">
           <div>
-            <p class="section-index">03 / Photo-native meaning</p>
-            <h2 id="asset-title">One photograph may be several files.</h2>
+            <h2 id="asset-title">Related files stay related.</h2>
           </div>
-          <p>Fotobank keeps those files related without inventing a new copy of the original or flattening the relationship into a filename convention.</p>
+          <p>A JPEG, camera RAW file, and XMP sidecar can represent one photograph. Fotobank records that relationship directly instead of inferring it every time from filenames.</p>
         </div>
         <div class="asset-graph" role="img" aria-label="A photo asset connected to a primary JPEG, camera RAW, and XMP sidecar">
-          <div class="asset-node"><small>ASSET</small><strong>Summer field</strong><span>stable photo identity</span></div>
+          <div class="asset-node"><strong>Summer field</strong><span>Photo record</span></div>
           <div class="graph-line"></div>
           <div class="file-nodes">
-            <div><small>PRIMARY</small><strong>IMG_1042.JPG</strong><span>display and sharing</span></div>
-            <div><small>CAMERA SOURCE</small><strong>IMG_1042.CR3</strong><span>original sensor data</span></div>
-            <div><small>SIDECAR</small><strong>IMG_1042.CR3.XMP</strong><span>portable edit metadata</span></div>
+            <div><strong>IMG_1042.JPG</strong><span>Primary display file</span></div>
+            <div><strong>IMG_1042.CR3</strong><span>Camera source</span></div>
+            <div><strong>IMG_1042.CR3.XMP</strong><span>Edit metadata sidecar</span></div>
           </div>
         </div>
       </section>
@@ -107,41 +98,25 @@
       <section class="site-section proof-section" aria-labelledby="proof-title">
         <div class="section-heading">
           <div>
-            <p class="section-index">04 / Operating principles</p>
-            <h2 id="proof-title">The archive stays understandable.</h2>
+            <h2 id="proof-title">What this boundary prevents.</h2>
           </div>
         </div>
         <div class="proof-grid">
-          <article><p class="proof-tag">Exact originals</p><h3>Imports do not mutate the source.</h3><p>Content identity is computed before Docbank accepts the bytes. Retries either find the same record or stop on a conflict.</p></article>
-          <article><p class="proof-tag">Ordinary working files</p><h3>Tools work through explicit checkouts.</h3><p>Selected versions become normal files. Settled edits commit as new immutable versions instead of rewriting the archive behind its back.</p></article>
-          <article><p class="proof-tag">Rebuildable views</p><h3>Indexes and previews are not authority.</h3><p>Thumbnails, extracted metadata, and search projections can be regenerated from a known content version.</p></article>
-          <article><p class="proof-tag">Visible boundaries</p><h3>Privacy and sharing stay in the product layer.</h3><p>Fotobank checks ownership and visibility before it lists, serves, exports, or shares a record.</p></article>
+          <article><h3>Import never changes the source.</h3><p>Fotobank reads a stable file, computes its identity, and copies it into Docbank. A retry finds the same content or reports a conflict.</p></article>
+          <article><h3>An editor cannot silently replace the archive.</h3><p>External tools edit checkout files. Fotobank records a settled edit as a new Docbank version and rejects a stale base.</p></article>
+          <article><h3>A lost index does not mean a lost photograph.</h3><p>Thumbnails, extracted metadata, and search data can be rebuilt from the exact stored version.</p></article>
+          <article><h3>A file identifier does not grant access.</h3><p>Fotobank checks ownership and visibility before it lists, serves, exports, or shares a file.</p></article>
         </div>
       </section>
 
       <section class="site-section direction" aria-labelledby="direction-title">
         <div>
-          <p class="section-index">05 / Direction</p>
-          <p class="future-label">Planned — not available yet</p>
-          <h2 id="direction-title">Understand photos once, use that intelligence everywhere.</h2>
-          <p>Docbank is growing a shared processing layer for retained renditions, metadata, embeddings, and retrieval. Fotobank will use that layer instead of maintaining a second generic AI stack.</p>
+          <h2 id="direction-title">Planned work in Docbank</h2>
+          <p>Docbank is adding source metadata, image previews, embeddings, and retrieval for exact content versions. Fotobank will use those APIs instead of keeping separate generic processing code.</p>
         </div>
-        <div class="direction-flow">
-          <div><strong>Exact version</strong><span>photo · video · RAW</span></div>
-          <i aria-hidden="true">→</i>
-          <div><strong>Docbank intelligence</strong><span>metadata · preview · embedding</span></div>
-          <i aria-hidden="true">→</i>
-          <div><strong>Fotobank experience</strong><span>find · review · organize</span></div>
-        </div>
-        <p class="direction-note">The governing rule will stay the same: generic facts about one content version belong in Docbank; photographer decisions about an asset belong in Fotobank.</p>
-      </section>
-
-      <section class="closing">
-        <p class="eyebrow">Build from the record outward</p>
-        <h2>Keep the original exact.<br>Make the library useful.</h2>
-        <div class="actions">
-          <a class="button primary" href="/guide/">Read the authority guide</a>
-          <a class="button" href="https://github.com/kenn-io/fotobank">View the source</a>
+        <div class="direction-details">
+          <p><strong>Docbank will own</strong> results that describe one file version, including extracted metadata, retained previews, model output, embeddings, and retrieval indexes.</p>
+          <p><strong>Fotobank will own</strong> decisions about a photograph, including file relationships, albums, ratings, privacy, sharing, and people curation.</p>
         </div>
       </section>
     </main>

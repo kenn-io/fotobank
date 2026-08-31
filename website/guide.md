@@ -1,62 +1,54 @@
-# The photo authority lifecycle
+# How Fotobank stores and edits a photograph
 
-Follow one photograph from source import through exact storage, asset
-relationships, working checkouts, and recovery. The original remains exact
-while each layer adds explicit, replaceable meaning around it.
+The stored file and the photo catalog have different jobs. This guide shows
+where each piece of information lives.
 
-## 1. Observe a settled source
+## Import a stable file
 
 Fotobank waits until size and modification time stop changing, then reads the
-exact bytes. The source is never renamed, rearranged, or edited in place.
+exact bytes. It does not rename, move, or edit the source.
 
-## 2. Preserve exact content
+## Store the exact content in Docbank
 
 Fotobank supplies the expected SHA-256 and size. Docbank accepts those bytes
 into content-addressed storage and creates an immutable version under a stable
 node.
 
-## 3. Relate the files as one photo
+## Record the file relationships
 
-The product catalog records which file is primary, which is the camera source,
-and which sidecar belongs to it. Each relationship points to an exact Docbank
-version.
+Fotobank records which file is primary, which is the camera source, and which
+sidecar belongs to it. Each relationship points to an exact Docbank version.
 
-## 4. Project useful views
+## Build disposable data for browsing
 
-Fotobank extracts photo metadata and generates thumbnails from the recorded
-version. These outputs speed up browsing, but they can be discarded and rebuilt
-without changing the record.
+Fotobank extracts EXIF and GPS metadata, generates thumbnails, and updates
+search from the recorded version. These outputs can be deleted and rebuilt
+without changing the stored photograph.
 
-## 5. Check out ordinary files
+## Edit files through a checkout
 
-A checkout materializes selected exact versions into a deliberate working
-directory. External editors, file managers, and shell tools can use normal
-files there.
+A checkout copies selected versions into a working directory. External editors,
+file managers, and shell tools can use normal files there.
 
-When a settled tracked file changes, Fotobank commits it as a new immutable
-Docbank version. The checkout never becomes the silent archive authority.
+When a tracked file stops changing, Fotobank records it as a new Docbank
+version. A checkout is never the only copy of the archive.
 
-## 6. Organize without rewriting the record
+## Keep catalog decisions in Fotobank
 
 Albums, visibility, sharing, and other catalog choices stay in Fotobank. They
 can change without copying the original or changing what a Docbank version
 means.
 
-## 7. Prove the archive still holds
+## Verify content before rebuilding
 
-Docbank verifies retained content. Fotobank snapshots and restores its product
-catalog under a coordinated database lock. Checkouts and projections can be
-reconstructed from those authorities.
+Docbank verifies retained content. Fotobank snapshots and restores its catalog
+under a coordinated database lock. Checkouts, thumbnails, metadata, and search
+data can then be rebuilt.
 
-## Direction: shared intelligence
+## Planned Docbank work
 
-**Planned — not available yet.**
-
-Photo metadata, canonical previews, embeddings, and retrieval that describe
-one exact file version belong in Docbank. Ratings, picks, albums, people
-identities, and other photographer decisions belong in Fotobank.
-
-This avoids building the same generic intelligence twice while keeping the
-photo-library experience focused.
+Metadata, image previews, embeddings, and retrieval results that describe one
+exact file version will live in Docbank. Ratings, picks, albums, people
+identities, and other catalog decisions will remain in Fotobank.
 
 Continue with the [technical documentation](/docs/).

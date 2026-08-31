@@ -1,21 +1,23 @@
 # A photo system of record you control
 
-Fotobank keeps exact originals and immutable versions in Docbank, then adds the
-relationships, curation, and working-file experience a photographer needs.
+Fotobank is a self-hosted photo archive. Docbank stores the exact files and
+their version history. Fotobank groups related files into photographs and
+provides the catalog around them.
 
-## Your library is more than a folder
+## A photo archive needs more than a directory tree
 
-A photo archive must preserve the bytes, explain which files belong together,
-and let tools edit ordinary files without quietly becoming the authority.
+It must preserve each file, record which files belong to the same photograph,
+and support external editors without treating a working directory as the
+archive.
 
-1. **Ingest:** Copy a settled source without changing it.
-2. **Preserve:** Keep exact bytes and immutable versions in Docbank.
-3. **Relate:** Model JPEG, RAW, sidecar, and edited files as one asset.
-4. **Work:** Materialize selected versions as explicit writable checkouts.
-5. **Recover:** Verify the content authority and restore the catalog
-   deliberately.
+1. **Import:** Read a settled source without changing it.
+2. **Store:** Keep exact bytes and immutable versions in Docbank.
+3. **Link:** Group JPEG, RAW, sidecar, and edited files as one photograph.
+4. **Edit:** Put selected versions in a writable checkout.
+5. **Recover:** Verify stored content before rebuilding the catalog and its
+   derived data.
 
-## Two systems, one clean line
+## Docbank stores files; Fotobank models photographs
 
 Docbank answers “what exact content do we have?” It owns content-addressed
 originals, immutable versions, provenance, integrity, storage, and recovery.
@@ -24,38 +26,36 @@ Fotobank answers “what does it mean in a photo library?” It owns assets and
 file relationships, albums, privacy and sharing, and photographer workflows
 such as timelines, maps, review, and writable checkouts.
 
-The boundary between them is an exact content version.
+Each Fotobank file record points to one exact Docbank version. That reference
+is the boundary between the archive and the photo catalog.
 
-## One photograph may be several files
+## Related files stay related
 
-Fotobank can relate a primary JPEG, a camera RAW, and an XMP sidecar as one
-asset. Each file remains an exact Docbank record. The asset supplies stable
-photo identity and product meaning without flattening the relationship into a
-filename convention.
+Fotobank can record a primary JPEG, camera RAW file, and XMP sidecar as one
+photograph. Each file remains an exact Docbank record. Fotobank stores the
+relationship instead of inferring it every time from filenames.
 
-## Operating principles
+## What this boundary prevents
 
-- **Exact originals:** Imports do not mutate the source. Retries find the same
-  record or stop on a conflict.
-- **Ordinary working files:** Selected versions become normal files. Settled
-  edits commit as new immutable versions.
-- **Rebuildable views:** Thumbnails, extracted metadata, and search projections
-  can be regenerated from a known content version.
-- **Visible boundaries:** Fotobank checks ownership and visibility before it
-  lists, serves, exports, or shares a record.
+- Import does not mutate the source. A retry finds the same content or reports
+  a conflict.
+- External tools edit checkout files. A settled edit becomes a new Docbank
+  version and cannot overwrite a newer base.
+- Thumbnails, extracted metadata, and search data can be rebuilt from the exact
+  stored version.
+- Fotobank checks ownership and visibility before it lists, serves, exports, or
+  shares a file.
 
-## Direction: shared photo intelligence
+## Planned work in Docbank
 
-**Planned — not available yet.**
+Docbank is adding source metadata, image previews, embeddings, and retrieval
+for exact content versions. Fotobank will use those APIs instead of keeping
+separate generic processing code.
 
-Docbank is growing a shared processing layer for retained renditions, metadata,
-embeddings, and retrieval. Fotobank will use that layer instead of maintaining
-a second generic AI stack.
+Results that describe one file version will live in Docbank. Decisions about a
+photograph will remain in Fotobank.
 
-The governing rule will stay simple: generic facts about one content version
-belong in Docbank; photographer decisions about an asset belong in Fotobank.
-
-Continue with the [photo authority guide](/guide/) or the [technical
+Continue with the [guide to storage and editing](/guide/) or the [technical
 documentation](/docs/).
 
 ## Project status

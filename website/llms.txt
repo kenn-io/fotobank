@@ -5,7 +5,7 @@
 ## Product overview
 
 - [Website Markdown](/index.md): Product position, authority boundary, and current status.
-- [Photo authority guide](/guide.md): The lifecycle from source observation through recovery.
+- [Storage and editing guide](/guide.md): How one photograph moves from import through recovery.
 
 ## Technical documentation
 
