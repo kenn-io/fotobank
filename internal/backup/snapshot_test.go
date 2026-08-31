@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -169,6 +170,52 @@ func TestSnapshotToRootStaysBoundAfterRootRename(t *testing.T) {
 	r.FileExists(filepath.Join(moved, relativeDst))
 	r.NoFileExists(filepath.Join(original, relativeDst))
 	r.True(integrityOk(t, filepath.Join(moved, relativeDst)))
+}
+
+func TestCopySnapshotContextInterruptsBlockedTransfer(t *testing.T) {
+	r := require.New(t)
+	destination := newBlockingWriteCloser()
+	source := io.NopCloser(strings.NewReader(strings.Repeat("x", 128*1024)))
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := copySnapshotContext(ctx, destination, source)
+		done <- err
+	}()
+
+	<-destination.started
+	cancel()
+	select {
+	case err := <-done:
+		r.ErrorIs(err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		r.Fail("snapshot copy did not stop after cancellation")
+	}
+}
+
+type blockingWriteCloser struct {
+	started chan struct{}
+	closed  chan struct{}
+	start   sync.Once
+	close   sync.Once
+}
+
+func newBlockingWriteCloser() *blockingWriteCloser {
+	return &blockingWriteCloser{
+		started: make(chan struct{}),
+		closed:  make(chan struct{}),
+	}
+}
+
+func (w *blockingWriteCloser) Write([]byte) (int, error) {
+	w.start.Do(func() { close(w.started) })
+	<-w.closed
+	return 0, os.ErrClosed
+}
+
+func (w *blockingWriteCloser) Close() error {
+	w.close.Do(func() { close(w.closed) })
+	return nil
 }
 
 func TestSnapshotSurfaceErrorFromSyncDir(t *testing.T) {

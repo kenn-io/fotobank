@@ -89,7 +89,7 @@ func SnapshotToRoot(ctx context.Context, db *sql.DB, root *os.Root, relativeDst 
 	if err != nil {
 		return fmt.Errorf("open rooted snapshot partial: %w", err)
 	}
-	if _, err := io.Copy(destination, source); err != nil {
+	if _, err := copySnapshotContext(ctx, destination, source); err != nil {
 		_ = destination.Close()
 		_ = root.Remove(partial)
 		return fmt.Errorf("copy rooted snapshot partial: %w", err)
@@ -114,6 +114,42 @@ func SnapshotToRoot(ctx context.Context, db *sql.DB, root *os.Root, relativeDst 
 		return fmt.Errorf("fsync rooted snapshot dir: %w", err)
 	}
 	return nil
+}
+
+func copySnapshotContext(
+	ctx context.Context,
+	destination io.WriteCloser,
+	source io.ReadCloser,
+) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	cancelDone := make(chan struct{})
+	stopCancel := context.AfterFunc(ctx, func() {
+		defer close(cancelDone)
+		_ = source.Close()
+		_ = destination.Close()
+	})
+	copied, err := io.Copy(destination, snapshotContextReader{ctx: ctx, reader: source})
+	if !stopCancel() {
+		<-cancelDone
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return copied, ctxErr
+	}
+	return copied, err
+}
+
+type snapshotContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r snapshotContextReader) Read(buffer []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(buffer)
 }
 
 // SnapshotPath opens its own writable SQLite connection at srcDB

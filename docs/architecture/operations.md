@@ -44,7 +44,12 @@ pathname. Fotobank then copies, syncs, and atomically publishes that snapshot
 through one retained NAS root; stat and retention operations use the same root.
 This requires temporary local space equal to the metadata snapshot but prevents
 mount disappearance or replacement from redirecting backup writes. Retention
-never treats an unparseable file as a valid managed snapshot.
+never treats an unparseable file as a valid managed snapshot. Readiness opens
+the NAS root and creates and probes the relative snapshot directory on every
+check, so it recovers as soon as a missing mount returns without waiting for a
+backup tick. Snapshot-copy cancellation closes both transfer handles;
+completion still depends on the operating system returning from any filesystem
+call already in progress.
 
 Every CLI database user canonicalizes the SQLite path through existing
 symlinks—or through the deepest existing ancestor for a new database—before
