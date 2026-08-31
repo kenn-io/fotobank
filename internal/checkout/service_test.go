@@ -1,7 +1,11 @@
 package checkout_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,6 +60,168 @@ func TestServiceMaterializesExactVersionAndRecordsEntry(t *testing.T) {
 	r.NoError(err)
 	r.Equal(checkout.StateActive, stored.State)
 	r.Equal(result.Checkout.Selection, stored.Selection)
+}
+
+func TestCommitterPublishesTrackedEditAndInvalidatesPrimaryProjections(t *testing.T) {
+	r := require.New(t)
+	fixture := newFixture(t)
+	original := []byte("original checkout bytes")
+	replacement := []byte("edited checkout bytes with a different size")
+	item, checkoutID, entry := createPendingEdit(t, fixture, original, replacement)
+
+	tagResultID := uuid.NewString()
+	captionResultID := uuid.NewString()
+	_, err := fixture.db.WriteDB().ExecContext(t.Context(), `INSERT INTO ai_results
+		(id, media_id, task, model_id, prompt_version, prompt_hash, input_profile, status, generated_at)
+		VALUES (?, ?, 'tag', 'model', 'v1', 'hash', 'profile', 'active', ?),
+		       (?, ?, 'caption', 'model', 'v1', 'hash', 'profile', 'active', ?)`,
+		tagResultID, item.ID, time.Now().UTC(), captionResultID, item.ID, time.Now().UTC())
+	r.NoError(err)
+	_, err = fixture.db.WriteDB().ExecContext(t.Context(),
+		`INSERT INTO media_tags(result_id, tag_key, tag_label, rank) VALUES (?, 'old', 'Old', 1)`,
+		tagResultID)
+	r.NoError(err)
+	_, err = fixture.db.WriteDB().ExecContext(t.Context(),
+		`INSERT INTO media_captions(result_id, text) VALUES (?, 'old caption')`, captionResultID)
+	r.NoError(err)
+	_, err = fixture.db.WriteDB().ExecContext(t.Context(), `INSERT INTO ai_jobs
+		(id, media_id, task, fingerprint, status, attempts, enqueued_at)
+		VALUES (?, ?, 'tag', 'claim', 'pending', 0, ?)`, uuid.NewString(), item.ID, time.Now().UTC())
+	r.NoError(err)
+	_, err = fixture.db.WriteDB().ExecContext(t.Context(), `INSERT INTO ai_failures
+		(media_id, task, model_id, prompt_version, input_profile, last_error,
+		 last_error_kind, attempt_count, failed_at)
+		VALUES (?, 'caption', 'model', 'v1', 'profile', 'failed', 'provider', 1, ?)`,
+		item.ID, time.Now().UTC())
+	r.NoError(err)
+	_, err = fixture.db.WriteDB().ExecContext(t.Context(), `INSERT INTO ai_skipped
+		(media_id, task, reason, recorded_at) VALUES (?, 'embed', 'no_preview', ?)`,
+		item.ID, time.Now().UTC())
+	r.NoError(err)
+
+	result, err := fixture.committer.Commit(t.Context(), fixture.owner, checkoutID)
+	r.NoError(err)
+	r.Equal(checkout.CommitResult{Pending: 1, Committed: 1}, result)
+
+	entries, err := fixture.checkouts.ListEntries(t.Context(), checkoutID)
+	r.NoError(err)
+	r.Len(entries, 1)
+	r.Equal(checkout.EntryClean, entries[0].State)
+	r.NotEqual(entry.BaseVersionID, entries[0].BaseVersionID)
+	r.Equal(entry.ObservedSHA256, entries[0].BaseSHA256)
+
+	updated, err := fixture.media.GetByID(t.Context(), item.ID)
+	r.NoError(err)
+	r.Equal(entries[0].BaseVersionID, updated.CurrentVersionID)
+	r.Equal(entry.ObservedSHA256, updated.SHA256)
+	r.Equal(int64(len(replacement)), updated.Size)
+	r.Equal("pending", updated.ThumbStatus)
+	r.Equal(4, updated.ThumbVersion)
+
+	prior, err := fixture.content.OpenVersion(t.Context(), item.CurrentVersionID)
+	r.NoError(err)
+	priorBytes, err := io.ReadAll(prior.Reader)
+	r.NoError(err)
+	r.NoError(prior.Reader.Verify())
+	r.NoError(prior.Reader.Close())
+	r.Equal(original, priorBytes)
+	current, err := fixture.content.OpenVersion(t.Context(), updated.CurrentVersionID)
+	r.NoError(err)
+	currentBytes, err := io.ReadAll(current.Reader)
+	r.NoError(err)
+	r.NoError(current.Reader.Verify())
+	r.NoError(current.Reader.Close())
+	r.Equal(replacement, currentBytes)
+
+	var activeResults, liveJobs, failures, skipped int
+	r.NoError(fixture.db.ReadDB().QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM ai_results WHERE media_id = ? AND status = 'active'`, item.ID).
+		Scan(&activeResults))
+	r.NoError(fixture.db.ReadDB().QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM ai_jobs WHERE media_id = ? AND status IN ('pending','working','blocked')`, item.ID).
+		Scan(&liveJobs))
+	r.NoError(fixture.db.ReadDB().QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM ai_failures WHERE media_id = ?`, item.ID).Scan(&failures))
+	r.NoError(fixture.db.ReadDB().QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM ai_skipped WHERE media_id = ?`, item.ID).Scan(&skipped))
+	r.Zero(activeResults)
+	r.Zero(liveJobs)
+	r.Zero(failures)
+	r.Zero(skipped)
+	var captionText, tagLabels string
+	r.NoError(fixture.db.ReadDB().QueryRowContext(t.Context(),
+		`SELECT caption_text, tag_label FROM media_fts WHERE media_id = ?`, item.ID).
+		Scan(&captionText, &tagLabels))
+	r.Empty(captionText)
+	r.Empty(tagLabels)
+}
+
+func TestCommitterMarksStaleDocbankBaseAsConflict(t *testing.T) {
+	r := require.New(t)
+	fixture := newFixture(t)
+	original := []byte("original checkout bytes")
+	localEdit := []byte("local checkout edit")
+	item, checkoutID, entry := createPendingEdit(t, fixture, original, localEdit)
+	target, err := fixture.checkouts.GetCommitTarget(t.Context(), checkoutID, entry.FileID)
+	r.NoError(err)
+	otherEdit := []byte("a different committed edit")
+	otherDigest := sha256.Sum256(otherEdit)
+	_, err = fixture.content.Replace(t.Context(), content.ReplaceRequest{
+		VirtualPath: target.VirtualPath,
+		NodeID:      target.NodeID, BaseVersionID: entry.BaseVersionID,
+		Base:      content.Identity{SHA256: entry.BaseSHA256, Size: entry.BaseSize},
+		MediaType: target.MediaType,
+		Expected: content.Identity{
+			SHA256: hex.EncodeToString(otherDigest[:]), Size: int64(len(otherEdit)),
+		},
+		Reader: bytes.NewReader(otherEdit),
+	})
+	r.NoError(err)
+
+	result, err := fixture.committer.Commit(t.Context(), fixture.owner, checkoutID)
+	r.NoError(err)
+	r.Equal(checkout.CommitResult{Pending: 1, Conflicts: 1}, result)
+	entries, err := fixture.checkouts.ListEntries(t.Context(), checkoutID)
+	r.NoError(err)
+	r.Len(entries, 1)
+	r.Equal(checkout.EntryConflict, entries[0].State)
+	unchanged, err := fixture.media.GetByID(t.Context(), item.ID)
+	r.NoError(err)
+	r.Equal(item.CurrentVersionID, unchanged.CurrentVersionID)
+}
+
+func TestCommitterAdoptsExpectedDocbankHeadAfterInterruptedReceipt(t *testing.T) {
+	r := require.New(t)
+	fixture := newFixture(t)
+	original := []byte("original checkout bytes")
+	replacement := []byte("edited checkout bytes")
+	item, checkoutID, entry := createPendingEdit(t, fixture, original, replacement)
+	target, err := fixture.checkouts.GetCommitTarget(t.Context(), checkoutID, entry.FileID)
+	r.NoError(err)
+	receipt, err := fixture.content.Replace(t.Context(), content.ReplaceRequest{
+		VirtualPath: target.VirtualPath,
+		NodeID:      target.NodeID, BaseVersionID: entry.BaseVersionID,
+		Base:      content.Identity{SHA256: entry.BaseSHA256, Size: entry.BaseSize},
+		MediaType: target.MediaType,
+		Expected: content.Identity{
+			SHA256: entry.ObservedSHA256, Size: entry.ObservedSize,
+		},
+		Reader: bytes.NewReader(replacement),
+	})
+	r.NoError(err)
+	r.False(receipt.Adopted)
+
+	result, err := fixture.committer.Commit(t.Context(), fixture.owner, checkoutID)
+	r.NoError(err)
+	r.Equal(checkout.CommitResult{Pending: 1, Committed: 1}, result)
+	updated, err := fixture.media.GetByID(t.Context(), item.ID)
+	r.NoError(err)
+	r.Equal(receipt.Version.ID, updated.CurrentVersionID)
+	entries, err := fixture.checkouts.ListEntries(t.Context(), checkoutID)
+	r.NoError(err)
+	r.Len(entries, 1)
+	r.Equal(checkout.EntryClean, entries[0].State)
+	r.Equal(receipt.Version.ID, entries[0].BaseVersionID)
 }
 
 func TestServiceKeepsTemporaryFilesSeparateFromOriginalNames(t *testing.T) {
@@ -341,6 +507,7 @@ type fixture struct {
 	media     *media.Repo
 	checkouts *checkout.Repo
 	service   *checkout.Materializer
+	committer *checkout.Committer
 }
 
 func newFixture(t *testing.T) fixture {
@@ -364,5 +531,44 @@ func newFixture(t *testing.T) fixture {
 		checkouts: checkoutRepo,
 		service: checkout.NewMaterializer(
 			checkoutRepo, resolver, filepath.Join(lockDir, "checkout.lock")),
+		committer: checkout.NewCommitter(checkoutRepo, contentStore),
 	}
+}
+
+func createPendingEdit(
+	t *testing.T,
+	fixture fixture,
+	original []byte,
+	replacement []byte,
+) (media.Media, string, checkout.Entry) {
+	t.Helper()
+	r := require.New(t)
+	item := assetfixture.InsertContent(t, fixture.media, fixture.content, original, media.Media{
+		Owner: fixture.owner, OriginalFilename: "IMG_0042.JPG",
+		ThumbStatus: "ready", ThumbVersion: 3,
+	})
+	root := t.TempDir()
+	validatedRoot, err := fixture.content.ResolveCheckoutRoot(root)
+	r.NoError(err)
+	result, err := fixture.service.Create(t.Context(), fixture.owner, checkout.CreateRequest{
+		Root: validatedRoot, Selection: checkout.Selection{AssetIDs: []string{item.ID}},
+	})
+	r.NoError(err)
+	entries, err := fixture.checkouts.ListEntries(t.Context(), result.Checkout.ID)
+	r.NoError(err)
+	r.Len(entries, 1)
+	workingPath := filepath.Join(root, filepath.FromSlash(entries[0].RelativePath))
+	r.NoError(os.WriteFile(workingPath, replacement, 0o600))
+	scanner := checkout.NewScanner(fixture.checkouts, fixture.content, checkout.ScannerConfig{
+		ScanInterval: time.Second, SettleInterval: 0,
+	})
+	_, err = scanner.Scan(t.Context())
+	r.NoError(err)
+	_, err = scanner.Scan(t.Context())
+	r.NoError(err)
+	entries, err = fixture.checkouts.ListEntries(t.Context(), result.Checkout.ID)
+	r.NoError(err)
+	r.Len(entries, 1)
+	r.Equal(checkout.EntryPending, entries[0].State)
+	return item, result.Checkout.ID, entries[0]
 }

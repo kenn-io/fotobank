@@ -96,6 +96,28 @@ type Entry struct {
 	UpdatedAt        time.Time
 }
 
+type CommitTarget struct {
+	Entry       Entry
+	AssetID     string
+	Role        string
+	MediaType   string
+	NodeID      int64
+	VirtualPath string
+}
+
+type CommitReceipt struct {
+	NodeID    int64
+	VersionID string
+	SHA256    string
+	Size      int64
+}
+
+type CommitResult struct {
+	Pending   int
+	Committed int
+	Conflicts int
+}
+
 // ScanCandidate is a durable local-file observation. FileID is empty for a
 // newly discovered working file and identifies an Entry for a tracked change.
 type ScanCandidate struct {

@@ -286,6 +286,48 @@ func TestAdapterCreate(t *testing.T) {
 	require.ErrorIs(err, errs.ErrContentConflict)
 }
 
+func TestAdapterReplaceRequiresAndRecoversFromExactBase(t *testing.T) {
+	r := require.New(t)
+	adapter, err := content.Open(t.Context(), content.Config{Root: t.TempDir()})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+
+	original := []byte("original photo bytes")
+	created, err := adapter.Create(t.Context(), content.CreateRequest{
+		VirtualPath: "/owners/owner/media/file/IMG_0001.JPG",
+		MediaType:   "image/jpeg",
+		Expected:    identityFor(original),
+		Reader:      bytes.NewReader(original),
+	})
+	r.NoError(err)
+	replacement := []byte("edited photo bytes")
+	request := content.ReplaceRequest{
+		VirtualPath: created.Node.VirtualPath,
+		NodeID:      created.Node.ID, BaseVersionID: created.Version.ID,
+		Base: created.Identity, MediaType: "image/jpeg",
+		Expected: identityFor(replacement), Reader: bytes.NewReader(replacement),
+	}
+	replaced, err := adapter.Replace(t.Context(), request)
+	r.NoError(err)
+	r.False(replaced.Adopted)
+	r.NotEqual(created.Version.ID, replaced.Version.ID)
+
+	request.Reader = bytes.NewReader(replacement)
+	recovered, err := adapter.Replace(t.Context(), request)
+	r.NoError(err)
+	r.True(recovered.Adopted)
+	r.Equal(replaced.Version.ID, recovered.Version.ID)
+
+	request.Expected = identityFor([]byte("another edit"))
+	request.Reader = bytes.NewReader([]byte("another edit"))
+	_, err = adapter.Replace(t.Context(), request)
+	r.ErrorIs(err, errs.ErrContentConflict)
+
+	current, err := adapter.Stat(t.Context(), created.Node.VirtualPath)
+	r.NoError(err)
+	r.Equal(replaced.Version.ID, current.CurrentVersionID)
+}
+
 func identityFor(payload []byte) content.Identity {
 	digest := sha256.Sum256(payload)
 	return content.Identity{SHA256: fmt.Sprintf("%x", digest), Size: int64(len(payload))}

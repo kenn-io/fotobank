@@ -84,6 +84,43 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(root, "undated", item.ID, "IMG_0100.JPG"))
 	r.NoError(err)
 	r.Equal(body, got)
+
+	edited := []byte("edited checkout bytes")
+	r.NoError(os.WriteFile(
+		filepath.Join(root, "undated", item.ID, "IMG_0100.JPG"), edited, 0o600))
+	database, err = db.Open(dbPath)
+	r.NoError(err)
+	contentStore, err = content.Open(t.Context(), content.Config{
+		Root: filepath.Join(tmp, "flash", "docbank"),
+	})
+	r.NoError(err)
+	checkoutRepo := checkout.NewRepo(database.WriteDB(), database.ReadDB())
+	scanner := checkout.NewScanner(checkoutRepo, contentStore, checkout.ScannerConfig{
+		ScanInterval: time.Second, SettleInterval: 0,
+	})
+	_, err = scanner.Scan(t.Context())
+	r.NoError(err)
+	_, err = scanner.Scan(t.Context())
+	r.NoError(err)
+	var checkoutID string
+	r.NoError(database.ReadDB().QueryRowContext(t.Context(),
+		`SELECT id FROM checkouts WHERE state = 'active'`).Scan(&checkoutID))
+	r.NoError(contentStore.Close())
+	r.NoError(database.Close())
+
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
+		"checkout", "commit", "--config", cfgPath, checkoutID,
+	}, &stdout, &stderr)
+	r.Zero(code, "stderr=%s", stderr.String())
+	r.Equal("pending=1\tcommitted=1\tconflicts=0\n", stdout.String())
+	database, err = db.Open(dbPath)
+	r.NoError(err)
+	updated, err := media.NewRepo(database.WriteDB(), database.ReadDB()).GetByID(t.Context(), item.ID)
+	r.NoError(err)
+	r.NotEqual(item.CurrentVersionID, updated.CurrentVersionID)
+	r.NoError(database.Close())
 }
 
 func TestCheckoutEstimateUsesCanonicalDatabaseLock(t *testing.T) {

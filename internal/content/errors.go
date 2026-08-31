@@ -25,6 +25,8 @@ func translateError(err error) error {
 		return fmt.Errorf("%w: %w", errs.ErrNotFound, err)
 	case errors.Is(err, docbank.ErrContentConflict):
 		return fmt.Errorf("%w: %w", errs.ErrContentConflict, err)
+	case errors.Is(err, docbank.ErrStaleRevision):
+		return fmt.Errorf("%w: %w", errs.ErrContentConflict, err)
 	case errors.Is(err, docbank.ErrDigestMismatch),
 		errors.Is(err, docbank.ErrSizeMismatch):
 		return fmt.Errorf("%w: %w", errs.ErrContentIdentityMismatch, err)

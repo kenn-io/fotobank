@@ -78,6 +78,10 @@ checkout so two product files cannot silently claim the same working file.
 The scanner updates that observation only after a file settles and is hashed.
 An unequal stable hash produces `pending`; an equal hash produces `clean`; an
 absent working file produces `missing` without changing content authority.
+Committing a pending tracked entry conditionally appends a Docbank version and
+then advances `media_files` and the checkout base in one Fotobank transaction.
+The entry's base and observed identity make an interrupted commit resumable;
+stale Docbank authority moves the entry to `conflict`.
 
 `checkout_scan_candidates` persists the first and latest size/mtime observation
 used by the settle window. A tracked candidate has a composite foreign key to

@@ -103,6 +103,11 @@ Garbage collection and destructive pruning are deliberate maintenance actions,
 not side effects of ordinary reads or cache eviction. Rebuildable caches may be
 evicted automatically; authoritative content may not.
 
+`fotobank checkout commit <checkout-id>` is an explicit writeback operation for
+settled tracked edits. It does not import untracked files, apply working-file
+deletions, infer renames, or resolve conflicts. Those states remain visible in
+the checkout ledger for their dedicated lifecycle operations.
+
 ## Tests and CI
 
 Go code uses the `sqlite_fts5` tag, CGO, `mattn/go-sqlite3`, and sqlite-vec.

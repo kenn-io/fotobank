@@ -237,7 +237,15 @@ always skips its reserved staging directory. Operator-supplied
 untracked files, so they can exclude tool-specific transient files without
 hiding a tracked media edit.
 
-Scanning does not write new Docbank versions. A later checkout-commit boundary
-consumes tracked `pending` entries with an atomic base-version precondition;
-until then, Docbank remains unchanged and the durable queue records the local
-work that is waiting.
+Scanning does not write new Docbank versions. `fotobank checkout commit
+<checkout-id>` consumes settled tracked `pending` entries. Each replacement is
+bound to the Docbank node revision for the entry's exact base version, so a
+newer head becomes a durable checkout conflict instead of being overwritten.
+
+The pending checkout entry is also the recovery record across the Fotobank and
+Docbank databases. If Docbank committed the expected bytes but Fotobank did not
+record the receipt before interruption, the next commit adopts that exact
+current node version. Any other current identity is a conflict. Applying a
+receipt advances the product file and checkout base together; a primary-file
+change queues a new thumbnail, invalidates current AI and vector projections,
+and refreshes the lexical corpus without deleting immutable Docbank history.
