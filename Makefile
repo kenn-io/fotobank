@@ -12,7 +12,7 @@ BINARY  := $(BIN_DIR)/fotobank
 
 .PHONY: build build-release install dev test test-short test-e2e vet lint nilaway \
         testify-helper-check tidy api-generate \
-        install-hooks clean help \
+        install-hooks clean help docs-build docs-check docs-serve \
         ensure-embed-dir frontend frontend-dev frontend-check air-install
 
 $(BIN_DIR):
@@ -115,6 +115,15 @@ tidy: ## go mod tidy
 api-generate: ## Regenerate OpenAPI spec + TypeScript schema
 	go run ./cmd/fotobank-openapi -out openapi.json
 	cd frontend && bun install && bunx openapi-typescript ../openapi.json -o src/lib/api/generated/schema.ts
+
+docs-build: ## Build the marketing site, guide, and Zensical docs
+	mise exec -- node scripts/docs/build.mjs
+
+docs-check: docs-build ## Validate the generated documentation site
+	mise exec -- node scripts/docs/verify-site.mjs site
+
+docs-serve: docs-build ## Serve the generated documentation site locally
+	mise exec -- node scripts/docs/serve.mjs site
 
 install-hooks: ## Install prek git hooks
 	prek install -f

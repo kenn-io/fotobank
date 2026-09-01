@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>How Fotobank stores and edits a photograph</title>
+    <meta name="description" content="See how Fotobank divides file storage, photo catalog data, working copies, and recovery between Fotobank and Docbank.">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles/site.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="wordmark" href="/">Fotobank</a>
+      <nav aria-label="Primary navigation">
+        <a aria-current="page" href="/guide/">Guide</a>
+        <a href="/docs/">Docs</a>
+        <a href="https://github.com/kenn-io/fotobank">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <header class="guide-hero">
+        <h1>How Fotobank stores and edits a photograph.</h1>
+        <p class="lede">The stored file and the photo catalog have different jobs. This guide shows where each piece of information lives.</p>
+        <ol class="guide-nav" aria-label="Guide stops">
+          <li><a href="#observe">Import</a></li>
+          <li><a href="#preserve">Storage</a></li>
+          <li><a href="#relate">Relationships</a></li>
+          <li><a href="#project">Derived data</a></li>
+          <li><a href="#work">Editing</a></li>
+          <li><a href="#curate">Catalog</a></li>
+          <li><a href="#recover">Recovery</a></li>
+        </ol>
+      </header>
+
+      <ol class="guide-stops">
+        <li id="observe">
+          <div class="stop-copy"><h2>Import a stable file.</h2><p>Fotobank waits until size and modification time stop changing, then reads the exact bytes. It does not rename, move, or edit the source.</p></div>
+        </li>
+        <li id="preserve">
+          <div class="stop-copy"><h2>Store the exact content in Docbank.</h2><p>Fotobank supplies the expected SHA-256 and size. Docbank accepts those bytes into content-addressed storage and creates an immutable version under a stable node.</p><a href="/docs/architecture/content-and-storage/">Content and storage</a></div>
+          <div class="stop-card code"><strong>Docbank receipt</strong><span>node 481 · version 7</span><span>sha256: 71b8…09e4</span></div>
+        </li>
+        <li id="relate">
+          <div class="stop-copy"><h2>Record the file relationships.</h2><p>Fotobank records which file is primary, which is the camera source, and which sidecar belongs to it. Each relationship points to an exact Docbank version.</p><a href="/docs/architecture/data-model/">Asset data model</a></div>
+          <div class="mini-graph"><strong>Photograph</strong><span>JPEG — primary display file</span><span>RAW — camera source</span><span>XMP — edit metadata</span></div>
+        </li>
+        <li id="project">
+          <div class="stop-copy"><h2>Build disposable data for browsing.</h2><p>Fotobank extracts EXIF and GPS metadata, generates thumbnails, and updates search from the recorded version. These outputs can be deleted and rebuilt without changing the stored photograph.</p></div>
+        </li>
+        <li id="work">
+          <div class="stop-copy"><h2>Edit files through a checkout.</h2><p>A checkout copies selected versions into a working directory. External editors, file managers, and shell tools can use normal files there.</p><p>When a tracked file stops changing, Fotobank records it as a new Docbank version. A checkout is never the only copy of the archive.</p></div>
+        </li>
+        <li id="curate">
+          <div class="stop-copy"><h2>Keep catalog decisions in Fotobank.</h2><p>Albums, visibility, sharing, and other catalog choices can change without copying the original or changing what a Docbank version means.</p></div>
+        </li>
+        <li id="recover">
+          <div class="stop-copy"><h2>Verify content before rebuilding.</h2><p>Docbank verifies retained content. Fotobank snapshots and restores its catalog under a coordinated database lock. Checkouts, thumbnails, metadata, and search data can then be rebuilt.</p><a href="/docs/architecture/operations/">Operations and recovery</a></div>
+          <div class="stop-card code"><strong>Recovery order</strong><span>Stored content → catalog → derived data</span></div>
+        </li>
+      </ol>
+
+      <section class="guide-direction">
+        <h2>Planned Docbank work</h2>
+        <p>Metadata, image previews, embeddings, and retrieval results that describe one exact file version will live in Docbank. Ratings, picks, albums, people identities, and other catalog decisions will remain in Fotobank.</p>
+      </section>
+    </main>
+
+    <footer><span>Fotobank</span><span><a href="/">Overview</a> · <a href="/docs/">Technical docs</a></span></footer>
+  </body>
+</html>

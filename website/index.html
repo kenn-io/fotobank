@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fotobank — a photo system of record you control</title>
+    <meta name="description" content="Fotobank is a self-hosted photo archive that stores exact file versions in Docbank and keeps the photo catalog around them.">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles/site.css">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="A photo system of record you control.">
+    <meta property="og:description" content="Store exact file versions in Docbank and keep photo relationships, albums, sharing, and working copies in Fotobank.">
+    <meta property="og:site_name" content="Fotobank">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="wordmark" href="/" aria-label="Fotobank home">Fotobank</a>
+      <nav aria-label="Primary navigation">
+        <a href="/guide/">Guide</a>
+        <a href="/docs/">Docs</a>
+        <a href="https://github.com/kenn-io/fotobank">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero">
+        <div class="hero-copy">
+          <h1>A photo system of record <em>you control.</em></h1>
+          <p class="lede">Fotobank is a self-hosted photo archive. Docbank stores the exact files and their version history. Fotobank groups related files into photographs and provides the catalog around them.</p>
+          <div class="actions">
+            <a class="button primary" href="/guide/">How it works</a>
+            <a class="button" href="/docs/">Read the technical docs</a>
+          </div>
+        </div>
+        <div class="contact-sheet" aria-label="An abstract contact sheet showing related photo files">
+          <span class="frame tall warm"><b>RAW</b></span>
+          <span class="frame wide dusk"><b>JPEG</b></span>
+          <span class="frame small amber"><b>XMP</b></span>
+          <span class="frame wide cool"><b>v2</b></span>
+          <span class="frame tall field"><b>CHECKOUT</b></span>
+          <span class="frame small ink"><b>SHA-256</b></span>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="record-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="record-title">A photo archive needs more than a directory tree.</h2>
+          </div>
+          <p>It must preserve each file, record which files belong to the same photograph, and support external editors without treating a working directory as the archive.</p>
+        </div>
+        <ol class="record-flow">
+          <li><strong>Import</strong><p>Read a settled source without changing it.</p></li>
+          <li><strong>Store</strong><p>Keep exact bytes and immutable versions in Docbank.</p></li>
+          <li><strong>Link</strong><p>Group JPEG, RAW, sidecar, and edited files as one photograph.</p></li>
+          <li><strong>Edit</strong><p>Put selected versions in a writable checkout.</p></li>
+          <li><strong>Recover</strong><p>Verify stored content before rebuilding the catalog and its derived data.</p></li>
+        </ol>
+      </section>
+
+      <section class="site-section split" aria-labelledby="authority-title">
+        <div>
+          <h2 id="authority-title">Docbank stores files. Fotobank models photographs.</h2>
+          <p class="section-lede">Each Fotobank file record points to one exact Docbank version. That reference is the boundary between the archive and the photo catalog.</p>
+        </div>
+        <div class="layer-stack">
+          <article class="layer photo">
+            <h3>Fotobank photo catalog</h3>
+            <ul><li>Assets and file relationships</li><li>Albums, privacy, and sharing</li><li>Timeline, map, review, and checkout workflows</li></ul>
+          </article>
+          <div class="version-seam" aria-hidden="true"></div>
+          <article class="layer record">
+            <h3>Docbank file authority</h3>
+            <ul><li>Content-addressed originals</li><li>Immutable versions and provenance</li><li>Integrity, storage, and recovery</li></ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="site-section" aria-labelledby="asset-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="asset-title">Related files stay related.</h2>
+          </div>
+          <p>A JPEG, camera RAW file, and XMP sidecar can represent one photograph. Fotobank records that relationship directly instead of inferring it every time from filenames.</p>
+        </div>
+        <div class="asset-graph" role="img" aria-label="A photo asset connected to a primary JPEG, camera RAW, and XMP sidecar">
+          <div class="asset-node"><strong>Summer field</strong><span>Photo record</span></div>
+          <div class="graph-line"></div>
+          <div class="file-nodes">
+            <div><strong>IMG_1042.JPG</strong><span>Primary display file</span></div>
+            <div><strong>IMG_1042.CR3</strong><span>Camera source</span></div>
+            <div><strong>IMG_1042.CR3.XMP</strong><span>Edit metadata sidecar</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="site-section proof-section" aria-labelledby="proof-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="proof-title">What this boundary prevents.</h2>
+          </div>
+        </div>
+        <div class="proof-grid">
+          <article><h3>Import never changes the source.</h3><p>Fotobank reads a stable file, computes its identity, and copies it into Docbank. A retry finds the same content or reports a conflict.</p></article>
+          <article><h3>An editor cannot silently replace the archive.</h3><p>External tools edit checkout files. Fotobank records a settled edit as a new Docbank version and rejects a stale base.</p></article>
+          <article><h3>A lost index does not mean a lost photograph.</h3><p>Thumbnails, extracted metadata, and search data can be rebuilt from the exact stored version.</p></article>
+          <article><h3>A file identifier does not grant access.</h3><p>Fotobank checks ownership and visibility before it lists, serves, exports, or shares a file.</p></article>
+        </div>
+      </section>
+
+      <section class="site-section direction" aria-labelledby="direction-title">
+        <div>
+          <h2 id="direction-title">Planned work in Docbank</h2>
+          <p>Docbank is adding source metadata, image previews, embeddings, and retrieval for exact content versions. Fotobank will use those APIs instead of keeping separate generic processing code.</p>
+        </div>
+        <div class="direction-details">
+          <p><strong>Docbank will own</strong> results that describe one file version, including extracted metadata, retained previews, model output, embeddings, and retrieval indexes.</p>
+          <p><strong>Fotobank will own</strong> decisions about a photograph, including file relationships, albums, ratings, privacy, sharing, and people curation.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer><span>Fotobank is pre-alpha software.</span><span>Copyright © 2026 Kenn Software LLC · Apache-2.0</span></footer>
+  </body>
+</html>

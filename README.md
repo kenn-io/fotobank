@@ -120,10 +120,10 @@ binary.
   `internal/search`, and `internal/ai` hold the domain packages.
 - `frontend/` is the Svelte app built into `internal/web/dist`.
 
-The Docbank authority cutover is in progress. The active import path still uses
-the earlier NAS-backed media table, while the embedded Docbank boundary and
-replacement asset/file domain are already present. The current and stable
-boundaries are documented in
+The active import path writes exact file versions to embedded Docbank and
+records the photo-specific asset graph in Fotobank. Writable checkouts expose
+selected versions as ordinary files and can commit settled edits back as new
+immutable Docbank versions. The current boundaries are documented in
 [`docs/architecture/`](docs/architecture/README.md).
 
 Identity supports local stub mode for development and header mode for

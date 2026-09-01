@@ -17,6 +17,9 @@ make lint             # golangci-lint --fix + testify-helper-check
 make nilaway          # pre-push tier
 make tidy             # go mod tidy
 make api-generate     # regenerate openapi.json
+make docs-build       # build marketing site, guide, and Zensical docs
+make docs-check       # build and validate the complete docs site
+make docs-serve       # serve the generated site on localhost
 make install-hooks    # install prek git hooks
 ```
 
