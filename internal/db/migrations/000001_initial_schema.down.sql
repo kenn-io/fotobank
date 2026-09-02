@@ -40,6 +40,7 @@ DROP TRIGGER IF EXISTS media_file_relationships_consistency_update;
 DROP TRIGGER IF EXISTS media_file_relationships_consistency_insert;
 DROP TABLE IF EXISTS media_file_relationships;
 DROP TABLE IF EXISTS media_files;
+-- Dropping assets also removes its exact-version source-metadata projection.
 DROP TABLE IF EXISTS assets;
 DROP TABLE IF EXISTS principal_display;
 DROP TABLE IF EXISTS owners;

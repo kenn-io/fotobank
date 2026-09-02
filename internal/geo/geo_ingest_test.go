@@ -2,15 +2,13 @@ package geo_test
 
 import (
 	"go.kenn.io/fotobank/internal/geo"
-	"go.kenn.io/fotobank/internal/ingest"
+	"go.kenn.io/fotobank/internal/media"
 )
 
 // Compile-time guard: *geo.NaturalEarth MUST satisfy
-// ingest.PlaceResolver. Importing ingest from geo's production package
+// media.PlaceResolver. Importing media from geo's production package
 // would create an import cycle because PlaceResolver belongs to its consumer
-// in ingest. A test-package
-// file can import ingest freely — `go test ./internal/geo/...` will
-// fail to build if ingest renames the method or alters the signature,
-// catching drift at the same point a production wiring assignment
-// would.
-var _ ingest.PlaceResolver = (*geo.NaturalEarth)(nil)
+// in media. A test-package file can import media freely. The geo package test
+// fails to build if media renames the method or alters the signature, catching
+// drift at the same point a production wiring assignment would.
+var _ media.PlaceResolver = (*geo.NaturalEarth)(nil)

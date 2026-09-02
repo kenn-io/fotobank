@@ -108,6 +108,59 @@ func TestImporterGroupsJPEGRAWAndXMPIntoOneReadyAsset(t *testing.T) {
 	r.Equal(1, result.Duplicates)
 }
 
+func TestImporterProjectsMetadataFromExactDocbankVersion(t *testing.T) {
+	r := require.New(t)
+	imp, assets, repo, _, owner, _ := newImporterFixture(t)
+	source := t.TempDir()
+	payload, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "photo-with-timestamp.jpg"))
+	r.NoError(err)
+	writeSource(t, source, "photo.jpg", payload)
+
+	result, err := imp.ImportDirectory(t.Context(), source, ingest.Options{
+		Owner: owner, ConcurrentWorkers: 1, SettleInterval: time.Millisecond,
+	})
+	r.NoError(err)
+	r.Equal(1, result.Imported, "result: %+v", result)
+	r.Empty(result.Failures)
+
+	items, err := repo.List(t.Context(), media.ListFilter{Owner: owner})
+	r.NoError(err)
+	r.Len(items, 1)
+	r.Equal("Canon", items[0].Make)
+	r.Equal("EOS R5", items[0].Model)
+	r.Equal(time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC), *items[0].Timestamp)
+	asset, err := assets.GetAsset(t.Context(), items[0].ID)
+	r.NoError(err)
+	r.Equal(items[0].CurrentVersionID, asset.SourceMetadataVersionID)
+	r.Len(asset.SourceMetadataExtractorFingerprint, sha256.Size*2)
+	r.Len(asset.SourceMetadataChecksum, sha256.Size*2)
+}
+
+func TestImporterProjectsVideoMetadataFromDocbank(t *testing.T) {
+	r := require.New(t)
+	imp, _, repo, _, owner, _ := newImporterFixture(t)
+	source := t.TempDir()
+	payload, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "video.mp4"))
+	r.NoError(err)
+	writeSource(t, source, "video.mp4", payload)
+
+	result, err := imp.ImportDirectory(t.Context(), source, ingest.Options{
+		Owner: owner, ConcurrentWorkers: 1, SettleInterval: time.Millisecond,
+	})
+	r.NoError(err)
+	r.Equal(1, result.Imported, "result: %+v", result)
+	r.Empty(result.Failures)
+
+	items, err := repo.List(t.Context(), media.ListFilter{Owner: owner})
+	r.NoError(err)
+	r.Len(items, 1)
+	r.Equal(media.TypeVideo, items[0].Type)
+	r.Equal(16, *items[0].Width)
+	r.Equal(16, *items[0].Height)
+	r.Greater(*items[0].DurationMs, int64(500))
+	r.WithinDuration(time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC), *items[0].Timestamp, time.Second)
+}
+
 func TestImporterRejectsXMPOnlyGroupBeforeReservation(t *testing.T) {
 	r := require.New(t)
 	imp, _, _, _, owner, ro := newImporterFixture(t)

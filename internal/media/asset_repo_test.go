@@ -162,3 +162,52 @@ func TestApplyContentReceiptIsIdempotent(t *testing.T) {
 	other.VersionID = uuid.NewString()
 	r.ErrorIs(repo.ApplyContentReceipt(t.Context(), other), errs.ErrContentConflict)
 }
+
+func TestApplySourceMetadataRequiresCurrentPrimaryVersion(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	var storageKey string
+	r.NoError(d.ReadDB().QueryRowContext(t.Context(),
+		`SELECT storage_key FROM owners WHERE hub=? AND user_id=?`, owner.Hub, owner.UserID,
+	).Scan(&storageKey))
+	assetID, fileID := uuid.NewString(), uuid.NewString()
+	path, err := content.VirtualPath(storageKey, fileID, "photo.jpg")
+	r.NoError(err)
+	digest := sha256.Sum256([]byte("photo"))
+	pending := media.PendingContent{
+		OperationID: uuid.NewString(),
+		File: media.File{
+			ID: fileID, AssetID: assetID, Owner: owner, Role: media.RolePrimary,
+			MimeType: "image/jpeg", OriginalFilename: "photo.jpg", Size: 5,
+		},
+		SHA256: hex.EncodeToString(digest[:]), Size: 5, VirtualPath: path,
+	}
+	repo := media.NewAssetRepo(d.WriteDB(), d.ReadDB())
+	r.NoError(repo.ReserveImport(t.Context(), media.Asset{
+		ID: assetID, Owner: owner, Type: media.TypePhoto,
+		ImportedAt: time.Now().UTC(), ThumbStatus: "pending",
+	}, []media.PendingContent{pending}, nil))
+	versionID := uuid.NewString()
+	r.NoError(repo.ApplyContentReceipt(t.Context(), media.ContentReceipt{
+		OperationID: pending.OperationID, NodeID: 1, VersionID: versionID,
+		SHA256: pending.SHA256, Size: pending.Size,
+	}))
+	timestamp := time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC)
+	projection := media.SourceMetadataProjection{
+		VersionID:            versionID,
+		ExtractorFingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Checksum:             "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		Timestamp:            &timestamp, Make: "Canon", Model: "EOS R5",
+	}
+	r.NoError(repo.ApplySourceMetadata(t.Context(), assetID, projection))
+	asset, err := repo.GetAsset(t.Context(), assetID)
+	r.NoError(err)
+	r.Equal("Canon", asset.Make)
+	r.Equal(versionID, asset.SourceMetadataVersionID)
+	r.Equal(projection.ExtractorFingerprint, asset.SourceMetadataExtractorFingerprint)
+	r.Equal(projection.Checksum, asset.SourceMetadataChecksum)
+
+	projection.VersionID = uuid.NewString()
+	r.ErrorIs(repo.ApplySourceMetadata(t.Context(), assetID, projection), errs.ErrContentConflict)
+}

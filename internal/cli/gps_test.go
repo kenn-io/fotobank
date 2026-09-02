@@ -241,9 +241,8 @@ func TestGPSBackfillFinalSummaryAlwaysEmitted(t *testing.T) {
 // TestGPSBackfillFullClearsCoordsWhenEXIFLacksGPS exercises the
 // authoritative-clear branch of mode=full: a row with non-NULL coords
 // whose backing file has no EXIF GPS segment must be wiped of all four
-// GPS fields after the backfill. exifread.ExtractPhotoFromReader
-// returns an empty Metadata{} (nil error) when the file lacks an EXIF
-// segment entirely, so a tiny non-JPEG byte string is enough.
+// GPS fields after the backfill. Docbank source metadata contains no GPS fields
+// when the file lacks an EXIF segment, so a tiny non-JPEG byte string is enough.
 func TestGPSBackfillFullClearsCoordsWhenEXIFLacksGPS(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()

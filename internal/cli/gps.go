@@ -13,7 +13,6 @@ import (
 	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/errs"
-	"go.kenn.io/fotobank/internal/exifread"
 	"go.kenn.io/fotobank/internal/geo"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
@@ -251,7 +250,6 @@ type backfiller struct {
 	svc     *service.MediaService
 	repo    *media.Repo
 	content *content.Adapter
-	resolve *contentresolver.Resolver
 	places  *geo.NaturalEarth
 	mode    media.GPSBackfillMode
 	since   *time.Time
@@ -285,7 +283,6 @@ func newBackfiller(
 		svc:     svc,
 		repo:    repo,
 		content: contentStore,
-		resolve: resolver,
 		places:  places,
 		mode:    opts.parsedMode,
 		since:   opts.sinceTime,
@@ -374,41 +371,30 @@ func relabelOne(ctx context.Context, b *backfiller, owner owners.Principal, row 
 	return nil
 }
 
-// reextractOne handles the Full and FillMissing modes: read the exact
-// Docbank version through exifread and reconcile the result with the row. Full is
-// authoritative — when EXIF has no GPS it clears any existing coords;
-// FillMissing leaves rows alone when EXIF has no GPS.
+// reextractOne handles the Full and FillMissing modes: ensure metadata for the
+// exact Docbank version and reconcile its GPS projection with the row. Full is
+// authoritative when the source metadata has no GPS; FillMissing leaves the
+// row alone in that case.
 func reextractOne(
 	ctx context.Context,
 	b *backfiller,
 	owner owners.Principal,
 	row media.Media,
 ) error {
-	opened, err := b.resolve.OpenCurrent(ctx, row.ID, "", 0, -1)
+	metadata, err := b.content.EnsureSourceMetadata(ctx, row.CurrentVersionID)
 	if err != nil {
-		return fmt.Errorf("read Docbank version: %w", err)
+		return fmt.Errorf("ensure Docbank source metadata: %w", err)
 	}
-	rc := opened.Reader
-	defer func() { _ = rc.Close() }()
-	meta, err := exifread.ExtractPhotoFromReader(rc)
+	projection, err := media.ProjectSourceMetadata(metadata, b.places)
 	if err != nil {
-		return fmt.Errorf("extract exif: %w", err)
+		return fmt.Errorf("project Docbank source metadata: %w", err)
 	}
-	if _, err := io.Copy(io.Discard, rc); err != nil {
-		return fmt.Errorf("drain original: %w", err)
-	}
-	// ExtractPhotoFromReader returns Metadata{} (no error) when the
-	// file simply has no EXIF segment. Such rows naturally fall
-	// through hasGPS=false below — no separate "skipped" counter.
-	if meta.Latitude == nil || meta.Longitude == nil {
+	if projection.Latitude == nil || projection.Longitude == nil {
 		return reextractMissing(ctx, b, owner, row)
 	}
-	label := ""
-	if l, ok := b.places.Resolve(*meta.Latitude, *meta.Longitude); ok {
-		label = l
-	}
 	if err := b.svc.UpdateGPS(
-		ctx, owner, row.ID, meta.Latitude, meta.Longitude, meta.GPSAt, label,
+		ctx, owner, row.ID, projection.Latitude, projection.Longitude,
+		projection.GPSAt, projection.LocationLabel,
 	); err != nil {
 		return fmt.Errorf("update gps for row %s: %w", row.ID, err)
 	}

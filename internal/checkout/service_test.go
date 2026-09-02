@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,10 +69,18 @@ func TestCommitterPublishesTrackedEditAndInvalidatesPrimaryProjections(t *testin
 	original := []byte("original checkout bytes")
 	replacement := []byte("edited checkout bytes with a different size")
 	item, checkoutID, entry := createPendingEdit(t, fixture, original, replacement)
+	_, err := fixture.db.WriteDB().ExecContext(t.Context(), `UPDATE assets SET
+		timestamp = ?, make = 'Canon', model = 'EOS R5', latitude = 48.8566,
+		longitude = 2.3522, location_label = 'Paris',
+		source_metadata_version_id = ?,
+		source_metadata_extractor_fingerprint = ?, source_metadata_checksum = ?
+		WHERE id = ?`, time.Now().UTC(), item.CurrentVersionID,
+		strings.Repeat("a", sha256.Size*2), strings.Repeat("b", sha256.Size*2), item.ID)
+	r.NoError(err)
 
 	tagResultID := uuid.NewString()
 	captionResultID := uuid.NewString()
-	_, err := fixture.db.WriteDB().ExecContext(t.Context(), `INSERT INTO ai_results
+	_, err = fixture.db.WriteDB().ExecContext(t.Context(), `INSERT INTO ai_results
 		(id, media_id, task, model_id, prompt_version, prompt_hash, input_profile, status, generated_at)
 		VALUES (?, ?, 'tag', 'model', 'v1', 'hash', 'profile', 'active', ?),
 		       (?, ?, 'caption', 'model', 'v1', 'hash', 'profile', 'active', ?)`,
@@ -117,6 +126,14 @@ func TestCommitterPublishesTrackedEditAndInvalidatesPrimaryProjections(t *testin
 	r.Equal(int64(len(replacement)), updated.Size)
 	r.Equal("pending", updated.ThumbStatus)
 	r.Equal(4, updated.ThumbVersion)
+	r.Nil(updated.Timestamp)
+	r.Empty(updated.Make)
+	r.Nil(updated.Latitude)
+	asset, err := media.NewAssetRepo(fixture.db.WriteDB(), fixture.db.ReadDB()).GetAsset(t.Context(), item.ID)
+	r.NoError(err)
+	r.Empty(asset.SourceMetadataVersionID)
+	r.Empty(asset.SourceMetadataExtractorFingerprint)
+	r.Empty(asset.SourceMetadataChecksum)
 
 	prior, err := fixture.content.OpenVersion(t.Context(), item.CurrentVersionID)
 	r.NoError(err)

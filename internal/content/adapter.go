@@ -242,6 +242,31 @@ type Version struct {
 	MediaType string
 }
 
+type MetadataTimestamp struct {
+	Normalized string
+	Precision  string
+	Timezone   string
+}
+
+type MetadataValue struct {
+	Kind      string
+	String    string
+	Integer   *int64
+	Number    *float64
+	Timestamp *MetadataTimestamp
+}
+
+// SourceMetadata is the subset of Docbank's exact-version metadata contract
+// needed by Fotobank's product projections. The version, extractor, and
+// checksum together fence every derived asset field to immutable source
+// evidence.
+type SourceMetadata struct {
+	VersionID            string
+	ExtractorFingerprint string
+	Checksum             string
+	Fields               map[string]MetadataValue
+}
+
 type Source struct {
 	Kind        string
 	Description string
@@ -585,6 +610,36 @@ func (a *Adapter) OpenVersion(ctx context.Context, versionID string) (*Read, err
 		MediaType: opened.Version.MediaType,
 		Size:      opened.Version.Size,
 		Reader:    translateReader(opened.Reader),
+	}, nil
+}
+
+// EnsureSourceMetadata returns current local metadata for one exact immutable
+// content version, processing it synchronously when needed.
+func (a *Adapter) EnsureSourceMetadata(ctx context.Context, versionID string) (SourceMetadata, error) {
+	metadata, err := a.vault.EnsureSourceMetadata(ctx, versionID)
+	if err != nil {
+		return SourceMetadata{}, translateError(err)
+	}
+	fields := make(map[string]MetadataValue, len(metadata.Fields))
+	for _, field := range metadata.Fields {
+		value := MetadataValue{
+			Kind: string(field.Value.Kind), String: field.Value.String,
+			Integer: field.Value.Integer, Number: field.Value.Number,
+		}
+		if field.Value.Timestamp != nil {
+			value.Timestamp = &MetadataTimestamp{
+				Normalized: field.Value.Timestamp.Normalized,
+				Precision:  string(field.Value.Timestamp.Precision),
+				Timezone:   string(field.Value.Timestamp.Timezone),
+			}
+		}
+		fields[field.Key] = value
+	}
+	return SourceMetadata{
+		VersionID:            metadata.Version.ID,
+		ExtractorFingerprint: metadata.ExtractorFingerprint,
+		Checksum:             metadata.Checksum,
+		Fields:               fields,
 	}, nil
 }
 

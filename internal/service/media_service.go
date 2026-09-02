@@ -85,7 +85,7 @@ func (s *MediaService) List(ctx context.Context, f media.ListFilter, caller owne
 // UpdateGPS persists the four GPS columns on a row owned by caller.
 // The owner check goes through Get, which returns errs.ErrNotFound on
 // caller mismatch — preserving the anti-probing convention. The CLI
-// orchestrates "open the exact content version, run exifread, resolve label";
+// orchestrates exact-version metadata projection and location resolution;
 // the service layer stays simple and auth-scoped. Returns
 // errs.ErrInvalidArgument (from the repo) if exactly one of lat/lon is
 // set — the GPS coordinate pair is atomic.

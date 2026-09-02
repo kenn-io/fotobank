@@ -14,6 +14,7 @@ import (
 	appsettingsstore "go.kenn.io/fotobank/internal/appsettings"
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/geo"
 	"go.kenn.io/fotobank/internal/ingest"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
@@ -119,6 +120,10 @@ func runContentRecovery(ctx context.Context, opts contentRecoveryOpts) error {
 	enqueuer := newIngestAIEnqueuer(d.DB, aiProvider.Effective())
 	assets := media.NewAssetRepo(d.WriteDB(), d.ReadDB())
 	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	places, err := geo.NewNaturalEarth()
+	if err != nil {
+		return fmt.Errorf("load geo gazetteer: %w", err)
+	}
 	reports := make([]ownerRecoveryReport, 0, len(registeredOwners))
 	for _, registeredOwner := range registeredOwners {
 		recoverer := ingest.NewImporter(
@@ -126,7 +131,7 @@ func runContentRecovery(ctx context.Context, opts contentRecoveryOpts) error {
 			assets,
 			mediaRepo,
 			registeredOwner.StorageKey,
-			nil,
+			places,
 		)
 		recoverer.SetAIEnqueuer(enqueuer)
 		result, err := recoverer.RecoverOwner(ctx, registeredOwner.Principal)

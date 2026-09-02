@@ -239,6 +239,13 @@ func (r *Repo) MarkCommitConflict(
 
 func invalidatePrimaryProjections(ctx context.Context, tx *sql.Tx, assetID string, now time.Time) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE assets SET
+		timestamp = NULL, make = NULL, model = NULL, lens_model = NULL,
+		focal_length = NULL, shutter = NULL, width = NULL, height = NULL,
+		iso = NULL, aperture = NULL, duration_ms = NULL, latitude = NULL,
+		longitude = NULL, gps_at = NULL, location_label = NULL,
+		source_metadata_version_id = NULL,
+		source_metadata_extractor_fingerprint = NULL,
+		source_metadata_checksum = NULL,
 		thumb_status = 'pending', thumb_version = thumb_version + 1,
 		thumb_updated_at = ?, thumb_claimed_at = NULL
 		WHERE id = ?`, now, assetID); err != nil {

@@ -52,7 +52,7 @@ Fotobank is built around a few opinions:
 
 The codebase currently includes:
 
-- CLI import with owner-scoped deduplication, EXIF/GPS metadata extraction,
+- CLI import with owner-scoped deduplication and Docbank-backed EXIF/GPS metadata,
   date-based storage, reconcile support, and thumbnail generation.
 - A Svelte web app with library browsing, sessions, media detail pages,
   lightbox viewing, albums, shares, hidden media, AI settings, and search.

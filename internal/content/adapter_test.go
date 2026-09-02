@@ -386,6 +386,31 @@ func TestAdapterOpenVersion(t *testing.T) {
 	require.ErrorIs(err, errs.ErrNotFound)
 }
 
+func TestAdapterEnsureSourceMetadataUsesExactVersion(t *testing.T) {
+	r := require.New(t)
+	adapter, err := content.Open(t.Context(), content.Config{Root: t.TempDir()})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+	payload, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "photo-with-timestamp.jpg"))
+	r.NoError(err)
+	receipt, err := adapter.Create(t.Context(), content.CreateRequest{
+		VirtualPath: "/owners/owner/media/file/photo.jpg",
+		MediaType:   "image/jpeg",
+		Expected:    identityFor(payload),
+		Reader:      bytes.NewReader(payload),
+	})
+	r.NoError(err)
+
+	metadata, err := adapter.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+	r.NoError(err)
+	r.Equal(receipt.Version.ID, metadata.VersionID)
+	r.Len(metadata.ExtractorFingerprint, sha256.Size*2)
+	r.Len(metadata.Checksum, sha256.Size*2)
+	r.Equal("Canon", metadata.Fields["image.exif.camera_make"].String)
+	r.Equal("timestamp", metadata.Fields["created"].Kind)
+	r.Equal("2024-06-15T14:30:22", metadata.Fields["created"].Timestamp.Normalized)
+}
+
 func TestAdapterOpenVersionRange(t *testing.T) {
 	require := require.New(t)
 	adapter, _, payload, receipt := createTestContent(t)

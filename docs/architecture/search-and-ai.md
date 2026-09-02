@@ -73,8 +73,9 @@ the affected media's current mapping because the visual input changed.
 
 Vectors remain Fotobank-owned while the Docbank content integration is proven.
 They key source projections by Fotobank media/asset identity and exact input
-versions; Docbank does not need to understand cameras, prompts, or Fotobank's
-search lifecycle.
+versions. Docbank owns reusable source extraction, including camera evidence;
+Fotobank owns the photographer-facing projection, prompts, and search
+lifecycle.
 
 ## Failure and privacy rules
 
