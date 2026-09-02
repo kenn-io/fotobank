@@ -363,7 +363,8 @@ func relabelOne(ctx context.Context, b *backfiller, owner owners.Principal, row 
 		return nil
 	}
 	if err := b.svc.UpdateGPS(
-		ctx, owner, row.ID, row.Latitude, row.Longitude, row.GPSAt, label,
+		ctx, owner, row.ID, row.CurrentVersionID,
+		row.Latitude, row.Longitude, row.GPSAt, label,
 	); err != nil {
 		return fmt.Errorf("update gps for row %s: %w", row.ID, err)
 	}
@@ -393,7 +394,8 @@ func reextractOne(
 		return reextractMissing(ctx, b, owner, row)
 	}
 	if err := b.svc.UpdateGPS(
-		ctx, owner, row.ID, projection.Latitude, projection.Longitude,
+		ctx, owner, row.ID, row.CurrentVersionID,
+		projection.Latitude, projection.Longitude,
 		projection.GPSAt, projection.LocationLabel,
 	); err != nil {
 		return fmt.Errorf("update gps for row %s: %w", row.ID, err)
@@ -421,7 +423,7 @@ func reextractMissing(
 		b.tally.unchanged++
 		return nil
 	}
-	if err := b.svc.UpdateGPS(ctx, owner, row.ID, nil, nil, nil, ""); err != nil {
+	if err := b.svc.UpdateGPS(ctx, owner, row.ID, row.CurrentVersionID, nil, nil, nil, ""); err != nil {
 		return fmt.Errorf("update gps for row %s: %w", row.ID, err)
 	}
 	b.tally.updated++

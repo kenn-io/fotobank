@@ -163,7 +163,7 @@ func TestApplyContentReceiptIsIdempotent(t *testing.T) {
 	r.ErrorIs(repo.ApplyContentReceipt(t.Context(), other), errs.ErrContentConflict)
 }
 
-func TestApplySourceMetadataRequiresCurrentPrimaryVersion(t *testing.T) {
+func TestSourceProjectionsRequireCurrentPrimaryVersion(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
@@ -210,4 +210,34 @@ func TestApplySourceMetadataRequiresCurrentPrimaryVersion(t *testing.T) {
 
 	projection.VersionID = uuid.NewString()
 	r.ErrorIs(repo.ApplySourceMetadata(t.Context(), assetID, projection), errs.ErrContentConflict)
+
+	productRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	latitude, longitude := 48.8566, 2.3522
+	tx, err := d.WriteDB().BeginTx(t.Context(), nil)
+	r.NoError(err)
+	r.NoError(productRepo.UpdateGPSTx(
+		t.Context(), tx, assetID, versionID, &latitude, &longitude, nil, "Paris",
+	))
+	r.NoError(tx.Commit())
+
+	nextVersionID := uuid.NewString()
+	_, err = d.WriteDB().ExecContext(t.Context(), `UPDATE media_files
+		SET current_version_id = ? WHERE id = ?`, nextVersionID, fileID)
+	r.NoError(err)
+	staleLatitude, staleLongitude := 40.7128, -74.006
+	tx, err = d.WriteDB().BeginTx(t.Context(), nil)
+	r.NoError(err)
+	err = productRepo.UpdateGPSTx(
+		t.Context(), tx, assetID, versionID, &staleLatitude, &staleLongitude, nil, "New York",
+	)
+	r.ErrorIs(err, errs.ErrContentConflict)
+	r.NoError(tx.Rollback())
+
+	var storedLatitude, storedLongitude float64
+	var storedLabel string
+	r.NoError(d.ReadDB().QueryRowContext(t.Context(), `SELECT latitude, longitude, location_label
+		FROM assets WHERE id = ?`, assetID).Scan(&storedLatitude, &storedLongitude, &storedLabel))
+	r.InDelta(latitude, storedLatitude, 0)
+	r.InDelta(longitude, storedLongitude, 0)
+	r.Equal("Paris", storedLabel)
 }

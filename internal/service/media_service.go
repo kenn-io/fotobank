@@ -82,13 +82,14 @@ func (s *MediaService) List(ctx context.Context, f media.ListFilter, caller owne
 	return s.repo.List(ctx, f)
 }
 
-// UpdateGPS persists the four GPS columns on a row owned by caller.
+// UpdateGPS persists the four GPS columns on a row owned by caller while its
+// primary file remains at expectedVersionID.
 // The owner check goes through Get, which returns errs.ErrNotFound on
 // caller mismatch — preserving the anti-probing convention. The CLI
 // orchestrates exact-version metadata projection and location resolution;
 // the service layer stays simple and auth-scoped. Returns
-// errs.ErrInvalidArgument (from the repo) if exactly one of lat/lon is
-// set — the GPS coordinate pair is atomic.
+// errs.ErrInvalidArgument (from the repo) if exactly one of lat/lon is set,
+// or errs.ErrContentConflict when the primary version changed.
 //
 // The UPDATE and the media_fts refresh run in the same write
 // transaction so search reads always see the location_label that the
@@ -97,6 +98,7 @@ func (s *MediaService) UpdateGPS(
 	ctx context.Context,
 	caller owners.Principal,
 	id string,
+	expectedVersionID string,
 	lat, lon *float64,
 	gpsAt *time.Time,
 	label string,
@@ -105,7 +107,7 @@ func (s *MediaService) UpdateGPS(
 		return err
 	}
 	return s.repo.WithWriteTx(ctx, func(tx *sql.Tx) error {
-		if err := s.repo.UpdateGPSTx(ctx, tx, id, lat, lon, gpsAt, label); err != nil {
+		if err := s.repo.UpdateGPSTx(ctx, tx, id, expectedVersionID, lat, lon, gpsAt, label); err != nil {
 			return err
 		}
 		return index.RefreshMediaFTS(ctx, tx, id)

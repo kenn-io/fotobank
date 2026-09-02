@@ -616,6 +616,8 @@ func (a *Adapter) OpenVersion(ctx context.Context, versionID string) (*Read, err
 // EnsureSourceMetadata returns current local metadata for one exact immutable
 // content version, processing it synchronously when needed.
 func (a *Adapter) EnsureSourceMetadata(ctx context.Context, versionID string) (SourceMetadata, error) {
+	// Docbank holds its vault mutation lock across the version lookup, verified
+	// processing, publication, and readback performed by this call.
 	metadata, err := a.vault.EnsureSourceMetadata(ctx, versionID)
 	if err != nil {
 		return SourceMetadata{}, translateError(err)
