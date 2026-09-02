@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/fotobank/internal/ai"
 	"go.kenn.io/fotobank/internal/ai/embedding"
 	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/search/index"
 )
 
@@ -90,12 +91,23 @@ func (r *Repo) ApplyCommit(
 	ctx context.Context,
 	target CommitTarget,
 	receipt CommitReceipt,
+	projection *media.SourceMetadataProjection,
 	clean bool,
 	now time.Time,
 ) error {
 	if receipt.NodeID != target.NodeID || receipt.NodeID <= 0 ||
 		uuid.Validate(receipt.VersionID) != nil || !validCommitSHA(receipt.SHA256) || receipt.Size < 0 {
 		return fmt.Errorf("apply checkout commit: %w: invalid Docbank receipt", errs.ErrInvalidArgument)
+	}
+	isPrimary := target.Role == string(media.RolePrimary)
+	var primaryProjection media.SourceMetadataProjection
+	if isPrimary {
+		if projection == nil {
+			return fmt.Errorf("apply checkout commit: %w: primary metadata projection is required", errs.ErrInvalidArgument)
+		}
+		primaryProjection = *projection
+	} else if projection != nil {
+		return fmt.Errorf("apply checkout commit: %w: primary metadata projection mismatch", errs.ErrInvalidArgument)
 	}
 	tx, err := r.rw.BeginTx(ctx, nil)
 	if err != nil {
@@ -189,8 +201,11 @@ func (r *Repo) ApplyCommit(
 		}
 	}
 
-	if role == "primary" {
-		if err := invalidatePrimaryProjections(ctx, tx, assetID, now.UTC()); err != nil {
+	if isPrimary {
+		if err := r.assets.ApplySourceMetadataTx(ctx, tx, assetID, primaryProjection); err != nil {
+			return fmt.Errorf("apply checkout commit: apply source metadata: %w", err)
+		}
+		if err := invalidatePrimaryDerivedWork(ctx, tx, assetID, now.UTC()); err != nil {
 			return fmt.Errorf("apply checkout commit: invalidate projections: %w", err)
 		}
 	}
@@ -237,15 +252,8 @@ func (r *Repo) MarkCommitConflict(
 	return state == EntryConflict, nil
 }
 
-func invalidatePrimaryProjections(ctx context.Context, tx *sql.Tx, assetID string, now time.Time) error {
+func invalidatePrimaryDerivedWork(ctx context.Context, tx *sql.Tx, assetID string, now time.Time) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE assets SET
-		timestamp = NULL, make = NULL, model = NULL, lens_model = NULL,
-		focal_length = NULL, shutter = NULL, width = NULL, height = NULL,
-		iso = NULL, aperture = NULL, duration_ms = NULL, latitude = NULL,
-		longitude = NULL, gps_at = NULL, location_label = NULL,
-		source_metadata_version_id = NULL,
-		source_metadata_extractor_fingerprint = NULL,
-		source_metadata_checksum = NULL,
 		thumb_status = 'pending', thumb_version = thumb_version + 1,
 		thumb_updated_at = ?, thumb_claimed_at = NULL
 		WHERE id = ?`, now, assetID); err != nil {

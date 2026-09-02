@@ -106,7 +106,9 @@ evicted automatically; authoritative content may not.
 `fotobank checkout commit <checkout-id>` is an explicit writeback operation for
 settled tracked edits. It does not import untracked files, apply working-file
 deletions, infer renames, or resolve conflicts. Those states remain visible in
-the checkout ledger for their dedicated lifecycle operations.
+the checkout ledger for their dedicated lifecycle operations. A primary edit
+is not settled in Fotobank until Docbank source metadata for the committed
+version is available; the pending checkout entry is the retry record.
 
 ## Tests and CI
 

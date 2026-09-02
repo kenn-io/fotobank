@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 )
 
@@ -23,12 +24,13 @@ import (
 type Committer struct {
 	repo    *Repo
 	content *content.Adapter
+	places  media.PlaceResolver
 	now     func() time.Time
 }
 
-func NewCommitter(repo *Repo, contentStore *content.Adapter) *Committer {
+func NewCommitter(repo *Repo, contentStore *content.Adapter, places media.PlaceResolver) *Committer {
 	return &Committer{
-		repo: repo, content: contentStore,
+		repo: repo, content: contentStore, places: places,
 		now: func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -141,10 +143,28 @@ func (c *Committer) commitEntry(
 	if observationErr != nil || closeErr != nil || rootErr != nil {
 		clean = false
 	}
+	var projection *media.SourceMetadataProjection
+	if target.Role == string(media.RolePrimary) {
+		metadata, metadataErr := c.content.EnsureSourceMetadata(ctx, receipt.Version.ID)
+		if metadataErr != nil {
+			return false, false, errors.Join(
+				observationErr, closeErr, rootErr,
+				fmt.Errorf("ensure committed source metadata: %w", metadataErr),
+			)
+		}
+		projected, metadataErr := media.ProjectSourceMetadata(metadata, c.places)
+		if metadataErr != nil {
+			return false, false, errors.Join(
+				observationErr, closeErr, rootErr,
+				fmt.Errorf("project committed source metadata: %w", metadataErr),
+			)
+		}
+		projection = &projected
+	}
 	applyErr := c.repo.ApplyCommit(ctx, target, CommitReceipt{
 		NodeID: receipt.Node.ID, VersionID: receipt.Version.ID,
 		SHA256: receipt.Identity.SHA256, Size: receipt.Identity.Size,
-	}, clean, c.now())
+	}, projection, clean, c.now())
 	if applyErr != nil {
 		if errors.Is(applyErr, errs.ErrContentConflict) {
 			marked, markErr := c.repo.MarkCommitConflict(ctx, target.Entry, applyErr, c.now())

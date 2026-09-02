@@ -366,6 +366,27 @@ func (r *AssetRepo) ApplySourceMetadata(
 	assetID string,
 	projection SourceMetadataProjection,
 ) error {
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("apply source metadata: begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := r.ApplySourceMetadataTx(ctx, tx, assetID, projection); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("apply source metadata: commit: %w", err)
+	}
+	return nil
+}
+
+// ApplySourceMetadataTx applies the projection inside the caller's transaction.
+func (r *AssetRepo) ApplySourceMetadataTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	assetID string,
+	projection SourceMetadataProjection,
+) error {
 	if err := validateOpaqueUUID(assetID, "asset ID"); err != nil {
 		return fmt.Errorf("apply source metadata: %w", err)
 	}
@@ -378,7 +399,7 @@ func (r *AssetRepo) ApplySourceMetadata(
 	if err := validateGPSPair(projection.Latitude, projection.Longitude); err != nil {
 		return fmt.Errorf("apply source metadata: %w", err)
 	}
-	res, err := r.rw.ExecContext(ctx, `UPDATE assets SET
+	res, err := tx.ExecContext(ctx, `UPDATE assets SET
 		timestamp = ?, make = ?, model = ?, lens_model = ?, focal_length = ?,
 		shutter = ?, width = ?, height = ?, iso = ?, aperture = ?, duration_ms = ?,
 		latitude = ?, longitude = ?, gps_at = ?, location_label = ?,
@@ -407,7 +428,7 @@ func (r *AssetRepo) ApplySourceMetadata(
 		return nil
 	}
 	var exists int
-	if err := r.ro.QueryRowContext(ctx, `SELECT COUNT(*) FROM assets WHERE id = ?`, assetID).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM assets WHERE id = ?`, assetID).Scan(&exists); err != nil {
 		return fmt.Errorf("apply source metadata: inspect asset: %w", err)
 	}
 	if exists == 0 {

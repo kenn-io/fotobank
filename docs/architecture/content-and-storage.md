@@ -254,6 +254,10 @@ The pending checkout entry is also the recovery record across the Fotobank and
 Docbank databases. If Docbank committed the expected bytes but Fotobank did not
 record the receipt before interruption, the next commit adopts that exact
 current node version. Any other current identity is a conflict. Applying a
-receipt advances the product file and checkout base together; a primary-file
-change queues a new thumbnail, invalidates current AI and vector projections,
-and refreshes the lexical corpus without deleting immutable Docbank history.
+receipt advances the product file and checkout base together. A primary-file
+commit first ensures and projects source metadata for the new exact version;
+processing failure leaves the checkout entry pending, so retry adopts the
+already-written Docbank version and tries again. Successful publication stores
+the new metadata fence, queues a thumbnail, invalidates current AI and vector
+projections, and refreshes the lexical corpus in one Fotobank transaction
+without deleting immutable Docbank history.
