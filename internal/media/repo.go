@@ -315,63 +315,38 @@ const (
 	GPSBackfillModeRelabel
 )
 
-// UpdateGPS sets the four GPS columns on an existing row. Used by the
-// backfill CLI; the importer uses Insert. Returns errs.ErrNotFound if
-// the row is gone, or errs.ErrInvalidArgument if exactly one of lat/lon
-// is set (the pair is atomic — both set or both nil).
-//
-// This is the auto-commit wrapper around UpdateGPSTx; callers that need
-// to bundle the update with another write (e.g. service.MediaService
-// pairing the UPDATE with a media_fts refresh) should use the Tx
-// variant directly.
-func (r *Repo) UpdateGPS(
-	ctx context.Context,
-	id string,
-	lat, lon *float64,
-	gpsAt *time.Time,
-	label string,
-) error {
-	if err := validateGPSPair(lat, lon); err != nil {
-		return fmt.Errorf("update media gps: %w", err)
-	}
-	tx, err := r.rw.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("update media gps: begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := r.UpdateGPSTx(ctx, tx, id, lat, lon, gpsAt, label); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("update media gps: commit: %w", err)
-	}
-	return nil
-}
-
-// UpdateGPSTx is the in-tx variant of UpdateGPS. The caller owns the
-// transaction so the UPDATE can be bundled with a media_fts refresh
-// (location_label is part of the FTS corpus). Same validation and
-// not-found semantics as UpdateGPS.
+// UpdateGPSTx changes the four GPS fields inside the caller's transaction so
+// the update can be bundled with a media_fts refresh
+// (location_label is part of the FTS corpus). The update succeeds only while
+// expectedVersionID remains the asset's current primary content version.
 func (r *Repo) UpdateGPSTx(
 	ctx context.Context,
 	tx *sql.Tx,
 	id string,
+	expectedVersionID string,
 	lat, lon *float64,
 	gpsAt *time.Time,
 	label string,
 ) error {
+	if err := validateOpaqueUUID(expectedVersionID, "expected content version ID"); err != nil {
+		return fmt.Errorf("update media gps: %w", err)
+	}
 	if err := validateGPSPair(lat, lon); err != nil {
 		return fmt.Errorf("update media gps: %w", err)
 	}
 	res, err := tx.ExecContext(ctx,
 		`UPDATE assets
 		    SET latitude = ?, longitude = ?, gps_at = ?, location_label = ?
-		  WHERE id = ?`,
+		  WHERE id = ? AND EXISTS (
+		    SELECT 1 FROM media_files
+		    WHERE asset_id = assets.id AND role = 'primary' AND current_version_id = ?
+		  )`,
 		nullFloat(lat),
 		nullFloat(lon),
 		nullTime(gpsAt),
 		nullStr(label),
 		id,
+		expectedVersionID,
 	)
 	if err != nil {
 		return fmt.Errorf("update media gps: %w", err)
@@ -381,7 +356,14 @@ func (r *Repo) UpdateGPSTx(
 		return fmt.Errorf("update media gps rows affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("%w: media id=%s", errs.ErrNotFound, id)
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM assets WHERE id = ?`, id).Scan(&exists); err != nil {
+			return fmt.Errorf("update media gps: inspect asset: %w", err)
+		}
+		if exists == 0 {
+			return fmt.Errorf("%w: media id=%s", errs.ErrNotFound, id)
+		}
+		return fmt.Errorf("%w: primary content version changed", errs.ErrContentConflict)
 	}
 	return nil
 }

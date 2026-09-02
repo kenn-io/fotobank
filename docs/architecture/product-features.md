@@ -9,11 +9,18 @@ source observations, groups related files into assets, computes SHA-256, and
 uses durable operations to create exact versions in Docbank. Search and
 derived work are queued only after every file mapping is complete.
 
-`internal/exifread` extracts capture time, camera, lens, exposure, dimensions,
-duration, orientation, and GPS data without sending media to an external
-service. `internal/geo` resolves coordinates to a coarse location label from
-embedded Natural Earth data. GPS relabeling can update place names without
-re-reading media; full backfill re-reads bytes when coordinates are missing.
+Docbank extracts capture time, camera, lens, exposure, dimensions, duration,
+orientation, and GPS evidence from the exact immutable primary version.
+`internal/media.ProjectSourceMetadata` selects the fields used by the photo
+library, and `internal/geo` resolves coordinates to a coarse location label
+from embedded Natural Earth data. The stored projection carries the Docbank
+version, extractor fingerprint, and metadata checksum that produced it. GPS
+relabeling can update place names without processing media; full backfill asks
+Docbank to ensure metadata only after the primary node, version, SHA-256, and
+size match the Fotobank mapping. It applies GPS only while that version remains
+the asset's current primary content. Incomplete, malformed, non-finite,
+out-of-range, and null-island coordinates are treated as absent without
+discarding other source metadata.
 
 One JPEG plus one camera RAW becomes one asset: JPEG is the primary display
 file and RAW is the camera source. XMP is a sidecar of the RAW when present,

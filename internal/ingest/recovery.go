@@ -106,6 +106,9 @@ func (imp *Importer) RecoverOwner(ctx context.Context, owner owners.Principal) (
 		if asset.State != media.AssetPending {
 			continue
 		}
+		if err := imp.projectAssetMetadata(ctx, assetID); err != nil {
+			return result, err
+		}
 		if err := imp.assets.FinalizeReady(ctx, assetID); err != nil {
 			return result, err
 		}

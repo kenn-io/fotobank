@@ -30,8 +30,10 @@ const assetInsert = `INSERT INTO assets (
 	id, owner_hub, owner_user_id, state, media_type, imported_at, timestamp,
 	make, model, lens_model, focal_length, shutter, width, height, iso, aperture,
 	duration_ms, latitude, longitude, gps_at, location_label,
+	source_metadata_version_id, source_metadata_extractor_fingerprint,
+	source_metadata_checksum,
 	thumb_status, thumb_version, thumb_updated_at, hidden_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const fileInsert = `INSERT INTO media_files (
 	id, asset_id, owner_hub, owner_user_id, role, mime_type,
@@ -53,6 +55,8 @@ const assetSelect = `SELECT
 	id, owner_hub, owner_user_id, state, media_type, imported_at, timestamp,
 	make, model, lens_model, focal_length, shutter, width, height, iso, aperture,
 	duration_ms, latitude, longitude, gps_at, location_label,
+	source_metadata_version_id, source_metadata_extractor_fingerprint,
+	source_metadata_checksum,
 	thumb_status, thumb_version, thumb_updated_at, hidden_at
 FROM assets`
 
@@ -125,6 +129,9 @@ func (r *AssetRepo) InsertGraph(
 		nullFloat(asset.Longitude),
 		nullTime(asset.GPSAt),
 		nullStr(asset.LocationLabel),
+		nullStr(asset.SourceMetadataVersionID),
+		nullStr(asset.SourceMetadataExtractorFingerprint),
+		nullStr(asset.SourceMetadataChecksum),
 		asset.ThumbStatus,
 		asset.ThumbVersion,
 		nullTime(asset.ThumbUpdatedAt),
@@ -237,6 +244,9 @@ func (r *AssetRepo) ReserveImport(
 		nullInt(asset.Height), nullInt(asset.ISO), nullFloat(asset.Aperture),
 		nullInt64(asset.DurationMs), nullFloat(asset.Latitude),
 		nullFloat(asset.Longitude), nullTime(asset.GPSAt), nullStr(asset.LocationLabel),
+		nullStr(asset.SourceMetadataVersionID),
+		nullStr(asset.SourceMetadataExtractorFingerprint),
+		nullStr(asset.SourceMetadataChecksum),
 		asset.ThumbStatus, asset.ThumbVersion, nullTime(asset.ThumbUpdatedAt),
 		nullTime(asset.HiddenAt),
 	); err != nil {
@@ -347,6 +357,84 @@ func (r *AssetRepo) ApplyContentReceipt(ctx context.Context, receipt ContentRece
 		return fmt.Errorf("apply content receipt: commit: %w", err)
 	}
 	return nil
+}
+
+// ApplySourceMetadata replaces every source-derived asset fact while the
+// supplied exact version is still the asset's primary content version.
+func (r *AssetRepo) ApplySourceMetadata(
+	ctx context.Context,
+	assetID string,
+	projection SourceMetadataProjection,
+) error {
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("apply source metadata: begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := r.ApplySourceMetadataTx(ctx, tx, assetID, projection); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("apply source metadata: commit: %w", err)
+	}
+	return nil
+}
+
+// ApplySourceMetadataTx applies the projection inside the caller's transaction.
+func (r *AssetRepo) ApplySourceMetadataTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	assetID string,
+	projection SourceMetadataProjection,
+) error {
+	if err := validateOpaqueUUID(assetID, "asset ID"); err != nil {
+		return fmt.Errorf("apply source metadata: %w", err)
+	}
+	if err := validateOpaqueUUID(projection.VersionID, "source metadata version ID"); err != nil {
+		return fmt.Errorf("apply source metadata: %w", err)
+	}
+	if !validSHA256(projection.ExtractorFingerprint) || !validSHA256(projection.Checksum) {
+		return fmt.Errorf("apply source metadata: %w: invalid projection fence", errs.ErrInvalidArgument)
+	}
+	if err := validateGPSPair(projection.Latitude, projection.Longitude); err != nil {
+		return fmt.Errorf("apply source metadata: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE assets SET
+		timestamp = ?, make = ?, model = ?, lens_model = ?, focal_length = ?,
+		shutter = ?, width = ?, height = ?, iso = ?, aperture = ?, duration_ms = ?,
+		latitude = ?, longitude = ?, gps_at = ?, location_label = ?,
+		source_metadata_version_id = ?,
+		source_metadata_extractor_fingerprint = ?, source_metadata_checksum = ?
+		WHERE id = ? AND state <> 'conflict' AND EXISTS (
+			SELECT 1 FROM media_files
+			WHERE asset_id = assets.id AND role = 'primary' AND current_version_id = ?
+		)`,
+		nullTime(projection.Timestamp), nullStr(projection.Make), nullStr(projection.Model),
+		nullStr(projection.LensModel), nullStr(projection.FocalLength), nullStr(projection.Shutter),
+		nullInt(projection.Width), nullInt(projection.Height), nullInt(projection.ISO),
+		nullFloat(projection.Aperture), nullInt64(projection.DurationMs),
+		nullFloat(projection.Latitude), nullFloat(projection.Longitude), nullTime(projection.GPSAt),
+		nullStr(projection.LocationLabel), projection.VersionID, projection.ExtractorFingerprint,
+		projection.Checksum, assetID, projection.VersionID,
+	)
+	if err != nil {
+		return fmt.Errorf("apply source metadata: update asset: %w", err)
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("apply source metadata: rows affected: %w", err)
+	}
+	if changed == 1 {
+		return nil
+	}
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM assets WHERE id = ?`, assetID).Scan(&exists); err != nil {
+		return fmt.Errorf("apply source metadata: inspect asset: %w", err)
+	}
+	if exists == 0 {
+		return fmt.Errorf("apply source metadata: %w: asset %s", errs.ErrNotFound, assetID)
+	}
+	return fmt.Errorf("apply source metadata: %w: primary content version changed", errs.ErrContentConflict)
 }
 
 // MarkContentConflict terminalizes a pending asset and all of its operations.
@@ -638,26 +726,29 @@ func scanContentReservation(scanner rowScanner) (ContentReservation, error) {
 
 func scanAsset(scanner rowScanner) (Asset, error) {
 	var (
-		asset          Asset
-		state          string
-		mediaType      string
-		timestamp      sql.NullTime
-		makeN          sql.NullString
-		modelN         sql.NullString
-		lensModel      sql.NullString
-		focalLength    sql.NullString
-		shutter        sql.NullString
-		width          sql.NullInt64
-		height         sql.NullInt64
-		iso            sql.NullInt64
-		aperture       sql.NullFloat64
-		durationMs     sql.NullInt64
-		latitude       sql.NullFloat64
-		longitude      sql.NullFloat64
-		gpsAt          sql.NullTime
-		locationLabel  sql.NullString
-		thumbUpdatedAt sql.NullTime
-		hiddenAt       sql.NullTime
+		asset             Asset
+		state             string
+		mediaType         string
+		timestamp         sql.NullTime
+		makeN             sql.NullString
+		modelN            sql.NullString
+		lensModel         sql.NullString
+		focalLength       sql.NullString
+		shutter           sql.NullString
+		width             sql.NullInt64
+		height            sql.NullInt64
+		iso               sql.NullInt64
+		aperture          sql.NullFloat64
+		durationMs        sql.NullInt64
+		latitude          sql.NullFloat64
+		longitude         sql.NullFloat64
+		gpsAt             sql.NullTime
+		locationLabel     sql.NullString
+		metadataVersion   sql.NullString
+		metadataExtractor sql.NullString
+		metadataChecksum  sql.NullString
+		thumbUpdatedAt    sql.NullTime
+		hiddenAt          sql.NullTime
 	)
 	if err := scanner.Scan(
 		&asset.ID,
@@ -681,6 +772,9 @@ func scanAsset(scanner rowScanner) (Asset, error) {
 		&longitude,
 		&gpsAt,
 		&locationLabel,
+		&metadataVersion,
+		&metadataExtractor,
+		&metadataChecksum,
 		&asset.ThumbStatus,
 		&asset.ThumbVersion,
 		&thumbUpdatedAt,
@@ -706,6 +800,9 @@ func scanAsset(scanner rowScanner) (Asset, error) {
 	asset.Longitude = floatFromNull(longitude)
 	asset.GPSAt = timeFromNull(gpsAt)
 	asset.LocationLabel = locationLabel.String
+	asset.SourceMetadataVersionID = metadataVersion.String
+	asset.SourceMetadataExtractorFingerprint = metadataExtractor.String
+	asset.SourceMetadataChecksum = metadataChecksum.String
 	asset.ThumbUpdatedAt = timeFromNull(thumbUpdatedAt)
 	asset.HiddenAt = timeFromNull(hiddenAt)
 	return asset, nil

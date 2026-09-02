@@ -6,6 +6,7 @@ import (
 	"go.kenn.io/fotobank/internal/checkout"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/contentresolver"
+	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 )
 
@@ -21,10 +22,11 @@ func NewCheckoutService(
 	resolver *contentresolver.Resolver,
 	contentStore *content.Adapter,
 	creationLockPath string,
+	places media.PlaceResolver,
 ) *CheckoutService {
 	return &CheckoutService{
 		materializer: checkout.NewMaterializer(repo, resolver, creationLockPath),
-		committer:    checkout.NewCommitter(repo, contentStore),
+		committer:    checkout.NewCommitter(repo, contentStore, places),
 	}
 }
 

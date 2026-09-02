@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/contentresolver"
+	"go.kenn.io/fotobank/internal/geo"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/service"
@@ -229,7 +230,7 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 	}
 	checkoutRepo := checkout.NewRepo(database.WriteDB(), database.ReadDB())
 	if !withContent {
-		runtime.service = service.NewCheckoutService(checkoutRepo, nil, nil, "")
+		runtime.service = service.NewCheckoutService(checkoutRepo, nil, nil, "", nil)
 		return runtime, nil
 	}
 	contentStore, err := content.Open(ctx, content.Config{
@@ -244,9 +245,14 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 		return nil, fmt.Errorf("open Docbank vault: %w", err)
 	}
 	runtime.content = contentStore
+	places, err := geo.NewNaturalEarth()
+	if err != nil {
+		runtime.close()
+		return nil, fmt.Errorf("load geo gazetteer: %w", err)
+	}
 	resolver := contentresolver.New(media.NewRepo(database.WriteDB(), database.ReadDB()), contentStore)
 	runtime.service = service.NewCheckoutService(
-		checkoutRepo, resolver, contentStore, dbPath+".checkout.lock")
+		checkoutRepo, resolver, contentStore, dbPath+".checkout.lock", places)
 	return runtime, nil
 }
 

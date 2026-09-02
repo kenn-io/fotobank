@@ -41,24 +41,27 @@ type Asset struct {
 	ImportedAt time.Time
 	Timestamp  *time.Time
 
-	Make           string
-	Model          string
-	LensModel      string
-	FocalLength    string
-	Shutter        string
-	Width          *int
-	Height         *int
-	ISO            *int
-	Aperture       *float64
-	DurationMs     *int64
-	Latitude       *float64
-	Longitude      *float64
-	GPSAt          *time.Time
-	LocationLabel  string
-	ThumbStatus    string
-	ThumbVersion   int
-	ThumbUpdatedAt *time.Time
-	HiddenAt       *time.Time
+	Make                               string
+	Model                              string
+	LensModel                          string
+	FocalLength                        string
+	Shutter                            string
+	Width                              *int
+	Height                             *int
+	ISO                                *int
+	Aperture                           *float64
+	DurationMs                         *int64
+	Latitude                           *float64
+	Longitude                          *float64
+	GPSAt                              *time.Time
+	LocationLabel                      string
+	SourceMetadataVersionID            string
+	SourceMetadataExtractorFingerprint string
+	SourceMetadataChecksum             string
+	ThumbStatus                        string
+	ThumbVersion                       int
+	ThumbUpdatedAt                     *time.Time
+	HiddenAt                           *time.Time
 }
 
 type File struct {

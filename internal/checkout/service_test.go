@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,16 +63,25 @@ func TestServiceMaterializesExactVersionAndRecordsEntry(t *testing.T) {
 	r.Equal(result.Checkout.Selection, stored.Selection)
 }
 
-func TestCommitterPublishesTrackedEditAndInvalidatesPrimaryProjections(t *testing.T) {
+func TestCommitterPublishesTrackedEditAndRebuildsPrimaryProjections(t *testing.T) {
 	r := require.New(t)
 	fixture := newFixture(t)
 	original := []byte("original checkout bytes")
-	replacement := []byte("edited checkout bytes with a different size")
+	replacement, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "photo-with-timestamp.jpg"))
+	r.NoError(err)
 	item, checkoutID, entry := createPendingEdit(t, fixture, original, replacement)
+	_, err = fixture.db.WriteDB().ExecContext(t.Context(), `UPDATE assets SET
+		timestamp = ?, make = 'Old make', model = 'Old model', latitude = 48.8566,
+		longitude = 2.3522, location_label = 'Paris',
+		source_metadata_version_id = ?,
+		source_metadata_extractor_fingerprint = ?, source_metadata_checksum = ?
+		WHERE id = ?`, time.Now().UTC(), item.CurrentVersionID,
+		strings.Repeat("a", sha256.Size*2), strings.Repeat("b", sha256.Size*2), item.ID)
+	r.NoError(err)
 
 	tagResultID := uuid.NewString()
 	captionResultID := uuid.NewString()
-	_, err := fixture.db.WriteDB().ExecContext(t.Context(), `INSERT INTO ai_results
+	_, err = fixture.db.WriteDB().ExecContext(t.Context(), `INSERT INTO ai_results
 		(id, media_id, task, model_id, prompt_version, prompt_hash, input_profile, status, generated_at)
 		VALUES (?, ?, 'tag', 'model', 'v1', 'hash', 'profile', 'active', ?),
 		       (?, ?, 'caption', 'model', 'v1', 'hash', 'profile', 'active', ?)`,
@@ -117,6 +127,17 @@ func TestCommitterPublishesTrackedEditAndInvalidatesPrimaryProjections(t *testin
 	r.Equal(int64(len(replacement)), updated.Size)
 	r.Equal("pending", updated.ThumbStatus)
 	r.Equal(4, updated.ThumbVersion)
+	r.Equal(time.Date(2024, 6, 15, 14, 30, 22, 0, time.UTC), *updated.Timestamp)
+	r.Equal("Canon", updated.Make)
+	r.Equal("EOS R5", updated.Model)
+	r.Equal(2, *updated.Width)
+	r.Equal(2, *updated.Height)
+	r.Nil(updated.Latitude)
+	asset, err := media.NewAssetRepo(fixture.db.WriteDB(), fixture.db.ReadDB()).GetAsset(t.Context(), item.ID)
+	r.NoError(err)
+	r.Equal(updated.CurrentVersionID, asset.SourceMetadataVersionID)
+	r.Len(asset.SourceMetadataExtractorFingerprint, sha256.Size*2)
+	r.Len(asset.SourceMetadataChecksum, sha256.Size*2)
 
 	prior, err := fixture.content.OpenVersion(t.Context(), item.CurrentVersionID)
 	r.NoError(err)
@@ -311,10 +332,14 @@ func TestNonCleanCommitForcesFreshCheckoutObservation(t *testing.T) {
 	workingPath := filepath.Join(storedCheckout.Root, filepath.FromSlash(entry.RelativePath))
 	r.NoError(os.WriteFile(workingPath, laterEdit, 0o600))
 	r.NoError(os.Chtimes(workingPath, entry.ObservedMTime, entry.ObservedMTime))
+	metadata, err := fixture.content.EnsureSourceMetadata(t.Context(), receipt.Version.ID)
+	r.NoError(err)
+	projection, err := media.ProjectSourceMetadata(metadata, nil)
+	r.NoError(err)
 	r.NoError(fixture.checkouts.ApplyCommit(t.Context(), target, checkout.CommitReceipt{
 		NodeID: receipt.Node.ID, VersionID: receipt.Version.ID,
 		SHA256: receipt.Identity.SHA256, Size: receipt.Identity.Size,
-	}, false, time.Now().UTC()))
+	}, &projection, false, time.Now().UTC()))
 
 	scanner := checkout.NewScanner(fixture.checkouts, fixture.content, checkout.ScannerConfig{
 		ScanInterval: time.Second, SettleInterval: 0,
@@ -638,7 +663,7 @@ func newFixture(t *testing.T) fixture {
 		checkouts: checkoutRepo,
 		service: checkout.NewMaterializer(
 			checkoutRepo, resolver, filepath.Join(lockDir, "checkout.lock")),
-		committer: checkout.NewCommitter(checkoutRepo, contentStore),
+		committer: checkout.NewCommitter(checkoutRepo, contentStore, nil),
 	}
 }
 

@@ -53,6 +53,9 @@ CREATE TABLE assets (
     longitude         REAL,
     gps_at            TIMESTAMP,
     location_label    TEXT,
+    source_metadata_version_id             TEXT,
+    source_metadata_extractor_fingerprint  TEXT,
+    source_metadata_checksum               TEXT,
     thumb_status      TEXT NOT NULL CHECK (
         thumb_status IN ('pending', 'working', 'ready',
                          'no_preview', 'failed')
@@ -63,7 +66,31 @@ CREATE TABLE assets (
     hidden_at         TIMESTAMP,
     FOREIGN KEY (owner_hub, owner_user_id)
       REFERENCES owners(hub, user_id),
-    UNIQUE (id, owner_hub, owner_user_id)
+    UNIQUE (id, owner_hub, owner_user_id),
+    CHECK (
+      (source_metadata_version_id IS NULL AND
+       source_metadata_extractor_fingerprint IS NULL AND
+       source_metadata_checksum IS NULL) OR
+      (source_metadata_version_id IS NOT NULL AND
+       length(source_metadata_version_id) = 36 AND
+       source_metadata_version_id = lower(source_metadata_version_id) AND
+       substr(source_metadata_version_id, 9, 1) = '-' AND
+       substr(source_metadata_version_id, 14, 1) = '-' AND
+       substr(source_metadata_version_id, 15, 1) = '4' AND
+       substr(source_metadata_version_id, 19, 1) = '-' AND
+       substr(source_metadata_version_id, 20, 1) GLOB '[89ab]' AND
+       substr(source_metadata_version_id, 24, 1) = '-' AND
+       length(replace(source_metadata_version_id, '-', '')) = 32 AND
+       replace(source_metadata_version_id, '-', '') NOT GLOB '*[^0-9a-f]*' AND
+       source_metadata_extractor_fingerprint IS NOT NULL AND
+       length(source_metadata_extractor_fingerprint) = 64 AND
+       source_metadata_extractor_fingerprint = lower(source_metadata_extractor_fingerprint) AND
+       source_metadata_extractor_fingerprint NOT GLOB '*[^0-9a-f]*' AND
+       source_metadata_checksum IS NOT NULL AND
+       length(source_metadata_checksum) = 64 AND
+       source_metadata_checksum = lower(source_metadata_checksum) AND
+       source_metadata_checksum NOT GLOB '*[^0-9a-f]*')
+    )
 );
 
 CREATE INDEX assets_owner_timestamp_idx

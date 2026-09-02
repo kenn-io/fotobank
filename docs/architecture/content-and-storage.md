@@ -20,7 +20,10 @@ sidecar of the RAW when present, otherwise of the primary. XMP-only and
 ambiguous groups are rejected. The importer computes SHA-256 and size, reserves
 stable IDs and durable operations, creates each file in Docbank, records exact
 receipts, and makes the asset ready only after every operation is applied.
-Thumbnail, metadata, full-text, and AI work starts after that ready transition.
+Before the ready transition, the importer asks Docbank to ensure source
+metadata for the exact primary version and stores Fotobank's query projection
+with its version, extractor, and checksum fence. Thumbnail, full-text, and AI
+work starts after the asset is ready.
 
 An owner can reserve a SHA-256 identity only once. Concurrent imports either
 create that reservation or resume the committed winner. Re-running an import
@@ -39,6 +42,8 @@ Only `internal/content` imports `go.kenn.io/docbank`. It owns:
 - stable virtual-path construction;
 - create requests with required expected SHA-256 and size;
 - exact-version and current-version reads;
+- exact-version source-metadata processing and projection into dependency-free
+  values;
 - bounded traversal of an owner's media subtree for reconciliation;
 - error translation into Fotobank sentinels; and
 - serialization of content mutations to bound local concurrency.
@@ -86,15 +91,18 @@ uses this durable operation protocol:
 2. Call Docbank with the stable virtual path and expected content.
 3. Record the returned node, version, SHA-256, and size in one Fotobank
    transaction.
-4. Make the asset ready and enqueue projections only when every file is mapped.
+4. Ensure and project metadata from the exact primary version.
+5. Make the asset ready and enqueue later projections only when every file is
+   mapped and its source metadata projection is recorded.
 
 Repeating the same create with the same path and identity is idempotent.
 Different content at the reserved path marks the asset and all sibling
 operations as a durable conflict. Receipts are rejected after conflict and the
 asset cannot become ready. A later import of the same source identities resumes
 pending operations. The content recovery command adopts matching creates left
-across a process interruption, completes fully applied assets, and reports
-unmatched Docbank files without changing them.
+across a process interruption, projects the recovered primary version before
+completing a fully applied asset, and reports unmatched Docbank files without
+changing them.
 
 The owner routes serve the primary through `/api/v1/media/{asset}/original`
 and attached RAW/XMP content through
@@ -246,6 +254,10 @@ The pending checkout entry is also the recovery record across the Fotobank and
 Docbank databases. If Docbank committed the expected bytes but Fotobank did not
 record the receipt before interruption, the next commit adopts that exact
 current node version. Any other current identity is a conflict. Applying a
-receipt advances the product file and checkout base together; a primary-file
-change queues a new thumbnail, invalidates current AI and vector projections,
-and refreshes the lexical corpus without deleting immutable Docbank history.
+receipt advances the product file and checkout base together. A primary-file
+commit first ensures and projects source metadata for the new exact version;
+processing failure leaves the checkout entry pending, so retry adopts the
+already-written Docbank version and tries again. Successful publication stores
+the new metadata fence, queues a thumbnail, invalidates current AI and vector
+projections, and refreshes the lexical corpus in one Fotobank transaction
+without deleting immutable Docbank history.

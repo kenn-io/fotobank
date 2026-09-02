@@ -35,6 +35,15 @@ complete Docbank mapping: node ID, stable virtual path, current version ID, and
 SHA-256. Database triggers prevent later inserts, updates, deletions, or owner
 changes from breaking those invariants.
 
+Capture time, camera, lens, exposure, dimensions, duration, and GPS columns are
+a rebuildable projection of the primary file's Docbank source metadata. The
+asset stores the exact content version, extractor fingerprint, and metadata
+checksum beside those fields. Applying a projection requires that version to
+still be current. Primary checkout writeback processes the new exact Docbank
+version before applying its receipt, then replaces the facts and fence in the
+same transaction that advances the file mapping. Library queries therefore do
+not expose metadata from older bytes.
+
 Product columns named `media_id` use “media” as product language. Their values
 are asset UUIDs and their foreign keys target `assets`.
 

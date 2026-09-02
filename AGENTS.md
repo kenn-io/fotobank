@@ -40,7 +40,6 @@ internal/
 ├── db/                    — sqlx wrapper + migrations
 │   └── migrations/        — golang-migrate SQL files (up/down pairs)
 ├── errs/                  — cross-cutting sentinel errors
-├── exifread/              — pure-Go EXIF reader
 ├── httpapi/               — huma/v2 REST API
 ├── identity/              — stub-mode identity (phase 1)
 ├── ingest/                — import pipeline

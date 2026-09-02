@@ -18,15 +18,10 @@ import (
 
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/errs"
-	"go.kenn.io/fotobank/internal/exifread"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/search/index"
 )
-
-type PlaceResolver interface {
-	Resolve(lat, lon float64) (label string, ok bool)
-}
 
 type Options struct {
 	Owner             owners.Principal
@@ -57,12 +52,12 @@ type Importer struct {
 	assets          *media.AssetRepo
 	repo            *media.Repo
 	ownerStorageKey string
-	places          PlaceResolver
+	places          media.PlaceResolver
 	now             func() time.Time
 	ai              AIEnqueuer
 }
 
-func NewImporter(contentStore *content.Adapter, assets *media.AssetRepo, repo *media.Repo, ownerStorageKey string, places PlaceResolver) *Importer {
+func NewImporter(contentStore *content.Adapter, assets *media.AssetRepo, repo *media.Repo, ownerStorageKey string, places media.PlaceResolver) *Importer {
 	return &Importer{
 		content: contentStore, assets: assets, repo: repo,
 		ownerStorageKey: ownerStorageKey, places: places,
@@ -383,6 +378,10 @@ func (imp *Importer) processGroup(ctx context.Context, sourceRoot string, group 
 			return out
 		}
 	}
+	if err := imp.projectAssetMetadata(ctx, asset.ID); err != nil {
+		out.err = err
+		return out
+	}
 	if err := imp.assets.FinalizeReady(ctx, asset.ID); err != nil {
 		out.err = err
 		return out
@@ -485,8 +484,10 @@ func (imp *Importer) prepareGroup(ctx context.Context, sourceRoot string, group 
 		}
 		observations[i] = observation
 	}
-	metadata := extractMetadata(primary)
-	asset := buildAsset(assetID, owner, primary.Type, metadata, imp.now(), imp.places)
+	asset := media.Asset{
+		ID: assetID, Owner: owner, State: media.AssetPending, Type: primary.Type,
+		ImportedAt: imp.now(), ThumbStatus: "pending",
+	}
 	prepared := make([]preparedFile, len(group.candidates))
 	fileIDs := make(map[CandidateKind]string)
 	for i, candidate := range group.candidates {
@@ -577,57 +578,24 @@ func revalidateObservation(path string, expected fileObservation) error {
 	return nil
 }
 
-func extractMetadata(candidate Candidate) exifread.Metadata {
-	switch candidate.Type {
-	case media.TypePhoto:
-		value, err := exifread.ExtractPhoto(candidate.Path)
-		if err == nil {
-			return value
-		}
-	case media.TypeVideo:
-		value, err := exifread.ExtractVideo(candidate.Path, candidate.MimeType)
-		if err == nil {
-			return value
-		}
+func (imp *Importer) projectAssetMetadata(ctx context.Context, assetID string) error {
+	primary, err := imp.assets.GetPrimaryFile(ctx, assetID)
+	if err != nil {
+		return fmt.Errorf("read primary file for source metadata: %w", err)
 	}
-	return exifread.Metadata{}
-}
-
-func buildAsset(id string, owner owners.Principal, mediaType media.Type, metadata exifread.Metadata, importedAt time.Time, places PlaceResolver) media.Asset {
-	asset := media.Asset{
-		ID: id, Owner: owner, State: media.AssetPending, Type: mediaType,
-		ImportedAt: importedAt, Timestamp: metadata.Timestamp,
-		Make: metadata.Make, Model: metadata.Model, LensModel: metadata.LensModel,
-		FocalLength: metadata.FocalLength, Shutter: metadata.ShutterSpeed,
-		ThumbStatus: "pending",
+	if primary.CurrentVersionID == "" {
+		return fmt.Errorf("%w: primary file has no Docbank version", errs.ErrContentUnavailable)
 	}
-	if metadata.Width > 0 {
-		value := metadata.Width
-		asset.Width = &value
+	metadata, err := imp.content.EnsureSourceMetadata(ctx, primary.CurrentVersionID)
+	if err != nil {
+		return fmt.Errorf("ensure Docbank source metadata: %w", err)
 	}
-	if metadata.Height > 0 {
-		value := metadata.Height
-		asset.Height = &value
+	projection, err := media.ProjectSourceMetadata(metadata, imp.places)
+	if err != nil {
+		return fmt.Errorf("project Docbank source metadata: %w", err)
 	}
-	if metadata.ISO > 0 {
-		value := metadata.ISO
-		asset.ISO = &value
+	if err := imp.assets.ApplySourceMetadata(ctx, assetID, projection); err != nil {
+		return err
 	}
-	if metadata.Aperture > 0 {
-		value := metadata.Aperture
-		asset.Aperture = &value
-	}
-	if metadata.DurationMs > 0 {
-		value := metadata.DurationMs
-		asset.DurationMs = &value
-	}
-	if metadata.Latitude != nil && metadata.Longitude != nil {
-		asset.Latitude, asset.Longitude, asset.GPSAt = metadata.Latitude, metadata.Longitude, metadata.GPSAt
-		if places != nil {
-			if label, ok := places.Resolve(*metadata.Latitude, *metadata.Longitude); ok {
-				asset.LocationLabel = label
-			}
-		}
-	}
-	return asset
+	return nil
 }

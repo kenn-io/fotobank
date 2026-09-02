@@ -9,15 +9,19 @@ import (
 	"time"
 
 	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 )
 
 type Repo struct {
-	rw *sql.DB
-	ro *sql.DB
+	rw     *sql.DB
+	ro     *sql.DB
+	assets *media.AssetRepo
 }
 
-func NewRepo(rw, ro *sql.DB) *Repo { return &Repo{rw: rw, ro: ro} }
+func NewRepo(rw, ro *sql.DB) *Repo {
+	return &Repo{rw: rw, ro: ro, assets: media.NewAssetRepo(rw, ro)}
+}
 
 func (r *Repo) ResolveSelection(
 	ctx context.Context,
