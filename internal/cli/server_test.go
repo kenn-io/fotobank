@@ -306,12 +306,13 @@ admin_listen = "127.0.0.1:0"
 func TestServerDrainsPendingThumbRow(t *testing.T) {
 	// Smoke test: seed a ready JPEG row pre-import, boot the server,
 	// poll until thumb_status becomes 'ready' (worker has drained it).
-	// Uses the existing photo-with-timestamp fixture as the source.
+	// The no-EXIF fixture has the sRGB-compatible color policy required
+	// by Docbank's canonical preview producer.
 	r := require.New(t)
 	tmp := t.TempDir()
 	nasRoot := filepath.Join(tmp, "nas")
 	r.NoError(os.MkdirAll(filepath.Join(nasRoot, "550e8400-e29b-41d4-a716-446655440000", "2024"), 0o700))
-	fixture, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "photo-with-timestamp.jpg"))
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "photo-no-exif.jpg"))
 	r.NoError(err)
 
 	cfgPath := filepath.Join(tmp, "c.toml")

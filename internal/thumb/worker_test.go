@@ -3,15 +3,15 @@ package thumb_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/jpeg"
 	"image/png"
 	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -68,10 +68,14 @@ func newWorkerFixture(t *testing.T) workerFixture {
 // the store at the row's path. Returns the row ID.
 func seedPhotoRow(t *testing.T, fx workerFixture, path string) string {
 	t.Helper()
-	bs, err := os.ReadFile(filepath.Join("..", "..", "testdata", "exif", "photo-with-timestamp.jpg"))
-	require.NoError(t, err)
 	id := uuid.NewString()
-	bs = append(bs, id...)
+	digest := sha256.Sum256([]byte(id))
+	source := image.NewRGBA(image.Rect(0, 0, 64, 48))
+	draw.Draw(source, source.Bounds(), image.NewUniform(
+		color.RGBA{R: digest[0], G: digest[1], B: digest[2], A: 255}), image.Point{}, draw.Src)
+	var encoded bytes.Buffer
+	require.NoError(t, jpeg.Encode(&encoded, source, &jpeg.Options{Quality: 90}))
+	bs := encoded.Bytes()
 	m := media.Media{
 		ID:                 id,
 		Owner:              fx.owner,
@@ -184,6 +188,11 @@ func TestWorkerDrainsPendingRowToReady(t *testing.T) {
 	go func() { done <- w.Run(ctx) }()
 
 	waitForStatus(t, fx.rw, id, "ready")
+	item, err := fx.repo.GetByID(t.Context(), id)
+	r.NoError(err)
+	preview, err := fx.content.VisualPreview(t.Context(), item.CurrentVersionID)
+	r.NoError(err)
+	r.Equal(content.VisualPreviewReady, preview.State)
 
 	// Read back the grid thumbnail — must be non-empty JPEG bytes.
 	version := readThumbVersionFor(t, fx.rw, id)
@@ -240,6 +249,11 @@ func TestWorkerDrainsPNGPhotoToReady(t *testing.T) {
 	go func() { done <- w.Run(ctx) }()
 
 	waitForStatus(t, fx.rw, id, "ready")
+	item, err := fx.repo.GetByID(t.Context(), id)
+	r.NoError(err)
+	preview, err := fx.content.VisualPreview(t.Context(), item.CurrentVersionID)
+	r.NoError(err)
+	r.Equal(content.VisualPreviewReady, preview.State)
 
 	version := readThumbVersionFor(t, fx.rw, id)
 	key := thumb.ThumbKey(id, version, thumb.SizeGrid)

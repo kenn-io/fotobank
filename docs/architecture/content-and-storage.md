@@ -44,6 +44,7 @@ Only `internal/content` imports `go.kenn.io/docbank`. It owns:
 - exact-version and current-version reads;
 - exact-version source-metadata processing and projection into dependency-free
   values;
+- exact-version canonical visual-preview processing and verified reads;
 - bounded traversal of an owner's media subtree for reconciliation;
 - error translation into Fotobank sentinels; and
 - serialization of content mutations to bound local concurrency.
@@ -127,6 +128,15 @@ This store carries only rebuildable thumbnails and other Fotobank artifacts.
 Thumbnail keys include the asset/media ID,
 thumbnail version, and requested size so regeneration never silently reuses an
 old source projection.
+
+For JPEG and PNG originals, the thumbnail worker asks Docbank to produce or
+reuse the canonical preview for the recorded exact version. It validates that
+the preview belongs to the asset's primary file, verifies the complete preview
+stream, and derives Fotobank's UI sizes from those JPEG pixels. Unsupported and
+failed preview results become terminal thumbnail outcomes rather than falling
+back to decoding the authoritative original. Camera RAW and GIF originals
+remain on Fotobank's existing decode paths until Docbank provides their
+canonical preview producers.
 
 ## Root isolation
 

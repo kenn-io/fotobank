@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/jpeg"
 	"io"
 	"log/slog"
 	"sync"
 	"time"
 
 	"go.kenn.io/fotobank/internal/ai/embedding"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/obs"
@@ -307,12 +309,15 @@ func (w *Worker) logClaimFinalize(op, id string, err error) {
 	w.cfg.Logger.Error("thumb: "+op, "id", id, "err", err)
 }
 
-// decodeSource picks the correct decoder for m and returns the decoded
-// image. RAW files are dispatched to ExtractPreview; JPEG/GIF go through
-// Decode (which applies EXIF orientation).
+// decodeSource uses Docbank's canonical preview for supported originals. RAW
+// files still use their embedded JPEG and GIF remains locally decoded until
+// those formats gain canonical producers.
 func (w *Worker) decodeSource(ctx context.Context, m media.Media) (image.Image, error) {
 	if w.cfg.Content == nil {
 		return nil, fmt.Errorf("read source: content adapter is not configured")
+	}
+	if m.MimeType == "image/jpeg" || m.MimeType == "image/png" {
+		return w.decodeCanonicalPreview(ctx, m)
 	}
 	opened, err := w.cfg.Content.OpenCurrent(ctx, m.ID, "", 0, -1)
 	if err != nil {
@@ -338,6 +343,42 @@ func (w *Worker) decodeSource(ctx context.Context, m media.Media) (image.Image, 
 		return nil, fmt.Errorf("drain source: %w", err)
 	}
 	return image, nil
+}
+
+func (w *Worker) decodeCanonicalPreview(ctx context.Context, m media.Media) (image.Image, error) {
+	ref, err := w.cfg.Content.ResolveCurrent(ctx, m.ID, "")
+	if err != nil {
+		return nil, fmt.Errorf("resolve preview source: %w", err)
+	}
+	preview, err := w.cfg.Content.EnsureVisualPreview(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	switch preview.State {
+	case content.VisualPreviewReady:
+		if preview.Reader == nil || preview.MediaType != "image/jpeg" {
+			return nil, errors.New("canonical preview is missing JPEG content")
+		}
+		return decodeVerifiedPreview(preview.Reader)
+	case content.VisualPreviewUnsupported:
+		return nil, fmt.Errorf("%w: canonical preview is unsupported (%s)", ErrNoPreview, preview.FailureCode)
+	case content.VisualPreviewFailed:
+		return nil, fmt.Errorf("canonical preview failed: %s", preview.FailureCode)
+	default:
+		return nil, fmt.Errorf("canonical preview returned unknown state %q", preview.State)
+	}
+}
+
+func decodeVerifiedPreview(reader io.ReadCloser) (_ image.Image, retErr error) {
+	defer func() { retErr = errors.Join(retErr, reader.Close()) }()
+	decoded, err := jpeg.Decode(reader)
+	if err != nil {
+		return nil, fmt.Errorf("decode canonical preview: %w", err)
+	}
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		return nil, fmt.Errorf("verify canonical preview: %w", err)
+	}
+	return decoded, nil
 }
 
 // emitSizes encodes img to JPEG at quality 85 for every Size and writes

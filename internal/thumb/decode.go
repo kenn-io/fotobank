@@ -1,16 +1,11 @@
 package thumb
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"image"
 	"image/gif"
-	"image/jpeg"
-	"image/png"
 	"io"
-
-	"github.com/dsoprea/go-exif/v3"
 )
 
 // ErrNoPreview indicates the source format is one we intentionally do
@@ -18,70 +13,21 @@ import (
 // to thumb_status='no_preview' without retrying.
 var ErrNoPreview = errors.New("thumb: no preview available")
 
-// Decode returns an image.Image from src, applying EXIF orientation so
-// downstream resize/encode produces display-correct pixels. Dispatch
-// is by MIME type. PNG has no EXIF orientation by spec so we decode
-// it as-is. HEIC requires a decoder that is not currently included.
-// (returns ErrNoPreview here).
+// Decode returns an image.Image for formats that do not yet have a canonical
+// Docbank preview producer. JPEG and PNG decoding belongs to Docbank. HEIC
+// requires a decoder that is not currently included.
 func Decode(mime string, src io.Reader) (image.Image, error) {
 	switch mime {
-	case "image/jpeg":
-		return decodeJPEG(src)
 	case "image/gif":
 		g, err := gif.Decode(src)
 		if err != nil {
 			return nil, fmt.Errorf("gif decode: %w", err)
 		}
 		return g, nil
-	case "image/png":
-		p, err := png.Decode(src)
-		if err != nil {
-			return nil, fmt.Errorf("png decode: %w", err)
-		}
-		return p, nil
 	case "image/heic", "image/heif":
 		return nil, fmt.Errorf("%w: %s (HEIC decoding requires CGO; deferred)", ErrNoPreview, mime)
 	}
 	return nil, fmt.Errorf("thumb: unsupported mime %q", mime)
-}
-
-func decodeJPEG(src io.Reader) (image.Image, error) {
-	bs, err := io.ReadAll(src)
-	if err != nil {
-		return nil, fmt.Errorf("read jpeg: %w", err)
-	}
-	img, err := jpeg.Decode(bytes.NewReader(bs))
-	if err != nil {
-		return nil, fmt.Errorf("jpeg decode: %w", err)
-	}
-	return applyOrientation(img, readOrientation(bs)), nil
-}
-
-// readOrientation returns the EXIF Orientation tag (1-8) for the given
-// JPEG bytes, or 1 (identity) if no EXIF segment is present, the tag
-// is missing, or parsing fails. Per the EXIF spec, values outside 1-8
-// are invalid and treated as identity.
-func readOrientation(bs []byte) int {
-	raw, err := exif.SearchAndExtractExif(bs)
-	if err != nil {
-		return 1
-	}
-	entries, _, err := exif.GetFlatExifData(raw, nil)
-	if err != nil {
-		return 1
-	}
-	for _, e := range entries {
-		if e.TagName != "Orientation" {
-			continue
-		}
-		if v, ok := e.Value.([]uint16); ok && len(v) > 0 {
-			n := int(v[0])
-			if n >= 1 && n <= 8 {
-				return n
-			}
-		}
-	}
-	return 1
 }
 
 // applyOrientation remaps pixels to bake the EXIF orientation into the

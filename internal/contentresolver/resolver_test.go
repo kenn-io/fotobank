@@ -46,17 +46,20 @@ func TestResolverOpensCurrentAndExactFileVersions(t *testing.T) {
 }
 
 func TestResolverRejectsVersionsAndFilesFromAnotherAsset(t *testing.T) {
+	r := require.New(t)
 	resolver, repo, store, owner := newResolverFixture(t)
 	first := assetfixture.InsertContent(t, repo, store, []byte("first"), media.Media{Owner: owner})
 	second := assetfixture.InsertContent(t, repo, store, []byte("second"), media.Media{Owner: owner})
 
 	_, err := resolver.ResolveCurrent(t.Context(), first.ID, second.PrimaryFileID)
-	require.ErrorIs(t, err, errs.ErrNotFound)
+	r.ErrorIs(err, errs.ErrNotFound)
 
 	ref, err := resolver.ResolveVersion(t.Context(), first.ID, first.PrimaryFileID, second.CurrentVersionID)
-	require.NoError(t, err)
+	r.NoError(err)
 	_, err = resolver.Open(t.Context(), ref, 0, -1)
-	require.ErrorIs(t, err, errs.ErrNotFound)
+	r.ErrorIs(err, errs.ErrNotFound)
+	_, err = resolver.EnsureVisualPreview(t.Context(), ref)
+	r.ErrorIs(err, errs.ErrNotFound)
 }
 
 func TestResolverRejectsStaleCurrentIdentityProjection(t *testing.T) {
