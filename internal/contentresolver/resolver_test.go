@@ -60,6 +60,7 @@ func TestResolverRejectsVersionsAndFilesFromAnotherAsset(t *testing.T) {
 }
 
 func TestResolverRejectsStaleCurrentIdentityProjection(t *testing.T) {
+	r := require.New(t)
 	resolver, repo, store, owner := newResolverFixture(t)
 	item := assetfixture.InsertContent(t, repo, store, []byte("authority"), media.Media{Owner: owner})
 
@@ -71,11 +72,13 @@ func TestResolverRejectsStaleCurrentIdentityProjection(t *testing.T) {
 		)
 		return err
 	})
-	require.NoError(t, err)
+	r.NoError(err)
 	ref, err := resolver.ResolveCurrent(t.Context(), item.ID, "")
-	require.NoError(t, err)
+	r.NoError(err)
 	_, err = resolver.Open(t.Context(), ref, 0, -1)
-	require.ErrorIs(t, err, errs.ErrContentIdentityMismatch)
+	r.ErrorIs(err, errs.ErrContentIdentityMismatch)
+	_, err = resolver.ValidateCurrent(t.Context(), item.ID, "")
+	r.ErrorIs(err, errs.ErrContentIdentityMismatch)
 }
 
 func newResolverFixture(

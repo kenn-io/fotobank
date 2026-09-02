@@ -16,8 +16,11 @@ library, and `internal/geo` resolves coordinates to a coarse location label
 from embedded Natural Earth data. The stored projection carries the Docbank
 version, extractor fingerprint, and metadata checksum that produced it. GPS
 relabeling can update place names without processing media; full backfill asks
-Docbank to ensure metadata for the recorded version and applies GPS only while
-that version remains the asset's current primary content.
+Docbank to ensure metadata only after the primary node, version, SHA-256, and
+size match the Fotobank mapping. It applies GPS only while that version remains
+the asset's current primary content. Incomplete, malformed, non-finite,
+out-of-range, and null-island coordinates are treated as absent without
+discarding other source metadata.
 
 One JPEG plus one camera RAW becomes one asset: JPEG is the primary display
 file and RAW is the camera source. XMP is a sidecar of the RAW when present,

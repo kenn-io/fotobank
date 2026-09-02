@@ -2,6 +2,7 @@ package media
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -86,28 +87,16 @@ func ProjectSourceMetadata(value content.SourceMetadata, places PlaceResolver) (
 	} else if found && duration > 0 {
 		projection.DurationMs = &duration
 	}
-	if err := projectGPS(&projection, value.Fields, places); err != nil {
-		return SourceMetadataProjection{}, err
-	}
+	projectGPS(&projection, value.Fields, places)
 	return projection, nil
 }
 
-func projectGPS(projection *SourceMetadataProjection, fields map[string]content.MetadataValue, places PlaceResolver) error {
-	latitude, hasLatitude, err := metadataCoordinate(fields, "image.exif.gps_latitude")
-	if err != nil {
-		return err
-	}
-	longitude, hasLongitude, err := metadataCoordinate(fields, "image.exif.gps_longitude")
-	if err != nil {
-		return err
-	}
-	if hasLatitude != hasLongitude {
-		return fmt.Errorf("%w: Docbank metadata contains incomplete GPS coordinates", errs.ErrInvalidArgument)
-	}
-	if hasLatitude {
-		if latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 {
-			return fmt.Errorf("%w: Docbank metadata contains invalid GPS coordinates", errs.ErrInvalidArgument)
-		}
+func projectGPS(projection *SourceMetadataProjection, fields map[string]content.MetadataValue, places PlaceResolver) {
+	latitude, hasLatitude := metadataCoordinate(fields, "image.exif.gps_latitude")
+	longitude, hasLongitude := metadataCoordinate(fields, "image.exif.gps_longitude")
+	if hasLatitude && hasLongitude &&
+		latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180 &&
+		(latitude != 0 || longitude != 0) {
 		projection.Latitude, projection.Longitude = &latitude, &longitude
 		if places != nil {
 			if label, ok := places.Resolve(latitude, longitude); ok {
@@ -115,8 +104,7 @@ func projectGPS(projection *SourceMetadataProjection, fields map[string]content.
 			}
 		}
 	}
-	projection.GPSAt, err = metadataTimestamp(fields, "image.exif.gps_timestamp")
-	return err
+	projection.GPSAt, _ = metadataTimestamp(fields, "image.exif.gps_timestamp")
 }
 
 func metadataString(fields map[string]content.MetadataValue, key string) (string, error) {
@@ -177,19 +165,16 @@ func metadataDimension(fields map[string]content.MetadataValue, keys ...string) 
 	return nil, nil
 }
 
-func metadataCoordinate(fields map[string]content.MetadataValue, key string) (float64, bool, error) {
+func metadataCoordinate(fields map[string]content.MetadataValue, key string) (float64, bool) {
 	value, found := fields[key]
-	if !found {
-		return 0, false, nil
-	}
-	if value.Kind != "string" {
-		return 0, false, metadataKindError(key, value.Kind, "string")
+	if !found || value.Kind != "string" {
+		return 0, false
 	}
 	parsed, err := strconv.ParseFloat(value.String, 64)
-	if err != nil {
-		return 0, false, fmt.Errorf("%w: parse Docbank metadata field %q: %v", errs.ErrInvalidArgument, key, err)
+	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return 0, false
 	}
-	return parsed, true, nil
+	return parsed, true
 }
 
 func metadataTimestamp(fields map[string]content.MetadataValue, key string) (*time.Time, error) {

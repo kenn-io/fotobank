@@ -163,7 +163,7 @@ func TestGPSBackfillRelabelOnlyTouchesRowsWithCoords(t *testing.T) {
 	code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--mode", "relabel")
 	r.Equal(0, code, "stderr=%s", stderr)
 	r.Contains(stdout, "gps backfill:")
-	r.Contains(stdout, "updated=1")
+	r.Contains(stdout, "updated=1", "stderr=%s", stderr)
 
 	d = testutil.OpenTestDBAt(t, dbPath)
 	defer func() { _ = d.Close() }()
@@ -276,7 +276,7 @@ func TestGPSBackfillFullClearsCoordsWhenEXIFLacksGPS(t *testing.T) {
 
 	code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--mode", "full")
 	r.Equal(0, code, "stderr=%s", stderr)
-	r.Contains(stdout, "updated=1")
+	r.Contains(stdout, "updated=1", "stderr=%s", stderr)
 
 	d = testutil.OpenTestDBAt(t, dbPath)
 	defer func() { _ = d.Close() }()
@@ -287,6 +287,57 @@ func TestGPSBackfillFullClearsCoordsWhenEXIFLacksGPS(t *testing.T) {
 	r.Nil(got.Longitude, "Full mode must clear Longitude when EXIF has no GPS")
 	r.Nil(got.GPSAt, "Full mode must clear GPSAt when EXIF has no GPS")
 	r.Empty(got.LocationLabel, "Full mode must clear LocationLabel when EXIF has no GPS")
+}
+
+func TestGPSBackfillRejectsMisboundDocbankVersion(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeGPSConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	dbCtx := context.Background()
+	d := testutil.OpenTestDBAt(t, dbPath)
+	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	_, err := d.WriteDB().ExecContext(dbCtx,
+		`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES(?,?,?,?)`,
+		owner.Hub, owner.UserID, "550e8400-e29b-41d4-a716-446655440000", time.Now().UTC(),
+	)
+	r.NoError(err)
+	store, err := content.Open(dbCtx, content.Config{Root: filepath.Join(tmp, "docbank")})
+	r.NoError(err)
+	latitude, longitude := 48.8566, 2.3522
+	first := assetfixture.InsertContent(t, repo, store, []byte("first photo"), media.Media{
+		Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		OriginalFilename: "first.jpg", ImportedAt: time.Now().UTC(),
+		Latitude: &latitude, Longitude: &longitude, LocationLabel: "Paris, France",
+		ThumbStatus: "pending",
+	})
+	second := assetfixture.InsertContent(t, repo, store, []byte("second photo"), media.Media{
+		Owner: owner, Type: media.TypePhoto, MimeType: "image/jpeg",
+		OriginalFilename: "second.jpg", ImportedAt: time.Now().UTC(), ThumbStatus: "pending",
+	})
+	_, err = d.WriteDB().ExecContext(dbCtx, `DELETE FROM assets WHERE id = ?`, second.ID)
+	r.NoError(err)
+	_, err = d.WriteDB().ExecContext(dbCtx, `UPDATE media_files SET current_version_id = ? WHERE id = ?`,
+		second.CurrentVersionID, first.PrimaryFileID)
+	r.NoError(err)
+	r.NoError(store.Close())
+	r.NoError(d.Close())
+
+	code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--mode", "full")
+	r.Equal(0, code, "stderr=%s", stderr)
+	r.Contains(stdout, "failed=1")
+	r.Contains(stderr, "current projection differs from Docbank")
+
+	d = testutil.OpenTestDBAt(t, dbPath)
+	defer func() { _ = d.Close() }()
+	got, err := media.NewRepo(d.WriteDB(), d.ReadDB()).GetByID(dbCtx, first.ID)
+	r.NoError(err)
+	r.InDelta(latitude, *got.Latitude, 0)
+	r.InDelta(longitude, *got.Longitude, 0)
+	r.Equal("Paris, France", got.LocationLabel)
 }
 
 // TestGPSBackfillFillMissingTerminatesOnUnchangedBatch is a regression

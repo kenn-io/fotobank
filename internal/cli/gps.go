@@ -250,6 +250,7 @@ type backfiller struct {
 	svc     *service.MediaService
 	repo    *media.Repo
 	content *content.Adapter
+	resolve *contentresolver.Resolver
 	places  *geo.NaturalEarth
 	mode    media.GPSBackfillMode
 	since   *time.Time
@@ -283,6 +284,7 @@ func newBackfiller(
 		svc:     svc,
 		repo:    repo,
 		content: contentStore,
+		resolve: resolver,
 		places:  places,
 		mode:    opts.parsedMode,
 		since:   opts.sinceTime,
@@ -382,7 +384,11 @@ func reextractOne(
 	owner owners.Principal,
 	row media.Media,
 ) error {
-	metadata, err := b.content.EnsureSourceMetadata(ctx, row.CurrentVersionID)
+	ref, err := b.resolve.ValidateCurrent(ctx, row.ID, row.PrimaryFileID)
+	if err != nil {
+		return fmt.Errorf("validate current Docbank content: %w", err)
+	}
+	metadata, err := b.content.EnsureSourceMetadata(ctx, ref.VersionID)
 	if err != nil {
 		return fmt.Errorf("ensure Docbank source metadata: %w", err)
 	}
@@ -394,7 +400,7 @@ func reextractOne(
 		return reextractMissing(ctx, b, owner, row)
 	}
 	if err := b.svc.UpdateGPS(
-		ctx, owner, row.ID, row.CurrentVersionID,
+		ctx, owner, row.ID, ref.VersionID,
 		projection.Latitude, projection.Longitude,
 		projection.GPSAt, projection.LocationLabel,
 	); err != nil {

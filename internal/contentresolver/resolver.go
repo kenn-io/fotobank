@@ -63,6 +63,28 @@ func (r *Resolver) ResolveCurrent(ctx context.Context, assetID, fileID string) (
 	return ref, nil
 }
 
+// ValidateCurrent resolves a file and checks its recorded node, current
+// version, SHA-256, and size against Docbank without opening the content bytes.
+func (r *Resolver) ValidateCurrent(ctx context.Context, assetID, fileID string) (Reference, error) {
+	ref, err := r.ResolveCurrent(ctx, assetID, fileID)
+	if err != nil {
+		return Reference{}, err
+	}
+	node, err := r.store.Stat(ctx, ref.File.DocbankVirtualPath)
+	if err != nil {
+		return Reference{}, fmt.Errorf("validate current content: %w", err)
+	}
+	if ref.File.DocbankNodeID == nil || node.ID != *ref.File.DocbankNodeID {
+		return Reference{}, fmt.Errorf("validate current content: %w: path does not name the recorded file",
+			errs.ErrNotFound)
+	}
+	if node.CurrentVersionID != ref.VersionID || node.SHA256 != ref.File.SHA256 || node.Size != ref.File.Size {
+		return Reference{}, fmt.Errorf("validate current content: %w: current projection differs from Docbank",
+			errs.ErrContentIdentityMismatch)
+	}
+	return ref, nil
+}
+
 // ResolveVersion binds an immutable Docbank version to a file. Open verifies
 // that the version belongs to the file's recorded Docbank node, so a version
 // from another asset or file is never accepted.
