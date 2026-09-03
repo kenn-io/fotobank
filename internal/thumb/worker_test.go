@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"image"
 	"image/color"
 	"image/draw"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -140,6 +142,19 @@ func seedPNGPhotoRow(t *testing.T, fx workerFixture, path string) string {
 	return id
 }
 
+func seedEncodedPhotoRow(t *testing.T, fx workerFixture, path, mimeType, filename string, source []byte) string {
+	t.Helper()
+	id := uuid.NewString()
+	m := media.Media{
+		ID: id, Owner: fx.owner, Type: media.TypePhoto, MimeType: mimeType,
+		DocbankVirtualPath: path, OriginalFilename: filename,
+		ImportedAt: time.Now().UTC().Truncate(time.Second), Size: int64(len(source)),
+		SHA256: uuid.NewString(), ThumbStatus: "pending",
+	}
+	assetfixture.InsertContent(t, fx.repo, fx.content, source, m)
+	return id
+}
+
 func readThumbStatusFor(t *testing.T, rw *sql.DB, id string) string {
 	t.Helper()
 	var status string
@@ -266,6 +281,49 @@ func TestWorkerDrainsPNGPhotoToReady(t *testing.T) {
 
 	cancel()
 	<-done
+}
+
+func TestWorkerDrainsGIFAndWebPPhotosToReady(t *testing.T) {
+	var encodedGIF bytes.Buffer
+	gifImage := image.NewPaletted(image.Rect(0, 0, 32, 32), color.Palette{color.Black})
+	require.NoError(t, gif.Encode(&encodedGIF, gifImage, nil))
+	webP, err := base64.StdEncoding.DecodeString("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name, extension, mediaType string
+		source                     []byte
+	}{
+		{name: "GIF", extension: ".gif", mediaType: "image/gif", source: encodedGIF.Bytes()},
+		{name: "WebP", extension: ".webp", mediaType: "image/webp", source: webP},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fx := newWorkerFixture(t)
+			id := seedEncodedPhotoRow(t, fx, "2024/source-"+uuid.NewString()+test.extension,
+				test.mediaType, "source"+test.extension, test.source)
+
+			ctx, cancel := context.WithCancel(t.Context())
+			t.Cleanup(cancel)
+			w := thumb.NewWorker(fx.queue, fx.store, thumb.Config{Content: fx.resolve,
+				WorkerConcurrency: 1,
+				PollInterval:      20 * time.Millisecond,
+				LeaseTimeout:      5 * time.Minute,
+			})
+			done := make(chan error, 1)
+			go func() { done <- w.Run(ctx) }()
+
+			waitForStatus(t, fx.rw, id, "ready")
+			item, err := fx.repo.GetByID(t.Context(), id)
+			require.NoError(t, err)
+			preview, err := fx.content.VisualPreview(t.Context(), item.CurrentVersionID)
+			require.NoError(t, err)
+			require.Equal(t, content.VisualPreviewReady, preview.State)
+
+			cancel()
+			<-done
+		})
+	}
 }
 
 // TestWorkerStaleWriteDoesNotCorruptReclaim verifies that after a sweep bumps
