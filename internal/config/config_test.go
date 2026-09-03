@@ -167,6 +167,19 @@ cache_enabled = false
 	require.False(t, cfg.Thumbs.CacheEnabled)
 }
 
+func TestLoadRejectsRemovedStorageSettings(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "c.toml")
+	require.NoError(t, os.WriteFile(p, []byte(`
+[storage]
+mode = "nas_only"
+thumbs_cache_enabled = false
+`), 0o600))
+
+	_, err := config.LoadUnchecked(p)
+	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+	require.ErrorContains(t, err, "[thumbs].cache_enabled")
+}
+
 func TestExplicitTOMLValuesWinOverDefaults(t *testing.T) {
 	// Regression test: TOML values override defaults for every section.
 	tmp := t.TempDir()

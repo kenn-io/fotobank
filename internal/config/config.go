@@ -234,12 +234,25 @@ func LoadUnchecked(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config %q: %w", path, err)
 	}
+	if err := rejectRemovedConfig(meta); err != nil {
+		return nil, err
+	}
 	applyDefaults(&cfg, meta)
 	applyEnvOverrides(&cfg)
 	if err := expandHomePaths(&cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func rejectRemovedConfig(meta toml.MetaData) error {
+	for _, key := range meta.Undecoded() {
+		if len(key) > 0 && key[0] == "storage" {
+			return fmt.Errorf("%w: [storage] was removed; configure local thumbnail caching with [thumbs].cache_enabled",
+				errs.ErrBadConfiguration)
+		}
+	}
+	return nil
 }
 
 // expandHomePaths rewrites filesystem-path config fields so a leading
