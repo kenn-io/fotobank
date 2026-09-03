@@ -184,8 +184,9 @@ admin_listen = "127.0.0.1:0"
 	}
 
 	// 7. Wait for the thumbnail worker to drain each imported row to a
-	// terminal state. Photos should become "ready"; the video should
-	// settle on "no_preview" because video posters are not implemented.
+	// terminal state. The sRGB-compatible photo becomes ready. The
+	// uncalibrated-color photo and video settle on no_preview because
+	// Docbank cannot produce a canonical preview for them.
 	waitAllTerminal := func() []mediaItem {
 		deadline := time.Now().Add(15 * time.Second)
 		for time.Now().Before(deadline) {
@@ -212,22 +213,28 @@ admin_listen = "127.0.0.1:0"
 		return nil
 	}
 	items := waitAllTerminal()
+	expectedThumbStatus := func(it mediaItem) string {
+		if fixtureSums[it.SHA256] == "photo-no-exif.jpg" {
+			return "ready"
+		}
+		return "no_preview"
+	}
 
-	// Separate photos from video; assert per-type terminal status.
+	// Collect the photo whose canonical preview is usable and assert the
+	// terminal policy for every fixture.
 	type photoRow struct {
 		ID      string
 		Version int
 	}
 	var photos []photoRow
 	for _, it := range items {
-		if it.Type == "photo" {
-			r.Equalf("ready", it.ThumbStatus, "photo %s should be ready", it.ID)
+		wantStatus := expectedThumbStatus(it)
+		r.Equalf(wantStatus, it.ThumbStatus, "fixture %s", fixtureSums[it.SHA256])
+		if it.Type == "photo" && wantStatus == "ready" {
 			photos = append(photos, photoRow{ID: it.ID, Version: it.ThumbVersion})
-			continue
 		}
-		r.Equalf("no_preview", it.ThumbStatus, "video %s should be no_preview", it.ID)
 	}
-	r.Len(photos, 2, "expected two photo rows")
+	r.Len(photos, 1, "expected one photo with a canonical preview")
 
 	// 8. Fetch grid thumb for each photo; assert 200, ETag, no-cache so
 	// every reuse must revalidate against the server.
@@ -250,8 +257,8 @@ admin_listen = "127.0.0.1:0"
 		oldVersions[it.ID] = it.ThumbVersion
 	}
 
-	// 9. Regenerate everything. All 3 rows get bumped (the video re-settles
-	// to no_preview at the new version, but still counts as enqueued).
+	// 9. Regenerate everything. All 3 rows get bumped; unsupported inputs
+	// settle on no_preview again but still count as enqueued.
 	{
 		var out, eout bytes.Buffer
 		code := cli.RunContext(context.Background(),
@@ -284,10 +291,7 @@ admin_listen = "127.0.0.1:0"
 			r.NoError(decErr)
 			allRebumped := len(body.Items) == 3
 			for _, it := range body.Items {
-				wantTerminal := "ready"
-				if it.Type == "video" {
-					wantTerminal = "no_preview"
-				}
+				wantTerminal := expectedThumbStatus(it)
 				if it.ThumbStatus != wantTerminal || it.ThumbVersion != oldVersions[it.ID]+1 {
 					allRebumped = false
 					break
@@ -303,9 +307,9 @@ admin_listen = "127.0.0.1:0"
 	}
 	rebumped := waitAllRebumped()
 
-	// 12. Fetch new thumb URL for each photo; assert 200.
+	// 12. Fetch the regenerated thumbnail for the supported photo.
 	for _, it := range rebumped {
-		if it.Type != "photo" {
+		if expectedThumbStatus(it) != "ready" {
 			continue
 		}
 		url := base + "/api/v1/media/" + it.ID + "/thumb?size=grid&v=" + strconv.Itoa(it.ThumbVersion)
@@ -317,7 +321,7 @@ admin_listen = "127.0.0.1:0"
 	}
 
 	// --- Albums round-trip ---------------------------------------------------
-	// Create an album, add both photo rows, list albums and assert cover
+	// Create an album, add the thumbnail-ready photo, list albums and assert cover
 	// is populated, then delete the album and list again.
 	cBody, err := json.Marshal(map[string]string{"name": "E2E Trip"})
 	r.NoError(err)
@@ -335,8 +339,8 @@ admin_listen = "127.0.0.1:0"
 	r.Equal(http.StatusCreated, cResp.StatusCode)
 	r.NotEmpty(created.ID)
 
-	// photos was populated earlier when the two imported photo rows were
-	// drained to thumb_status='ready'. Build the add-media request from it.
+	// photos was populated earlier from rows whose canonical previews were
+	// usable. Build the add-media request from it.
 	photoIDs := make([]string, 0, len(photos))
 	for _, p := range photos {
 		photoIDs = append(photoIDs, p.ID)
@@ -359,7 +363,7 @@ admin_listen = "127.0.0.1:0"
 	r.Equal(len(photoIDs), addOut.Added)
 
 	// By the time this code runs, earlier sections of the test have already
-	// waited for thumbs to reach 'ready' for both photos, so /api/v1/albums
+	// waited for the supported photo to reach 'ready', so /api/v1/albums
 	// should return a non-nil cover on the first call. Keep a short bounded
 	// poll to tolerate one extra scheduling hop.
 	var sawCover bool

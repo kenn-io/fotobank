@@ -31,6 +31,7 @@ func translateError(err error) error {
 		errors.Is(err, docbank.ErrSizeMismatch):
 		return fmt.Errorf("%w: %w", errs.ErrContentIdentityMismatch, err)
 	case errors.Is(err, docbank.ErrContentUnavailable),
+		errors.Is(err, docbank.ErrVisualPreviewUnavailable),
 		errors.Is(err, docbank.ErrClosed):
 		return fmt.Errorf("%w: %w", errs.ErrContentUnavailable, err)
 	case errors.Is(err, docbank.ErrInvalidContentRange):

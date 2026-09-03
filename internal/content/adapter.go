@@ -267,6 +267,31 @@ type SourceMetadata struct {
 	Fields               map[string]MetadataValue
 }
 
+type VisualPreviewState string
+
+const (
+	VisualPreviewReady       VisualPreviewState = "ready"
+	VisualPreviewUnsupported VisualPreviewState = "unsupported"
+	VisualPreviewFailed      VisualPreviewState = "failed"
+)
+
+// VisualPreview is Fotobank's dependency-free view of Docbank's canonical
+// preview for one exact content version.
+type VisualPreview struct {
+	Version     Version
+	State       VisualPreviewState
+	FailureCode string
+	MediaType   string
+	Width       int
+	Height      int
+}
+
+// VisualPreviewRead binds a ready preview result to its verified bytes.
+type VisualPreviewRead struct {
+	Preview VisualPreview
+	Reader  VerifiedReadCloser
+}
+
 type Source struct {
 	Kind        string
 	Description string
@@ -625,8 +650,11 @@ func (a *Adapter) EnsureSourceMetadata(ctx context.Context, versionID string) (S
 	fields := make(map[string]MetadataValue, len(metadata.Fields))
 	for _, field := range metadata.Fields {
 		value := MetadataValue{
-			Kind: string(field.Value.Kind), String: field.Value.String,
+			Kind:    string(field.Value.Kind),
 			Integer: field.Value.Integer, Number: field.Value.Number,
+		}
+		if field.Value.String != nil {
+			value.String = *field.Value.String
 		}
 		if field.Value.Timestamp != nil {
 			value.Timestamp = &MetadataTimestamp{
@@ -642,6 +670,38 @@ func (a *Adapter) EnsureSourceMetadata(ctx context.Context, versionID string) (S
 		ExtractorFingerprint: metadata.ExtractorFingerprint,
 		Checksum:             metadata.Checksum,
 		Fields:               fields,
+	}, nil
+}
+
+// VisualPreview returns the current canonical preview result for one exact
+// immutable content version without producing it.
+func (a *Adapter) VisualPreview(ctx context.Context, versionID string) (VisualPreview, error) {
+	preview, err := a.vault.VisualPreview(ctx, versionID)
+	if err != nil {
+		return VisualPreview{}, translateError(err)
+	}
+	return projectVisualPreview(preview), nil
+}
+
+// EnsureVisualPreview returns the current canonical preview result for one
+// exact immutable content version, producing it synchronously when needed.
+func (a *Adapter) EnsureVisualPreview(ctx context.Context, versionID string) (VisualPreview, error) {
+	preview, err := a.vault.EnsureVisualPreview(ctx, versionID)
+	if err != nil {
+		return VisualPreview{}, translateError(err)
+	}
+	return projectVisualPreview(preview), nil
+}
+
+// OpenVisualPreview opens the verified bytes of a ready exact-version preview.
+func (a *Adapter) OpenVisualPreview(ctx context.Context, versionID string) (*VisualPreviewRead, error) {
+	opened, err := a.vault.OpenVisualPreview(ctx, versionID)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	return &VisualPreviewRead{
+		Preview: projectVisualPreview(opened.Preview),
+		Reader:  translateReader(opened.Reader),
 	}, nil
 }
 
@@ -813,4 +873,20 @@ func projectVersion(version docbank.ContentVersion) Version {
 		Size:      version.Size,
 		MediaType: version.MediaType,
 	}
+}
+
+func projectVisualPreview(preview docbank.VisualPreview) VisualPreview {
+	projected := VisualPreview{
+		Version: projectVersion(preview.Version),
+		State:   VisualPreviewState(preview.State),
+	}
+	if preview.Failure != nil {
+		projected.FailureCode = preview.Failure.Code
+	}
+	if preview.Output != nil {
+		projected.MediaType = preview.Output.MediaType
+		projected.Width = preview.Output.Width
+		projected.Height = preview.Output.Height
+	}
+	return projected
 }

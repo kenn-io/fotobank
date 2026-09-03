@@ -35,6 +35,18 @@ type Read struct {
 	Reader    io.ReadCloser
 }
 
+// VisualPreview is a canonical exact-version preview result. Reader is set
+// only when State is ready and must be drained or closed by the caller.
+type VisualPreview struct {
+	Reference   Reference
+	State       content.VisualPreviewState
+	FailureCode string
+	MediaType   string
+	Width       int
+	Height      int
+	Reader      io.ReadCloser
+}
+
 // Resolver maps ready Fotobank assets and files to catalog-authorized Docbank
 // versions. Authorization and hidden-media policy remain service concerns.
 type Resolver struct {
@@ -187,6 +199,44 @@ func (r *Resolver) OpenCurrent(
 		return nil, err
 	}
 	return r.Open(ctx, ref, offset, length)
+}
+
+// EnsureVisualPreview produces or reuses the canonical preview for ref and
+// validates that Docbank returned evidence for the requested file version.
+func (r *Resolver) EnsureVisualPreview(ctx context.Context, ref Reference) (*VisualPreview, error) {
+	if r == nil || r.store == nil {
+		return nil, fmt.Errorf("ensure visual preview: %w: resolver is not configured", errs.ErrContentUnavailable)
+	}
+	if ref.File.DocbankNodeID == nil || ref.VersionID == "" {
+		return nil, fmt.Errorf("ensure visual preview: %w: incomplete file mapping", errs.ErrInvalidArgument)
+	}
+	preview, err := r.store.EnsureVisualPreview(ctx, ref.VersionID)
+	if err != nil {
+		return nil, fmt.Errorf("ensure visual preview: %w", err)
+	}
+	if err := validateOpened(ref, preview.Version.NodeID, preview.Version.SHA256, preview.Version.Size); err != nil {
+		return nil, err
+	}
+	result := &VisualPreview{
+		Reference: ref, State: preview.State, FailureCode: preview.FailureCode,
+		MediaType: preview.MediaType, Width: preview.Width, Height: preview.Height,
+	}
+	if preview.State != content.VisualPreviewReady {
+		return result, nil
+	}
+	opened, err := r.store.OpenVisualPreview(ctx, ref.VersionID)
+	if err != nil {
+		return nil, fmt.Errorf("open visual preview: %w", err)
+	}
+	if err := validateOpened(ref, opened.Preview.Version.NodeID,
+		opened.Preview.Version.SHA256, opened.Preview.Version.Size); err != nil {
+		return nil, errors.Join(err, opened.Reader.Close())
+	}
+	result.MediaType = opened.Preview.MediaType
+	result.Width = opened.Preview.Width
+	result.Height = opened.Preview.Height
+	result.Reader = &verifyOnEOF{reader: opened.Reader}
+	return result, nil
 }
 
 func validateOpened(ref Reference, nodeID int64, sha256 string, size int64) error {
