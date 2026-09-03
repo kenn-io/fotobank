@@ -53,8 +53,20 @@ func newConfigDiagnoseCmd() *cobra.Command {
 }
 
 func diagnoseConfig(path string) []configDiagnostic {
-	cfg, err := config.Load(path)
+	cfg, err := config.LoadUnchecked(path)
 	if err != nil {
+		return []configDiagnostic{{
+			name: "configuration", status: "error", detail: err.Error(),
+			action: "fix the named setting in " + path + " and run this command again",
+		}}
+	}
+	if cfg == nil {
+		return []configDiagnostic{{
+			name: "configuration", status: "error", detail: "configuration loader returned no result",
+			action: "check that " + path + " is a readable TOML configuration file",
+		}}
+	}
+	if err := cfg.ValidateWithOptions(config.ValidationOptions{AllowUnavailableNAS: true}); err != nil {
 		return []configDiagnostic{{
 			name: "configuration", status: "error", detail: err.Error(),
 			action: "fix the named setting in " + path + " and run this command again",
@@ -93,9 +105,10 @@ func diagnoseConfig(path string) []configDiagnostic {
 		})
 	}
 
-	if err := inspectDirectory(cfg.NAS.Root); err != nil {
+	nasErr := inspectDirectory(cfg.NAS.Root)
+	if nasErr != nil {
 		checks = append(checks, configDiagnostic{
-			name: "nas artifacts", status: "error", detail: fmt.Sprintf("%s: %v", cfg.NAS.Root, err),
+			name: "nas artifacts", status: "error", detail: fmt.Sprintf("%s: %v", cfg.NAS.Root, nasErr),
 			action: "mount or create [nas].root before importing or serving artifacts",
 		})
 	} else {
@@ -119,6 +132,14 @@ func diagnoseConfig(path string) []configDiagnostic {
 		return checks
 	}
 	backupDir := backupDirFor(cfg)
+	if cfg.Backup.Dir == "" && nasErr != nil {
+		checks = append(checks, configDiagnostic{
+			name: "backups", status: "error",
+			detail: fmt.Sprintf("%s: [nas].root is unavailable: %v", backupDir, nasErr),
+			action: "mount [nas].root before Fotobank creates or writes the default backup directory",
+		})
+		return checks
+	}
 	status, detail, err := inspectBackupDestination(backupDir)
 	if err != nil {
 		checks = append(checks, configDiagnostic{
