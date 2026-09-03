@@ -15,9 +15,37 @@ func newConfigCmd() *cobra.Command {
 		Use:   "config",
 		Short: "Inspect fotobank configuration",
 	}
+	cmd.AddCommand(newConfigInitCmd())
 	cmd.AddCommand(newConfigPathCmd())
 	cmd.AddCommand(newConfigReadCmd())
 	cmd.AddCommand(newConfigValidateCmd())
+	return cmd
+}
+
+func newConfigInitCmd() *cobra.Command {
+	var cfgPath string
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "Create an editable configuration file",
+		Args:  usageArgs(cobra.NoArgs),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			path := cfgPath
+			if path == "" {
+				path = config.DefaultConfigPath()
+			}
+			created, err := config.EnsureDefault(path)
+			if err != nil {
+				return err
+			}
+			if created {
+				fmt.Fprintf(cmd.OutOrStdout(), "created %s\n", path)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "already exists %s\n", path)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&cfgPath, "config", "", "path to create (defaults to DefaultConfigPath)")
 	return cmd
 }
 

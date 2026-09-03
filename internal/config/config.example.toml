@@ -1,24 +1,20 @@
-# Where fotobank stores its SQLite DB and (optionally) flash-cached
-# originals and thumbnails.
+# Where fotobank stores its SQLite DB and disposable thumbnail cache.
 [flash]
 root = "~/.fotobank"                 # default; ~ expanded
 
 [docbank]
-# Authoritative content-addressed vault. Defaults to <flash.root>/docbank.
-# Keep this distinct from import sources and the NAS artifact root.
-root = ""
+# Authoritative content-addressed vault. Put this on durable storage.
+# Keep it distinct from import sources and the NAS artifact root.
+root = "/mnt/nas/docbank"
 
-# Where durable bytes live. Imports write originals here before the
-# media row is committed; thumbnails are written here asynchronously
-# by the background worker after the row commits (see §10, §11).
+# Rebuildable artifacts and metadata snapshots. Original media lives in
+# Docbank, not here. This must not contain or overlap the Docbank root.
 [nas]
-root = "/mnt/nas/fotobank"           # required
+root = "/mnt/nas/fotobank-artifacts" # required
 
-# "nas_only" (no flash tier), "flash_cache" (default)
+# "nas_only" or "flash_cache" for generated artifacts (default)
 [storage]
 mode = "flash_cache"
-originals_cache_days = 30            # recency window for original cache
-originals_cache_max_media = 100000   # hard ceiling; whichever hits first
 thumbs_cache_enabled = true          # thumbs cached on flash
 
 [identity]

@@ -18,6 +18,35 @@ func TestConfigPathPrintsResolvedPath(t *testing.T) {
 	require.Contains(t, out.String(), "/tmp/example.toml")
 }
 
+func TestConfigInitCreatesLoadableExample(t *testing.T) {
+	r := require.New(t)
+	path := filepath.Join(t.TempDir(), "nested", "config.toml")
+	var out, eout bytes.Buffer
+
+	r.Equal(0, cli.Run([]string{"config", "init", "--config", path}, &out, &eout))
+	r.Equal("created "+path+"\n", out.String())
+	_, err := os.Stat(path)
+	r.NoError(err)
+
+	out.Reset()
+	r.Equal(0, cli.Run([]string{"config", "validate", "--config", path}, &out, &eout))
+	r.Equal("ok\n", out.String())
+}
+
+func TestConfigInitDoesNotOverwriteExistingFile(t *testing.T) {
+	r := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	contents := []byte("existing configuration\n")
+	r.NoError(os.WriteFile(path, contents, 0o600))
+	var out, eout bytes.Buffer
+
+	r.Equal(0, cli.Run([]string{"config", "init", "--config", path}, &out, &eout))
+	r.Equal("already exists "+path+"\n", out.String())
+	actual, err := os.ReadFile(path)
+	r.NoError(err)
+	r.Equal(contents, actual)
+}
+
 func TestConfigValidateWithValidFile(t *testing.T) {
 	tmp := t.TempDir()
 	p := filepath.Join(tmp, "c.toml")

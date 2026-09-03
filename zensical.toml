@@ -12,6 +12,13 @@ extra_css = ["stylesheets/extra.css"]
 use_directory_urls = true
 nav = [
   {"Overview" = "index.md"},
+  {"Use Fotobank" = [
+    {"Set up Fotobank" = "guides/setup.md"},
+    {"Import and recover" = "guides/import.md"},
+    {"Work with checkouts" = "guides/checkouts.md"},
+    {"Back up and restore" = "guides/backup.md"},
+    {"Automate Fotobank" = "guides/automation.md"},
+  ]},
   {"Architecture" = [
     {"System map" = "architecture/README.md"},
     {"Runtime and boundaries" = "architecture/runtime.md"},

@@ -2,11 +2,11 @@
 
 Fotobank is a self-hosted photo archive and browsing app built around Docbank's
 content-addressed storage. Fotobank owns the photo-library model—metadata,
-albums, sharing, privacy, thumbnails, and search—while Docbank is becoming the
-authority for imported photos, videos, RAW files, sidecars, and their versions.
+albums, sharing, privacy, thumbnails, and search—while Docbank is the authority
+for imported photos, videos, RAW files, sidecars, and their versions.
 
 Import copies source files and leaves them untouched. Writable, partial
-checkouts will provide ordinary files for photo editors, file managers, and
+checkouts provide ordinary files for photo editors, file managers, and
 shell tools without making a working directory the archive authority.
 
 Fotobank is not trying to be every photo product for every household. It is a
@@ -158,11 +158,10 @@ backend-only binary unless `internal/web/dist/` is already populated:
 go build -tags sqlite_fts5 -o bin/fotobank ./cmd/fotobank
 ```
 
-Create a config:
+Create a config with the installed binary:
 
 ```sh
-mkdir -p ~/.config/fotobank
-cp internal/config/config.example.toml ~/.config/fotobank/config.toml
+bin/fotobank config init
 ```
 
 Fotobank uses TOML. The loader resolves the config path with this precedence:
@@ -173,8 +172,10 @@ Fotobank uses TOML. The loader resolves the config path with this precedence:
 4. `$HOME/.config/fotobank/config.toml`
 5. `./config.toml`
 
-The canonical example lives at `internal/config/config.example.toml`. At
-minimum, edit `[nas].root` in `config.toml`. The default stub identity is
+The command never overwrites an existing file. Edit `[docbank].root` and
+`[nas].root` before first use. They should be separate directories on durable
+storage: Docbank holds original media, while the NAS artifact root holds
+rebuildable files and Fotobank metadata snapshots. The default stub identity is
 usable for local development.
 
 Validate and run:
@@ -191,16 +192,17 @@ Common commands:
 
 ```sh
 bin/fotobank serve             # HTTP API + background workers
+bin/fotobank config init       # write an editable config without replacing one
 bin/fotobank config path
 bin/fotobank import <dir>      # import photos/videos
-bin/fotobank reconcile         # NAS ↔ DB drift report
+bin/fotobank content recover   # finish imports and report unmatched Docbank files
+bin/fotobank checkout          # estimate/create working copies and commit edits
 bin/fotobank thumbs regenerate # rebuild thumbnails
 bin/fotobank albums            # CRUD over albums
 bin/fotobank shares            # CRUD over share scopes (CLI works regardless of [ui].sharing_enabled)
 bin/fotobank hidden            # manage the hidden-privacy passcode
 bin/fotobank ai                # AI status / backfill / retry / acknowledge
 bin/fotobank gps               # GPS metadata management
-bin/fotobank pair              # RAW/JPEG sidecar pairing
 bin/fotobank backup            # snapshot / list / restore the metadata DB
 bin/fotobank owners            # list / register principals
 ```
