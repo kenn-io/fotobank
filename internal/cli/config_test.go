@@ -165,7 +165,7 @@ root = %q
 	r.NoDirExists(docbankRoot)
 }
 
-func TestConfigDiagnoseReportsDanglingNASAsUnavailable(t *testing.T) {
+func TestConfigDiagnoseReportsUnavailableStorageSeparately(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
 	nasTarget := filepath.Join(tmp, "missing-nas-target")
@@ -173,6 +173,12 @@ func TestConfigDiagnoseReportsDanglingNASAsUnavailable(t *testing.T) {
 	if err := os.Symlink(nasTarget, nasAlias); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
+	docbankTarget := filepath.Join(tmp, "missing-docbank-target")
+	docbankAlias := filepath.Join(tmp, "docbank")
+	r.NoError(os.Symlink(docbankTarget, docbankAlias))
+	flashTarget := filepath.Join(tmp, "missing-flash-target")
+	flashAlias := filepath.Join(tmp, "flash")
+	r.NoError(os.Symlink(flashTarget, flashAlias))
 	cfgPath := filepath.Join(tmp, "config.toml")
 	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
 [flash]
@@ -181,12 +187,13 @@ root = %q
 root = %q
 [nas]
 root = %q
-`, filepath.Join(tmp, "flash"), filepath.Join(tmp, "docbank"), nasAlias), 0o600))
+`, flashAlias, docbankAlias, nasAlias), 0o600))
 	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
 
 	var out, eout bytes.Buffer
 	r.Equal(1, cli.Run([]string{"config", "diagnose", "--config", cfgPath}, &out, &eout))
 	r.Contains(out.String(), "configuration        ok")
+	r.Contains(out.String(), docbankTarget)
 	r.Contains(out.String(), "nas artifacts        error")
 	r.Contains(out.String(), "backups              error")
 	r.NotContains(out.String(), "backups              ready")

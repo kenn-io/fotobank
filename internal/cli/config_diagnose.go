@@ -66,7 +66,7 @@ func diagnoseConfig(path string) []configDiagnostic {
 			action: "check that " + path + " is a readable TOML configuration file",
 		}}
 	}
-	if err := cfg.ValidateWithOptions(config.ValidationOptions{AllowUnavailableNAS: true}); err != nil {
+	if err := cfg.ValidateWithOptions(config.ValidationOptions{AllowUnavailableStorage: true}); err != nil {
 		return []configDiagnostic{{
 			name: "configuration", status: "error", detail: err.Error(),
 			action: "fix the named setting in " + path + " and run this command again",

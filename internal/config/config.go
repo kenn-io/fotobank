@@ -208,6 +208,9 @@ type ValidationOptions struct {
 	// AllowUnavailableNAS lets the server expose health endpoints while a
 	// configured external NAS symlink has no reachable target.
 	AllowUnavailableNAS bool
+	// AllowUnavailableStorage lets read-only diagnostics report each missing
+	// storage resource independently while retaining path-boundary checks.
+	AllowUnavailableStorage bool
 }
 
 // Load reads the file at path, parses it as TOML, applies defaults,
@@ -342,21 +345,16 @@ func (c *Config) ValidateWithOptions(options ValidationOptions) error {
 	if c.Docbank.Root == "" {
 		return fmt.Errorf("%w: [docbank].root is required", errs.ErrBadConfiguration)
 	}
-	docbankRoot, err := canonicalConfigPath(c.Docbank.Root)
+	docbankRoot, err := canonicalValidationPath(c.Docbank.Root, options.AllowUnavailableStorage)
 	if err != nil {
 		return fmt.Errorf("%w: canonicalize [docbank].root: %v", errs.ErrBadConfiguration, err)
 	}
-	nasRoot, err := canonicalConfigPath(c.NAS.Root)
+	nasRoot, err := canonicalValidationPath(c.NAS.Root,
+		options.AllowUnavailableNAS || options.AllowUnavailableStorage)
 	if err != nil {
-		if !options.AllowUnavailableNAS || !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%w: canonicalize [nas].root: %v", errs.ErrBadConfiguration, err)
-		}
-		nasRoot, err = canonicalUnavailableConfigPath(c.NAS.Root)
-		if err != nil {
-			return fmt.Errorf("%w: resolve unavailable [nas].root: %v", errs.ErrBadConfiguration, err)
-		}
+		return fmt.Errorf("%w: canonicalize [nas].root: %v", errs.ErrBadConfiguration, err)
 	}
-	flashRoot, err := canonicalConfigPath(c.Flash.Root)
+	flashRoot, err := canonicalValidationPath(c.Flash.Root, options.AllowUnavailableStorage)
 	if err != nil {
 		return fmt.Errorf("%w: canonicalize [flash].root: %v", errs.ErrBadConfiguration, err)
 	}
@@ -480,6 +478,14 @@ func (c *Config) ValidateWithOptions(options ValidationOptions) error {
 
 func canonicalConfigPath(value string) (string, error) {
 	return canonicalConfigPathMode(value, false, 0)
+}
+
+func canonicalValidationPath(value string, allowUnavailable bool) (string, error) {
+	resolved, err := canonicalConfigPath(value)
+	if err == nil || !allowUnavailable || !errors.Is(err, os.ErrNotExist) {
+		return resolved, err
+	}
+	return canonicalUnavailableConfigPath(value)
 }
 
 func canonicalUnavailableConfigPath(value string) (string, error) {
