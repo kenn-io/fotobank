@@ -131,6 +131,8 @@ func classify(ext string) (media.Type, string, CandidateKind, bool) {
 		return media.TypePhoto, "image/png", CandidateImage, true
 	case ".gif":
 		return media.TypePhoto, "image/gif", CandidateImage, true
+	case ".webp":
+		return media.TypePhoto, "image/webp", CandidateImage, true
 	case ".heic":
 		return media.TypePhoto, "image/heic", CandidateImage, true
 	case ".arw":

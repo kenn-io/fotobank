@@ -15,7 +15,7 @@ import (
 func TestDiscoverClassifies(t *testing.T) {
 	r := require.New(t)
 	root := t.TempDir()
-	for _, name := range []string{"a.jpg", "b.JPG", "c.mov", "d.heic", "e.txt", "sub/f.png"} {
+	for _, name := range []string{"a.jpg", "b.JPG", "c.mov", "d.heic", "e.txt", "f.webp", "sub/g.png"} {
 		full := filepath.Join(root, name)
 		r.NoError(os.MkdirAll(filepath.Dir(full), 0o700))
 		r.NoError(os.WriteFile(full, []byte("x"), 0o600))
@@ -26,7 +26,7 @@ func TestDiscoverClassifies(t *testing.T) {
 		got = append(got, c)
 		return nil
 	}))
-	r.Len(got, 5) // a.jpg, b.JPG, c.mov, d.heic, sub/f.png
+	r.Len(got, 6) // a.jpg, b.JPG, c.mov, d.heic, f.webp, sub/g.png
 
 	photos, videos := 0, 0
 	for _, c := range got {
@@ -37,7 +37,7 @@ func TestDiscoverClassifies(t *testing.T) {
 			videos++
 		}
 	}
-	r.Equal(4, photos)
+	r.Equal(5, photos)
 	r.Equal(1, videos)
 }
 

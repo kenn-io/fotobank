@@ -310,13 +310,13 @@ func (w *Worker) logClaimFinalize(op, id string, err error) {
 }
 
 // decodeSource uses Docbank's canonical preview for supported originals. RAW
-// files still use their embedded JPEG and GIF remains locally decoded until
-// those formats gain canonical producers.
+// files still use their embedded JPEG until Docbank gains a canonical producer.
 func (w *Worker) decodeSource(ctx context.Context, m media.Media) (image.Image, error) {
 	if w.cfg.Content == nil {
 		return nil, fmt.Errorf("read source: content adapter is not configured")
 	}
-	if m.MimeType == "image/jpeg" || m.MimeType == "image/png" {
+	if m.MimeType == "image/jpeg" || m.MimeType == "image/png" ||
+		m.MimeType == "image/gif" || m.MimeType == "image/webp" {
 		return w.decodeCanonicalPreview(ctx, m)
 	}
 	opened, err := w.cfg.Content.OpenCurrent(ctx, m.ID, "", 0, -1)
@@ -335,14 +335,7 @@ func (w *Worker) decodeSource(ctx context.Context, m media.Media) (image.Image, 
 		}
 		return image, nil
 	}
-	image, err := Decode(m.MimeType, rc)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := io.Copy(io.Discard, rc); err != nil {
-		return nil, fmt.Errorf("drain source: %w", err)
-	}
-	return image, nil
+	return nil, fmt.Errorf("thumb: unsupported mime %q", m.MimeType)
 }
 
 func (w *Worker) decodeCanonicalPreview(ctx context.Context, m media.Media) (image.Image, error) {
