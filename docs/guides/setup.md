@@ -9,6 +9,10 @@ Fotobank needs three separate storage locations:
 The Docbank and artifact directories may be siblings on the same mounted
 filesystem, but neither may contain the other.
 
+Generated thumbnails are written to the artifact directory. By default they
+are also cached beneath the local state directory; set
+`thumbs.cache_enabled = false` when a second local copy is not useful.
+
 ## Create the configuration
 
 ```sh

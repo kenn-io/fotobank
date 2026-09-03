@@ -112,11 +112,11 @@ and read the recorded immutable Docbank version.
 
 ## Artifact storage
 
-`internal/storage` currently offers two implementations:
-
-- NAS-only writes and reads beneath each owner's opaque storage directory.
-- Flash-cache mode writes durable objects to NAS and keeps selected local cache
-  entries under the flash root.
+`internal/storage` is the rebuildable artifact boundary. Its filesystem store
+writes beneath each owner's opaque directory in the NAS artifact root. An
+optional local decorator caches versioned thumbnail keys under
+`{flash.root}/thumbs`; it rejects non-thumbnail keys rather than becoming a
+second route for original bytes.
 
 Storage keys are relative POSIX paths. Absolute paths, backslashes, empty
 segments, and traversal are rejected. Owner storage keys are one safe path
@@ -124,10 +124,10 @@ component. Writers require the configured NAS root to exist and create only
 directories beneath an opened root-bound filesystem view; they never recreate
 the external root during an outage.
 
-This store carries only rebuildable thumbnails and other Fotobank artifacts.
-Thumbnail keys include the asset/media ID,
-thumbnail version, and requested size so regeneration never silently reuses an
-old source projection.
+This store currently carries only rebuildable thumbnails. Thumbnail keys
+include the asset/media ID, thumbnail version, and requested size so
+regeneration never silently reuses an old source projection. The NAS artifact
+remains the backing copy when the local thumbnail cache is enabled.
 
 For JPEG, PNG, GIF, WebP, and supported camera RAW originals, the thumbnail
 worker asks Docbank to produce or reuse the canonical preview for the recorded

@@ -7,52 +7,32 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
-	"time"
 
 	"go.kenn.io/fotobank/internal/owners"
 )
 
-// errThumbCacheDisabled signals that a .thumbs/* key was routed through
-// the flash cache but no thumbs root has been enabled; callers treat it
-// as "skip cache, use NAS".
-var errThumbCacheDisabled = errors.New("storage: thumbs flash cache disabled")
-
-// FlashCacheOptions tunes the recency janitor.
-type FlashCacheOptions struct {
-	OriginalsCacheDays     int
-	OriginalsCacheMaxMedia int
-}
-
-// FlashCache wraps a NAS-backed Store with a flash-tier mirror. Writes
-// go through to the wrapped Store then populate flash best-effort;
-// reads hit flash first and fall back to the wrapped Store, populating
-// flash on the way back.
-type FlashCache struct {
-	nas         Store
-	flashRoot   string // originals root
-	thumbsRoot  string // "" when disabled
+// ThumbCache adds a local cache for versioned thumbnail artifacts. The wrapped
+// store remains authoritative for artifacts; Docbank remains authoritative for
+// original content and never passes through this cache.
+type ThumbCache struct {
+	backing     Store
+	thumbsRoot  string
 	storageKeys map[owners.Principal]string
-	opts        FlashCacheOptions
 }
 
-// NewFlashCache builds a FlashCache. storageKeys mirrors the map given
-// to the wrapped Store so the cache can compute its own file paths.
-func NewFlashCache(nas Store, flashRoot string, storageKeys map[owners.Principal]string, opts FlashCacheOptions) *FlashCache {
-	return &FlashCache{nas: nas, flashRoot: flashRoot, storageKeys: storageKeys, opts: opts}
+// NewThumbCache builds a thumbnail-only cache. storageKeys mirrors the map
+// given to the wrapped Store so the cache can compute owner-local paths.
+func NewThumbCache(backing Store, thumbsRoot string, storageKeys map[owners.Principal]string) *ThumbCache {
+	return &ThumbCache{backing: backing, thumbsRoot: thumbsRoot, storageKeys: storageKeys}
 }
 
-// EnableThumbs activates the thumbs sibling cache at the given root.
-// Calling this is how cfg.Storage.ThumbsCacheEnabled takes effect; when
-// never called, .thumbs/* keys bypass the flash tier entirely.
-func (c *FlashCache) EnableThumbs(thumbsRoot string) {
-	c.thumbsRoot = thumbsRoot
-}
-
-func (c *FlashCache) flashPath(p owners.Principal, key string) (string, error) {
+func (c *ThumbCache) flashPath(p owners.Principal, key string) (string, error) {
 	if err := validateKey(key); err != nil {
 		return "", err
+	}
+	if !strings.HasPrefix(key, ".thumbs/") {
+		return "", fmt.Errorf("%w: flash cache accepts thumbnail keys only: %q", ErrInvalidKey, key)
 	}
 	sk, ok := c.storageKeys[p]
 	if !ok {
@@ -61,147 +41,109 @@ func (c *FlashCache) flashPath(p owners.Principal, key string) (string, error) {
 	if err := ValidateStorageKey(sk); err != nil {
 		return "", err
 	}
-	root := c.flashRoot
-	if strings.HasPrefix(key, ".thumbs/") {
-		if c.thumbsRoot == "" {
-			return "", errThumbCacheDisabled
-		}
-		root = c.thumbsRoot
-	}
-	return filepath.Join(root, sk, filepath.FromSlash(key)), nil
+	return filepath.Join(c.thumbsRoot, sk, filepath.FromSlash(key)), nil
 }
 
-// Stat returns authoritative metadata from NAS but reports TierFlash
+// Stat returns authoritative metadata from the backing store but reports TierFlash
 // when a cached copy exists on the flash tier.
-func (c *FlashCache) Stat(ctx context.Context, p owners.Principal, key string) (StoreInfo, error) {
-	info, err := c.nas.Stat(ctx, p, key)
+func (c *ThumbCache) Stat(ctx context.Context, p owners.Principal, key string) (StoreInfo, error) {
+	flash, err := c.flashPath(p, key)
 	if err != nil {
 		return StoreInfo{}, err
 	}
-	flash, perr := c.flashPath(p, key)
-	if perr == nil {
-		if _, ferr := os.Stat(flash); ferr == nil {
-			info.Tier = TierFlash
-			return info, nil
-		}
+	info, err := c.backing.Stat(ctx, p, key)
+	if err != nil {
+		return StoreInfo{}, err
+	}
+	if _, err := os.Stat(flash); err == nil {
+		info.Tier = TierFlash
 	}
 	return info, nil
 }
 
-// ReadRange serves reads from flash when available, falling back to
-// NAS on miss. Full-file misses trigger a background flash populate.
-func (c *FlashCache) ReadRange(ctx context.Context, p owners.Principal, key string, offset, length int64) (io.ReadCloser, error) {
-	flash, perr := c.flashPath(p, key)
-	if perr == nil {
-		if f, err := os.Open(flash); err == nil {
-			return readerFromFile(f, offset, length)
-		}
-	}
-	rc, err := c.nas.ReadRange(ctx, p, key, offset, length)
+// ReadRange serves reads from flash when available. A full-file miss populates
+// the cache synchronously before opening the cached copy; partial reads go
+// directly to the backing store.
+func (c *ThumbCache) ReadRange(ctx context.Context, p owners.Principal, key string, offset, length int64) (io.ReadCloser, error) {
+	flash, err := c.flashPath(p, key)
 	if err != nil {
 		return nil, err
 	}
-	// Populate flash best-effort for full-file reads only. Partial
-	// reads would cache an incomplete file and corrupt future hits.
-	if offset == 0 && length < 0 && perr == nil {
-		go c.populate(p, key)
+	if f, err := os.Open(flash); err == nil {
+		return readerFromFile(f, offset, length)
 	}
-	return rc, nil
+	if offset == 0 && length < 0 {
+		if err := c.populate(ctx, p, key); err == nil {
+			if f, err := os.Open(flash); err == nil {
+				return f, nil
+			}
+		}
+	}
+	return c.backing.ReadRange(ctx, p, key, offset, length)
 }
 
-func (c *FlashCache) populate(p owners.Principal, key string) {
-	rc, err := c.nas.ReadRange(context.Background(), p, key, 0, -1)
-	if err != nil {
-		return
+func (c *ThumbCache) populate(ctx context.Context, p owners.Principal, key string) (retErr error) {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	defer func() { _ = rc.Close() }()
+	rc, err := c.backing.ReadRange(ctx, p, key, 0, -1)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, rc.Close()) }()
 	flash, err := c.flashPath(p, key)
 	if err != nil {
-		return
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(flash), 0o700); err != nil {
-		return
+		return err
 	}
 	tmp := flash + tmpSuffix()
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return
+		return err
 	}
 	if _, err := io.Copy(f, rc); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)
-		return
+		return err
 	}
 	if err := f.Close(); err != nil {
 		_ = os.Remove(tmp)
-		return
+		return err
 	}
-	// Overwrite is fine: NAS holds the authoritative bytes.
-	_ = os.Rename(tmp, flash)
+	// Overwrite is safe because the backing artifact is authoritative and
+	// thumbnail keys include their generation.
+	if err := os.Rename(tmp, flash); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
-// Write persists to NAS and best-effort populates flash in the
-// background. The NAS write is authoritative — a failed flash copy
-// does not fail the call.
-func (c *FlashCache) Write(ctx context.Context, p owners.Principal, key string, src io.Reader) (string, error) {
-	resKey, err := c.nas.Write(ctx, p, key, src)
+// Write persists to the backing store and then populates flash best-effort.
+// A failed cache copy does not fail an authoritative artifact write.
+func (c *ThumbCache) Write(ctx context.Context, p owners.Principal, key string, src io.Reader) (string, error) {
+	if _, err := c.flashPath(p, key); err != nil {
+		return "", err
+	}
+	resKey, err := c.backing.Write(ctx, p, key, src)
 	if err != nil {
 		return resKey, err
 	}
-	go c.populate(p, resKey)
+	_ = c.populate(ctx, p, resKey)
 	return resKey, nil
 }
 
-// Delete removes the key from NAS and best-effort evicts the flash copy.
-func (c *FlashCache) Delete(ctx context.Context, p owners.Principal, key string) error {
-	flash, perr := c.flashPath(p, key)
-	if perr == nil {
-		_ = os.Remove(flash)
+// Delete removes the key from the backing store and best-effort evicts the
+// cached copy.
+func (c *ThumbCache) Delete(ctx context.Context, p owners.Principal, key string) error {
+	flash, err := c.flashPath(p, key)
+	if err != nil {
+		return err
 	}
-	return c.nas.Delete(ctx, p, key)
-}
-
-// Evict runs the recency janitor synchronously. Returns after pruning
-// completes; callers decide how often to invoke it (fotobank server
-// schedules it daily).
-func (c *FlashCache) Evict(_ context.Context) error {
-	if c.opts.OriginalsCacheDays <= 0 && c.opts.OriginalsCacheMaxMedia <= 0 {
-		return nil
-	}
-	cutoff := time.Now().Add(-time.Duration(c.opts.OriginalsCacheDays) * 24 * time.Hour)
-	type entry struct {
-		path    string
-		modTime time.Time
-	}
-	var entries []entry
-	_ = filepath.WalkDir(c.flashRoot, func(p string, d os.DirEntry, werr error) error {
-		if werr != nil || d.IsDir() {
-			return nil
-		}
-		if filepath.Base(p) == ".fotobank" {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		if c.opts.OriginalsCacheDays > 0 && info.ModTime().Before(cutoff) {
-			_ = os.Remove(p)
-			return nil
-		}
-		entries = append(entries, entry{path: p, modTime: info.ModTime()})
-		return nil
-	})
-	if c.opts.OriginalsCacheMaxMedia > 0 && len(entries) > c.opts.OriginalsCacheMaxMedia {
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].modTime.Before(entries[j].modTime)
-		})
-		excess := len(entries) - c.opts.OriginalsCacheMaxMedia
-		for i := range excess {
-			_ = os.Remove(entries[i].path)
-		}
-	}
-	return nil
+	_ = os.Remove(flash)
+	return c.backing.Delete(ctx, p, key)
 }
 
 func readerFromFile(f *os.File, offset, length int64) (io.ReadCloser, error) {

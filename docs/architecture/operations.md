@@ -8,7 +8,7 @@ config directory, the user config directory, or `./config.toml`, in that order.
 path without replacing an existing file. The same example remains in
 `internal/config/config.example.toml` for source readers.
 
-Configuration covers flash, Docbank, NAS, storage mode, identity, HTTP,
+Configuration covers local state, Docbank, NAS artifacts, identity, HTTP,
 imports, thumbnails, broker, backup, observability, admins, AI, search, and UI
 feature flags. Defaults and the narrow documented environment overrides are
 applied before validation. Database-backed application overrides are merged

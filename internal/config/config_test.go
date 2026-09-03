@@ -24,9 +24,8 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	r.Equal(filepath.Join(canonicalCWD, "test-nas"), cfg.NAS.Root)
 	r.NotEmpty(cfg.Flash.Root) // defaulted
 	r.Equal(filepath.Join(cfg.Flash.Root, "docbank"), cfg.Docbank.Root)
-	r.Equal("flash_cache", cfg.Storage.Mode) // defaulted
-	r.True(cfg.Storage.ThumbsCacheEnabled)   // defaulted true when unset
-	r.Equal("stub", cfg.Identity.Mode)       // defaulted
+	r.True(cfg.Thumbs.CacheEnabled)    // defaulted true when unset
+	r.Equal("stub", cfg.Identity.Mode) // defaulted
 	r.Equal("127.0.0.1:8090", cfg.HTTP.ListenAddress)
 	r.Equal(30*time.Second, cfg.HTTP.RequestTimeout)
 	r.Equal(60*time.Second, cfg.HTTP.WriteTimeout)
@@ -111,20 +110,6 @@ func TestValidateDocbankRootOverlap(t *testing.T) {
 			flashRoot:   filepath.Join(tmp, "flash-parent"),
 		},
 		{
-			name:        "equals flash originals cache",
-			docbankRoot: filepath.Join(tmp, "flash-originals", "originals"),
-			nasRoot:     filepath.Join(tmp, "nas-flash-originals"),
-			flashRoot:   filepath.Join(tmp, "flash-originals"),
-			wantErr:     true,
-		},
-		{
-			name:        "beneath flash originals cache",
-			docbankRoot: filepath.Join(tmp, "flash-originals-child", "originals", "vault"),
-			nasRoot:     filepath.Join(tmp, "nas-flash-originals-child"),
-			flashRoot:   filepath.Join(tmp, "flash-originals-child"),
-			wantErr:     true,
-		},
-		{
 			name:        "beneath flash thumbs cache",
 			docbankRoot: filepath.Join(tmp, "flash-thumbs", "thumbs", "vault"),
 			nasRoot:     filepath.Join(tmp, "nas-flash-thumbs"),
@@ -174,12 +159,12 @@ func TestExplicitThumbsCacheFalseIsHonored(t *testing.T) {
 	require.NoError(t, os.WriteFile(p, []byte(`
 [nas]
 root = "/tmp/nas"
-[storage]
-thumbs_cache_enabled = false
+[thumbs]
+cache_enabled = false
 `), 0o600))
 	cfg, err := config.Load(p)
 	require.NoError(t, err)
-	require.False(t, cfg.Storage.ThumbsCacheEnabled)
+	require.False(t, cfg.Thumbs.CacheEnabled)
 }
 
 func TestExplicitTOMLValuesWinOverDefaults(t *testing.T) {
@@ -194,10 +179,6 @@ func TestExplicitTOMLValuesWinOverDefaults(t *testing.T) {
 root = %q
 [flash]
 root = %q
-[storage]
-mode = "nas_only"
-originals_cache_days = 7
-originals_cache_max_media = 10
 [identity]
 mode = "header"
 [http]
@@ -214,6 +195,7 @@ ignore_patterns = ["*.catalog.lock"]
 worker_concurrency = 1
 poll_interval = "1s"
 lease_timeout = "2m"
+cache_enabled = false
 [broker]
 mode = "exec"
 [broker.exec]
@@ -231,9 +213,6 @@ keep_daily = 14
 	r := require.New(t)
 	r.Equal(filepath.Join(canonicalTmp, "custom-nas"), cfg.NAS.Root)
 	r.Equal(filepath.Join(canonicalTmp, "custom-flash"), cfg.Flash.Root)
-	r.Equal("nas_only", cfg.Storage.Mode)
-	r.Equal(7, cfg.Storage.OriginalsCacheDays)
-	r.Equal(10, cfg.Storage.OriginalsCacheMaxMedia)
 	r.Equal("header", cfg.Identity.Mode)
 	r.Equal("127.0.0.1:9999", cfg.HTTP.ListenAddress)
 	r.Equal(15*time.Second, cfg.HTTP.RequestTimeout)
@@ -245,6 +224,7 @@ keep_daily = 14
 	r.Equal(1, cfg.Thumbs.WorkerConcurrency)
 	r.Equal(time.Second, cfg.Thumbs.PollInterval)
 	r.Equal(2*time.Minute, cfg.Thumbs.LeaseTimeout)
+	r.False(cfg.Thumbs.CacheEnabled)
 	r.Equal("exec", cfg.Broker.Mode)
 	r.Equal(backupDir, cfg.Backup.Dir)
 	r.Equal(8, cfg.Backup.Keep15Min)
@@ -409,19 +389,6 @@ func TestValidateRejectsUnknownIdentityMode(t *testing.T) {
 root = "/tmp/nas"
 [identity]
 mode = "bogus"
-`), 0o600))
-	_, err := config.Load(p)
-	require.ErrorIs(t, err, errs.ErrBadConfiguration)
-}
-
-func TestValidateRejectsUnknownStorageMode(t *testing.T) {
-	tmp := t.TempDir()
-	p := filepath.Join(tmp, "c.toml")
-	require.NoError(t, os.WriteFile(p, []byte(`
-[nas]
-root = "/tmp/nas"
-[storage]
-mode = "weird"
 `), 0o600))
 	_, err := config.Load(p)
 	require.ErrorIs(t, err, errs.ErrBadConfiguration)
