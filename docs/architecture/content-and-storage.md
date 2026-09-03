@@ -129,14 +129,13 @@ Thumbnail keys include the asset/media ID,
 thumbnail version, and requested size so regeneration never silently reuses an
 old source projection.
 
-For JPEG, PNG, GIF, and WebP originals, the thumbnail worker asks Docbank to
-produce or reuse the canonical preview for the recorded exact version. It
-validates that the preview belongs to the asset's primary file, verifies the
-complete preview stream, and derives Fotobank's UI sizes from those JPEG
-pixels. Unsupported and failed preview results become terminal thumbnail
-outcomes rather than falling back to decoding the authoritative original.
-Camera RAW originals remain on Fotobank's existing decode path until Docbank
-provides a canonical preview producer.
+For JPEG, PNG, GIF, WebP, and supported camera RAW originals, the thumbnail
+worker asks Docbank to produce or reuse the canonical preview for the recorded
+exact version. It validates that the preview belongs to the asset's primary
+file, verifies the complete preview stream, and derives Fotobank's UI sizes
+from those JPEG pixels. Unsupported and failed preview results become terminal
+thumbnail outcomes rather than falling back to decoding the authoritative
+original.
 
 ## Root isolation
 
