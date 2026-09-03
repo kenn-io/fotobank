@@ -22,6 +22,18 @@ The most important split is simple:
 - Generated metadata and search indexes are rebuildable. They never become the
   authority for a photo or video.
 
+## Use Fotobank
+
+- [Set up Fotobank](guides/setup.md) — create and validate a configuration.
+- [Import and recover](guides/import.md) — copy media into Docbank and finish
+  interrupted imports.
+- [Work with checkouts](guides/checkouts.md) — materialize ordinary writable
+  files and commit tracked edits.
+- [Back up and restore](guides/backup.md) — protect the current metadata
+  catalog and understand what is not yet covered.
+- [Automate Fotobank](guides/automation.md) — invoke commands predictably from
+  scripts and agents.
+
 ## Read by concern
 
 - [Content and storage](architecture/content-and-storage.md) — imports,

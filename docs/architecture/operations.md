@@ -4,7 +4,9 @@
 
 Fotobank loads TOML from an explicit `--config`, `FOTOBANK_CONFIG`, the XDG
 config directory, the user config directory, or `./config.toml`, in that order.
-The canonical example is `internal/config/config.example.toml`.
+`fotobank config init` writes the embedded canonical example to the selected
+path without replacing an existing file. The same example remains in
+`internal/config/config.example.toml` for source readers.
 
 Configuration covers flash, Docbank, NAS, storage mode, identity, HTTP,
 imports, thumbnails, broker, backup, observability, admins, AI, search, and UI

@@ -44,16 +44,24 @@ func DefaultConfigPath() string {
 // Returns scaffolded=true when a new file was written, false if the file
 // was already present.
 func EnsureDefault(path string) (bool, error) {
-	if _, err := os.Stat(path); err == nil {
-		return false, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return false, fmt.Errorf("stat %q: %w", path, err)
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return false, fmt.Errorf("mkdir %q: %w", filepath.Dir(path), err)
 	}
-	if err := os.WriteFile(path, exampleTOML, 0o600); err != nil {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("create %q: %w", path, err)
+	}
+	if _, err := file.Write(exampleTOML); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
 		return false, fmt.Errorf("write %q: %w", path, err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return false, fmt.Errorf("close %q: %w", path, err)
 	}
 	return true, nil
 }
