@@ -138,10 +138,9 @@ func (s *MediaService) ListFiles(
 	return out, nil
 }
 
-// OpenOriginal resolves the media row, enforces the owner check, and
-// returns the backing-store reader sliced by offset / length. offset and
-// length follow the storage.Store.ReadRange convention: length < 0 means
-// "to EOF". When the caller is not the owner or the row is hidden and
+// OpenOriginal resolves the media row, enforces the owner check, and opens its
+// recorded Docbank version at the requested offset and length. A negative
+// length means "to EOF". When the caller is not the owner or the row is hidden and
 // includeHidden is not true, returns (nil, media.Media{}, errs.ErrNotFound).
 // The variadic includeHidden keeps existing call sites compiling.
 // The caller owns the returned ReadCloser and must Close it.

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,26 +41,26 @@ admin_listen = "127.0.0.1:0"
 	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrSink)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	// Register cleanup immediately so any require.* failure before the
-	// explicit cancel() still triggers server shutdown. The server
-	// goroutine observes ctx.Done() and exits; on happy path we block
-	// on `done` below to assert the exit code.
-	t.Cleanup(cancel)
-
 	done := make(chan int, 1)
 	go func() {
 		var so, se bytes.Buffer
 		done <- cli.RunContext(ctx, []string{"server"}, &so, &se)
 	}()
-
-	var addr string
-	for range 100 {
-		if b, err := os.ReadFile(addrSink); err == nil && len(b) > 0 {
-			addr = strings.TrimSpace(string(b))
-			break
-		}
-		time.Sleep(30 * time.Millisecond)
+	var stopOnce sync.Once
+	stopServer := func() {
+		stopOnce.Do(func() {
+			cancel()
+			select {
+			case code := <-done:
+				r.Equal(0, code)
+			case <-time.After(10 * time.Second):
+				r.Fail("server did not shut down")
+			}
+		})
 	}
+	t.Cleanup(stopServer)
+
+	addr := waitForSink(t, addrSink)
 	r.NotEmpty(addr, "server did not publish bind address")
 
 	// Short per-request timeout so a stalled server can't hang the test
@@ -93,11 +93,5 @@ admin_listen = "127.0.0.1:0"
 	// t.Cleanup will also call cancel(), but a second cancel on an
 	// already-cancelled context is a no-op.
 	client.CloseIdleConnections()
-	cancel()
-	select {
-	case code := <-done:
-		r.Equal(0, code)
-	case <-time.After(5 * time.Second):
-		r.Fail("server did not shut down")
-	}
+	stopServer()
 }

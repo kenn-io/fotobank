@@ -12,11 +12,6 @@ root = "/mnt/nas/docbank"
 [nas]
 root = "/mnt/nas/fotobank-artifacts" # required
 
-# "nas_only" or "flash_cache" for generated artifacts (default)
-[storage]
-mode = "flash_cache"
-thumbs_cache_enabled = true          # thumbs cached on flash
-
 [identity]
 mode = "stub"                        # "stub" | "header"
 
@@ -68,6 +63,7 @@ settle_interval = "2s"               # size, mtime, and file identity must remai
 ignore_patterns = ["*.catalog.lock"] # optional path.Match patterns for untracked transient files
 
 [thumbs]
+cache_enabled = true                 # keep a local cache; NAS remains the artifact store
 worker_concurrency = 4               # goroutines generating thumbnails per server process
 poll_interval = "5s"                 # how often to scan for pending rows
 lease_timeout = "10m"                # working rows reclaimed after this

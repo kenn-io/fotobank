@@ -39,8 +39,6 @@ func writeGPSConfig(t *testing.T, tmp string) string {
 root = %q
 [flash]
 root = %q
-[storage]
-mode = "nas_only"
 [docbank]
 root = %q
 [identity]

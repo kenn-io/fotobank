@@ -70,7 +70,6 @@ type Config struct {
 	Flash         Flash         `toml:"flash"`
 	Docbank       Docbank       `toml:"docbank"`
 	NAS           NAS           `toml:"nas"`
-	Storage       Storage       `toml:"storage"`
 	Identity      Identity      `toml:"identity"`
 	HTTP          HTTP          `toml:"http"`
 	Imports       Imports       `toml:"imports"`
@@ -106,20 +105,10 @@ type Docbank struct {
 	Root string `toml:"root"`
 }
 
-const (
-	FlashOriginalsCacheDir = "originals"
-	FlashThumbsCacheDir    = "thumbs"
-)
+const FlashThumbsCacheDir = "thumbs"
 
 type NAS struct {
 	Root string `toml:"root"`
-}
-
-type Storage struct {
-	Mode                   string `toml:"mode"`
-	OriginalsCacheDays     int    `toml:"originals_cache_days"`
-	OriginalsCacheMaxMedia int    `toml:"originals_cache_max_media"`
-	ThumbsCacheEnabled     bool   `toml:"thumbs_cache_enabled"`
 }
 
 type Identity struct {
@@ -176,6 +165,7 @@ type Thumbs struct {
 	WorkerConcurrency int           `toml:"worker_concurrency"`
 	PollInterval      time.Duration `toml:"poll_interval"`
 	LeaseTimeout      time.Duration `toml:"lease_timeout"`
+	CacheEnabled      bool          `toml:"cache_enabled"`
 }
 
 type Broker struct {
@@ -244,12 +234,25 @@ func LoadUnchecked(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config %q: %w", path, err)
 	}
+	if err := rejectRemovedConfig(meta); err != nil {
+		return nil, err
+	}
 	applyDefaults(&cfg, meta)
 	applyEnvOverrides(&cfg)
 	if err := expandHomePaths(&cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func rejectRemovedConfig(meta toml.MetaData) error {
+	for _, key := range meta.Undecoded() {
+		if len(key) > 0 && key[0] == "storage" {
+			return fmt.Errorf("%w: [storage] was removed; configure local thumbnail caching with [thumbs].cache_enabled",
+				errs.ErrBadConfiguration)
+		}
+	}
+	return nil
 }
 
 // expandHomePaths rewrites filesystem-path config fields so a leading
@@ -366,16 +369,14 @@ func (c *Config) ValidateWithOptions(options ValidationOptions) error {
 	if pathContains(docbankRoot, flashRoot) {
 		return fmt.Errorf("%w: [docbank].root must not contain [flash].root", errs.ErrBadConfiguration)
 	}
-	for _, cacheDir := range []string{FlashOriginalsCacheDir, FlashThumbsCacheDir} {
-		cacheRoot, err := canonicalConfigPath(filepath.Join(flashRoot, cacheDir))
-		if err != nil {
-			return fmt.Errorf("%w: canonicalize [flash].root/%s: %v",
-				errs.ErrBadConfiguration, cacheDir, err)
-		}
-		if pathsOverlap(docbankRoot, cacheRoot) {
-			return fmt.Errorf("%w: [docbank].root must not overlap [flash].root/%s",
-				errs.ErrBadConfiguration, cacheDir)
-		}
+	cacheRoot, err := canonicalConfigPath(filepath.Join(flashRoot, FlashThumbsCacheDir))
+	if err != nil {
+		return fmt.Errorf("%w: canonicalize [flash].root/%s: %v",
+			errs.ErrBadConfiguration, FlashThumbsCacheDir, err)
+	}
+	if pathsOverlap(docbankRoot, cacheRoot) {
+		return fmt.Errorf("%w: [docbank].root must not overlap [flash].root/%s",
+			errs.ErrBadConfiguration, FlashThumbsCacheDir)
 	}
 	switch c.Identity.Mode {
 	case "stub":
@@ -387,12 +388,6 @@ func (c *Config) ValidateWithOptions(options ValidationOptions) error {
 	default:
 		return fmt.Errorf("%w: [identity].mode=%q (must be stub|header)",
 			errs.ErrBadConfiguration, c.Identity.Mode)
-	}
-	switch c.Storage.Mode {
-	case "nas_only", "flash_cache":
-	default:
-		return fmt.Errorf("%w: [storage].mode=%q (must be nas_only|flash_cache)",
-			errs.ErrBadConfiguration, c.Storage.Mode)
 	}
 	if c.Checkouts.ScanInterval <= 0 {
 		return fmt.Errorf("%w: [checkouts].scan_interval must be positive",
@@ -424,7 +419,7 @@ func (c *Config) ValidateWithOptions(options ValidationOptions) error {
 		}
 		// call_timeout: 0 is the documented "use the default" sentinel
 		// and follows fotobank's convention for zero-valued numeric
-		// config (see originals_cache_days, worker_concurrency, etc.).
+		// config (see worker_concurrency and similar numeric settings).
 		// applyDefaults rewrites 0 to 30s before this arm runs, so a 0
 		// the user typed and a missing key are indistinguishable here
 		// and both produce a 30s effective timeout — there is no way
@@ -662,20 +657,11 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	if c.Docbank.Root == "" {
 		c.Docbank.Root = filepath.Join(c.Flash.Root, "docbank")
 	}
-	if c.Storage.Mode == "" {
-		c.Storage.Mode = "flash_cache"
-	}
-	if c.Storage.OriginalsCacheDays == 0 {
-		c.Storage.OriginalsCacheDays = 30
-	}
-	if c.Storage.OriginalsCacheMaxMedia == 0 {
-		c.Storage.OriginalsCacheMaxMedia = 100_000
-	}
-	// Only default ThumbsCacheEnabled to true when it was not explicitly
+	// Only default CacheEnabled to true when it was not explicitly
 	// set in the TOML; otherwise we would silently override a user's
-	// explicit `thumbs_cache_enabled = false`.
-	if !meta.IsDefined("storage", "thumbs_cache_enabled") {
-		c.Storage.ThumbsCacheEnabled = true
+	// explicit `cache_enabled = false`.
+	if !meta.IsDefined("thumbs", "cache_enabled") {
+		c.Thumbs.CacheEnabled = true
 	}
 	if c.Identity.Mode == "" {
 		c.Identity.Mode = "stub"

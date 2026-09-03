@@ -35,20 +35,18 @@ root = %q
 }
 
 func TestValidateDocbankRootFlashCacheSymlinkOverlap(t *testing.T) {
-	for _, cacheDir := range []string{"originals", "thumbs"} {
-		t.Run(cacheDir, func(t *testing.T) {
-			require := require.New(t)
-			tmp := t.TempDir()
-			vaultRoot := filepath.Join(tmp, "vault")
-			flashRoot := filepath.Join(tmp, "flash")
-			require.NoError(os.Mkdir(vaultRoot, 0o700))
-			require.NoError(os.Mkdir(flashRoot, 0o700))
-			if err := os.Symlink(vaultRoot, filepath.Join(flashRoot, cacheDir)); err != nil {
-				t.Skipf("symlinks unavailable: %v", err)
-			}
+	require := require.New(t)
+	tmp := t.TempDir()
+	vaultRoot := filepath.Join(tmp, "vault")
+	flashRoot := filepath.Join(tmp, "flash")
+	require.NoError(os.Mkdir(vaultRoot, 0o700))
+	require.NoError(os.Mkdir(flashRoot, 0o700))
+	if err := os.Symlink(vaultRoot, filepath.Join(flashRoot, "thumbs")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
 
-			p := filepath.Join(tmp, "config.toml")
-			require.NoError(os.WriteFile(p, []byte(fmt.Sprintf(`
+	p := filepath.Join(tmp, "config.toml")
+	require.NoError(os.WriteFile(p, []byte(fmt.Sprintf(`
 [flash]
 root = %q
 [nas]
@@ -57,10 +55,8 @@ root = %q
 root = %q
 `, flashRoot, filepath.Join(tmp, "nas"), vaultRoot)), 0o600))
 
-			_, err := config.Load(p)
-			require.ErrorIs(err, errs.ErrBadConfiguration)
-		})
-	}
+	_, err := config.Load(p)
+	require.ErrorIs(err, errs.ErrBadConfiguration)
 }
 
 func TestValidateRejectsFlashRootInsideDocbankWithExternalCacheSymlinks(t *testing.T) {
@@ -70,12 +66,10 @@ func TestValidateRejectsFlashRootInsideDocbankWithExternalCacheSymlinks(t *testi
 	flashRoot := filepath.Join(docbankRoot, "flash")
 	externalCacheRoot := filepath.Join(tmp, "external-cache")
 	require.NoError(os.MkdirAll(flashRoot, 0o700))
-	for _, cacheDir := range []string{"originals", "thumbs"} {
-		target := filepath.Join(externalCacheRoot, cacheDir)
-		require.NoError(os.MkdirAll(target, 0o700))
-		if err := os.Symlink(target, filepath.Join(flashRoot, cacheDir)); err != nil {
-			t.Skipf("symlinks unavailable: %v", err)
-		}
+	target := filepath.Join(externalCacheRoot, "thumbs")
+	require.NoError(os.MkdirAll(target, 0o700))
+	if err := os.Symlink(target, filepath.Join(flashRoot, "thumbs")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
 	}
 
 	p := filepath.Join(tmp, "config.toml")
@@ -146,7 +140,7 @@ func TestValidateDocbankRootSymlinkParentOverlap(t *testing.T) {
 	require := require.New(t)
 	tmp := t.TempDir()
 	flashRoot := filepath.Join(tmp, "flash")
-	cacheChild := filepath.Join(flashRoot, "originals", "child")
+	cacheChild := filepath.Join(flashRoot, "thumbs", "child")
 	require.NoError(os.MkdirAll(cacheChild, 0o700))
 	aliasesRoot := filepath.Join(tmp, "aliases")
 	require.NoError(os.Mkdir(aliasesRoot, 0o700))

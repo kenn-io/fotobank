@@ -68,11 +68,6 @@ import (
 // requests to drain before the server forcibly closes connections.
 const shutdownTimeout = 30 * time.Second
 
-// flashEvictInterval is how often the background janitor runs after the
-// initial startup eviction. One eviction a day keeps the flash footprint
-// bounded without thrashing the NAS on every request.
-const flashEvictInterval = 24 * time.Hour
-
 // embedActivatorTickDefault is how often the activator re-evaluates the
 // promote-from-building condition. One minute is short enough that a
 // freshly completed embed batch can trigger promotion within seconds of
@@ -243,7 +238,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	if err != nil {
 		return err
 	}
-	storeLayer, flashCache := buildStorageLayer(cfg, keys)
+	storeLayer := buildStorageLayer(cfg, keys)
 
 	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	contentResolver := contentresolver.New(mediaRepo, contentStore)
@@ -714,18 +709,6 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	// would race against d.Close, surfacing as "sql: database is closed"
 	// log spam or WAL corruption.
 	var bgWG sync.WaitGroup
-
-	// Run one eviction synchronously before Serve so a freshly booted
-	// server with a stale flash cache doesn't wait a full interval for
-	// cleanup, and so a fatal bug in Evict is visible at boot.
-	if flashCache != nil {
-		if err := flashCache.Evict(sigCtx); err != nil {
-			fmt.Fprintln(opts.stderr, "initial flash eviction failed:", err)
-		}
-		bgWG.Go(func() {
-			runFlashJanitor(sigCtx, flashCache, opts.stderr)
-		})
-	}
 
 	// Hidden session sweeper: expires old sessions and purges stale
 	// failure-log rows every 5 minutes. The interval is overridable via
@@ -1250,44 +1233,15 @@ func loadStorageKeys(ctx context.Context, ownerSvc *service.OwnerService) (map[o
 	return keys, nil
 }
 
-// buildStorageLayer assembles the Store implementation dictated by
-// cfg.Storage.Mode. When mode is "flash_cache" the returned *FlashCache
-// is non-nil so the caller can drive its daily janitor; otherwise it's
-// nil and the NAS-only Store is returned. cfg.Validate already rejects
-// unknown modes, so the default branch here is defensive.
-func buildStorageLayer(cfg *config.Config, keys map[owners.Principal]string) (storage.Store, *storage.FlashCache) {
+// buildStorageLayer constructs the rebuildable artifact store. NAS holds the
+// durable artifact copy; the optional local tier caches thumbnail keys only.
+func buildStorageLayer(cfg *config.Config, keys map[owners.Principal]string) storage.Store {
 	nasStore := storage.NewNASOnly(cfg.NAS.Root, keys)
-	if cfg.Storage.Mode != "flash_cache" {
-		return nasStore, nil
+	if !cfg.Thumbs.CacheEnabled {
+		return nasStore
 	}
-	cacheRoot := filepath.Join(cfg.Flash.Root, config.FlashOriginalsCacheDir)
-	fc := storage.NewFlashCache(nasStore, cacheRoot, keys, storage.FlashCacheOptions{
-		OriginalsCacheDays:     cfg.Storage.OriginalsCacheDays,
-		OriginalsCacheMaxMedia: cfg.Storage.OriginalsCacheMaxMedia,
-	})
-	if cfg.Storage.ThumbsCacheEnabled {
-		thumbsCacheRoot := filepath.Join(cfg.Flash.Root, config.FlashThumbsCacheDir)
-		fc.EnableThumbs(thumbsCacheRoot)
-	}
-	return fc, fc
-}
-
-// runFlashJanitor drives FlashCache.Evict on a fixed interval until
-// ctx is cancelled. Eviction errors are logged to stderr rather than
-// fatal — a transient filesystem hiccup should not crash the server.
-func runFlashJanitor(ctx context.Context, fc *storage.FlashCache, stderr io.Writer) {
-	ticker := time.NewTicker(flashEvictInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := fc.Evict(ctx); err != nil {
-				fmt.Fprintln(stderr, "flash eviction failed:", err)
-			}
-		}
-	}
+	thumbsCacheRoot := filepath.Join(cfg.Flash.Root, config.FlashThumbsCacheDir)
+	return storage.NewThumbCache(nasStore, thumbsCacheRoot, keys)
 }
 
 // runHiddenSweeper calls Sweep on the hidden service every interval

@@ -1,8 +1,6 @@
-// Package storage persists media bytes under per-owner prefixes across
-// one or more backing tiers (flash, NAS). Implementations are safe for
-// concurrent use by multiple goroutines within a single process; the
-// import pipeline additionally serialises multiprocess access via a
-// file lock (see internal/ingest).
+// Package storage persists rebuildable Fotobank artifacts under per-owner
+// prefixes. Authoritative original content belongs to Docbank and does not
+// pass through this package.
 package storage
 
 import (
@@ -32,16 +30,12 @@ type StoreInfo struct {
 	Tier    Tier
 }
 
-// ErrPathOccupied indicates that the no-clobber finalize step saw an
-// existing file at the final path. Callers decide whether to retry
-// with a bumped sequence number (photo path) or adopt the orphan
-// (content-addressed video path).
+// ErrPathOccupied indicates that the no-clobber finalize step found an
+// existing artifact at the requested key.
 var ErrPathOccupied = errors.New("storage: path already occupied")
 
-// Store persists media bytes. Implementations must be safe for
-// concurrent use by multiple goroutines within a single process; the
-// import pipeline additionally serialises multiprocess access via a
-// file lock (see internal/ingest).
+// Store persists rebuildable artifacts. Implementations must be safe for
+// concurrent use by multiple goroutines within a single process.
 type Store interface {
 	Stat(ctx context.Context, owner owners.Principal, key string) (StoreInfo, error)
 	ReadRange(ctx context.Context, owner owners.Principal, key string, offset, length int64) (io.ReadCloser, error)

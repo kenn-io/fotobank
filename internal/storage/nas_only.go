@@ -14,9 +14,9 @@ import (
 	"go.kenn.io/fotobank/internal/owners"
 )
 
-// NASOnly is a Store backed by a single local filesystem root. Writes
-// use a no-clobber finalize (tmp file + os.Link) so concurrent workers
-// cannot silently overwrite each other's bytes.
+// NASOnly is an artifact Store backed by a single filesystem root. Writes use
+// a no-clobber finalize (tmp file + os.Link) so concurrent workers cannot
+// silently overwrite each other's bytes.
 type NASOnly struct {
 	root        string
 	storageKeys map[owners.Principal]string

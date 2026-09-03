@@ -48,7 +48,7 @@ internal/
 ├── owners/                — owner principal type
 ├── service/               — auth-scoped wrappers over repos
 ├── share/                 — sharing scopes domain
-├── storage/               — NAS + flash cache
+├── storage/               — rebuildable artifacts + local thumbnail cache
 ├── testutil/              — shared test helpers
 ├── thumb/                 — thumbnail queue and worker
 └── version/               — build-metadata globals set from ldflags
