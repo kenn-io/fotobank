@@ -18,6 +18,15 @@ All configured roots are canonical absolute paths after load. Invalid enum
 values, unsafe overlaps, incomplete identity boundaries, non-loopback admin
 listeners, and impossible retention settings fail before server startup.
 
+`fotobank config diagnose` is the read-only operational check. It reports the
+effective file, environment, and default configuration together with the
+availability of SQLite, the Docbank catalog and blob directory, NAS artifacts,
+checkout boundary configuration, identity mode, and the backup destination. It
+never initializes or migrates SQLite, opens Docbank through its mutating vault
+lifecycle, creates directories, or tests storage by writing a file. A healthy
+result therefore establishes readable structure and valid boundaries, not a
+full database integrity check or proof that the service account can write.
+
 ## Startup and shutdown
 
 `fotobank serve` opens the SQLite database and migrations, registers the owner,

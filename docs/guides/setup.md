@@ -55,6 +55,17 @@ Validation resolves storage paths and rejects overlapping authority, artifact,
 and cache roots. It does not make an unavailable external mount safe: the
 server reports an absent NAS through readiness, and commands that need it fail.
 
+For a read-only check of the complete local setup, run:
+
+```sh
+fotobank config diagnose
+```
+
+The diagnostic reports configuration, SQLite, Docbank, NAS artifacts,
+checkout boundaries, identity, and backups separately. It names the setting
+and corrective action for each failure. It does not create a database, vault,
+storage root, or backup directory, and it never writes a probe file.
+
 Start the application after validation:
 
 ```sh
