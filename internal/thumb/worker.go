@@ -25,6 +25,10 @@ import (
 // of PollInterval so a stuck decode can't delay sweep.
 const defaultSweepInterval = time.Minute
 
+// ErrNoPreview indicates that Docbank cannot produce a canonical preview for
+// the source. The worker records a terminal no_preview result without retrying.
+var ErrNoPreview = errors.New("thumb: no preview available")
+
 // Config tunes the Worker's scheduling knobs. Zero values are treated as
 // "use a conservative default" so callers can leave unused fields blank.
 // Defaults match the production values in the thumbnail plan.
@@ -309,31 +313,14 @@ func (w *Worker) logClaimFinalize(op, id string, err error) {
 	w.cfg.Logger.Error("thumb: "+op, "id", id, "err", err)
 }
 
-// decodeSource uses Docbank's canonical preview for supported originals. RAW
-// files still use their embedded JPEG until Docbank gains a canonical producer.
+// decodeSource uses Docbank's canonical preview for supported originals.
 func (w *Worker) decodeSource(ctx context.Context, m media.Media) (image.Image, error) {
 	if w.cfg.Content == nil {
 		return nil, fmt.Errorf("read source: content adapter is not configured")
 	}
 	if m.MimeType == "image/jpeg" || m.MimeType == "image/png" ||
-		m.MimeType == "image/gif" || m.MimeType == "image/webp" {
+		m.MimeType == "image/gif" || m.MimeType == "image/webp" || isRAWMime(m.MimeType) {
 		return w.decodeCanonicalPreview(ctx, m)
-	}
-	opened, err := w.cfg.Content.OpenCurrent(ctx, m.ID, "", 0, -1)
-	if err != nil {
-		return nil, fmt.Errorf("read source: %w", err)
-	}
-	rc := opened.Reader
-	defer func() { _ = rc.Close() }()
-	if isRAWMime(m.MimeType) {
-		image, err := ExtractPreview(rc)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := io.Copy(io.Discard, rc); err != nil {
-			return nil, fmt.Errorf("drain source: %w", err)
-		}
-		return image, nil
 	}
 	return nil, fmt.Errorf("thumb: unsupported mime %q", m.MimeType)
 }
@@ -408,9 +395,8 @@ func skipFormat(m media.Media) bool {
 	return false
 }
 
-// isRAWMime reports whether mime identifies a camera RAW format whose
-// display preview must be extracted from an embedded JPEG rather than
-// decoded directly.
+// isRAWMime reports whether Docbank can produce a canonical preview for the
+// camera RAW format.
 func isRAWMime(mime string) bool {
 	switch mime {
 	case "image/x-sony-arw",

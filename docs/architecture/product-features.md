@@ -34,11 +34,12 @@ the media ID, thumbnail version, and lease time. Completion succeeds only if
 the claim is still current; abandoned claims return to the queue after the
 lease timeout.
 
-The worker reads the asset's exact Docbank version, extracts an embedded preview for supported RAW
-formats or decodes ordinary images with orientation, resizes to the fixed
-sizes, and writes versioned JPEG artifacts. Videos and formats without a
-supported decoder become `no_preview`. A regenerated thumbnail invalidates
-embeddings built from the previous preview version.
+The worker asks Docbank for the asset's canonical exact-version preview,
+resizes those verified JPEG pixels to the fixed sizes, and writes versioned
+JPEG artifacts. Docbank owns ordinary-image decoding, orientation, and
+embedded-preview extraction for supported camera RAW formats. Videos and
+formats without a supported producer become `no_preview`. A regenerated
+thumbnail invalidates embeddings built from the previous preview version.
 
 Thumbnail files are disposable. The database records whether a version is
 pending, working, ready, failed, or has no preview. Serving checks both status
