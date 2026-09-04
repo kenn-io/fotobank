@@ -199,3 +199,33 @@ root = %q
 	r.NotContains(out.String(), "backups              ready")
 	r.Contains(eout.String(), "configuration diagnostics failed")
 }
+
+func TestConfigDiagnoseRejectsBackupBelowDanglingSymlink(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	backupAlias := filepath.Join(tmp, "backup-link")
+	if err := os.Symlink(filepath.Join(tmp, "missing-backup-target"), backupAlias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	backupDir := filepath.Join(backupAlias, "snapshots")
+	cfgPath := filepath.Join(tmp, "config.toml")
+	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
+[flash]
+root = %q
+[docbank]
+root = %q
+[nas]
+root = %q
+[backup]
+dir = %q
+`, filepath.Join(tmp, "flash"), filepath.Join(tmp, "docbank"),
+		filepath.Join(tmp, "nas"), backupDir), 0o600))
+	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
+
+	var out, eout bytes.Buffer
+	r.Equal(1, cli.Run([]string{"config", "diagnose", "--config", cfgPath}, &out, &eout))
+	r.Contains(out.String(), "backups              error")
+	r.Contains(out.String(), backupAlias)
+	r.NotContains(out.String(), "backups              ready")
+	r.Contains(eout.String(), "configuration diagnostics failed")
+}

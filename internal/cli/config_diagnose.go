@@ -222,23 +222,24 @@ func inspectDirectory(path string) (retErr error) {
 }
 
 func inspectBackupDestination(path string) (string, string, error) {
-	info, err := os.Stat(path)
-	if err == nil {
-		if !info.IsDir() {
-			return "", "", errors.New("destination is not a directory")
-		}
-		return "ok", path + " is available", nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return "", "", err
-	}
-
-	ancestor := filepath.Dir(path)
+	ancestor := path
 	for {
-		info, err = os.Stat(ancestor)
+		info, err := os.Lstat(ancestor)
 		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				info, err = os.Stat(ancestor)
+				if err != nil {
+					return "", "", fmt.Errorf("resolve %s: %w", ancestor, err)
+				}
+			}
 			if !info.IsDir() {
+				if ancestor == path {
+					return "", "", errors.New("destination is not a directory")
+				}
 				return "", "", fmt.Errorf("existing parent %s is not a directory", ancestor)
+			}
+			if ancestor == path {
+				return "ok", path + " is available", nil
 			}
 			return "ready", fmt.Sprintf("%s will be created beneath %s", path, ancestor), nil
 		}
