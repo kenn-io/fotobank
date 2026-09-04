@@ -82,6 +82,33 @@ type Config struct {
 	AI            ai.Config     `toml:"ai"`
 	Search        search.Config `toml:"search"`
 	UI            UI            `toml:"ui"`
+
+	configuredFlashRoot string
+	configuredNASRoot   string
+}
+
+// ConfiguredFlashRoot returns the expanded absolute path supplied by
+// configuration, before validation resolves filesystem aliases.
+func (c *Config) ConfiguredFlashRoot() string {
+	if c != nil && c.configuredFlashRoot != "" {
+		return c.configuredFlashRoot
+	}
+	if c == nil {
+		return ""
+	}
+	return c.Flash.Root
+}
+
+// ConfiguredNASRoot returns the expanded absolute path supplied by
+// configuration, before validation resolves filesystem aliases.
+func (c *Config) ConfiguredNASRoot() string {
+	if c != nil && c.configuredNASRoot != "" {
+		return c.configuredNASRoot
+	}
+	if c == nil {
+		return ""
+	}
+	return c.NAS.Root
 }
 
 type Admin struct {
@@ -245,7 +272,26 @@ func LoadUnchecked(path string) (*Config, error) {
 	if err := expandHomePaths(&cfg); err != nil {
 		return nil, err
 	}
+	cfg.configuredFlashRoot, err = absoluteConfiguredPath(cfg.Flash.Root)
+	if err != nil {
+		return nil, fmt.Errorf("make configured flash root absolute: %w", err)
+	}
+	cfg.configuredNASRoot, err = absoluteConfiguredPath(cfg.NAS.Root)
+	if err != nil {
+		return nil, fmt.Errorf("make configured NAS root absolute: %w", err)
+	}
 	return &cfg, nil
+}
+
+func absoluteConfiguredPath(value string) (string, error) {
+	if value == "" || filepath.IsAbs(value) {
+		return value, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return cwd + string(os.PathSeparator) + value, nil
 }
 
 func rejectRemovedConfig(meta toml.MetaData) error {

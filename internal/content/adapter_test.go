@@ -2,11 +2,13 @@ package content_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +16,300 @@ import (
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/errs"
 )
+
+func TestAdapterBackupRoundTrip(t *testing.T) {
+	r := require.New(t)
+	adapter, err := content.Open(t.Context(), content.Config{Root: filepath.Join(t.TempDir(), "live")})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+
+	body := []byte("recoverable photo bytes\n")
+	receipt, err := adapter.Create(t.Context(), content.CreateRequest{
+		VirtualPath: "/owners/owner/media/file/photo.jpg",
+		Reader:      bytes.NewReader(body),
+		Expected:    identityFor(body),
+		MediaType:   "image/jpeg",
+	})
+	r.NoError(err)
+
+	repositoryRoot := filepath.Join(t.TempDir(), "repository")
+	repository, err := content.InitBackupRepository(repositoryRoot)
+	r.NoError(err)
+	r.NotEmpty(repository.ID())
+	canonicalRepositoryRoot, err := filepath.EvalSymlinks(repositoryRoot)
+	r.NoError(err)
+	r.Equal(canonicalRepositoryRoot, repository.Root())
+	catalogSnapshot := filepath.Join(t.TempDir(), "catalog.sqlite")
+	snapshot, err := adapter.CreateBackup(t.Context(), repository, content.BackupOptions{
+		Tag: "fotobank-test",
+		Prepare: func(context.Context) error {
+			return os.WriteFile(catalogSnapshot, []byte("catalog snapshot\n"), 0o600)
+		},
+		ExtraFiles: []content.BackupExtraFile{{
+			Path: catalogSnapshot, RecordAs: "application/catalog.sqlite",
+		}},
+	})
+	r.NoError(err)
+	r.NotEmpty(snapshot.ID)
+	r.Equal("fotobank-test", snapshot.Tag)
+
+	snapshots, err := repository.Snapshots()
+	r.NoError(err)
+	r.Len(snapshots, 1)
+	r.Equal(snapshot.ID, snapshots[0].ID)
+	reopened, err := content.OpenBackupRepository(repositoryRoot)
+	r.NoError(err)
+	r.Equal(repository.ID(), reopened.ID())
+	verified, err := reopened.Verify(t.Context(), content.BackupVerifyOptions{SnapshotID: snapshot.ID})
+	r.NoError(err)
+	r.Equal([]string{snapshot.ID}, verified.Snapshots)
+	r.Empty(verified.Problems)
+
+	restoredRoot := filepath.Join(t.TempDir(), "restored")
+	restored, err := adapter.RestoreBackup(t.Context(), reopened, content.BackupRestoreOptions{
+		SnapshotID: snapshot.ID,
+		Target:     restoredRoot,
+	})
+	r.NoError(err)
+	r.Equal(snapshot.ID, restored.SnapshotID)
+	r.Equal(1, restored.ExtraFiles)
+	r.True(restored.ContentVerified)
+	r.True(restored.SQLiteIntegrityVerified)
+	restoredCatalog, err := os.ReadFile(filepath.Join(restoredRoot, "application", "catalog.sqlite"))
+	r.NoError(err)
+	r.Equal("catalog snapshot\n", string(restoredCatalog))
+
+	restoredAdapter, err := content.Open(t.Context(), content.Config{Root: restoredRoot})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(restoredAdapter.Close()) })
+	opened, err := restoredAdapter.OpenVersion(t.Context(), receipt.Version.ID)
+	r.NoError(err)
+	got, err := io.ReadAll(opened.Reader)
+	r.NoError(err)
+	r.NoError(opened.Reader.Verify())
+	r.NoError(opened.Reader.Close())
+	r.Equal(body, got)
+}
+
+func TestAdapterBackupPreservesSensitiveHostFilePolicy(t *testing.T) {
+	r := require.New(t)
+	adapter, err := content.Open(t.Context(), content.Config{Root: filepath.Join(t.TempDir(), "live")})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+	body := []byte("recoverable photo bytes\n")
+	_, err = adapter.Create(t.Context(), content.CreateRequest{
+		VirtualPath: "/owners/owner/media/file/photo.jpg",
+		Reader:      bytes.NewReader(body),
+		Expected:    identityFor(body),
+		MediaType:   "image/jpeg",
+	})
+	r.NoError(err)
+	repository, err := content.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
+	r.NoError(err)
+	secretPath := filepath.Join(t.TempDir(), "credentials.json")
+	r.NoError(os.WriteFile(secretPath, []byte("synthetic secret\n"), 0o600))
+	extraFiles := []content.BackupExtraFile{{
+		Path: secretPath, RecordAs: "application/credentials.json", Sensitive: true,
+	}}
+
+	_, err = adapter.CreateBackup(t.Context(), repository, content.BackupOptions{
+		ExtraFiles: extraFiles,
+	})
+	r.ErrorContains(err, "requires an encrypted repository")
+	snapshots, err := repository.Snapshots()
+	r.NoError(err)
+	r.Empty(snapshots)
+
+	_, err = adapter.CreateBackup(t.Context(), repository, content.BackupOptions{
+		AllowPlaintextSecrets: true,
+		ExtraFiles:            extraFiles,
+	})
+	r.NoError(err)
+}
+
+func TestAdapterBackupBlocksContentWritesOnlyDuringHostPreparation(t *testing.T) {
+	r := require.New(t)
+	adapter, err := content.Open(t.Context(), content.Config{Root: filepath.Join(t.TempDir(), "live")})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+	before := []byte("before\n")
+	_, err = adapter.Create(t.Context(), content.CreateRequest{
+		VirtualPath: "/owners/owner/media/file/before.jpg",
+		Reader:      bytes.NewReader(before),
+		Expected:    identityFor(before),
+		MediaType:   "image/jpeg",
+	})
+	r.NoError(err)
+	repository, err := content.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
+	r.NoError(err)
+
+	prepareEntered := make(chan struct{})
+	allowPrepare := make(chan struct{})
+	prepareReturned := make(chan struct{})
+	capturing := make(chan struct{})
+	resume := make(chan struct{})
+	var captureOnce sync.Once
+	backupDone := make(chan error, 1)
+	go func() {
+		_, backupErr := adapter.CreateBackup(t.Context(), repository, content.BackupOptions{
+			Prepare: func(context.Context) error {
+				close(prepareEntered)
+				<-allowPrepare
+				close(prepareReturned)
+				return nil
+			},
+			Progress: func(content.BackupProgress) {
+				select {
+				case <-prepareReturned:
+					captureOnce.Do(func() { close(capturing) })
+					<-resume
+				default:
+				}
+			},
+		})
+		backupDone <- backupErr
+	}()
+	select {
+	case <-prepareEntered:
+	case <-time.After(5 * time.Second):
+		r.FailNow("backup did not enter coordinated preparation")
+	}
+
+	after := []byte("after\n")
+	writeDone := make(chan error, 1)
+	go func() {
+		_, createErr := adapter.Create(t.Context(), content.CreateRequest{
+			VirtualPath: "/owners/owner/media/file/after.jpg",
+			Reader:      bytes.NewReader(after),
+			Expected:    identityFor(after),
+			MediaType:   "image/jpeg",
+		})
+		writeDone <- createErr
+	}()
+	select {
+	case err := <-writeDone:
+		close(allowPrepare)
+		close(resume)
+		r.NoError(err)
+		r.FailNow("content write completed while coordinated preparation was running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(allowPrepare)
+	select {
+	case <-capturing:
+	case <-time.After(5 * time.Second):
+		close(resume)
+		r.FailNow("backup did not continue after host preparation")
+	}
+	select {
+	case err := <-writeDone:
+		r.NoError(err)
+	case <-time.After(5 * time.Second):
+		close(resume)
+		r.FailNow("content write remained blocked after Docbank pinned the backup")
+	}
+	close(resume)
+	r.NoError(<-backupDone)
+}
+
+func TestAdapterBackupRestoreRejectsManagedStorage(t *testing.T) {
+	r := require.New(t)
+	managedRoot := t.TempDir()
+	adapter, err := content.Open(t.Context(), content.Config{
+		Root:         filepath.Join(t.TempDir(), "live"),
+		ManagedRoots: []content.ManagedRoot{{Path: managedRoot}},
+	})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+	body := []byte("protected photo bytes\n")
+	_, err = adapter.Create(t.Context(), content.CreateRequest{
+		VirtualPath: "/owners/owner/media/file/photo.jpg",
+		Reader:      bytes.NewReader(body),
+		Expected:    identityFor(body),
+		MediaType:   "image/jpeg",
+	})
+	r.NoError(err)
+	repository, err := content.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
+	r.NoError(err)
+	snapshot, err := adapter.CreateBackup(t.Context(), repository, content.BackupOptions{})
+	r.NoError(err)
+
+	target := filepath.Join(managedRoot, "restore")
+	_, err = adapter.RestoreBackup(t.Context(), repository, content.BackupRestoreOptions{
+		SnapshotID: snapshot.ID,
+		Target:     target,
+		Overwrite:  true,
+	})
+	r.ErrorIs(err, errs.ErrBadConfiguration)
+	r.NoDirExists(target)
+}
+
+func TestAdapterBackupRestoreRejectsRetargetedManagedStorage(t *testing.T) {
+	r := require.New(t)
+	originalTarget := t.TempDir()
+	currentTarget := t.TempDir()
+	managedRoot := filepath.Join(t.TempDir(), "managed")
+	if err := os.Symlink(originalTarget, managedRoot); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	adapter, err := content.Open(t.Context(), content.Config{
+		Root:         filepath.Join(t.TempDir(), "live"),
+		ManagedRoots: []content.ManagedRoot{{Path: managedRoot}},
+	})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+	body := []byte("protected photo bytes\n")
+	_, err = adapter.Create(t.Context(), content.CreateRequest{
+		VirtualPath: "/owners/owner/media/file/photo.jpg",
+		Reader:      bytes.NewReader(body),
+		Expected:    identityFor(body),
+		MediaType:   "image/jpeg",
+	})
+	r.NoError(err)
+	repository, err := content.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
+	r.NoError(err)
+	snapshot, err := adapter.CreateBackup(t.Context(), repository, content.BackupOptions{})
+	r.NoError(err)
+
+	r.NoError(os.Remove(managedRoot))
+	r.NoError(os.Symlink(currentTarget, managedRoot))
+	target := filepath.Join(managedRoot, "restore")
+	_, err = adapter.RestoreBackup(t.Context(), repository, content.BackupRestoreOptions{
+		SnapshotID: snapshot.ID,
+		Target:     target,
+		Overwrite:  true,
+	})
+	r.ErrorIs(err, errs.ErrBadConfiguration)
+	r.NoDirExists(filepath.Join(currentTarget, "restore"))
+}
+
+func TestAdapterRetargetedManagedStorageRemainsExternalBoundary(t *testing.T) {
+	r := require.New(t)
+	originalTarget := t.TempDir()
+	currentTarget := t.TempDir()
+	managedRoot := filepath.Join(t.TempDir(), "managed")
+	if err := os.Symlink(originalTarget, managedRoot); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	adapter, err := content.Open(t.Context(), content.Config{
+		Root:         filepath.Join(t.TempDir(), "live"),
+		ManagedRoots: []content.ManagedRoot{{Path: managedRoot}},
+	})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+
+	r.NoError(os.Remove(managedRoot))
+	r.NoError(os.Symlink(currentTarget, managedRoot))
+	_, err = adapter.ResolveImportRoot(currentTarget)
+	r.ErrorIs(err, errs.ErrBadConfiguration)
+	checkoutPath := filepath.Join(currentTarget, "checkout")
+	r.NoError(os.Mkdir(checkoutPath, 0o700))
+	checkoutRoot, err := adapter.ResolveCheckoutRoot(checkoutPath)
+	if checkoutRoot != nil {
+		t.Cleanup(func() { r.NoError(checkoutRoot.Close()) })
+	}
+	r.ErrorIs(err, errs.ErrBadConfiguration)
+}
 
 func TestAdapterLifecycle(t *testing.T) {
 	require := require.New(t)

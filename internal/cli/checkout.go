@@ -233,13 +233,7 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 		runtime.service = service.NewCheckoutService(checkoutRepo, nil, nil, "", nil)
 		return runtime, nil
 	}
-	contentStore, err := content.Open(ctx, content.Config{
-		Root: cfg.Docbank.Root,
-		ManagedRoots: []content.ManagedRoot{
-			{Path: cfg.NAS.Root},
-			{Path: cfg.Flash.Root, CreateIfMissing: true},
-		},
-	})
+	contentStore, err := content.Open(ctx, contentAdapterConfig(cfg, false))
 	if err != nil {
 		runtime.close()
 		return nil, fmt.Errorf("open Docbank vault: %w", err)

@@ -45,9 +45,28 @@ Only `internal/content` imports `go.kenn.io/docbank`. It owns:
 - exact-version source-metadata processing and projection into dependency-free
   values;
 - exact-version canonical visual-preview processing and verified reads;
+- backup repository creation, verification, and isolated restore;
 - bounded traversal of an owner's media subtree for reconciliation;
 - error translation into Fotobank sentinels; and
 - serialization of content mutations to bound local concurrency.
+
+A coordinated backup declares the Fotobank SQLite snapshot as a host file and
+provides the callback that creates it. Docbank runs that callback inside its
+short metadata freeze, captures the host file in the same manifest as the
+content snapshot, and releases content writers before immutable backup bytes
+stream. Host files that contain credentials or tokens retain Docbank's
+sensitivity marker and require an explicit plaintext-backup opt-in. Backup and
+restore reports are projected into Fotobank types, and restore always targets a
+separate vault root rather than replacing
+the open authority. The adapter supplies Docbank with every configured NAS and
+flash-managed root as protected storage, so restore rejects their descendants
+and filesystem aliases before it creates or overwrites a target. One boundary
+set retains each configured alias, its validated destination, and the target
+resolved when the adapter opened. Restore, import, and checkout validation
+resolve that complete set again before use, so a retargeted storage alias does
+not expose either its earlier or current destination. Configuration validation
+keeps canonical roots for ordinary I/O but also preserves absolute unresolved
+versions of the paths the operator configured for this boundary.
 
 `internal/contentresolver` is the shared product-to-content boundary above the
 adapter. It resolves a ready asset and either its primary or a named attached

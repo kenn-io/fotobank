@@ -73,9 +73,11 @@ configuration names the database through an alias.
 Current backup covers Fotobank metadata only and is therefore not a complete
 media recovery mechanism. A coordinated backup must guarantee that every
 Docbank version referenced by the Fotobank snapshot exists in the published
-Docbank backup. It can take the short Fotobank snapshot first, fence destructive
-Docbank operations, then stream the append-only content backup without
-blocking ordinary appends for the full archive duration.
+Docbank backup. The content boundary can create the SQLite snapshot inside
+Docbank's short metadata freeze and record it as an extra file in the same
+manifest. Docbank then streams the append-only content backup without blocking
+ordinary appends for the full archive duration. The current product backup
+command has not yet adopted that complete archive format.
 
 Restore drills verify referenced blob content through bounded embedded
 Docbank verification. Whole-catalog metadata validation is a separate Docbank
