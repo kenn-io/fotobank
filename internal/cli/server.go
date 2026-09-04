@@ -197,13 +197,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	}
 	defer d.Close()
 
-	contentStore, err := content.Open(ctx, content.Config{
-		Root: cfg.Docbank.Root,
-		ManagedRoots: []content.ManagedRoot{
-			{Path: cfg.NAS.Root, AllowUnavailable: true},
-			{Path: cfg.Flash.Root, CreateIfMissing: true},
-		},
-	})
+	contentStore, err := content.Open(ctx, contentAdapterConfig(cfg, true))
 	if err != nil {
 		return fmt.Errorf("open Docbank vault: %w", err)
 	}

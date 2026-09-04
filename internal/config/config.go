@@ -82,6 +82,33 @@ type Config struct {
 	AI            ai.Config     `toml:"ai"`
 	Search        search.Config `toml:"search"`
 	UI            UI            `toml:"ui"`
+
+	configuredFlashRoot string
+	configuredNASRoot   string
+}
+
+// ConfiguredFlashRoot returns the expanded path supplied by configuration,
+// before validation resolves filesystem aliases.
+func (c *Config) ConfiguredFlashRoot() string {
+	if c != nil && c.configuredFlashRoot != "" {
+		return c.configuredFlashRoot
+	}
+	if c == nil {
+		return ""
+	}
+	return c.Flash.Root
+}
+
+// ConfiguredNASRoot returns the expanded path supplied by configuration,
+// before validation resolves filesystem aliases.
+func (c *Config) ConfiguredNASRoot() string {
+	if c != nil && c.configuredNASRoot != "" {
+		return c.configuredNASRoot
+	}
+	if c == nil {
+		return ""
+	}
+	return c.NAS.Root
 }
 
 type Admin struct {
@@ -245,6 +272,8 @@ func LoadUnchecked(path string) (*Config, error) {
 	if err := expandHomePaths(&cfg); err != nil {
 		return nil, err
 	}
+	cfg.configuredFlashRoot = cfg.Flash.Root
+	cfg.configuredNASRoot = cfg.NAS.Root
 	return &cfg, nil
 }
 

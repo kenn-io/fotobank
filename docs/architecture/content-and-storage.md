@@ -61,7 +61,9 @@ flash-managed root as protected storage, so restore rejects their descendants
 and filesystem aliases before it creates or overwrites a target. It retains
 both each configured path and the target resolved when the adapter opened;
 Docbank resolves them again for every restore, so a retargeted storage alias
-protects both its earlier and current destinations.
+protects both its earlier and current destinations. Configuration validation
+keeps canonical roots for ordinary I/O but also preserves the expanded paths
+the operator configured for this restore boundary.
 
 `internal/contentresolver` is the shared product-to-content boundary above the
 adapter. It resolves a ready asset and either its primary or a named attached
