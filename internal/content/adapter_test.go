@@ -91,6 +91,42 @@ func TestAdapterBackupRoundTrip(t *testing.T) {
 	r.Equal(body, got)
 }
 
+func TestAdapterBackupPreservesSensitiveHostFilePolicy(t *testing.T) {
+	r := require.New(t)
+	adapter, err := content.Open(t.Context(), content.Config{Root: filepath.Join(t.TempDir(), "live")})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+	body := []byte("recoverable photo bytes\n")
+	_, err = adapter.Create(t.Context(), content.CreateRequest{
+		VirtualPath: "/owners/owner/media/file/photo.jpg",
+		Reader:      bytes.NewReader(body),
+		Expected:    identityFor(body),
+		MediaType:   "image/jpeg",
+	})
+	r.NoError(err)
+	repository, err := content.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
+	r.NoError(err)
+	secretPath := filepath.Join(t.TempDir(), "credentials.json")
+	r.NoError(os.WriteFile(secretPath, []byte("synthetic secret\n"), 0o600))
+	extraFiles := []content.BackupExtraFile{{
+		Path: secretPath, RecordAs: "application/credentials.json", Sensitive: true,
+	}}
+
+	_, err = adapter.CreateBackup(t.Context(), repository, content.BackupOptions{
+		ExtraFiles: extraFiles,
+	})
+	r.ErrorContains(err, "requires an encrypted repository")
+	snapshots, err := repository.Snapshots()
+	r.NoError(err)
+	r.Empty(snapshots)
+
+	_, err = adapter.CreateBackup(t.Context(), repository, content.BackupOptions{
+		AllowPlaintextSecrets: true,
+		ExtraFiles:            extraFiles,
+	})
+	r.NoError(err)
+}
+
 func TestAdapterBackupBlocksContentWritesOnlyDuringHostPreparation(t *testing.T) {
 	r := require.New(t)
 	adapter, err := content.Open(t.Context(), content.Config{Root: filepath.Join(t.TempDir(), "live")})
