@@ -221,7 +221,7 @@ test.describe("W1 Search", () => {
     // request fired by the prior page.goto("/search?q=beach") has
     // already settled by the time we reach this point because the
     // result-cell visibility assertion above blocked on it.
-    const newestBtn = page.getByTestId("search-sort-newest");
+    const newestBtn = page.getByRole("radio", { name: "Newest" });
     await Promise.all([
       page.waitForResponse(
         (resp) => {
