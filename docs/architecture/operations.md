@@ -78,7 +78,9 @@ require neither configuration nor the original vault.
 
 `internal/backup.CreateArchive` snapshots Fotobank SQLite into private temporary
 storage during Docbank's mutation freeze and declares it as
-`application/catalog.sqlite` in the same manifest. SQLite uses a separate
+`application/catalog.sqlite` in the same manifest. Preparation first checks
+SQLite integrity and the `schema_migrations` marker using `ValidateSnapshot`;
+empty or unrelated databases are rejected before snapshot creation. SQLite uses a separate
 connection without running Fotobank migrations. The temporary snapshot remains
 until archive creation returns, then is removed. Content already referenced by
 that catalog exists before Docbank pins its state; later content appends do not

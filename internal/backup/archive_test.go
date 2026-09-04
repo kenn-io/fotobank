@@ -1,6 +1,7 @@
 package backup_test
 
 import (
+	"database/sql"
 	"io"
 	"os"
 	"path/filepath"
@@ -81,4 +82,37 @@ func TestArchiveDoesNotPublishInvalidCatalog(t *testing.T) {
 	r.Empty(snapshots)
 	_, err = backup.CreateArchive(t.Context(), filepath.Dir(catalog), vault, repository, "directory")
 	r.ErrorContains(err, "regular SQLite file")
+}
+
+func TestArchiveRejectsEmptyAndUnrelatedDatabases(t *testing.T) {
+	for _, name := range []string{"empty", "unrelated"} {
+		t.Run(name, func(t *testing.T) {
+			r := require.New(t)
+			vault, err := content.Open(t.Context(), content.Config{Root: filepath.Join(t.TempDir(), "vault")})
+			r.NoError(err)
+			t.Cleanup(func() { r.NoError(vault.Close()) })
+			repository, err := content.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
+			r.NoError(err)
+			catalog := filepath.Join(t.TempDir(), "catalog.sqlite")
+			r.NoError(os.WriteFile(catalog, nil, 0o600))
+			if name == "unrelated" {
+				db.RegisterSqliteVec()
+				other, err := sql.Open("sqlite3", catalog)
+				r.NoError(err)
+				_, err = other.ExecContext(t.Context(), "CREATE TABLE unrelated (value TEXT)")
+				r.NoError(err)
+				r.NoError(other.Close())
+			}
+			_, err = backup.CreateArchive(t.Context(), catalog, vault, repository, name)
+			r.Error(err)
+			snapshots, err := repository.Snapshots()
+			r.NoError(err)
+			r.Empty(snapshots)
+			if name == "empty" {
+				info, err := os.Stat(catalog)
+				r.NoError(err)
+				r.Zero(info.Size(), "validation must not initialize the source")
+			}
+		})
+	}
 }

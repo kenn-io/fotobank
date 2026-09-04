@@ -35,6 +35,9 @@ func CreateArchive(ctx context.Context, databasePath string, vault *content.Adap
 	return vault.CreateBackup(ctx, repository, content.BackupOptions{
 		Tag: tag,
 		Prepare: func(ctx context.Context) error {
+			if err := ValidateSnapshot(ctx, databasePath); err != nil {
+				return fmt.Errorf("validate archive catalog: %w", err)
+			}
 			return SnapshotPath(ctx, databasePath, catalog)
 		},
 		ExtraFiles: []content.BackupExtraFile{{Path: catalog, RecordAs: ArchiveCatalogPath}},
