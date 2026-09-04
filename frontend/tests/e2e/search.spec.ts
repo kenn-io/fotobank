@@ -77,6 +77,16 @@ test.describe("W1 Search", () => {
     await expect(
       page.getByLabel("Photo search-fixture-vis-001"),
     ).toBeVisible({ timeout: 5_000 });
+
+    const thumbnail = page
+      .getByLabel("Photo search-fixture-vis-001")
+      .locator("img");
+    await expect(thumbnail).toBeVisible();
+    await expect
+      .poll(() =>
+        thumbnail.evaluate((image: HTMLImageElement) => image.naturalWidth),
+      )
+      .toBeGreaterThan(0);
   });
 
   // -------------------------------------------------------------------------

@@ -85,7 +85,7 @@ behavior. The shared control owns the search icon, shortcut badge, and clear
 action; `SearchBar.svelte` owns query synchronization, the global keyboard
 shortcut, and trimmed submission to the router.
 
-![Global search field with its clear action](images/global-search.png)
+![Global search over loaded synthetic results](images/global-search.png)
 
 `make frontend-check` runs `kit-ui-check` in warning mode alongside type checks
 and unit tests. Warnings identify remaining local control equivalents without

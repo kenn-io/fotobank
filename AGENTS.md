@@ -144,7 +144,10 @@ Don't track ad-hoc one-turn tasks in kata — it's for outstanding designed/plan
    review decision or explains a product risk.
 8. A pull request that changes the web interface must include a screenshot of
    the actual rendered result using synthetic data. Inspect it before
-   publishing; never substitute a mockup for the implementation.
+   publishing; never substitute a mockup for the implementation. Use a fully
+   loaded, representative state: broken images, loading shells, and placeholder
+   media are not acceptable evidence unless that state is the behavior under
+   review.
 9. Do not poll, watch, repeatedly query, or wait for GitHub Actions unless the
    user explicitly asks you to monitor CI. Opening or updating a pull request
    does not grant that authority. Report any immediately available status and

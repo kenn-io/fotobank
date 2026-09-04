@@ -750,7 +750,8 @@ func seedFixtures(dbPath, nasRoot, docbankRoot string) error {
 		return fmt.Errorf("seed ai fixtures: %w", err)
 	}
 
-	if err := seedSearchFixtures(ctx, d, repo, owner, insert); err != nil {
+	if err := seedSearchFixtures(ctx, d, repo, owner, nasRoot,
+		"550e8400-e29b-41d4-a716-44665544000e", insert); err != nil {
 		return fmt.Errorf("seed search fixtures: %w", err)
 	}
 
@@ -1225,10 +1226,10 @@ func seedAIFixtures(
 	resultsRepo := results.NewRepo(d.WriteDB(), d.ReadDB())
 	failuresRepo := failures.NewRepo(d.WriteDB(), d.ReadDB())
 
-	// One small valid JPEG shared by both fixtures; the imginput resolver
+	// One deterministic JPEG is shared by both fixtures; the imginput resolver
 	// just needs decodable bytes to scale and re-encode at ProfileV1's
-	// 1024-edge target.
-	previewJPEG, err := smallTestJPEG()
+	// 1024-edge target. Grid bytes keep ready fixtures visually complete.
+	previewJPEG, err := syntheticSearchJPEG("mountain", 8)
 	if err != nil {
 		return fmt.Errorf("encode ai fixture preview jpeg: %w", err)
 	}
@@ -1248,8 +1249,9 @@ func seedAIFixtures(
 	}); err != nil {
 		return fmt.Errorf("seed %s: %w", taggedID, err)
 	}
-	if err := writePreviewBlob(nasRoot, storageKey, taggedID, previewJPEG); err != nil {
-		return fmt.Errorf("write preview blob for %s: %w", taggedID, err)
+	if err := writeFixtureThumbs(nasRoot, storageKey, taggedID, previewJPEG,
+		thumb.SizeGrid, thumb.SizePreview); err != nil {
+		return fmt.Errorf("write thumbnails for %s: %w", taggedID, err)
 	}
 	tags := []parse.Tag{
 		{Key: "e2e-tag-a", Label: "e2e-tag-a", Rank: 1},
@@ -1278,8 +1280,9 @@ func seedAIFixtures(
 	}); err != nil {
 		return fmt.Errorf("seed %s: %w", failedID, err)
 	}
-	if err := writePreviewBlob(nasRoot, storageKey, failedID, previewJPEG); err != nil {
-		return fmt.Errorf("write preview blob for %s: %w", failedID, err)
+	if err := writeFixtureThumbs(nasRoot, storageKey, failedID, previewJPEG,
+		thumb.SizeGrid, thumb.SizePreview); err != nil {
+		return fmt.Errorf("write thumbnails for %s: %w", failedID, err)
 	}
 	if err := resultsRepo.WriteTagResult(ctx, failedID, tagFP, tagPrompt.Hash, tags); err != nil {
 		return fmt.Errorf("seed tag result for %s: %w", failedID, err)
@@ -1317,19 +1320,25 @@ func smallTestJPEG() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// writePreviewBlob writes the preview-tier thumbnail bytes for an AI
-// fixture under <nasRoot>/<storageKey>/<thumb.ThumbKey(id, 0, preview)>.
+// writeFixtureThumbs writes thumbnail bytes for an e2e fixture under
+// <nasRoot>/<storageKey>/<thumb.ThumbKey(id, 0, size)>.
 // Bypasses storage.NewNASOnly so the seed function doesn't need to
 // reconstruct a principal→storage_key map; the e2e server has exactly
 // one owner.
-func writePreviewBlob(nasRoot, storageKey, mediaID string, jpg []byte) error {
-	key := thumb.ThumbKey(mediaID, 0, thumb.SizePreview)
-	full := filepath.Join(nasRoot, storageKey, filepath.FromSlash(key))
-	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
-		return fmt.Errorf("mkdir: %w", err)
-	}
-	if err := os.WriteFile(full, jpg, 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", full, err)
+func writeFixtureThumbs(
+	nasRoot, storageKey, mediaID string,
+	jpg []byte,
+	sizes ...thumb.Size,
+) error {
+	for _, size := range sizes {
+		key := thumb.ThumbKey(mediaID, 0, size)
+		full := filepath.Join(nasRoot, storageKey, filepath.FromSlash(key))
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			return fmt.Errorf("mkdir: %w", err)
+		}
+		if err := os.WriteFile(full, jpg, 0o600); err != nil {
+			return fmt.Errorf("write %s: %w", full, err)
+		}
 	}
 	return nil
 }
@@ -1339,7 +1348,8 @@ func writePreviewBlob(nasRoot, storageKey, mediaID string, jpg []byte) error {
 // active tag + caption results for each (so FTS picks them up), an
 // active embedding generation matching cfg.AI.Embed, and 22/30
 // media_embedding_ids mappings for the visible photos so embedding
-// completeness lands at ≈73% — under the 80% banner threshold.
+// completeness lands at ≈73% — under the 80% banner threshold. Every ready
+// row also gets a decodable grid thumbnail so the browser fixture is honest.
 //
 // Captions are seeded with a deterministic three-keyword pattern
 // ("beach", "mountain", or "sunset") so the Playwright suite can
@@ -1356,6 +1366,7 @@ func seedSearchFixtures(
 	d *db.DB,
 	mediaRepo *media.Repo,
 	owner owners.Principal,
+	nasRoot, storageKey string,
 	insert func(media.Media) error,
 ) error {
 	base := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
@@ -1389,6 +1400,13 @@ func seedSearchFixtures(
 			return fmt.Errorf("seed %s: %w", id, err)
 		}
 		kw := keywords[(i-1)%len(keywords)]
+		jpg, err := syntheticSearchJPEG(kw, i)
+		if err != nil {
+			return fmt.Errorf("render thumbnail for %s: %w", id, err)
+		}
+		if err := writeFixtureThumbs(nasRoot, storageKey, id, jpg, thumb.SizeGrid); err != nil {
+			return fmt.Errorf("write thumbnail for %s: %w", id, err)
+		}
 		caption := fmt.Sprintf("A %s photo numbered %d.", kw, i)
 		if err := writeSearchAIResults(ctx, d, id, kw, caption); err != nil {
 			return fmt.Errorf("seed ai results for %s: %w", id, err)
@@ -1414,6 +1432,13 @@ func seedSearchFixtures(
 			ThumbStatus:        "ready",
 		}); err != nil {
 			return fmt.Errorf("seed %s: %w", id, err)
+		}
+		jpg, err := syntheticSearchJPEG("hidden", i)
+		if err != nil {
+			return fmt.Errorf("render thumbnail for %s: %w", id, err)
+		}
+		if err := writeFixtureThumbs(nasRoot, storageKey, id, jpg, thumb.SizeGrid); err != nil {
+			return fmt.Errorf("write thumbnail for %s: %w", id, err)
 		}
 		if err := writeSearchAIResults(
 			ctx, d, id, "hiddencache",
@@ -1492,6 +1517,99 @@ func seedSearchFixtures(
 	}
 
 	return nil
+}
+
+// syntheticSearchJPEG renders small deterministic scenes for search fixtures.
+// They are deliberately illustrative rather than photographic: screenshots
+// should exercise real image loading without importing personal photos or
+// disguising generated artwork as user content.
+func syntheticSearchJPEG(keyword string, index int) ([]byte, error) {
+	const width, height = 480, 320
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	horizon := 170 + index%4*7
+
+	for y := range height {
+		for x := range width {
+			var pixel color.RGBA
+			switch keyword {
+			case "beach":
+				switch {
+				case y < horizon:
+					pixel = verticalBlend(y, horizon,
+						color.RGBA{R: 20, G: 46, B: 78, A: 255},
+						color.RGBA{R: 126, G: 190, B: 207, A: 255})
+				case y < horizon+58:
+					wave := uint8((x/17 + y/5 + index*3) % 18) //nolint:gosec // bounded fixture color
+					pixel = color.RGBA{R: 28 + wave, G: 108 + wave, B: 137 + wave, A: 255}
+				default:
+					grain := uint8((x*3 + y + index*11) % 14) //nolint:gosec // bounded fixture color
+					pixel = color.RGBA{R: 194 + grain, G: 154 + grain, B: 96 + grain/2, A: 255}
+				}
+			case "mountain":
+				ridge := 138 + int(math.Abs(float64(x-(145+index%5*43))))*3/5
+				switch {
+				case y < ridge:
+					pixel = verticalBlend(y, height,
+						color.RGBA{R: 31, G: 55, B: 84, A: 255},
+						color.RGBA{R: 146, G: 178, B: 181, A: 255})
+				case y < ridge+22:
+					pixel = color.RGBA{R: 119, G: 128, B: 124, A: 255}
+				default:
+					pixel = color.RGBA{R: 39, G: 64 + uint8(index%4*5), B: 54, A: 255}
+				}
+			case "sunset":
+				pixel = verticalBlend(y, height,
+					color.RGBA{R: 48, G: 29, B: 66, A: 255},
+					color.RGBA{R: 221, G: 103, B: 55, A: 255})
+				if y > 235 {
+					pixel = color.RGBA{R: 30, G: 33, B: 48, A: 255}
+				}
+			default:
+				pixel = verticalBlend(y, height,
+					color.RGBA{R: 45, G: 48, B: 57, A: 255},
+					color.RGBA{R: 112, G: 102, B: 91, A: 255})
+			}
+			img.SetRGBA(x, y, pixel)
+		}
+	}
+
+	if keyword == "beach" || keyword == "sunset" {
+		sunX := 90 + index%6*55
+		sunY := 76 + index%3*14
+		drawDisc(img, sunX, sunY, 24, color.RGBA{R: 244, G: 190, B: 91, A: 255})
+	}
+
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 88}); err != nil {
+		return nil, fmt.Errorf("encode search fixture: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func verticalBlend(position, extent int, top, bottom color.RGBA) color.RGBA {
+	if extent <= 0 {
+		return top
+	}
+	t := float64(position) / float64(extent)
+	if t > 1 {
+		t = 1
+	}
+	blend := func(a, b uint8) uint8 {
+		return uint8(float64(a)*(1-t) + float64(b)*t)
+	}
+	return color.RGBA{R: blend(top.R, bottom.R), G: blend(top.G, bottom.G), B: blend(top.B, bottom.B), A: 255}
+}
+
+func drawDisc(img *image.RGBA, centerX, centerY, radius int, fill color.RGBA) {
+	radiusSquared := radius * radius
+	for y := centerY - radius; y <= centerY+radius; y++ {
+		for x := centerX - radius; x <= centerX+radius; x++ {
+			dx, dy := x-centerX, y-centerY
+			if dx*dx+dy*dy <= radiusSquared && image.Pt(x, y).In(img.Bounds()) {
+				img.SetRGBA(x, y, fill)
+			}
+		}
+	}
 }
 
 // writeSearchAIResults seeds an active tag + caption for mediaID and
