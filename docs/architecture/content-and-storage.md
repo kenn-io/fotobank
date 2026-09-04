@@ -56,7 +56,9 @@ keeps that gate through Docbank's metadata freeze, then releases it as soon as
 Docbank has pinned the logical snapshot; imports can continue while immutable
 backup bytes stream. Backup and restore reports are projected into Fotobank
 types, and restore always targets a separate vault root rather than replacing
-the open authority.
+the open authority. The adapter supplies Docbank with every configured NAS and
+flash-managed root as protected storage, so restore rejects their descendants
+and filesystem aliases before it creates or overwrites a target.
 
 `internal/contentresolver` is the shared product-to-content boundary above the
 adapter. It resolves a ready asset and either its primary or a named attached

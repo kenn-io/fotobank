@@ -20,6 +20,7 @@ func TestTranslateError(t *testing.T) {
 		{name: "content conflict", upstream: docbank.ErrContentConflict, want: errs.ErrContentConflict},
 		{name: "content unavailable", upstream: docbank.ErrContentUnavailable, want: errs.ErrContentUnavailable},
 		{name: "not found", upstream: docbank.ErrNotFound, want: errs.ErrNotFound},
+		{name: "backup restore overlap", upstream: docbank.ErrBackupRestoreTargetOverlap, want: errs.ErrBadConfiguration},
 	}
 
 	for _, tt := range tests {

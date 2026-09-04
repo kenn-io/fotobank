@@ -70,7 +70,7 @@ func TestAdapterBackupRoundTrip(t *testing.T) {
 	r.NoError(err)
 	r.Equal(snapshot.ID, restored.SnapshotID)
 	r.True(restored.ContentVerified)
-	r.True(restored.CatalogIntegrityVerified)
+	r.True(restored.SQLiteIntegrityVerified)
 
 	restoredAdapter, err := content.Open(t.Context(), content.Config{Root: restoredRoot})
 	r.NoError(err)
@@ -163,6 +163,38 @@ func TestAdapterBackupReleasesContentWritesAfterDocbankPinsSnapshot(t *testing.T
 	}
 	close(resume)
 	r.NoError(<-backupDone)
+}
+
+func TestAdapterBackupRestoreRejectsManagedStorage(t *testing.T) {
+	r := require.New(t)
+	managedRoot := t.TempDir()
+	adapter, err := content.Open(t.Context(), content.Config{
+		Root:         filepath.Join(t.TempDir(), "live"),
+		ManagedRoots: []content.ManagedRoot{{Path: managedRoot}},
+	})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+	body := []byte("protected photo bytes\n")
+	_, err = adapter.Create(t.Context(), content.CreateRequest{
+		VirtualPath: "/owners/owner/media/file/photo.jpg",
+		Reader:      bytes.NewReader(body),
+		Expected:    identityFor(body),
+		MediaType:   "image/jpeg",
+	})
+	r.NoError(err)
+	repository, err := content.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
+	r.NoError(err)
+	snapshot, err := adapter.CreateBackup(t.Context(), repository, content.BackupOptions{})
+	r.NoError(err)
+
+	target := filepath.Join(managedRoot, "restore")
+	_, err = adapter.RestoreBackup(t.Context(), repository, content.BackupRestoreOptions{
+		SnapshotID: snapshot.ID,
+		Target:     target,
+		Overwrite:  true,
+	})
+	r.ErrorIs(err, errs.ErrBadConfiguration)
+	r.NoDirExists(target)
 }
 
 func TestAdapterLifecycle(t *testing.T) {

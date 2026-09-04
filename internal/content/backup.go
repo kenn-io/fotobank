@@ -94,14 +94,14 @@ type BackupRestoreOptions struct {
 }
 
 type BackupRestoreReport struct {
-	SnapshotID               string
-	Target                   string
-	DatabasePath             string
-	DatabaseBytes            int64
-	ContentBlobs             int64
-	ContentBytes             int64
-	ContentVerified          bool
-	CatalogIntegrityVerified bool
+	SnapshotID              string
+	Target                  string
+	DatabasePath            string
+	DatabaseBytes           int64
+	ContentBlobs            int64
+	ContentBytes            int64
+	ContentVerified         bool
+	SQLiteIntegrityVerified bool
 }
 
 func InitBackupRepository(root string) (*BackupRepository, error) {
@@ -227,25 +227,26 @@ func (a *Adapter) RestoreBackup(
 		return BackupRestoreReport{}, errors.New("content backup repository is required")
 	}
 	report, err := a.vault.RestoreBackup(ctx, repository.repository, docbank.BackupRestoreOptions{
-		SnapshotID:  options.SnapshotID,
-		Target:      options.Target,
-		Overwrite:   options.Overwrite,
-		Jobs:        options.Jobs,
-		ForceUnlock: options.ForceUnlock,
-		Progress:    projectBackupProgressCallback(options.Progress),
+		SnapshotID:     options.SnapshotID,
+		Target:         options.Target,
+		ProtectedRoots: append([]string(nil), a.managedRoots...),
+		Overwrite:      options.Overwrite,
+		Jobs:           options.Jobs,
+		ForceUnlock:    options.ForceUnlock,
+		Progress:       projectBackupProgressCallback(options.Progress),
 	})
 	if err != nil {
 		return BackupRestoreReport{}, fmt.Errorf("restore content backup: %w", translateError(err))
 	}
 	return BackupRestoreReport{
-		SnapshotID:               report.SnapshotID,
-		Target:                   report.Target,
-		DatabasePath:             report.DatabasePath,
-		DatabaseBytes:            report.DatabaseBytes,
-		ContentBlobs:             report.ContentBlobs,
-		ContentBytes:             report.ContentBytes,
-		ContentVerified:          report.Proof.ContentVerified,
-		CatalogIntegrityVerified: report.Proof.SQLiteIntegrity,
+		SnapshotID:              report.SnapshotID,
+		Target:                  report.Target,
+		DatabasePath:            report.DatabasePath,
+		DatabaseBytes:           report.DatabaseBytes,
+		ContentBlobs:            report.ContentBlobs,
+		ContentBytes:            report.ContentBytes,
+		ContentVerified:         report.Proof.ContentVerified,
+		SQLiteIntegrityVerified: report.Proof.SQLiteIntegrity,
 	}, nil
 }
 

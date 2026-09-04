@@ -36,6 +36,8 @@ func translateError(err error) error {
 		return fmt.Errorf("%w: %w", errs.ErrContentUnavailable, err)
 	case errors.Is(err, docbank.ErrInvalidContentRange):
 		return fmt.Errorf("%w: %w", errs.ErrInvalidArgument, err)
+	case errors.Is(err, docbank.ErrBackupRestoreTargetOverlap):
+		return fmt.Errorf("%w: %w", errs.ErrBadConfiguration, err)
 	default:
 		return err
 	}
