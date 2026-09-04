@@ -274,7 +274,7 @@ admin_listen = "127.0.0.1:0"
 		errCh <- cli.RunContext(ctx, []string{"serve", "--config", cfgPath}, &stdout, &stderr)
 	}()
 
-	for range 100 {
+	for range 500 {
 		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
 			break
 		}
