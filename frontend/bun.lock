@@ -5,7 +5,7 @@
     "": {
       "name": "fotobank-frontend",
       "dependencies": {
-        "@kenn-io/kit-ui": "github:kenn-io/kit-ui#57af07006f841d68840f81bf300e76e701e8a25b",
+        "@kenn-io/kit-ui": "github:kenn-io/kit-ui#11c6ad385b82cea114df4e908e7914bbc4f26266",
         "leaflet": "1.9",
         "leaflet.markercluster": "1.5",
         "openapi-fetch": "^0.17.0",
@@ -147,7 +147,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@kenn-io/kit-ui": ["@kenn-io/kit-ui@github:kenn-io/kit-ui#57af070", { "peerDependencies": { "@lucide/svelte": ">=1.0.0", "dompurify": "^3.2.0", "marked": "^18.0.0", "mermaid": ">=11.15.0 <12", "shiki": "^4.0.0", "svelte": "^5.29.0" }, "optionalPeers": ["mermaid"], "bin": { "kit-ui-check": "./bin/kit-ui-check.mjs" } }, "kenn-io-kit-ui-57af070", "sha512-MkWCPIH3iNVAWOU82rFUgAURXJzo8Wgq1kPkHzQ818seoygx/1o3T/dzjOXpgu+tKDu1t+j4Oh72Wggyxr9H7Q=="],
+    "@kenn-io/kit-ui": ["@kenn-io/kit-ui@github:kenn-io/kit-ui#11c6ad3", { "peerDependencies": { "@lucide/svelte": ">=1.0.0", "dompurify": "^3.2.0", "marked": "^18.0.0", "mermaid": ">=11.15.0 <12", "shiki": "^4.0.0", "svelte": "^5.29.0" }, "optionalPeers": ["mermaid"], "bin": { "kit-ui-check": "./bin/kit-ui-check.mjs" } }, "kenn-io-kit-ui-11c6ad3", "sha512-v/1XK/rco7jbNt6oDIF6N9jewFAjiUmOx183YoiIbc32b1KT/bbFnJAktVVaxNKyb7j/STY/KH78bfYOwtqP6Q=="],
 
     "@lucide/svelte": ["@lucide/svelte@1.37.0", "", { "peerDependencies": { "svelte": "^5" } }, "sha512-AxaiSxeuErlt4fNmmN28oaL5R7yVoQLsfSeiAONxCEK+l0/SrLAjRktQ0DkTQpomv1oRzOA3hohWY0ZHTZCMmw=="],
 
