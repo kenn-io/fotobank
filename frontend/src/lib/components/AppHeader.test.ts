@@ -34,9 +34,9 @@ describe("AppHeader", () => {
     expect(container.querySelector("header.top nav")).toBeNull();
   });
 
-  it("exposes the search input via data-testid", () => {
-    const { getByTestId } = renderHeader();
-    const input = getByTestId("search-input") as HTMLInputElement;
+  it("exposes the global search field", () => {
+    const { getByRole } = renderHeader();
+    const input = getByRole("searchbox", { name: "Search" }) as HTMLInputElement;
     expect(input).toBeTruthy();
     expect(input.tagName).toBe("INPUT");
     expect(input.type).toBe("search");

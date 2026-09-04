@@ -1,5 +1,7 @@
 <!-- frontend/src/lib/components/SearchBar.svelte -->
 <script lang="ts">
+  import { SearchInput } from "@kenn-io/kit-ui";
+
   // Always-visible search input that lives in the AppHeader's middle
   // column. ⌘K (Cmd on macOS, Ctrl elsewhere) focuses the input from
   // anywhere in the app; Enter submits the trimmed query via
@@ -17,18 +19,12 @@
     onsubmit: (q: string) => void;
   } = $props();
 
-  let inputEl: HTMLInputElement | null = $state(null);
+  let inputEl: HTMLInputElement | undefined = $state();
   // Local input state. Initialized empty and seeded from `query` via
   // an effect so the literal-on-init read of `query` (which would
   // capture only the first frame) doesn't show up as a Svelte 5
   // state_referenced_locally warning.
   let value = $state("");
-  // Mirrors `:focus-within` for the kbd-hint hide. Kept in addition
-  // to the CSS rule because jsdom doesn't compute :focus-within in
-  // unit tests; toggling a class lets the test scope assertions to
-  // the focused state without hand-rolling computed-style logic.
-  let focused = $state(false);
-
   // Mirror an externally-supplied `query` prop into the input on
   // change so the host can seed the value (e.g. from ?q=) without
   // racing the user's typing. The effect keys on `query` only —
@@ -60,34 +56,16 @@
   }
 </script>
 
-<div class="search-bar" class:focused>
-  <svg
-    class="search-icon"
-    width="13"
-    height="13"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="1.5"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    aria-hidden="true"
-  >
-    <circle cx="6.5" cy="6.5" r="5"></circle>
-    <path d="M14 14l-3.5-3.5"></path>
-  </svg>
-  <input
-    bind:this={inputEl}
+<div class="search-bar">
+  <SearchInput
+    bind:inputEl
     bind:value
-    type="search"
-    aria-label="Search"
+    ariaLabel="Search"
     placeholder="Search photos, cameras, places, dates…"
-    data-testid="search-input"
+    keys={["⌘", "K"]}
     onkeydown={onKeyDown}
-    onfocus={() => (focused = true)}
-    onblur={() => (focused = false)}
+    block
   />
-  <kbd>⌘K</kbd>
 </div>
 
 <style>
@@ -97,62 +75,7 @@
     max-width: 520px;
     justify-self: center;
   }
-  .search-bar input {
-    width: 100%;
-    height: 28px;
-    padding: 0 56px 0 32px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border-default);
-    color: var(--text-primary);
-    font-family: var(--font-sans);
-    font-size: 12.5px;
-    letter-spacing: -0.005em;
-    outline: none;
-    transition: border-color 140ms, background 140ms, box-shadow 140ms;
-  }
-  .search-bar input::placeholder {
-    color: var(--text-muted);
-  }
-  .search-bar input::-webkit-search-cancel-button {
-    display: none;
-  }
-  .search-bar input:hover {
-    border-color: var(--border-muted);
-  }
-  .search-bar input:focus {
-    border-color: var(--accent-blue);
-    background: var(--bg-inset);
-    box-shadow: 0 0 0 1px var(--fb-accent-glow), 0 0 14px rgba(232, 164, 75, 0.12);
-  }
-  .search-bar .search-icon {
-    position: absolute;
-    left: 11px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--text-muted);
-    pointer-events: none;
-    transition: color 140ms;
-  }
-  .search-bar:focus-within .search-icon {
-    color: var(--accent-blue);
-  }
-  .search-bar kbd {
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    padding: 1px 5px;
-    color: var(--text-muted);
-    border: 1px solid var(--border-muted);
-    background: var(--bg-primary);
-    pointer-events: none;
-    transition: opacity 120ms;
-    opacity: 1;
-  }
-  .search-bar:focus-within kbd,
-  .search-bar.focused kbd {
+  .search-bar:focus-within :global(.kit-kbd-badge) {
     opacity: 0;
   }
 </style>
