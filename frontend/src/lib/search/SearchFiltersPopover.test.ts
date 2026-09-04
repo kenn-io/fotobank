@@ -166,22 +166,13 @@ describe("SearchFiltersPopover", () => {
 
   it("media-type segmented control sets photo|video|null", async () => {
     const onChange = vi.fn();
-    const { container, rerender } = render(SearchFiltersPopover, {
+    const { getByRole, rerender } = render(SearchFiltersPopover, {
       props: { filters: emptyFilters(), onChange, client: makeClient() },
     });
 
-    const photoBtn = container.querySelector(
-      "button[data-testid='search-filter-media-type-photo']",
-    ) as HTMLButtonElement;
-    const videoBtn = container.querySelector(
-      "button[data-testid='search-filter-media-type-video']",
-    ) as HTMLButtonElement;
-    const allBtn = container.querySelector(
-      "button[data-testid='search-filter-media-type-all']",
-    ) as HTMLButtonElement;
-    expect(photoBtn).toBeTruthy();
-    expect(videoBtn).toBeTruthy();
-    expect(allBtn).toBeTruthy();
+    const photoBtn = getByRole("radio", { name: "Photos" });
+    const videoBtn = getByRole("radio", { name: "Videos" });
+    const allBtn = getByRole("radio", { name: "All" });
 
     await fireEvent.click(photoBtn);
     expect(onChange).toHaveBeenLastCalledWith({
@@ -232,7 +223,7 @@ describe("SearchFiltersPopover", () => {
       dateBefore: "2025-02-01",
       mediaType: "photo",
     };
-    const { container } = render(SearchFiltersPopover, {
+    const { container, getByRole } = render(SearchFiltersPopover, {
       props: { filters, onChange: vi.fn(), client: makeClient() },
     });
     const after = container.querySelector(
@@ -241,14 +232,12 @@ describe("SearchFiltersPopover", () => {
     const before = container.querySelector(
       "input[data-testid='search-filter-date-before']",
     ) as HTMLInputElement;
-    const photoBtn = container.querySelector(
-      "button[data-testid='search-filter-media-type-photo']",
-    ) as HTMLButtonElement;
+    const photoBtn = getByRole("radio", { name: "Photos" });
     expect(after.value).toBe("2025-01-01");
     expect(before.value).toBe("2025-02-01");
-    // The active media-type button has aria-pressed=true so callers
+    // The active media-type option has aria-checked=true so callers
     // (and screen readers) can identify the selected value.
-    expect(photoBtn.getAttribute("aria-pressed")).toBe("true");
+    expect(photoBtn.getAttribute("aria-checked")).toBe("true");
   });
 
   it("autocomplete debounces successive keystrokes within 200ms", async () => {
@@ -284,12 +273,12 @@ describe("SearchFiltersPopover", () => {
     // the wire serializer drops it (the engine's default is exclusion).
     const onChange = vi.fn();
     const client = makeClient();
-    const { container, rerender } = render(SearchFiltersPopover, {
+    const { getByRole, rerender } = render(SearchFiltersPopover, {
       props: { filters: emptyFilters(), onChange, client },
     });
-    const toggle = container.querySelector(
-      "input[data-testid='search-filter-include-hidden']",
-    ) as HTMLInputElement;
+    const toggle = getByRole("checkbox", {
+      name: "Include hidden media",
+    }) as HTMLInputElement;
     expect(toggle).toBeTruthy();
     expect(toggle.checked).toBe(false);
 
@@ -310,14 +299,33 @@ describe("SearchFiltersPopover", () => {
       onChange,
       client,
     });
-    const toggle2 = container.querySelector(
-      "input[data-testid='search-filter-include-hidden']",
-    ) as HTMLInputElement;
+    const toggle2 = getByRole("checkbox", {
+      name: "Include hidden media",
+    }) as HTMLInputElement;
     expect(toggle2.checked).toBe(true);
     await fireEvent.change(toggle2, { target: { checked: false } });
     const last = onChange.mock.calls[onChange.mock.calls.length - 1]![0] as SearchFilters;
     expect(last.includeHidden).toBeUndefined();
     expect(last.tags).toEqual([]);
+  });
+
+  it("moves to the next media type with the right arrow", async () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(SearchFiltersPopover, {
+      props: { filters: emptyFilters(), onChange, client: makeClient() },
+    });
+
+    await fireEvent.keyDown(getByRole("radio", { name: "All" }), {
+      key: "ArrowRight",
+    });
+
+    expect(onChange).toHaveBeenCalledWith({
+      tags: [],
+      cameras: [],
+      lenses: [],
+      facetTagKeys: [],
+      mediaType: "photo",
+    });
   });
 
   it("clearing the tag input after typing cancels suggestions without an autocomplete call", async () => {

@@ -7,6 +7,11 @@
      Mutations bubble up via the onChange callback (Svelte 5 idiom).
      -->
 <script lang="ts">
+  import {
+    Checkbox,
+    SegmentedControl,
+    type SegmentedControlOption,
+  } from "@kenn-io/kit-ui";
   import type { SearchClient } from "./client";
   import { searchClient as defaultClient } from "./client";
   import type { SearchFilters } from "./types";
@@ -67,6 +72,12 @@
   // for an empty input.
   let tagFetchToken = 0;
   let locFetchToken = 0;
+
+  const mediaTypeOptions: SegmentedControlOption[] = [
+    { value: "all", label: "All" },
+    { value: "photo", label: "Photos" },
+    { value: "video", label: "Videos" },
+  ];
 
   $effect(() => {
     const value = tagInput;
@@ -155,12 +166,14 @@
     locationSuggestions = [];
   }
 
-  function setMediaType(t: "photo" | "video" | null): void {
+  function setMediaType(value: string): void {
     const next: SearchFilters = { ...filters };
-    if (t === null) {
+    if (value === "all") {
       delete next.mediaType;
+    } else if (value === "photo" || value === "video") {
+      next.mediaType = value;
     } else {
-      next.mediaType = t;
+      return;
     }
     emit(next);
   }
@@ -170,8 +183,7 @@
   // include hidden media in results; when unchecked the field is
   // removed entirely so the wire shape drops it (the engine's default
   // is exclusion).
-  function toggleIncludeHidden(ev: Event): void {
-    const checked = (ev.target as HTMLInputElement).checked;
+  function toggleIncludeHidden(checked: boolean): void {
     const next: SearchFilters = { ...filters };
     if (checked) {
       next.includeHidden = true;
@@ -258,40 +270,23 @@
     </ul>
   </div>
 
-  <div class="filter-row segmented" role="group" aria-label="Media type">
-    <button
-      type="button"
-      class="segment"
-      data-testid="search-filter-media-type-all"
-      aria-pressed={filters.mediaType === undefined}
-      onclick={() => setMediaType(null)}
-    >All</button>
-    <button
-      type="button"
-      class="segment"
-      data-testid="search-filter-media-type-photo"
-      aria-pressed={filters.mediaType === "photo"}
-      onclick={() => setMediaType("photo")}
-    >Photos</button>
-    <button
-      type="button"
-      class="segment"
-      data-testid="search-filter-media-type-video"
-      aria-pressed={filters.mediaType === "video"}
-      onclick={() => setMediaType("video")}
-    >Videos</button>
+  <div class="filter-row">
+    <SegmentedControl
+      options={mediaTypeOptions}
+      value={filters.mediaType ?? "all"}
+      onchange={setMediaType}
+      ariaLabel="Media type"
+      variant="borderless"
+      block
+    />
   </div>
 
   <div class="filter-row">
-    <label class="filter-toggle">
-      <input
-        type="checkbox"
-        data-testid="search-filter-include-hidden"
-        checked={filters.includeHidden === true}
-        onchange={toggleIncludeHidden}
-      />
-      <span>Include hidden media</span>
-    </label>
+    <Checkbox
+      checked={filters.includeHidden === true}
+      onchange={toggleIncludeHidden}
+      label="Include hidden media"
+    />
   </div>
 </div>
 
@@ -308,10 +303,6 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-  }
-  .filter-row.segmented {
-    flex-direction: row;
-    gap: 0;
   }
   .filter-label {
     display: flex;
@@ -354,29 +345,5 @@
   .suggestion-count {
     color: var(--text-secondary);
     font-size: 11px;
-  }
-  .segment {
-    flex: 1;
-    height: 28px;
-    padding: 0 8px;
-    border: 1px solid var(--border-default);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    font-size: 13px;
-    cursor: pointer;
-  }
-  .segment:not(:first-child) {
-    border-left: none;
-  }
-  .segment[aria-pressed="true"] {
-    background: var(--bg-inset);
-    font-weight: 600;
-  }
-  .filter-toggle {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--text-secondary);
   }
 </style>

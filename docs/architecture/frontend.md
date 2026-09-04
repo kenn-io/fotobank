@@ -83,7 +83,9 @@ close, backdrop, focus-trap, and keyboard behavior for the route.
 The app header composes kit-ui's search field with Fotobank's navigation
 behavior. The shared control owns the search icon, shortcut badge, and clear
 action; `SearchBar.svelte` owns query synchronization, the global keyboard
-shortcut, and trimmed submission to the router.
+shortcut, and trimmed submission to the router. Search sorting and media-type
+filters use shared segmented controls, while the hidden-media option uses the
+shared checkbox; the search route remains the owner of query and filter state.
 
 ![Global search over loaded synthetic results](images/global-search.png)
 

@@ -14,7 +14,17 @@
      Mutations bubble up via the onChange callback (Svelte 5 idiom).
 -->
 <script lang="ts">
+  import {
+    SegmentedControl,
+    type SegmentedControlOption,
+  } from "@kenn-io/kit-ui";
   import type { SearchSort } from "./types";
+
+  const options: SegmentedControlOption[] = [
+    { value: "relevance", label: "Relevance" },
+    { value: "newest", label: "Newest" },
+    { value: "oldest", label: "Oldest" },
+  ];
 
   // Tests render the segment in isolation; production callers pass the
   // store's `query` so the relevance→newest coercion lines up. onChange
@@ -32,6 +42,12 @@
     onChange?.(next);
   }
 
+  function select(value: string): void {
+    if (value === "relevance" || value === "newest" || value === "oldest") {
+      emit(value);
+    }
+  }
+
   // effectiveSelected mirrors the backend's effective_sort coercion:
   // relevance + empty query → newest. We compute it here (rather than
   // reading store.effectiveSort) because the segment is decoupled from
@@ -42,48 +58,10 @@
   );
 </script>
 
-<div class="search-sort-segment segmented" role="radiogroup" aria-label="Sort">
-  <button
-    type="button"
-    class:selected={effectiveSelected === "relevance"}
-    aria-pressed={effectiveSelected === "relevance"}
-    data-testid="search-sort-relevance"
-    onclick={() => emit("relevance")}
-  >Relevance</button>
-  <button
-    type="button"
-    class:selected={effectiveSelected === "newest"}
-    aria-pressed={effectiveSelected === "newest"}
-    data-testid="search-sort-newest"
-    onclick={() => emit("newest")}
-  >Newest</button>
-  <button
-    type="button"
-    class:selected={effectiveSelected === "oldest"}
-    aria-pressed={effectiveSelected === "oldest"}
-    data-testid="search-sort-oldest"
-    onclick={() => emit("oldest")}
-  >Oldest</button>
-</div>
-
-<style>
-  .search-sort-segment {
-    display: inline-flex;
-  }
-  .search-sort-segment button {
-    height: 28px;
-    padding: 0 10px;
-    border: 1px solid var(--border-default);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    font-size: 13px;
-    cursor: pointer;
-  }
-  .search-sort-segment button:not(:first-child) {
-    border-left: none;
-  }
-  .search-sort-segment button.selected {
-    background: var(--bg-inset);
-    font-weight: 600;
-  }
-</style>
+<SegmentedControl
+  {options}
+  value={effectiveSelected}
+  onchange={select}
+  ariaLabel="Sort"
+  variant="borderless"
+/>
