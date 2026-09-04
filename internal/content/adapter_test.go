@@ -39,16 +39,17 @@ func TestAdapterBackupRoundTrip(t *testing.T) {
 	canonicalRepositoryRoot, err := filepath.EvalSymlinks(repositoryRoot)
 	r.NoError(err)
 	r.Equal(canonicalRepositoryRoot, repository.Root())
-	prepared := 0
+	catalogSnapshot := filepath.Join(t.TempDir(), "catalog.sqlite")
 	snapshot, err := adapter.CreateBackup(t.Context(), repository, content.BackupOptions{
 		Tag: "fotobank-test",
 		Prepare: func(context.Context) error {
-			prepared++
-			return nil
+			return os.WriteFile(catalogSnapshot, []byte("catalog snapshot\n"), 0o600)
 		},
+		ExtraFiles: []content.BackupExtraFile{{
+			Path: catalogSnapshot, RecordAs: "application/catalog.sqlite",
+		}},
 	})
 	r.NoError(err)
-	r.Equal(1, prepared)
 	r.NotEmpty(snapshot.ID)
 	r.Equal("fotobank-test", snapshot.Tag)
 
@@ -71,8 +72,12 @@ func TestAdapterBackupRoundTrip(t *testing.T) {
 	})
 	r.NoError(err)
 	r.Equal(snapshot.ID, restored.SnapshotID)
+	r.Equal(1, restored.ExtraFiles)
 	r.True(restored.ContentVerified)
 	r.True(restored.SQLiteIntegrityVerified)
+	restoredCatalog, err := os.ReadFile(filepath.Join(restoredRoot, "application", "catalog.sqlite"))
+	r.NoError(err)
+	r.Equal("catalog snapshot\n", string(restoredCatalog))
 
 	restoredAdapter, err := content.Open(t.Context(), content.Config{Root: restoredRoot})
 	r.NoError(err)
@@ -86,7 +91,7 @@ func TestAdapterBackupRoundTrip(t *testing.T) {
 	r.Equal(body, got)
 }
 
-func TestAdapterBackupReleasesContentWritesAfterDocbankPinsSnapshot(t *testing.T) {
+func TestAdapterBackupBlocksContentWritesOnlyDuringHostPreparation(t *testing.T) {
 	r := require.New(t)
 	adapter, err := content.Open(t.Context(), content.Config{Root: filepath.Join(t.TempDir(), "live")})
 	r.NoError(err)
@@ -104,21 +109,25 @@ func TestAdapterBackupReleasesContentWritesAfterDocbankPinsSnapshot(t *testing.T
 
 	prepareEntered := make(chan struct{})
 	allowPrepare := make(chan struct{})
-	pinned := make(chan struct{})
+	prepareReturned := make(chan struct{})
+	capturing := make(chan struct{})
 	resume := make(chan struct{})
-	var pinnedOnce sync.Once
+	var captureOnce sync.Once
 	backupDone := make(chan error, 1)
 	go func() {
 		_, backupErr := adapter.CreateBackup(t.Context(), repository, content.BackupOptions{
 			Prepare: func(context.Context) error {
 				close(prepareEntered)
 				<-allowPrepare
+				close(prepareReturned)
 				return nil
 			},
-			Progress: func(progress content.BackupProgress) {
-				if progress.Stage == "freeze" && progress.Final {
-					pinnedOnce.Do(func() { close(pinned) })
+			Progress: func(content.BackupProgress) {
+				select {
+				case <-prepareReturned:
+					captureOnce.Do(func() { close(capturing) })
 					<-resume
+				default:
 				}
 			},
 		})
@@ -151,10 +160,10 @@ func TestAdapterBackupReleasesContentWritesAfterDocbankPinsSnapshot(t *testing.T
 	}
 	close(allowPrepare)
 	select {
-	case <-pinned:
+	case <-capturing:
 	case <-time.After(5 * time.Second):
 		close(resume)
-		r.FailNow("backup did not pin its Docbank snapshot")
+		r.FailNow("backup did not continue after host preparation")
 	}
 	select {
 	case err := <-writeDone:

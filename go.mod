@@ -16,7 +16,7 @@ require (
 	github.com/paulmach/orb v0.13.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	go.kenn.io/docbank v0.14.1-0.20260904144917-608fe56895b8
+	go.kenn.io/docbank v0.14.1-0.20260904161707-1e2b3b1cc02d
 	golang.org/x/crypto v0.54.0
 	golang.org/x/image v0.44.0
 	golang.org/x/sync v0.22.0

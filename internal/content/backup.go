@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	"go.kenn.io/docbank"
 )
@@ -34,11 +33,17 @@ type BackupOptions struct {
 	ZstdLevel   int
 	Jobs        int
 	ForceUnlock bool
-	// Prepare runs while Fotobank content mutations are paused and immediately
-	// before Docbank pins its snapshot. The archive layer uses it to capture the
-	// Fotobank catalog that the Docbank snapshot must cover.
-	Prepare  func(context.Context) error
-	Progress func(BackupProgress)
+	// Prepare runs during Docbank's short content freeze. It may create the
+	// immutable host files declared by ExtraFiles; those files must remain
+	// unchanged until CreateBackup returns.
+	Prepare    func(context.Context) error
+	ExtraFiles []BackupExtraFile
+	Progress   func(BackupProgress)
+}
+
+type BackupExtraFile struct {
+	Path     string
+	RecordAs string
 }
 
 type BackupProgress struct {
@@ -100,6 +105,7 @@ type BackupRestoreReport struct {
 	DatabaseBytes           int64
 	ContentBlobs            int64
 	ContentBytes            int64
+	ExtraFiles              int
 	ContentVerified         bool
 	SQLiteIntegrityVerified bool
 }
@@ -168,11 +174,9 @@ func (r *BackupRepository) Verify(
 	return result, nil
 }
 
-// CreateBackup captures one Docbank recovery point coordinated with a
-// Fotobank catalog snapshot. Prepare runs under the same adapter mutation gate
-// as Create and Replace. That gate is released as soon as Docbank reports that
-// its logical snapshot is pinned, so imports may continue while bytes stream to
-// the backup repository.
+// CreateBackup captures one Docbank recovery point together with any declared
+// host files. Docbank runs Prepare inside its metadata freeze and releases
+// content writers before snapshot bytes stream to the repository.
 func (a *Adapter) CreateBackup(
 	ctx context.Context,
 	repository *BackupRepository,
@@ -185,29 +189,14 @@ func (a *Adapter) CreateBackup(
 		return BackupSnapshot{}, errors.New("content backup repository is required")
 	}
 
-	a.mutation.Lock()
-	var releaseOnce sync.Once
-	release := func() { releaseOnce.Do(a.mutation.Unlock) }
-	defer release()
-	if options.Prepare != nil {
-		if err := options.Prepare(ctx); err != nil {
-			return BackupSnapshot{}, fmt.Errorf("prepare coordinated backup: %w", err)
-		}
-	}
-
 	snapshot, err := a.vault.CreateBackup(ctx, repository.repository, docbank.BackupOptions{
 		Tag:         options.Tag,
 		ZstdLevel:   options.ZstdLevel,
 		Jobs:        options.Jobs,
 		ForceUnlock: options.ForceUnlock,
-		Progress: func(progress docbank.BackupProgress) {
-			if progress.Stage == "freeze" && progress.Final {
-				release()
-			}
-			if options.Progress != nil {
-				options.Progress(projectBackupProgress(progress))
-			}
-		},
+		Prepare:     options.Prepare,
+		ExtraFiles:  projectBackupExtraFiles(options.ExtraFiles),
+		Progress:    projectBackupProgressCallback(options.Progress),
 	})
 	if err != nil {
 		return BackupSnapshot{}, fmt.Errorf("create content backup: %w", translateError(err))
@@ -245,9 +234,21 @@ func (a *Adapter) RestoreBackup(
 		DatabaseBytes:           report.DatabaseBytes,
 		ContentBlobs:            report.ContentBlobs,
 		ContentBytes:            report.ContentBytes,
+		ExtraFiles:              report.ExtrasFiles,
 		ContentVerified:         report.Proof.ContentVerified,
 		SQLiteIntegrityVerified: report.Proof.SQLiteIntegrity,
 	}, nil
+}
+
+func projectBackupExtraFiles(files []BackupExtraFile) []docbank.BackupExtraFile {
+	if len(files) == 0 {
+		return nil
+	}
+	result := make([]docbank.BackupExtraFile, len(files))
+	for i, file := range files {
+		result[i] = docbank.BackupExtraFile{Path: file.Path, RecordAs: file.RecordAs}
+	}
+	return result
 }
 
 func projectBackupSnapshot(snapshot docbank.BackupSnapshot) BackupSnapshot {

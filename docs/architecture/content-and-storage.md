@@ -50,12 +50,12 @@ Only `internal/content` imports `go.kenn.io/docbank`. It owns:
 - error translation into Fotobank sentinels; and
 - serialization of content mutations to bound local concurrency.
 
-A coordinated backup may provide a preparation callback that snapshots
-Fotobank SQLite while content creates and replacements are paused. The adapter
-keeps that gate through Docbank's metadata freeze, then releases it as soon as
-Docbank has pinned the logical snapshot; imports can continue while immutable
-backup bytes stream. Backup and restore reports are projected into Fotobank
-types, and restore always targets a separate vault root rather than replacing
+A coordinated backup declares the Fotobank SQLite snapshot as a host file and
+provides the callback that creates it. Docbank runs that callback inside its
+short metadata freeze, captures the host file in the same manifest as the
+content snapshot, and releases content writers before immutable backup bytes
+stream. Backup and restore reports are projected into Fotobank types, and
+restore always targets a separate vault root rather than replacing
 the open authority. The adapter supplies Docbank with every configured NAS and
 flash-managed root as protected storage, so restore rejects their descendants
 and filesystem aliases before it creates or overwrites a target. One boundary
