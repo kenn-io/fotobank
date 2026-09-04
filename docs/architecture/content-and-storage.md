@@ -58,12 +58,13 @@ backup bytes stream. Backup and restore reports are projected into Fotobank
 types, and restore always targets a separate vault root rather than replacing
 the open authority. The adapter supplies Docbank with every configured NAS and
 flash-managed root as protected storage, so restore rejects their descendants
-and filesystem aliases before it creates or overwrites a target. It retains
-both each configured path and the target resolved when the adapter opened;
-Docbank resolves them again for every restore, so a retargeted storage alias
-protects both its earlier and current destinations. Configuration validation
-keeps canonical roots for ordinary I/O but also preserves the expanded paths
-the operator configured for this restore boundary.
+and filesystem aliases before it creates or overwrites a target. One boundary
+set retains each configured alias, its validated destination, and the target
+resolved when the adapter opened. Restore, import, and checkout validation
+resolve that complete set again before use, so a retargeted storage alias does
+not expose either its earlier or current destination. Configuration validation
+keeps canonical roots for ordinary I/O but also preserves absolute unresolved
+versions of the paths the operator configured for this boundary.
 
 `internal/contentresolver` is the shared product-to-content boundary above the
 adapter. It resolves a ready asset and either its primary or a named attached

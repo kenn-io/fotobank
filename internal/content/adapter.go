@@ -21,7 +21,10 @@ type Config struct {
 }
 
 type ManagedRoot struct {
-	Path            string
+	Path string
+	// ValidatedPath preserves a canonical destination established before Open,
+	// including the target of an unavailable configured symlink.
+	ValidatedPath   string
 	CreateIfMissing bool
 	// AllowUnavailable defers only a missing-path check at Open. Import and
 	// checkout root validation still requires every managed root to resolve.
@@ -357,13 +360,12 @@ type RangeRead struct {
 }
 
 type Adapter struct {
-	vault            *docbank.Vault
-	mutation         sync.Mutex
-	root             string
-	managedRootPaths []string
-	managedRoots     []string
-	closeOnce        sync.Once
-	closeErr         error
+	vault        *docbank.Vault
+	mutation     sync.Mutex
+	root         string
+	managedRoots []string
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 func Open(ctx context.Context, cfg Config) (*Adapter, error) {
@@ -381,14 +383,20 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 		_ = vault.Close()
 		return nil, fmt.Errorf("make Docbank root absolute: %w", err)
 	}
-	managedRootPaths := make([]string, len(cfg.ManagedRoots))
-	managedRoots := make([]string, len(cfg.ManagedRoots))
-	for i, managedRoot := range cfg.ManagedRoots {
+	managedRoots := make([]string, 0, len(cfg.ManagedRoots)*3)
+	for _, managedRoot := range cfg.ManagedRoots {
 		if !filepath.IsAbs(managedRoot.Path) {
 			_ = vault.Close()
 			return nil, fmt.Errorf("%w: managed root must be absolute", errs.ErrBadConfiguration)
 		}
-		managedRootPaths[i] = filepath.Clean(managedRoot.Path)
+		managedRoots = append(managedRoots, managedRoot.Path)
+		if managedRoot.ValidatedPath != "" {
+			if !filepath.IsAbs(managedRoot.ValidatedPath) {
+				_ = vault.Close()
+				return nil, fmt.Errorf("%w: validated managed root must be absolute", errs.ErrBadConfiguration)
+			}
+			managedRoots = append(managedRoots, managedRoot.ValidatedPath)
+		}
 		if managedRoot.CreateIfMissing {
 			if err := os.MkdirAll(managedRoot.Path, 0o700); err != nil {
 				_ = vault.Close()
@@ -398,7 +406,6 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 		resolvedManagedRoot, evalErr := filepath.EvalSymlinks(managedRoot.Path)
 		if evalErr != nil {
 			if managedRoot.AllowUnavailable && os.IsNotExist(evalErr) {
-				managedRoots[i] = filepath.Clean(managedRoot.Path)
 				continue
 			}
 			_ = vault.Close()
@@ -407,7 +414,6 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 		info, statErr := os.Stat(resolvedManagedRoot)
 		if statErr != nil {
 			if managedRoot.AllowUnavailable && os.IsNotExist(statErr) {
-				managedRoots[i] = filepath.Clean(managedRoot.Path)
 				continue
 			}
 			_ = vault.Close()
@@ -422,11 +428,10 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 			_ = vault.Close()
 			return nil, fmt.Errorf("make managed root absolute: %w", err)
 		}
-		managedRoots[i] = filepath.Clean(resolvedManagedRoot)
+		managedRoots = append(managedRoots, filepath.Clean(resolvedManagedRoot))
 	}
 	return &Adapter{
-		vault: vault, root: filepath.Clean(root),
-		managedRootPaths: managedRootPaths, managedRoots: managedRoots,
+		vault: vault, root: filepath.Clean(root), managedRoots: managedRoots,
 	}, nil
 }
 

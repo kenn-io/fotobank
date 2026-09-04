@@ -238,6 +238,34 @@ func TestAdapterBackupRestoreRejectsRetargetedManagedStorage(t *testing.T) {
 	r.NoDirExists(filepath.Join(currentTarget, "restore"))
 }
 
+func TestAdapterRetargetedManagedStorageRemainsExternalBoundary(t *testing.T) {
+	r := require.New(t)
+	originalTarget := t.TempDir()
+	currentTarget := t.TempDir()
+	managedRoot := filepath.Join(t.TempDir(), "managed")
+	if err := os.Symlink(originalTarget, managedRoot); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	adapter, err := content.Open(t.Context(), content.Config{
+		Root:         filepath.Join(t.TempDir(), "live"),
+		ManagedRoots: []content.ManagedRoot{{Path: managedRoot}},
+	})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+
+	r.NoError(os.Remove(managedRoot))
+	r.NoError(os.Symlink(currentTarget, managedRoot))
+	_, err = adapter.ResolveImportRoot(currentTarget)
+	r.ErrorIs(err, errs.ErrBadConfiguration)
+	checkoutPath := filepath.Join(currentTarget, "checkout")
+	r.NoError(os.Mkdir(checkoutPath, 0o700))
+	checkoutRoot, err := adapter.ResolveCheckoutRoot(checkoutPath)
+	if checkoutRoot != nil {
+		t.Cleanup(func() { r.NoError(checkoutRoot.Close()) })
+	}
+	r.ErrorIs(err, errs.ErrBadConfiguration)
+}
+
 func TestAdapterLifecycle(t *testing.T) {
 	require := require.New(t)
 	adapter, err := content.Open(t.Context(), content.Config{Root: t.TempDir()})

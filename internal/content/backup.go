@@ -226,13 +226,10 @@ func (a *Adapter) RestoreBackup(
 	if repository == nil || repository.repository == nil {
 		return BackupRestoreReport{}, errors.New("content backup repository is required")
 	}
-	protectedRoots := make([]string, 0, len(a.managedRootPaths)+len(a.managedRoots))
-	protectedRoots = append(protectedRoots, a.managedRootPaths...)
-	protectedRoots = append(protectedRoots, a.managedRoots...)
 	report, err := a.vault.RestoreBackup(ctx, repository.repository, docbank.BackupRestoreOptions{
 		SnapshotID:     options.SnapshotID,
 		Target:         options.Target,
-		ProtectedRoots: protectedRoots,
+		ProtectedRoots: append([]string(nil), a.managedRoots...),
 		Overwrite:      options.Overwrite,
 		Jobs:           options.Jobs,
 		ForceUnlock:    options.ForceUnlock,

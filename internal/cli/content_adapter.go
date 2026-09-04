@@ -9,8 +9,16 @@ func contentAdapterConfig(cfg *config.Config, allowUnavailableNAS bool) content.
 	return content.Config{
 		Root: cfg.Docbank.Root,
 		ManagedRoots: []content.ManagedRoot{
-			{Path: cfg.ConfiguredNASRoot(), AllowUnavailable: allowUnavailableNAS},
-			{Path: cfg.ConfiguredFlashRoot(), CreateIfMissing: true},
+			{
+				Path:             cfg.ConfiguredNASRoot(),
+				ValidatedPath:    cfg.NAS.Root,
+				AllowUnavailable: allowUnavailableNAS,
+			},
+			{
+				Path:            cfg.ConfiguredFlashRoot(),
+				ValidatedPath:   cfg.Flash.Root,
+				CreateIfMissing: true,
+			},
 		},
 	}
 }

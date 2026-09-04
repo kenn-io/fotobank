@@ -20,7 +20,6 @@ func TestLoadedConfigRestoreRejectsRetargetedManagedStorage(t *testing.T) {
 	tmp := t.TempDir()
 	originalNAS := filepath.Join(tmp, "original-nas")
 	currentNAS := filepath.Join(tmp, "current-nas")
-	r.NoError(os.Mkdir(originalNAS, 0o700))
 	r.NoError(os.Mkdir(currentNAS, 0o700))
 	nasAlias := filepath.Join(tmp, "nas")
 	if err := os.Symlink(originalNAS, nasAlias); err != nil {
@@ -35,10 +34,11 @@ root = %q
 [nas]
 root = %q
 `, filepath.Join(tmp, "flash"), filepath.Join(tmp, "docbank"), nasAlias), 0o600))
-	cfg, err := config.Load(configPath)
+	cfg, err := config.LoadUnchecked(configPath)
 	r.NoError(err)
+	r.NoError(cfg.ValidateWithOptions(config.ValidationOptions{AllowUnavailableNAS: true}))
 
-	adapter, err := content.Open(t.Context(), contentAdapterConfig(cfg, false))
+	adapter, err := content.Open(t.Context(), contentAdapterConfig(cfg, true))
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(adapter.Close()) })
 	body := []byte("protected photo bytes\n")
@@ -67,4 +67,34 @@ root = %q
 	})
 	r.ErrorIs(err, errs.ErrBadConfiguration)
 	r.NoDirExists(filepath.Join(currentNAS, "restore"))
+
+	_, err = adapter.RestoreBackup(t.Context(), repository, content.BackupRestoreOptions{
+		SnapshotID: snapshot.ID,
+		Target:     filepath.Join(originalNAS, "restore"),
+		Overwrite:  true,
+	})
+	r.ErrorIs(err, errs.ErrBadConfiguration)
+	r.NoDirExists(filepath.Join(originalNAS, "restore"))
+}
+
+func TestLoadedRelativeStorageRootsOpenContentAdapter(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	r.NoError(os.Mkdir("nas", 0o700))
+	configPath := filepath.Join(tmp, "fotobank.toml")
+	r.NoError(os.WriteFile(configPath, []byte(`
+[flash]
+root = "flash"
+[docbank]
+root = "docbank"
+[nas]
+root = "nas"
+`), 0o600))
+	cfg, err := config.Load(configPath)
+	r.NoError(err)
+
+	adapter, err := content.Open(t.Context(), contentAdapterConfig(cfg, false))
+	r.NoError(err)
+	r.NoError(adapter.Close())
 }
