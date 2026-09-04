@@ -2,11 +2,13 @@ package content_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +16,154 @@ import (
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/errs"
 )
+
+func TestAdapterBackupRoundTrip(t *testing.T) {
+	r := require.New(t)
+	adapter, err := content.Open(t.Context(), content.Config{Root: filepath.Join(t.TempDir(), "live")})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+
+	body := []byte("recoverable photo bytes\n")
+	receipt, err := adapter.Create(t.Context(), content.CreateRequest{
+		VirtualPath: "/owners/owner/media/file/photo.jpg",
+		Reader:      bytes.NewReader(body),
+		Expected:    identityFor(body),
+		MediaType:   "image/jpeg",
+	})
+	r.NoError(err)
+
+	repositoryRoot := filepath.Join(t.TempDir(), "repository")
+	repository, err := content.InitBackupRepository(repositoryRoot)
+	r.NoError(err)
+	r.NotEmpty(repository.ID())
+	r.Equal(repositoryRoot, repository.Root())
+	prepared := 0
+	snapshot, err := adapter.CreateBackup(t.Context(), repository, content.BackupOptions{
+		Tag: "fotobank-test",
+		Prepare: func(context.Context) error {
+			prepared++
+			return nil
+		},
+	})
+	r.NoError(err)
+	r.Equal(1, prepared)
+	r.NotEmpty(snapshot.ID)
+	r.Equal("fotobank-test", snapshot.Tag)
+
+	snapshots, err := repository.Snapshots()
+	r.NoError(err)
+	r.Len(snapshots, 1)
+	r.Equal(snapshot.ID, snapshots[0].ID)
+	reopened, err := content.OpenBackupRepository(repositoryRoot)
+	r.NoError(err)
+	r.Equal(repository.ID(), reopened.ID())
+	verified, err := reopened.Verify(t.Context(), content.BackupVerifyOptions{SnapshotID: snapshot.ID})
+	r.NoError(err)
+	r.Equal([]string{snapshot.ID}, verified.Snapshots)
+	r.Empty(verified.Problems)
+
+	restoredRoot := filepath.Join(t.TempDir(), "restored")
+	restored, err := adapter.RestoreBackup(t.Context(), reopened, content.BackupRestoreOptions{
+		SnapshotID: snapshot.ID,
+		Target:     restoredRoot,
+	})
+	r.NoError(err)
+	r.Equal(snapshot.ID, restored.SnapshotID)
+	r.True(restored.ContentVerified)
+	r.True(restored.CatalogIntegrityVerified)
+
+	restoredAdapter, err := content.Open(t.Context(), content.Config{Root: restoredRoot})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(restoredAdapter.Close()) })
+	opened, err := restoredAdapter.OpenVersion(t.Context(), receipt.Version.ID)
+	r.NoError(err)
+	got, err := io.ReadAll(opened.Reader)
+	r.NoError(err)
+	r.NoError(opened.Reader.Verify())
+	r.NoError(opened.Reader.Close())
+	r.Equal(body, got)
+}
+
+func TestAdapterBackupReleasesContentWritesAfterDocbankPinsSnapshot(t *testing.T) {
+	r := require.New(t)
+	adapter, err := content.Open(t.Context(), content.Config{Root: filepath.Join(t.TempDir(), "live")})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+	before := []byte("before\n")
+	_, err = adapter.Create(t.Context(), content.CreateRequest{
+		VirtualPath: "/owners/owner/media/file/before.jpg",
+		Reader:      bytes.NewReader(before),
+		Expected:    identityFor(before),
+		MediaType:   "image/jpeg",
+	})
+	r.NoError(err)
+	repository, err := content.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
+	r.NoError(err)
+
+	prepareEntered := make(chan struct{})
+	allowPrepare := make(chan struct{})
+	pinned := make(chan struct{})
+	resume := make(chan struct{})
+	var pinnedOnce sync.Once
+	backupDone := make(chan error, 1)
+	go func() {
+		_, backupErr := adapter.CreateBackup(t.Context(), repository, content.BackupOptions{
+			Prepare: func(context.Context) error {
+				close(prepareEntered)
+				<-allowPrepare
+				return nil
+			},
+			Progress: func(progress content.BackupProgress) {
+				if progress.Stage == "freeze" && progress.Final {
+					pinnedOnce.Do(func() { close(pinned) })
+					<-resume
+				}
+			},
+		})
+		backupDone <- backupErr
+	}()
+	select {
+	case <-prepareEntered:
+	case <-time.After(5 * time.Second):
+		r.FailNow("backup did not enter coordinated preparation")
+	}
+
+	after := []byte("after\n")
+	writeDone := make(chan error, 1)
+	go func() {
+		_, createErr := adapter.Create(t.Context(), content.CreateRequest{
+			VirtualPath: "/owners/owner/media/file/after.jpg",
+			Reader:      bytes.NewReader(after),
+			Expected:    identityFor(after),
+			MediaType:   "image/jpeg",
+		})
+		writeDone <- createErr
+	}()
+	select {
+	case err := <-writeDone:
+		close(allowPrepare)
+		close(resume)
+		r.NoError(err)
+		r.FailNow("content write completed while coordinated preparation was running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(allowPrepare)
+	select {
+	case <-pinned:
+	case <-time.After(5 * time.Second):
+		close(resume)
+		r.FailNow("backup did not pin its Docbank snapshot")
+	}
+	select {
+	case err := <-writeDone:
+		r.NoError(err)
+	case <-time.After(5 * time.Second):
+		close(resume)
+		r.FailNow("content write remained blocked after Docbank pinned the backup")
+	}
+	close(resume)
+	r.NoError(<-backupDone)
+}
 
 func TestAdapterLifecycle(t *testing.T) {
 	require := require.New(t)

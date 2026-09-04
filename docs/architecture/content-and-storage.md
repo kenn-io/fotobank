@@ -45,9 +45,18 @@ Only `internal/content` imports `go.kenn.io/docbank`. It owns:
 - exact-version source-metadata processing and projection into dependency-free
   values;
 - exact-version canonical visual-preview processing and verified reads;
+- backup repository creation, verification, and isolated restore;
 - bounded traversal of an owner's media subtree for reconciliation;
 - error translation into Fotobank sentinels; and
 - serialization of content mutations to bound local concurrency.
+
+A coordinated backup may provide a preparation callback that snapshots
+Fotobank SQLite while content creates and replacements are paused. The adapter
+keeps that gate through Docbank's metadata freeze, then releases it as soon as
+Docbank has pinned the logical snapshot; imports can continue while immutable
+backup bytes stream. Backup and restore reports are projected into Fotobank
+types, and restore always targets a separate vault root rather than replacing
+the open authority.
 
 `internal/contentresolver` is the shared product-to-content boundary above the
 adapter. It resolves a ready asset and either its primary or a named attached

@@ -1,0 +1,273 @@
+package content
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+
+	"go.kenn.io/docbank"
+)
+
+// BackupRepository is an initialized immutable Docbank snapshot repository.
+// The Docbank implementation remains private to the content boundary.
+type BackupRepository struct {
+	repository *docbank.BackupRepository
+}
+
+func (r *BackupRepository) ID() string {
+	if r == nil || r.repository == nil {
+		return ""
+	}
+	return r.repository.ID()
+}
+
+func (r *BackupRepository) Root() string {
+	if r == nil || r.repository == nil {
+		return ""
+	}
+	return r.repository.Root()
+}
+
+type BackupOptions struct {
+	Tag         string
+	ZstdLevel   int
+	Jobs        int
+	ForceUnlock bool
+	// Prepare runs while Fotobank content mutations are paused and immediately
+	// before Docbank pins its snapshot. The archive layer uses it to capture the
+	// Fotobank catalog that the Docbank snapshot must cover.
+	Prepare  func(context.Context) error
+	Progress func(BackupProgress)
+}
+
+type BackupProgress struct {
+	Stage      string
+	Done       int64
+	Total      int64
+	BytesDone  int64
+	BytesTotal int64
+	Final      bool
+}
+
+type BackupSnapshot struct {
+	ID              string
+	ParentID        string
+	CreatedAt       string
+	Tag             string
+	Nodes           int64
+	Files           int64
+	Blobs           int64
+	BlobBytes       int64
+	BytesAdded      int64
+	DurationSeconds float64
+}
+
+type BackupVerifyOptions struct {
+	SnapshotID  string
+	All         bool
+	Quick       bool
+	Jobs        int
+	ForceUnlock bool
+	Progress    func(BackupProgress)
+}
+
+type BackupVerifyProblem struct {
+	SnapshotID string
+	Detail     string
+}
+
+type BackupVerifyReport struct {
+	Snapshots    []string
+	BlobsChecked int64
+	BytesRead    int64
+	Problems     []BackupVerifyProblem
+}
+
+type BackupRestoreOptions struct {
+	SnapshotID  string
+	Target      string
+	Overwrite   bool
+	Jobs        int
+	ForceUnlock bool
+	Progress    func(BackupProgress)
+}
+
+type BackupRestoreReport struct {
+	SnapshotID               string
+	Target                   string
+	DatabasePath             string
+	DatabaseBytes            int64
+	ContentBlobs             int64
+	ContentBytes             int64
+	ContentVerified          bool
+	CatalogIntegrityVerified bool
+}
+
+func InitBackupRepository(root string) (*BackupRepository, error) {
+	repository, err := docbank.InitBackupRepository(root)
+	if err != nil {
+		return nil, fmt.Errorf("initialize content backup repository: %w", translateError(err))
+	}
+	return &BackupRepository{repository: repository}, nil
+}
+
+func OpenBackupRepository(root string) (*BackupRepository, error) {
+	repository, err := docbank.OpenBackupRepository(root)
+	if err != nil {
+		return nil, fmt.Errorf("open content backup repository: %w", translateError(err))
+	}
+	return &BackupRepository{repository: repository}, nil
+}
+
+func (r *BackupRepository) Snapshots() ([]BackupSnapshot, error) {
+	if r == nil || r.repository == nil {
+		return nil, errors.New("content backup repository is required")
+	}
+	snapshots, err := r.repository.Snapshots()
+	if err != nil {
+		return nil, fmt.Errorf("list content backups: %w", translateError(err))
+	}
+	result := make([]BackupSnapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		result = append(result, projectBackupSnapshot(snapshot))
+	}
+	return result, nil
+}
+
+func (r *BackupRepository) Verify(
+	ctx context.Context,
+	options BackupVerifyOptions,
+) (BackupVerifyReport, error) {
+	if r == nil || r.repository == nil {
+		return BackupVerifyReport{}, errors.New("content backup repository is required")
+	}
+	report, err := r.repository.Verify(ctx, docbank.BackupVerifyOptions{
+		SnapshotID:  options.SnapshotID,
+		All:         options.All,
+		Quick:       options.Quick,
+		Jobs:        options.Jobs,
+		ForceUnlock: options.ForceUnlock,
+		Progress:    projectBackupProgressCallback(options.Progress),
+	})
+	if err != nil {
+		return BackupVerifyReport{}, fmt.Errorf("verify content backup: %w", translateError(err))
+	}
+	result := BackupVerifyReport{
+		Snapshots:    append([]string(nil), report.Snapshots...),
+		BlobsChecked: report.BlobsChecked,
+		BytesRead:    report.BytesRead,
+		Problems:     make([]BackupVerifyProblem, 0, len(report.Problems)),
+	}
+	for _, problem := range report.Problems {
+		result.Problems = append(result.Problems, BackupVerifyProblem{
+			SnapshotID: problem.SnapshotID,
+			Detail:     problem.Detail,
+		})
+	}
+	return result, nil
+}
+
+// CreateBackup captures one Docbank recovery point coordinated with a
+// Fotobank catalog snapshot. Prepare runs under the same adapter mutation gate
+// as Create and Replace. That gate is released as soon as Docbank reports that
+// its logical snapshot is pinned, so imports may continue while bytes stream to
+// the backup repository.
+func (a *Adapter) CreateBackup(
+	ctx context.Context,
+	repository *BackupRepository,
+	options BackupOptions,
+) (BackupSnapshot, error) {
+	if a == nil || a.vault == nil {
+		return BackupSnapshot{}, errors.New("content adapter is required")
+	}
+	if repository == nil || repository.repository == nil {
+		return BackupSnapshot{}, errors.New("content backup repository is required")
+	}
+
+	a.mutation.Lock()
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(a.mutation.Unlock) }
+	defer release()
+	if options.Prepare != nil {
+		if err := options.Prepare(ctx); err != nil {
+			return BackupSnapshot{}, fmt.Errorf("prepare coordinated backup: %w", err)
+		}
+	}
+
+	snapshot, err := a.vault.CreateBackup(ctx, repository.repository, docbank.BackupOptions{
+		Tag:         options.Tag,
+		ZstdLevel:   options.ZstdLevel,
+		Jobs:        options.Jobs,
+		ForceUnlock: options.ForceUnlock,
+		Progress: func(progress docbank.BackupProgress) {
+			if progress.Stage == "freeze" && progress.Final {
+				release()
+			}
+			if options.Progress != nil {
+				options.Progress(projectBackupProgress(progress))
+			}
+		},
+	})
+	if err != nil {
+		return BackupSnapshot{}, fmt.Errorf("create content backup: %w", translateError(err))
+	}
+	return projectBackupSnapshot(snapshot), nil
+}
+
+func (a *Adapter) RestoreBackup(
+	ctx context.Context,
+	repository *BackupRepository,
+	options BackupRestoreOptions,
+) (BackupRestoreReport, error) {
+	if a == nil || a.vault == nil {
+		return BackupRestoreReport{}, errors.New("content adapter is required")
+	}
+	if repository == nil || repository.repository == nil {
+		return BackupRestoreReport{}, errors.New("content backup repository is required")
+	}
+	report, err := a.vault.RestoreBackup(ctx, repository.repository, docbank.BackupRestoreOptions{
+		SnapshotID:  options.SnapshotID,
+		Target:      options.Target,
+		Overwrite:   options.Overwrite,
+		Jobs:        options.Jobs,
+		ForceUnlock: options.ForceUnlock,
+		Progress:    projectBackupProgressCallback(options.Progress),
+	})
+	if err != nil {
+		return BackupRestoreReport{}, fmt.Errorf("restore content backup: %w", translateError(err))
+	}
+	return BackupRestoreReport{
+		SnapshotID:               report.SnapshotID,
+		Target:                   report.Target,
+		DatabasePath:             report.DatabasePath,
+		DatabaseBytes:            report.DatabaseBytes,
+		ContentBlobs:             report.ContentBlobs,
+		ContentBytes:             report.ContentBytes,
+		ContentVerified:          report.Proof.ContentVerified,
+		CatalogIntegrityVerified: report.Proof.SQLiteIntegrity,
+	}, nil
+}
+
+func projectBackupSnapshot(snapshot docbank.BackupSnapshot) BackupSnapshot {
+	return BackupSnapshot{
+		ID: snapshot.ID, ParentID: snapshot.ParentID, CreatedAt: snapshot.CreatedAt,
+		Tag: snapshot.Tag, Nodes: snapshot.Nodes, Files: snapshot.Files,
+		Blobs: snapshot.Blobs, BlobBytes: snapshot.BlobBytes,
+		BytesAdded: snapshot.BytesAdded, DurationSeconds: snapshot.DurationSeconds,
+	}
+}
+
+func projectBackupProgress(progress docbank.BackupProgress) BackupProgress {
+	return BackupProgress{
+		Stage: progress.Stage, Done: progress.Done, Total: progress.Total,
+		BytesDone: progress.BytesDone, BytesTotal: progress.BytesTotal, Final: progress.Final,
+	}
+}
+
+func projectBackupProgressCallback(callback func(BackupProgress)) func(docbank.BackupProgress) {
+	if callback == nil {
+		return nil
+	}
+	return func(progress docbank.BackupProgress) { callback(projectBackupProgress(progress)) }
+}
