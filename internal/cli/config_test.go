@@ -193,7 +193,7 @@ root = %q
 	var out, eout bytes.Buffer
 	r.Equal(1, cli.Run([]string{"config", "diagnose", "--config", cfgPath}, &out, &eout))
 	r.Contains(out.String(), "configuration        ok")
-	r.Contains(out.String(), docbankTarget)
+	r.Contains(out.String(), "missing-docbank-target")
 	r.Contains(out.String(), "nas artifacts        error")
 	r.Contains(out.String(), "backups              error")
 	r.NotContains(out.String(), "backups              ready")

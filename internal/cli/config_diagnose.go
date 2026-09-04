@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/fotobank/internal/config"
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/errs"
 )
 
@@ -94,7 +95,7 @@ func diagnoseConfig(path string) []configDiagnostic {
 		})
 	}
 
-	if err := inspectDocbank(cfg.Docbank.Root); err != nil {
+	if err := content.InspectVault(cfg.Docbank.Root); err != nil {
 		checks = append(checks, configDiagnostic{
 			name: "docbank", status: "error", detail: fmt.Sprintf("%s: %v", cfg.Docbank.Root, err),
 			action: "make [docbank].root available and initialize the vault with fotobank serve",
@@ -155,6 +156,13 @@ func diagnoseConfig(path string) []configDiagnostic {
 }
 
 func inspectSQLiteFile(path string) (retErr error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("not a regular file")
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -170,37 +178,6 @@ func inspectSQLiteReader(reader io.Reader) error {
 	}
 	if string(header) != sqliteHeader {
 		return errors.New("not a SQLite database")
-	}
-	return nil
-}
-
-func inspectDocbank(path string) (retErr error) {
-	root, err := os.OpenRoot(path)
-	if err != nil {
-		return err
-	}
-	defer func() { retErr = errors.Join(retErr, root.Close()) }()
-	info, err := root.Stat(".")
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		return errors.New("vault root is not a directory")
-	}
-	blobs, err := root.Stat("blobs")
-	if err != nil {
-		return fmt.Errorf("inspect blobs directory: %w", err)
-	}
-	if !blobs.IsDir() {
-		return errors.New("blobs is not a directory")
-	}
-	catalog, err := root.Open("docbank.db")
-	if err != nil {
-		return fmt.Errorf("open catalog: %w", err)
-	}
-	defer func() { retErr = errors.Join(retErr, catalog.Close()) }()
-	if err := inspectSQLiteReader(catalog); err != nil {
-		return fmt.Errorf("inspect catalog: %w", err)
 	}
 	return nil
 }
