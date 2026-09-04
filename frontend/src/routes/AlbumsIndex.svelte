@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button, EmptyState, Modal } from "@kenn-io/kit-ui";
   import AlbumGrid from "../lib/components/AlbumGrid.svelte";
   import NewAlbumForm from "../lib/components/NewAlbumForm.svelte";
   import type { AlbumsStore } from "../lib/albums/albumsStore.svelte";
@@ -53,46 +54,33 @@
 
 <header class="page-header">
   <h1>Albums</h1>
-  <button type="button" onclick={() => (modalOpen = true)}>+ New Album</button>
+  <Button tone="info" surface="solid" onclick={() => (modalOpen = true)}>New album</Button>
 </header>
 
 {#if albumsStore.albums.length > 0}
   <AlbumGrid albums={albumsStore.albums} />
 {:else if albumsStore.loadError}
-  <div class="empty">
-    <p>Couldn't load albums.</p>
-    <button type="button" onclick={() => albumsStore.retry()}>Retry</button>
-  </div>
+  <EmptyState title="Couldn't load albums">
+    <Button onclick={() => albumsStore.retry()}>Retry</Button>
+  </EmptyState>
 {:else if !albumsStore.loading}
-  <div class="empty">
-    <p>No albums yet</p>
-    <button type="button" onclick={() => (modalOpen = true)}>Create your first album</button>
-  </div>
+  <EmptyState
+    title="No albums yet"
+    description="Collect photos into albums for projects, trips, and people."
+  >
+    <Button tone="info" surface="solid" onclick={() => (modalOpen = true)}>
+      Create your first album
+    </Button>
+  </EmptyState>
 {/if}
 
 {#if albumsStore.loading}<div class="loading">Loading…</div>{/if}
 <div bind:this={sentinel} style="height:1px"></div>
 
-<svelte:window
-  onkeydown={(e) => {
-    if (modalOpen && e.key === "Escape") modalOpen = false;
-  }}
-/>
-
 {#if modalOpen}
-  <!-- Backdrop click dismisses; Esc dismisses via the window keydown
-       handler above. Inner modal stops click propagation so interactions
-       inside don't bubble up to the backdrop. -->
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="modal-backdrop" role="presentation" onclick={() => (modalOpen = false)}>
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="modal" role="dialog" aria-modal="true" aria-label="New album" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-      <h2>New album</h2>
-      <NewAlbumForm {onCreate} onCancel={() => (modalOpen = false)} />
-    </div>
-  </div>
+  <Modal title="New album" width="360px" onclose={() => (modalOpen = false)}>
+    <NewAlbumForm {onCreate} onCancel={() => (modalOpen = false)} />
+  </Modal>
 {/if}
 
 <style>
@@ -104,27 +92,5 @@
     border-bottom: 1px solid var(--border-default);
   }
   .page-header h1 { font-size: 18px; margin: 0; }
-  .empty {
-    padding: 64px 16px;
-    text-align: center;
-    color: var(--text-secondary);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-  }
   .loading { padding: 12px; color: var(--text-muted); }
-  .modal-backdrop {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 100;
-  }
-  .modal {
-    background: var(--bg-inset);
-    border: 1px solid var(--border-default);
-    border-radius: 8px;
-    padding: 16px;
-    min-width: 320px;
-  }
-  .modal h2 { margin-top: 0; }
 </style>

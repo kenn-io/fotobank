@@ -74,6 +74,12 @@ product's visual identity.
 
 ![Fotobank header using the darkroom theme over kit-ui tokens](images/kit-ui-theme-foundation.png)
 
+Album creation uses the shared modal, text field, buttons, and empty state.
+The controls inherit Fotobank's darkroom palette, and the modal supplies the
+close, backdrop, focus-trap, and keyboard behavior for the route.
+
+![New album dialog over synthetic album data](images/album-creation.png)
+
 `make frontend-check` runs `kit-ui-check` in warning mode alongside type checks
 and unit tests. Warnings identify remaining local control equivalents without
 blocking incremental adoption. Architecture docs record interaction and data

@@ -19,6 +19,11 @@ const config = {
       "/api": { target: apiUrl, changeOrigin: true, ws: true },
     },
   },
+  ssr: {
+    // kit-ui publishes Svelte source. Keep it and its icon components in
+    // Vite's transform pipeline when Vitest runs in its server environment.
+    noExternal: ["@kenn-io/kit-ui", "@lucide/svelte"],
+  },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
