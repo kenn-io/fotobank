@@ -11,9 +11,9 @@ test.describe("F2.3 albums", () => {
     await page.goto("/albums");
     await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
 
-    // Create a fresh album. Cobra: AlbumsIndex's "+ New Album" button
+    // Create a fresh album. AlbumsIndex's "New album" button
     // opens the new-album modal, NewAlbumForm submits via api.POST.
-    await page.getByRole("button", { name: "+ New Album" }).click();
+    await page.getByRole("button", { name: "New album" }).click();
     await page.getByLabel("Name").fill(albumName);
     await page.getByRole("button", { name: "Create" }).click();
     await expect(page.getByText(albumName)).toBeVisible();
@@ -24,9 +24,7 @@ test.describe("F2.3 albums", () => {
     // MediaStore.loadInitial() can swallow the first click.
     await page.goto("/library");
     await expect(page.getByLabel("Photo gps-fixture-1")).toBeVisible();
-    await page
-      .getByLabel("Photo gps-fixture-1")
-      .click({ modifiers: ["Meta"] });
+    await page.getByLabel("Photo gps-fixture-1").click({ modifiers: ["Meta"] });
     await page
       .getByLabel("Photo pair-fixture-primary")
       .click({ modifiers: ["Meta"] });
@@ -55,13 +53,9 @@ test.describe("F2.3 albums", () => {
     // Multi-select 1 photo, click Remove from this album. AlbumDetail
     // bulks via the route-scoped selectedInAlbum derivation — the
     // single-id click puts a 1-photo selection into the action bar.
-    await page
-      .getByLabel("Photo gps-fixture-1")
-      .click({ modifiers: ["Meta"] });
+    await page.getByLabel("Photo gps-fixture-1").click({ modifiers: ["Meta"] });
     await expect(page.getByText("1 selected")).toBeVisible();
-    await page
-      .getByRole("button", { name: "Remove from this album" })
-      .click();
+    await page.getByRole("button", { name: "Remove from this album" }).click();
     await expect(page.getByLabel(/^Photo /)).toHaveCount(1);
 
     // Delete the album. Two "Delete" buttons exist after the confirm
@@ -105,5 +99,4 @@ test.describe("F2.3 albums", () => {
       .click();
     await expect(page.getByText(/\d+ selected/)).toBeVisible();
   });
-
 });

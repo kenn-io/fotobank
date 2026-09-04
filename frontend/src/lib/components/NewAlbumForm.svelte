@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Button, TextInput } from "@kenn-io/kit-ui";
+
   let {
     onCreate,
     onCancel,
@@ -31,31 +33,37 @@
       pending = false;
     }
   }
+
+  function updateName(value: string) {
+    name = value.slice(0, 200);
+  }
 </script>
 
 <form onsubmit={submit} class="new-album-form">
-  <label>
-    <span>Name</span>
-    <!-- svelte-ignore a11y_autofocus -->
-    <input
-      type="text"
-      bind:value={name}
-      maxlength="200"
-      autofocus
-      placeholder="Album name"
-      aria-invalid={error !== null}
-    />
-  </label>
-  {#if error}<div class="error" role="alert">{error}</div>{/if}
+  <label for="new-album-name">Name</label>
+  <!-- svelte-ignore a11y_autofocus -->
+  <TextInput
+    id="new-album-name"
+    value={name}
+    oninput={updateName}
+    placeholder="Album name"
+    invalid={error !== null}
+    {...(error ? { ariaDescribedby: "new-album-error" } : {})}
+    autofocus
+    block
+  />
+  {#if error}<div id="new-album-error" class="error" role="alert">{error}</div>{/if}
   <div class="actions">
-    {#if onCancel}<button type="button" onclick={onCancel} disabled={pending}>Cancel</button>{/if}
-    <button type="submit" disabled={!valid || pending}>{pending ? "Creating…" : "Create"}</button>
+    {#if onCancel}<Button onclick={onCancel} disabled={pending}>Cancel</Button>{/if}
+    <Button type="submit" tone="info" surface="solid" disabled={!valid || pending}>
+      {pending ? "Creating…" : "Create"}
+    </Button>
   </div>
 </form>
 
 <style>
   .new-album-form { display: flex; flex-direction: column; gap: 12px; }
-  label { display: flex; flex-direction: column; gap: 4px; }
+  label { color: var(--text-secondary); font-size: var(--font-size-sm); }
   .error { color: var(--accent-red); font-size: 13px; }
   .actions { display: flex; gap: 8px; justify-content: flex-end; }
 </style>

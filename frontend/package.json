@@ -23,7 +23,7 @@
     "test:e2e:scale": "playwright test --config=playwright-e2e-scale.config.ts"
   },
   "dependencies": {
-    "@kenn-io/kit-ui": "github:kenn-io/kit-ui#d985dc46f4850fbbba5c8ec5aa39d8402fc08866",
+    "@kenn-io/kit-ui": "github:kenn-io/kit-ui#57af07006f841d68840f81bf300e76e701e8a25b",
     "leaflet": "1.9",
     "leaflet.markercluster": "1.5",
     "openapi-fetch": "^0.17.0",
