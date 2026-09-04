@@ -357,12 +357,13 @@ type RangeRead struct {
 }
 
 type Adapter struct {
-	vault        *docbank.Vault
-	mutation     sync.Mutex
-	root         string
-	managedRoots []string
-	closeOnce    sync.Once
-	closeErr     error
+	vault            *docbank.Vault
+	mutation         sync.Mutex
+	root             string
+	managedRootPaths []string
+	managedRoots     []string
+	closeOnce        sync.Once
+	closeErr         error
 }
 
 func Open(ctx context.Context, cfg Config) (*Adapter, error) {
@@ -380,12 +381,14 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 		_ = vault.Close()
 		return nil, fmt.Errorf("make Docbank root absolute: %w", err)
 	}
+	managedRootPaths := make([]string, len(cfg.ManagedRoots))
 	managedRoots := make([]string, len(cfg.ManagedRoots))
 	for i, managedRoot := range cfg.ManagedRoots {
 		if !filepath.IsAbs(managedRoot.Path) {
 			_ = vault.Close()
 			return nil, fmt.Errorf("%w: managed root must be absolute", errs.ErrBadConfiguration)
 		}
+		managedRootPaths[i] = filepath.Clean(managedRoot.Path)
 		if managedRoot.CreateIfMissing {
 			if err := os.MkdirAll(managedRoot.Path, 0o700); err != nil {
 				_ = vault.Close()
@@ -422,7 +425,8 @@ func Open(ctx context.Context, cfg Config) (*Adapter, error) {
 		managedRoots[i] = filepath.Clean(resolvedManagedRoot)
 	}
 	return &Adapter{
-		vault: vault, root: filepath.Clean(root), managedRoots: managedRoots,
+		vault: vault, root: filepath.Clean(root),
+		managedRootPaths: managedRootPaths, managedRoots: managedRoots,
 	}, nil
 }
 

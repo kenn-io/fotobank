@@ -36,7 +36,9 @@ func TestAdapterBackupRoundTrip(t *testing.T) {
 	repository, err := content.InitBackupRepository(repositoryRoot)
 	r.NoError(err)
 	r.NotEmpty(repository.ID())
-	r.Equal(repositoryRoot, repository.Root())
+	canonicalRepositoryRoot, err := filepath.EvalSymlinks(repositoryRoot)
+	r.NoError(err)
+	r.Equal(canonicalRepositoryRoot, repository.Root())
 	prepared := 0
 	snapshot, err := adapter.CreateBackup(t.Context(), repository, content.BackupOptions{
 		Tag: "fotobank-test",
@@ -195,6 +197,45 @@ func TestAdapterBackupRestoreRejectsManagedStorage(t *testing.T) {
 	})
 	r.ErrorIs(err, errs.ErrBadConfiguration)
 	r.NoDirExists(target)
+}
+
+func TestAdapterBackupRestoreRejectsRetargetedManagedStorage(t *testing.T) {
+	r := require.New(t)
+	originalTarget := t.TempDir()
+	currentTarget := t.TempDir()
+	managedRoot := filepath.Join(t.TempDir(), "managed")
+	if err := os.Symlink(originalTarget, managedRoot); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	adapter, err := content.Open(t.Context(), content.Config{
+		Root:         filepath.Join(t.TempDir(), "live"),
+		ManagedRoots: []content.ManagedRoot{{Path: managedRoot}},
+	})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(adapter.Close()) })
+	body := []byte("protected photo bytes\n")
+	_, err = adapter.Create(t.Context(), content.CreateRequest{
+		VirtualPath: "/owners/owner/media/file/photo.jpg",
+		Reader:      bytes.NewReader(body),
+		Expected:    identityFor(body),
+		MediaType:   "image/jpeg",
+	})
+	r.NoError(err)
+	repository, err := content.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
+	r.NoError(err)
+	snapshot, err := adapter.CreateBackup(t.Context(), repository, content.BackupOptions{})
+	r.NoError(err)
+
+	r.NoError(os.Remove(managedRoot))
+	r.NoError(os.Symlink(currentTarget, managedRoot))
+	target := filepath.Join(managedRoot, "restore")
+	_, err = adapter.RestoreBackup(t.Context(), repository, content.BackupRestoreOptions{
+		SnapshotID: snapshot.ID,
+		Target:     target,
+		Overwrite:  true,
+	})
+	r.ErrorIs(err, errs.ErrBadConfiguration)
+	r.NoDirExists(filepath.Join(currentTarget, "restore"))
 }
 
 func TestAdapterLifecycle(t *testing.T) {
