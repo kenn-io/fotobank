@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -47,13 +48,14 @@ func RestoreArchive(ctx context.Context, repository *content.BackupRepository,
 	// different immutable versions. Do not require the catalog's version to be
 	// the Docbank head: a later append can legitimately be in the same backup.
 	rows, err := database.QueryContext(ctx, `
-		SELECT docbank_node_id, current_version_id, sha256, size
+		SELECT docbank_node_id, current_version_id, sha256, size, docbank_virtual_path
 		FROM media_files WHERE current_version_id IS NOT NULL
 		UNION
-		SELECT docbank_node_id, docbank_version_id, expected_sha256, expected_size
+		SELECT docbank_node_id, docbank_version_id, expected_sha256, expected_size, docbank_virtual_path
 		FROM content_operations WHERE docbank_node_id IS NOT NULL AND docbank_version_id IS NOT NULL
 		UNION
-		SELECT COALESCE(f.docbank_node_id, 0), e.base_version_id, e.base_sha256, e.base_size
+		SELECT COALESCE(f.docbank_node_id, 0), e.base_version_id, e.base_sha256, e.base_size,
+		       f.docbank_virtual_path
 		FROM checkout_entries e LEFT JOIN media_files f ON f.id=e.file_id`)
 	if err != nil {
 		return result, fmt.Errorf("read restored catalog references: %w", err)
@@ -63,8 +65,20 @@ func RestoreArchive(ctx context.Context, repository *content.BackupRepository,
 	for rows.Next() {
 		var nodeID, size int64
 		var versionID, digest string
-		if err := rows.Scan(&nodeID, &versionID, &digest, &size); err != nil {
+		var virtualPath sql.NullString
+		if err := rows.Scan(&nodeID, &versionID, &digest, &size, &virtualPath); err != nil {
 			return result, err
+		}
+		// Detached checkout bases have no retained virtual path. For mapped
+		// references, check only path-to-node identity, not the current head.
+		if virtualPath.Valid {
+			node, err := vault.Stat(ctx, virtualPath.String)
+			if err != nil {
+				return result, fmt.Errorf("restore path for version %s: %w", versionID, err)
+			}
+			if node.ID != nodeID {
+				return result, fmt.Errorf("restored path for version %s does not name its catalog node", versionID)
+			}
 		}
 		opened, err := vault.OpenVersion(ctx, versionID)
 		if err != nil {

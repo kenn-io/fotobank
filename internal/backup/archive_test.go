@@ -1,7 +1,10 @@
 package backup_test
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -33,6 +36,19 @@ func TestArchiveRestoresCatalogAndReferencedOriginal(t *testing.T) {
 		media.Media{Owner: owner, OriginalFilename: "photo.jpg"})
 	repository, err := content.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
 	r.NoError(err)
+	// A later content append can precede its catalog receipt. Recovery must
+	// validate the recorded path/node without requiring this newer head.
+	later := []byte("a later original")
+	node, err := vault.Stat(t.Context(), item.DocbankVirtualPath)
+	r.NoError(err)
+	_, err = vault.Replace(t.Context(), content.ReplaceRequest{
+		VirtualPath: item.DocbankVirtualPath, NodeID: node.ID,
+		BaseVersionID: item.CurrentVersionID,
+		Base:          content.Identity{SHA256: item.SHA256, Size: item.Size},
+		Expected:      content.Identity{SHA256: fmt.Sprintf("%x", sha256.Sum256(later)), Size: int64(len(later))},
+		MediaType:     item.MimeType, Reader: bytes.NewReader(later),
+	})
+	r.NoError(err)
 	snapshot, err := backup.CreateArchive(t.Context(), databasePath, vault, repository, "before-edit")
 	r.NoError(err)
 	// A later catalog change must not alter the recovery point.
@@ -56,7 +72,7 @@ func TestArchiveRestoresCatalogAndReferencedOriginal(t *testing.T) {
 	t.Cleanup(func() { r.NoError(restoredVault.Close()) })
 	repo := media.NewRepo(restoredDB.WriteDB(), restoredDB.ReadDB())
 	resolver := contentresolver.New(repo, restoredVault)
-	ref, err := resolver.ValidateCurrent(t.Context(), item.ID, item.PrimaryFileID)
+	ref, err := resolver.ResolveCurrent(t.Context(), item.ID, item.PrimaryFileID)
 	r.NoError(err)
 	r.Equal(item.CurrentVersionID, ref.VersionID)
 	r.Empty(ref.Asset.Make)
@@ -121,6 +137,44 @@ func TestArchiveRestoreRequiresCapturedCatalog(t *testing.T) {
 	result, err := backup.RestoreArchive(t.Context(), repository, snapshot.ID, filepath.Join(t.TempDir(), "restored"), nil)
 	r.ErrorContains(err, "validate restored catalog")
 	r.Empty(result.SnapshotID)
+}
+
+func TestArchiveRestoreRejectsIncorrectVirtualPath(t *testing.T) {
+	for _, wrongPath := range []string{"missing", "another-file"} {
+		t.Run(wrongPath, func(t *testing.T) {
+			r := require.New(t)
+			databasePath := filepath.Join(t.TempDir(), "catalog.sqlite")
+			database := testutil.OpenTestDBAt(t, databasePath)
+			t.Cleanup(func() { r.NoError(database.Close()) })
+			owner := testutil.SeedOwner(t, database.WriteDB(), "local", "restore-owner")
+			vault, err := content.Open(t.Context(), content.Config{Root: filepath.Join(t.TempDir(), "vault")})
+			r.NoError(err)
+			t.Cleanup(func() { r.NoError(vault.Close()) })
+			repo := media.NewRepo(database.WriteDB(), database.ReadDB())
+			item := assetfixture.InsertContent(t, repo, vault, []byte("original"), media.Media{Owner: owner})
+			path := item.DocbankVirtualPath + ".other"
+			if wrongPath == "another-file" {
+				_, err := vault.Create(t.Context(), content.CreateRequest{
+					VirtualPath: path, MediaType: item.MimeType,
+					Expected: content.Identity{SHA256: item.SHA256, Size: item.Size},
+					Reader:   bytes.NewReader([]byte("original")),
+				})
+				r.NoError(err)
+			}
+			_, err = database.WriteDB().ExecContext(t.Context(),
+				"UPDATE media_files SET docbank_virtual_path=? WHERE id=?", path, item.PrimaryFileID)
+			r.NoError(err)
+			_, err = contentresolver.New(repo, vault).ValidateCurrent(t.Context(), item.ID, item.PrimaryFileID)
+			r.Error(err, "the bad path makes the catalog unusable by normal validation")
+			repository, err := content.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
+			r.NoError(err)
+			snapshot, err := backup.CreateArchive(t.Context(), databasePath, vault, repository, "bad-path")
+			r.NoError(err)
+			result, err := backup.RestoreArchive(t.Context(), repository, snapshot.ID, filepath.Join(t.TempDir(), "restored"), nil)
+			r.Error(err)
+			r.Empty(result.SnapshotID)
+		})
+	}
 }
 
 func TestArchiveRejectsEmptyAndUnrelatedDatabases(t *testing.T) {

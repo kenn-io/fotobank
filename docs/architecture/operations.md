@@ -107,7 +107,8 @@ The target must be separate and empty; the CLI does not expose overwrite.
 After Docbank restores and verifies its snapshot and host files, Fotobank
 validates the captured SQLite catalog without migrations. It resolves current
 media-file mappings, applied import receipts, and retained checkout base
-versions against the restored vault, comparing node IDs where retained,
+versions against the restored vault, checking virtual paths against their
+recorded nodes where retained and comparing version ownership,
 digests, and sizes and reading each referenced version through verification.
 The catalog need not name the latest Docbank head: later appends can be included
 in the same snapshot. A failed check leaves the isolated target for diagnosis
