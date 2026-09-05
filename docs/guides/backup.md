@@ -39,7 +39,8 @@ The existing retention settings apply only to scheduled metadata snapshots.
 Choose a new or empty directory outside the configured storage and backup
 repository. Restore needs the saved deployment configuration to identify paths
 it must not replace, but the original catalog, vault, NAS, and flash storage
-can be gone:
+can be gone. The source database path may also be a dangling symlink into lost
+storage; recovery does not recreate that location:
 
 ```sh
 fotobank backup restore --repo /backups/photos \

@@ -64,6 +64,37 @@ func TestBackupArchiveCLI(t *testing.T) {
 	r.FileExists(restored.CatalogPath)
 	r.NoDirExists(filepath.Join(tmp, "flash"))
 	r.NoDirExists(filepath.Join(tmp, "nas"))
+	for _, kind := range []string{"database", "parent"} {
+		t.Run("lost-symlink-"+kind, func(t *testing.T) {
+			r := require.New(t)
+			aliases := t.TempDir()
+			lost := filepath.Join(t.TempDir(), "lost")
+			alias := filepath.Join(aliases, "catalog")
+			linkTarget := lost
+			dbPath := filepath.Join(alias, "fotobank.sqlite")
+			if kind == "database" {
+				linkTarget = filepath.Join(lost, "fotobank.sqlite")
+				dbPath = alias
+			}
+			if err := os.Symlink(linkTarget, alias); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			t.Setenv("FOTOBANK_DB_PATH", dbPath)
+			var stdout, stderr bytes.Buffer
+			code := cli.RunContext(t.Context(), []string{"backup", "restore", "--repo", repository,
+				"--target", filepath.Join(tmp, "recovered-"+kind), "--config", cfgPath}, &stdout, &stderr)
+			r.Equal(0, code, "%s", stderr.String())
+			r.NoDirExists(lost)
+			for _, target := range []string{filepath.Join(filepath.Dir(dbPath), "restore"), filepath.Join(lost, "restore")} {
+				stdout.Reset()
+				stderr.Reset()
+				code = cli.RunContext(t.Context(), []string{"backup", "restore", "--repo", repository,
+					"--target", target, "--config", cfgPath}, &stdout, &stderr)
+				r.NotEqual(0, code, "must not restore into either source location")
+				r.NoDirExists(target)
+			}
+		})
+	}
 	// The lost deployment's paths remain reserved even though they are absent.
 	stdout.Reset()
 	stderr.Reset()

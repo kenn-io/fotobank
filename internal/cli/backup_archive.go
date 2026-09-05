@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -187,12 +186,12 @@ func restoreArchive(cmd *cobra.Command, repositoryPath, snapshotID, target strin
 	if err := cfg.ValidateWithOptions(config.ValidationOptions{AllowUnavailableStorage: true}); err != nil {
 		return err
 	}
-	databasePath, err := resolveDBPath(cfg)
+	protected := []string{configuredVault, cfg.Docbank.Root, cfg.ConfiguredNASRoot(), cfg.NAS.Root,
+		cfg.ConfiguredFlashRoot(), cfg.Flash.Root, cfg.Backup.Dir}
+	target, protected, err = config.ArchiveRestorePaths(target, configuredDBPath(cfg), protected)
 	if err != nil {
 		return err
 	}
-	protected := []string{configuredVault, cfg.Docbank.Root, cfg.ConfiguredNASRoot(), cfg.NAS.Root,
-		cfg.ConfiguredFlashRoot(), cfg.Flash.Root, filepath.Dir(databasePath), cfg.Backup.Dir}
 	repository, err := content.OpenBackupRepository(repositoryPath)
 	if err != nil {
 		return err

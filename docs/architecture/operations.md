@@ -103,6 +103,10 @@ permits absent source storage but retains the configured aliases and validated
 roots, plus the database directory (including `FOTOBANK_DB_PATH`) and metadata
 backup destination, as protected roots for Docbank's target validation.
 The target must be separate and empty; the CLI does not expose overwrite.
+`config.ArchiveRestorePaths` permits dangling source database symlinks, including
+parent-directory links, without opening or recreating them. It checks configured
+aliases lexically and supplies resolved destinations to Docbank's filesystem
+checks. Ordinary database opening and lifetime-lock resolution remain strict.
 
 After Docbank restores and verifies its snapshot and host files, Fotobank
 validates the captured SQLite catalog without migrations. It resolves current
