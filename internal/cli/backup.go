@@ -22,11 +22,12 @@ import (
 func newBackupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backup",
-		Short: "Snapshot, list, and restore the metadata DB",
+		Short: "Create and verify recovery archives, or manage metadata snapshots",
 	}
 	cmd.AddCommand(newBackupSnapshotCmd())
 	cmd.AddCommand(newBackupListCmd())
 	cmd.AddCommand(newBackupRestoreCmd())
+	cmd.AddCommand(newBackupInitCmd(), newBackupCreateCmd(), newBackupVerifyCmd())
 	return cmd
 }
 
@@ -123,11 +124,15 @@ func newBackupSnapshotCmd() *cobra.Command {
 
 func newBackupListCmd() *cobra.Command {
 	var asJSON bool
+	var repositoryPath string
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List all snapshots in the configured backup dir, newest-first",
+		Short: "List archive recovery points with --repo, or configured metadata snapshots",
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if repositoryPath != "" {
+				return listArchives(cmd, repositoryPath, asJSON)
+			}
 			cfg, err := loadConfigFromCmd(cmd)
 			if err != nil {
 				return err
@@ -169,6 +174,7 @@ func newBackupListCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&repositoryPath, "repo", "", "archive repository to list (default: metadata snapshot directory)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON to stdout")
 	cmd.Flags().String("config", "", "path to config file")
 	return cmd

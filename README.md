@@ -203,7 +203,7 @@ bin/fotobank shares            # CRUD over share scopes (CLI works regardless of
 bin/fotobank hidden            # manage the hidden-privacy passcode
 bin/fotobank ai                # AI status / backfill / retry / acknowledge
 bin/fotobank gps               # GPS metadata management
-bin/fotobank backup            # snapshot / list / restore the metadata DB
+bin/fotobank backup            # create / verify complete archives; metadata snapshot / restore
 bin/fotobank owners            # list / register principals
 ```
 

@@ -60,16 +60,16 @@ type BackupProgress struct {
 }
 
 type BackupSnapshot struct {
-	ID              string
-	ParentID        string
-	CreatedAt       string
-	Tag             string
-	Nodes           int64
-	Files           int64
-	Blobs           int64
-	BlobBytes       int64
-	BytesAdded      int64
-	DurationSeconds float64
+	ID              string  `json:"id"`
+	ParentID        string  `json:"parent_id"`
+	CreatedAt       string  `json:"created_at"`
+	Tag             string  `json:"tag"`
+	Nodes           int64   `json:"nodes"`
+	Files           int64   `json:"files"`
+	Blobs           int64   `json:"blobs"`
+	BlobBytes       int64   `json:"blob_bytes"`
+	BytesAdded      int64   `json:"bytes_added"`
+	DurationSeconds float64 `json:"duration_seconds"`
 }
 
 type BackupVerifyOptions struct {
@@ -82,15 +82,15 @@ type BackupVerifyOptions struct {
 }
 
 type BackupVerifyProblem struct {
-	SnapshotID string
-	Detail     string
+	SnapshotID string `json:"snapshot_id"`
+	Detail     string `json:"detail"`
 }
 
 type BackupVerifyReport struct {
-	Snapshots    []string
-	BlobsChecked int64
-	BytesRead    int64
-	Problems     []BackupVerifyProblem
+	Snapshots    []string              `json:"snapshots"`
+	BlobsChecked int64                 `json:"blobs_checked"`
+	BytesRead    int64                 `json:"bytes_read"`
+	Problems     []BackupVerifyProblem `json:"problems"`
 }
 
 type BackupRestoreOptions struct {

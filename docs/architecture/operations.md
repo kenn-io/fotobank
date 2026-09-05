@@ -70,14 +70,37 @@ Restore takes that same lock exclusively, so it refuses to replace the database
 while the server, an import, or another command is using it, including when
 configuration names the database through an alias.
 
-Current backup covers Fotobank metadata only and is therefore not a complete
-media recovery mechanism. A coordinated backup must guarantee that every
-Docbank version referenced by the Fotobank snapshot exists in the published
-Docbank backup. The content boundary can create the SQLite snapshot inside
-Docbank's short metadata freeze and record it as an extra file in the same
-manifest. Docbank then streams the append-only content backup without blocking
-ordinary appends for the full archive duration. The current product backup
-command has not yet adopted that complete archive format.
+`backup init`, `backup create`, `backup list --repo`, and `backup verify`
+manage complete recovery archives through `internal/content`. They require an
+explicit repository path; creation opens an initialized repository rather than
+silently creating a missing destination. Repository listing and verification
+require neither configuration nor the original vault.
+
+`internal/backup.CreateArchive` snapshots Fotobank SQLite into private temporary
+storage during Docbank's mutation freeze and declares it as
+`application/catalog.sqlite` in the same manifest. Preparation first checks
+SQLite integrity and the `schema_migrations` marker using `ValidateSnapshot`;
+empty or unrelated databases are rejected before snapshot creation. SQLite uses a separate
+connection without running Fotobank migrations. The temporary snapshot remains
+until archive creation returns, then is removed. Content already referenced by
+that catalog exists before Docbank pins its state; later content appends do not
+invalidate the recovery point. The CLI holds the shared database lifetime lock
+and owns the embedded vault for the operation, so `backup create` requires the
+server to be stopped. A future in-process caller can reuse the same capture
+operation with its already-open vault.
+
+Complete archives include all owners and hidden media. They do not include
+configuration files, provider credentials, disposable artifacts, or checkout
+files that have not been committed. Repository verification checks the stored
+catalog bytes, not Fotobank relationship semantics. The archive integration
+test restores both databases and resolves a catalog file through
+`contentresolver`, checking node, version, digest, size, and original bytes.
+
+Scheduled snapshots, their tiered retention, and `backup restore` still apply
+only to metadata SQLite files. The complete-archive CLI does not yet expose
+restore or retention. The embedded restore operation requires an open source
+vault and publishes to a separate target; it is not yet a source-independent
+disaster recovery command.
 
 Restore drills verify referenced blob content through bounded embedded
 Docbank verification. Whole-catalog metadata validation is a separate Docbank
