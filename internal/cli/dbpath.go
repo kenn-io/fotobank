@@ -22,13 +22,14 @@ import (
 // database, the deepest existing ancestor is resolved and missing components
 // are appended beneath it.
 func resolveDBPath(cfg *config.Config) (string, error) {
-	var p string
+	return canonicalDBPath(configuredDBPath(cfg))
+}
+
+func configuredDBPath(cfg *config.Config) string {
 	if v := os.Getenv("FOTOBANK_DB_PATH"); v != "" {
-		p = v
-	} else {
-		p = filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
+		return v
 	}
-	return canonicalDBPath(p)
+	return filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
 }
 
 // canonicalDBPath resolves existing symlinks before a database or its lock is

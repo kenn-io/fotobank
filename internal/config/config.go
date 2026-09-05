@@ -583,7 +583,14 @@ func canonicalConfigPathMode(value string, allowDanglingSymlink bool, symlinkDep
 			return "", err
 		}
 		if !filepath.IsAbs(linkTarget) {
-			linkTarget = filepath.Join(filepath.Dir(current), linkTarget)
+			parent, _ := rawPathParent(current)
+			resolvedParent, parentErr := filepath.EvalSymlinks(parent)
+			if parentErr != nil {
+				return "", parentErr
+			}
+			// Relative targets belong to the link's real parent. Preserve
+			// target components so any further symlinks resolve before "..".
+			linkTarget = resolvedParent + string(os.PathSeparator) + linkTarget
 		}
 		resolved, err = canonicalConfigPathMode(linkTarget, true, symlinkDepth+1)
 		if err != nil {

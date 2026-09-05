@@ -96,15 +96,38 @@ catalog bytes, not Fotobank relationship semantics. The archive integration
 test restores both databases and resolves a catalog file through
 `contentresolver`, checking node, version, digest, size, and original bytes.
 
-Scheduled snapshots, their tiered retention, and `backup restore` still apply
-only to metadata SQLite files. The complete-archive CLI does not yet expose
-restore or retention. The embedded restore operation requires an open source
-vault and publishes to a separate target; it is not yet a source-independent
-disaster recovery command.
+`backup restore [snapshot-id] --repo ... --target ...` uses
+`internal/backup.RestoreArchive` and the repository-only content restore API.
+It never opens or creates the original vault or catalog. Configuration loading
+permits absent source storage but retains the configured aliases and validated
+roots, plus the database directory (including `FOTOBANK_DB_PATH`) and metadata
+backup destination, as protected roots for Docbank's target validation.
+The target must be separate and empty; the CLI does not expose overwrite.
+`config.ArchiveRestorePaths` permits dangling source database symlinks, including
+parent-directory links, without opening or recreating them. It checks configured
+aliases lexically and supplies resolved destinations to Docbank's filesystem
+checks. Ordinary database opening and lifetime-lock resolution remain strict.
 
-Restore drills verify referenced blob content through bounded embedded
-Docbank verification. Whole-catalog metadata validation is a separate Docbank
-capability and must not be implied by a content scrub.
+After Docbank restores and verifies its snapshot and host files, Fotobank
+validates the captured SQLite catalog without migrations. It resolves current
+media-file mappings, applied import receipts, and retained checkout base
+versions against the restored vault, checking virtual paths against their
+recorded nodes where retained and comparing version ownership,
+digests, and sizes and reading each referenced version through verification.
+The catalog need not name the latest Docbank head: later appends can be included
+in the same snapshot. A failed check leaves the isolated target for diagnosis
+and returns an error rather than reporting a usable recovery. Success reports
+the vault and catalog paths; it does not change the deployment configuration.
+
+Checkout records retain their original working paths. Recovery does not restore
+working files, relocate checkout roots, or activate the recovered deployment.
+Operators must review those paths before running its checkout scanner. Archive
+verification establishes byte integrity, and restore adds the named reference
+checks; neither claims whole-application metadata validation.
+
+Scheduled snapshots, their tiered retention, and `backup restore` without
+`--repo` still apply only to metadata SQLite files. Complete-archive retention
+is not exposed yet.
 
 ## Observability
 

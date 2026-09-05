@@ -68,6 +68,13 @@ not expose either its earlier or current destination. Configuration validation
 keeps canonical roots for ordinary I/O but also preserves absolute unresolved
 versions of the paths the operator configured for this boundary.
 
+`BackupRepository.Restore` can recover without an open source adapter. It
+accepts protected storage roots from its caller and delegates restoration and
+target coordination to Docbank. The product archive command supplies those
+roots from configuration, restores into an empty separate target, and checks
+the restored Fotobank catalog's references before reporting success. It does
+not bootstrap a new source vault to recover an old one.
+
 `internal/contentresolver` is the shared product-to-content boundary above the
 adapter. It resolves a ready asset and either its primary or a named attached
 file, then binds an immutable version to that file's recorded Docbank node.

@@ -94,12 +94,13 @@ type BackupVerifyReport struct {
 }
 
 type BackupRestoreOptions struct {
-	SnapshotID  string
-	Target      string
-	Overwrite   bool
-	Jobs        int
-	ForceUnlock bool
-	Progress    func(BackupProgress)
+	ProtectedRoots []string
+	SnapshotID     string
+	Target         string
+	Overwrite      bool
+	Jobs           int
+	ForceUnlock    bool
+	Progress       func(BackupProgress)
 }
 
 type BackupRestoreReport struct {
@@ -223,7 +224,7 @@ func (a *Adapter) RestoreBackup(
 	report, err := a.vault.RestoreBackup(ctx, repository.repository, docbank.BackupRestoreOptions{
 		SnapshotID:     options.SnapshotID,
 		Target:         options.Target,
-		ProtectedRoots: append([]string(nil), a.managedRoots...),
+		ProtectedRoots: append(append([]string(nil), a.managedRoots...), options.ProtectedRoots...),
 		Overwrite:      options.Overwrite,
 		Jobs:           options.Jobs,
 		ForceUnlock:    options.ForceUnlock,
@@ -232,6 +233,28 @@ func (a *Adapter) RestoreBackup(
 	if err != nil {
 		return BackupRestoreReport{}, fmt.Errorf("restore content backup: %w", translateError(err))
 	}
+	return projectBackupRestoreReport(report), nil
+}
+
+// Restore recovers from the repository without opening the original vault.
+// Callers declare live or offline application storage in ProtectedRoots.
+func (r *BackupRepository) Restore(ctx context.Context, options BackupRestoreOptions) (BackupRestoreReport, error) {
+	if r == nil || r.repository == nil {
+		return BackupRestoreReport{}, errors.New("content backup repository is required")
+	}
+	report, err := r.repository.Restore(ctx, docbank.BackupRestoreOptions{
+		SnapshotID: options.SnapshotID, Target: options.Target,
+		ProtectedRoots: options.ProtectedRoots, Overwrite: options.Overwrite,
+		Jobs: options.Jobs, ForceUnlock: options.ForceUnlock,
+		Progress: projectBackupProgressCallback(options.Progress),
+	})
+	if err != nil {
+		return BackupRestoreReport{}, fmt.Errorf("restore content backup: %w", translateError(err))
+	}
+	return projectBackupRestoreReport(report), nil
+}
+
+func projectBackupRestoreReport(report docbank.BackupRestoreReport) BackupRestoreReport {
 	return BackupRestoreReport{
 		SnapshotID:              report.SnapshotID,
 		Target:                  report.Target,
@@ -242,7 +265,7 @@ func (a *Adapter) RestoreBackup(
 		ExtraFiles:              report.ExtrasFiles,
 		ContentVerified:         report.Proof.ContentVerified,
 		SQLiteIntegrityVerified: report.Proof.SQLiteIntegrity,
-	}, nil
+	}
 }
 
 func projectBackupExtraFiles(files []BackupExtraFile) []docbank.BackupExtraFile {

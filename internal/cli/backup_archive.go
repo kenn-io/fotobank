@@ -170,3 +170,39 @@ func listArchives(cmd *cobra.Command, repositoryPath string, asJSON bool) error 
 	}
 	return nil
 }
+
+func restoreArchive(cmd *cobra.Command, repositoryPath, snapshotID, target string, asJSON bool) error {
+	cfgPath, _ := cmd.Flags().GetString("config")
+	if cfgPath == "" {
+		cfgPath = config.DefaultConfigPath()
+	}
+	cfg, err := config.LoadUnchecked(cfgPath)
+	if err != nil {
+		return err
+	}
+	// Preserve configured aliases as well as validated destinations. Source
+	// directories may be missing after a storage loss; none are opened here.
+	configuredVault := cfg.Docbank.Root
+	if err := cfg.ValidateWithOptions(config.ValidationOptions{AllowUnavailableStorage: true}); err != nil {
+		return err
+	}
+	protected := []string{configuredVault, cfg.Docbank.Root, cfg.ConfiguredNASRoot(), cfg.NAS.Root,
+		cfg.ConfiguredFlashRoot(), cfg.Flash.Root, cfg.Backup.Dir}
+	target, protected, err = config.ArchiveRestorePaths(target, configuredDBPath(cfg), protected)
+	if err != nil {
+		return err
+	}
+	repository, err := content.OpenBackupRepository(repositoryPath)
+	if err != nil {
+		return err
+	}
+	report, err := backup.RestoreArchive(cmd.Context(), repository, snapshotID, target, protected)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(report)
+	}
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "archive restored and verified: %s\nvault: %s\ncatalog: %s\nverified content references: %d\n", report.SnapshotID, report.VaultRoot, report.CatalogPath, report.ReferencesVerified)
+	return err
+}
