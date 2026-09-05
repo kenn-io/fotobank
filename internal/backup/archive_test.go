@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -40,16 +41,17 @@ func TestArchiveRestoresCatalogAndReferencedOriginal(t *testing.T) {
 	report, err := repository.Verify(t.Context(), content.BackupVerifyOptions{SnapshotID: snapshot.ID})
 	r.NoError(err)
 	r.Empty(report.Problems)
-	restored, err := vault.RestoreBackup(t.Context(), repository, content.BackupRestoreOptions{
-		SnapshotID: snapshot.ID, Target: filepath.Join(t.TempDir(), "restored"),
-	})
+	r.NoError(vault.Close())
+	r.NoError(database.Close())
+	restored, err := backup.RestoreArchive(t.Context(), repository, snapshot.ID, filepath.Join(t.TempDir(), "restored"), nil)
 	r.NoError(err)
-	catalogPath := filepath.Join(restored.Target, filepath.FromSlash(backup.ArchiveCatalogPath))
+	r.Positive(restored.ReferencesVerified)
+	catalogPath := restored.CatalogPath
 	r.NoError(backup.ValidateSnapshot(t.Context(), catalogPath))
 	restoredDB, err := db.Open(catalogPath)
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(restoredDB.Close()) })
-	restoredVault, err := content.Open(t.Context(), content.Config{Root: restored.Target})
+	restoredVault, err := content.Open(t.Context(), content.Config{Root: restored.VaultRoot})
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(restoredVault.Close()) })
 	repo := media.NewRepo(restoredDB.WriteDB(), restoredDB.ReadDB())
@@ -82,6 +84,43 @@ func TestArchiveDoesNotPublishInvalidCatalog(t *testing.T) {
 	r.Empty(snapshots)
 	_, err = backup.CreateArchive(t.Context(), filepath.Dir(catalog), vault, repository, "directory")
 	r.ErrorContains(err, "regular SQLite file")
+}
+
+func TestArchiveRestoreRejectsMismatchedCatalogReferences(t *testing.T) {
+	r := require.New(t)
+	databasePath := filepath.Join(t.TempDir(), "catalog.sqlite")
+	database := testutil.OpenTestDBAt(t, databasePath)
+	t.Cleanup(func() { r.NoError(database.Close()) })
+	owner := testutil.SeedOwner(t, database.WriteDB(), "local", "restore-owner")
+	vault, err := content.Open(t.Context(), content.Config{Root: filepath.Join(t.TempDir(), "vault")})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(vault.Close()) })
+	item := assetfixture.InsertContent(t, media.NewRepo(database.WriteDB(), database.ReadDB()), vault,
+		[]byte("synthetic original"), media.Media{Owner: owner, OriginalFilename: "photo.jpg"})
+	_, err = database.WriteDB().ExecContext(t.Context(), "UPDATE media_files SET sha256=? WHERE id=?",
+		strings.Repeat("0", 64), item.PrimaryFileID)
+	r.NoError(err)
+	repository, err := content.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
+	r.NoError(err)
+	snapshot, err := backup.CreateArchive(t.Context(), databasePath, vault, repository, "mismatch")
+	r.NoError(err)
+	result, err := backup.RestoreArchive(t.Context(), repository, snapshot.ID, filepath.Join(t.TempDir(), "restored"), nil)
+	r.ErrorContains(err, "does not match its catalog reference")
+	r.Empty(result.SnapshotID, "a byte-valid archive is not necessarily a valid product recovery")
+}
+
+func TestArchiveRestoreRequiresCapturedCatalog(t *testing.T) {
+	r := require.New(t)
+	vault, err := content.Open(t.Context(), content.Config{Root: filepath.Join(t.TempDir(), "vault")})
+	r.NoError(err)
+	t.Cleanup(func() { r.NoError(vault.Close()) })
+	repository, err := content.InitBackupRepository(filepath.Join(t.TempDir(), "repository"))
+	r.NoError(err)
+	snapshot, err := vault.CreateBackup(t.Context(), repository, content.BackupOptions{})
+	r.NoError(err)
+	result, err := backup.RestoreArchive(t.Context(), repository, snapshot.ID, filepath.Join(t.TempDir(), "restored"), nil)
+	r.ErrorContains(err, "validate restored catalog")
+	r.Empty(result.SnapshotID)
 }
 
 func TestArchiveRejectsEmptyAndUnrelatedDatabases(t *testing.T) {

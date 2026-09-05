@@ -182,11 +182,25 @@ func newBackupListCmd() *cobra.Command {
 
 func newBackupRestoreCmd() *cobra.Command {
 	var yes, asJSON, dryRun bool
+	var repositoryPath, target string
 	cmd := &cobra.Command{
-		Use:   "restore <snapshot-path>",
-		Short: "Restore the metadata DB from a snapshot file",
-		Args:  usageArgs(cobra.ExactArgs(1)),
+		Use:   "restore [snapshot-id-or-path]",
+		Short: "Restore an archive with --repo and --target, or a metadata snapshot",
+		Args:  usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if repositoryPath != "" {
+				if target == "" || yes || dryRun {
+					return errors.New("archive restore requires --target and does not accept --yes or --dry-run; use backup verify for a read-only check")
+				}
+				snapshotID := ""
+				if len(args) != 0 {
+					snapshotID = args[0]
+				}
+				return restoreArchive(cmd, repositoryPath, snapshotID, target, asJSON)
+			}
+			if target != "" || len(args) != 1 {
+				return errors.New("metadata restore requires one snapshot path; archive restore requires --repo and --target")
+			}
 			cfg, err := loadConfigFromCmd(cmd)
 			if err != nil {
 				return err
@@ -237,6 +251,8 @@ func newBackupRestoreCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON to stdout")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "validate + acquire lock only; no file changes")
 	cmd.Flags().String("config", "", "path to config file")
+	cmd.Flags().StringVar(&repositoryPath, "repo", "", "archive repository to restore")
+	cmd.Flags().StringVar(&target, "target", "", "separate empty directory for archive recovery")
 	return cmd
 }
 
