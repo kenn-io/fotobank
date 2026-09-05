@@ -64,7 +64,7 @@ func TestBackupArchiveCLI(t *testing.T) {
 	r.FileExists(restored.CatalogPath)
 	r.NoDirExists(filepath.Join(tmp, "flash"))
 	r.NoDirExists(filepath.Join(tmp, "nas"))
-	for _, kind := range []string{"database", "parent"} {
+	for _, kind := range []string{"database", "parent", "nested-relative"} {
 		t.Run("lost-symlink-"+kind, func(t *testing.T) {
 			r := require.New(t)
 			aliases := t.TempDir()
@@ -75,6 +75,17 @@ func TestBackupArchiveCLI(t *testing.T) {
 			if kind == "database" {
 				linkTarget = filepath.Join(lost, "fotobank.sqlite")
 				dbPath = alias
+			}
+			if kind == "nested-relative" {
+				parent := filepath.Join(filepath.Dir(lost), "state")
+				r.NoError(os.Mkdir(parent, 0o700))
+				parentAlias := filepath.Join(aliases, "parent")
+				if err := os.Symlink(parent, parentAlias); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+				alias = filepath.Join(parentAlias, "catalog")
+				dbPath = alias
+				linkTarget = filepath.Join("..", "lost", "fotobank.sqlite")
 			}
 			if err := os.Symlink(linkTarget, alias); err != nil {
 				t.Skipf("symlinks unavailable: %v", err)
