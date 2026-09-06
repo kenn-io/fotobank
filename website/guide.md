@@ -53,9 +53,11 @@ one manifest. Restore verifies the saved bytes and the catalog's references to
 those bytes. Albums and other catalog choices need that saved catalog; they
 cannot be rebuilt from the files alone.
 
-Configuration, credentials, disposable thumbnails, and working checkout files
-are not included. Restore into a separate directory and review configuration
-and saved checkout paths before starting the recovered deployment. See
+Configuration files, provider credentials, disposable thumbnails, and working
+checkout files are not included. Catalog settings and stored authentication
+hashes, including hidden-media passcode hashes, are preserved. Restore into a
+separate directory and review configuration and saved checkout paths before
+starting the recovered deployment. See
 [backup and restore](/docs/guides/backup/).
 
 ## Intelligence today and next
