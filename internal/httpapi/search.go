@@ -1,9 +1,8 @@
 // Package httpapi — the /api/v1/search* surface (search proper plus
 // the two autocomplete endpoints) is split into this file so the
 // search surface can evolve independently of the rest of the API.
-// Routes are only registered when a *search.Service is wired into
-// Deps; the OpenAPI dumper passes Deps{} so the search surface is
-// absent from the dumped spec until the runtime wires it in.
+// Operations are registered without a runtime service so schema generation
+// includes the same contract as the configured server.
 package httpapi
 
 import (
@@ -46,15 +45,10 @@ const autocompleteDefaultLimit = 10
 // suggestions; the cap protects the DB from a forgetful caller.
 const autocompleteMaxLimit = 50
 
-// registerSearchRoutes mounts the search surface on api. svc==nil
-// leaves every route unregistered (no handlers, no schemas) so the
-// OpenAPI dumper can pass Deps{} unchanged. Production wiring supplies
-// a fully-built *search.Service. m may be nil; the handler skips
-// metric emits when so.
+// registerSearchRoutes registers the search contract without requiring runtime
+// services. Handlers report a missing service after resolving identity. A nil
+// metrics registry disables metric emission.
 func registerSearchRoutes(api huma.API, svc *searchsvc.Service, m *obs.Metrics) {
-	if svc == nil {
-		return
-	}
 	huma.Register(api, huma.Operation{
 		OperationID: "search",
 		Method:      http.MethodGet,
@@ -105,6 +99,9 @@ func handleAutocompleteTags(ctx context.Context, svc *searchsvc.Service, in *aut
 	if !ok {
 		return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
 	}
+	if svc == nil {
+		return nil, huma.Error503ServiceUnavailable("search service not configured")
+	}
 	caller := id.Principal.OwnersPrincipal()
 
 	limit := in.Limit
@@ -145,6 +142,9 @@ func handleAutocompleteLocations(ctx context.Context, svc *searchsvc.Service, in
 	id, ok := IdentityFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
+	}
+	if svc == nil {
+		return nil, huma.Error503ServiceUnavailable("search service not configured")
 	}
 	caller := id.Principal.OwnersPrincipal()
 
@@ -189,6 +189,9 @@ func handleSearch(ctx context.Context, svc *searchsvc.Service, m *obs.Metrics, i
 	id, ok := IdentityFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
+	}
+	if svc == nil {
+		return nil, huma.Error503ServiceUnavailable("search service not configured")
 	}
 	caller := id.Principal.OwnersPrincipal()
 	start := time.Now()

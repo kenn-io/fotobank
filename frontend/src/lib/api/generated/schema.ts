@@ -90,6 +90,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record per-principal hidden-processing acknowledgement */
+        post: operations["ai-acknowledge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enqueue missing-fingerprint AI jobs for the caller's library */
+        post: operations["ai-backfill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/failures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent AI failures for the active fingerprint */
+        get: operations["ai-failures"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** AI status snapshot */
+        get: operations["ai-health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/retry-failed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Re-enqueue all current-fingerprint failures for a task */
+        post: operations["ai-retry-failed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/retry-photo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Re-enqueue a single (media, task) job */
+        post: operations["ai-retry-photo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/albums": {
         parameters: {
             query?: never;
@@ -264,6 +366,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/facets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Per-facet counts for the caller's library (exclude-self semantics) */
+        get: operations["facets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/healthz": {
         parameters: {
             query?: never;
@@ -392,6 +511,74 @@ export interface paths {
         };
         /** Return the detail for a single media item */
         get: operations["get-media"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media/{media_id}/ai": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get AI artifacts (tags, caption, skip, failures) for a media */
+        get: operations["ai-media-view"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Hybrid search across the caller's library */
+        get: operations["search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/search/autocomplete/locations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Substring-match location-label autocomplete for the caller's library */
+        get: operations["search-autocomplete-locations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/search/autocomplete/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Prefix-match tag-label autocomplete for the caller's library */
+        get: operations["search-autocomplete-tags"];
         put?: never;
         post?: never;
         delete?: never;
@@ -653,6 +840,98 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        AiAckBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AiAckBody.json
+             */
+            readonly $schema?: string;
+            ok: boolean;
+        };
+        AiAcknowledgeInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AiAcknowledgeInputBody.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            kind: "hidden_processing";
+        };
+        AiBackfillInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AiBackfillInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description include media that already have an active result */
+            force?: boolean;
+            /**
+             * @description reserved for future scoping
+             * @enum {string}
+             */
+            scope?: "all";
+            /**
+             * @description AI task to enqueue
+             * @enum {string}
+             */
+            task: "tag" | "caption";
+        };
+        AiEnqueuedBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AiEnqueuedBody.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            enqueued: number;
+        };
+        AiFailureDTO: {
+            /** Format: int64 */
+            attempt_count: number;
+            /** Format: date-time */
+            failed_at: string;
+            input_profile: string;
+            last_error: string;
+            last_error_kind: string;
+            media_id: string;
+            model_id: string;
+            prompt_version: string;
+            task: string;
+        };
+        AiFailuresBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AiFailuresBody.json
+             */
+            readonly $schema?: string;
+            rows: components["schemas"]["AiFailureDTO"][] | null;
+        };
+        AiRetryFailedInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AiRetryFailedInputBody.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            task: "tag" | "caption";
+        };
+        AiRetryPhotoInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AiRetryPhotoInputBody.json
+             */
+            readonly $schema?: string;
+            media_id: string;
+            /** @enum {string} */
+            task: "tag" | "caption";
+        };
         AlbumDTO: {
             /**
              * Format: uri
@@ -684,6 +963,31 @@ export interface components {
             };
             /** Format: int64 */
             generation_id?: number;
+        };
+        AutocompleteLocationsBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AutocompleteLocationsBody.json
+             */
+            readonly $schema?: string;
+            locations: components["schemas"]["LocationSuggestionDTO"][] | null;
+        };
+        AutocompleteTagsBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AutocompleteTagsBody.json
+             */
+            readonly $schema?: string;
+            tags: components["schemas"]["TagSuggestionDTO"][] | null;
+        };
+        CaptionItem: {
+            /** Format: date-time */
+            generated_at: string;
+            model_id: string;
+            prompt_version: string;
+            text: string;
         };
         CoverDTO: {
             media_id: string;
@@ -758,6 +1062,42 @@ export interface components {
             model: string;
             state: string;
         };
+        EmbedTaskPart: {
+            active_fingerprint: string;
+            /** Format: int64 */
+            blocked: number;
+            /** Format: int64 */
+            done: number;
+            /** Format: int64 */
+            failed_active: number;
+            /** Format: date-time */
+            last_completed_at?: string;
+            paused_reason: string;
+            /** Format: int64 */
+            pending: number;
+            /** Format: int64 */
+            skipped: number;
+            /** Format: double */
+            throughput_per_min: number;
+            /** Format: int64 */
+            working: number;
+        };
+        EmbeddingGenerationSummary: {
+            /** Format: date-time */
+            activated_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            eligible_count: number;
+            /** Format: int64 */
+            embedded_count: number;
+            fingerprint: string;
+            /** Format: int64 */
+            id: number;
+            /** Format: date-time */
+            retired_at?: string;
+            state: string;
+        };
         ErrorDetail: {
             /** @description Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
             location?: string;
@@ -805,6 +1145,36 @@ export interface components {
              */
             type: string;
         };
+        FacetPlacesDTO: {
+            /** Format: int64 */
+            with_gps: number;
+            /** Format: int64 */
+            without_gps: number;
+        };
+        FacetTagDTO: {
+            /** Format: int64 */
+            count: number;
+            key: string;
+            label: string;
+        };
+        FacetValueDTO: {
+            /** Format: int64 */
+            count: number;
+            value: string;
+        };
+        FacetsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/FacetsOutputBody.json
+             */
+            readonly $schema?: string;
+            cameras: components["schemas"]["FacetValueDTO"][] | null;
+            lenses: components["schemas"]["FacetValueDTO"][] | null;
+            media_types: components["schemas"]["FacetValueDTO"][] | null;
+            places: components["schemas"]["FacetPlacesDTO"];
+            tags: components["schemas"]["FacetTagDTO"][] | null;
+        };
         FeaturesStruct: {
             admin_settings_enabled: boolean;
             sharing_enabled: boolean;
@@ -817,6 +1187,21 @@ export interface components {
             sha256: string;
             /** Format: int64 */
             size: number;
+        };
+        Health: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/Health.json
+             */
+            readonly $schema?: string;
+            caption: components["schemas"]["TaskPart"];
+            embed: components["schemas"]["EmbedTaskPart"];
+            embedding_generations: components["schemas"]["EmbeddingGenerationSummary"][] | null;
+            enabled: boolean;
+            paused_reason: string;
+            tag: components["schemas"]["TaskPart"];
+            vision: components["schemas"]["VisionPart"];
         };
         HealthzOutputBody: {
             /**
@@ -949,6 +1334,11 @@ export interface components {
             /** Format: int64 */
             next_offset?: number;
         };
+        LocationSuggestionDTO: {
+            /** Format: int64 */
+            count: number;
+            label: string;
+        };
         MeOutputBody: {
             /**
              * Format: uri
@@ -1005,6 +1395,23 @@ export interface components {
             type: string;
             /** Format: int64 */
             width?: number;
+        };
+        MediaFailure: {
+            kind: string;
+            message: string;
+        };
+        MediaView: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/MediaView.json
+             */
+            readonly $schema?: string;
+            caption?: components["schemas"]["CaptionItem"];
+            caption_failure?: components["schemas"]["MediaFailure"];
+            skipped?: components["schemas"]["SkippedItem"];
+            tag_failure?: components["schemas"]["MediaFailure"];
+            tags?: components["schemas"]["TagItem"][] | null;
         };
         OverrideMetadata: {
             /** Format: date-time */
@@ -1116,6 +1523,54 @@ export interface components {
             target_type: string;
             uuid: string;
         };
+        ScoreComponentsDTO: {
+            /** Format: double */
+            bm25: number | null;
+            /** Format: int64 */
+            rank_bm25: number | null;
+            /** Format: int64 */
+            rank_vector: number | null;
+            /** Format: double */
+            rrf: number;
+            /** Format: double */
+            vector: number | null;
+        };
+        SearchBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/SearchBody.json
+             */
+            readonly $schema?: string;
+            effective_sort: string;
+            /** Format: double */
+            embedding_completeness: number;
+            has_more: boolean;
+            next_cursor: string | null;
+            results: components["schemas"]["SearchResultDTO"][] | null;
+            semantic_unavailable: boolean;
+            semantic_unavailable_reason: string;
+            /** Format: int64 */
+            total?: number;
+        };
+        SearchResultDTO: {
+            /** Format: int64 */
+            height: number | null;
+            /** Format: date-time */
+            imported_at: string;
+            media_id: string;
+            media_type: string;
+            /** Format: double */
+            score?: number;
+            score_components?: components["schemas"]["ScoreComponentsDTO"];
+            thumb_status: string;
+            /** Format: int64 */
+            thumb_version: number;
+            /** Format: date-time */
+            timestamp: string | null;
+            /** Format: int64 */
+            width: number | null;
+        };
         SharedAlbumCoverDTO: {
             media_id: string;
             /** Format: int64 */
@@ -1220,10 +1675,44 @@ export interface components {
             target_type: string;
             uuid: string;
         };
+        SkippedItem: {
+            reason: string;
+        };
+        TagItem: {
+            key: string;
+            label: string;
+            /** Format: int64 */
+            rank: number;
+        };
+        TagSuggestionDTO: {
+            /** Format: int64 */
+            count: number;
+            key: string;
+            label: string;
+        };
         TargetSummaryDTO: {
             /** Format: int64 */
             item_count?: number;
             label: string;
+        };
+        TaskPart: {
+            active_fingerprint: string;
+            /** Format: int64 */
+            blocked: number;
+            /** Format: int64 */
+            done: number;
+            /** Format: int64 */
+            failed_active: number;
+            /** Format: date-time */
+            last_completed_at?: string;
+            /** Format: int64 */
+            pending: number;
+            /** Format: int64 */
+            skipped: number;
+            /** Format: double */
+            throughput_per_min: number;
+            /** Format: int64 */
+            working: number;
         };
         UserSettingPutInputBody: {
             /**
@@ -1253,6 +1742,12 @@ export interface components {
             api_key_env: string;
             endpoint: string;
             model: string;
+        };
+        VisionPart: {
+            /** Format: date-time */
+            last_check_at: string;
+            last_error?: string;
+            reachable: boolean;
         };
     };
     responses: never;
@@ -1442,6 +1937,201 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Result"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "ai-acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiAcknowledgeInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAckBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "ai-backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiBackfillInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiEnqueuedBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "ai-failures": {
+        parameters: {
+            query?: {
+                /** @description AI task to query */
+                task?: "tag" | "caption";
+                /** @description max rows to return (default 5) */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiFailuresBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "ai-health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Health"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "ai-retry-failed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiRetryFailedInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiEnqueuedBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "ai-retry-photo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiRetryPhotoInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiAckBody"];
                 };
             };
             /** @description Error */
@@ -1904,6 +2594,56 @@ export interface operations {
             };
         };
     };
+    facets: {
+        parameters: {
+            query?: {
+                /** @description repeatable; each value is a canonical "make model" bucket */
+                camera?: string[] | null;
+                /** @description repeatable; each value is a lens_model string */
+                lens?: string[] | null;
+                /** @description repeatable; each value is a tag_key (any-of semantics for sidebar tag chips) */
+                facet_tag?: string[] | null;
+                /** @description repeatable; each value is a tag label resolved server-side (and-of semantics for typed-chip strip) */
+                tag?: string[] | null;
+                /** @description true narrows to geotagged rows; false to non-geotagged; omit for no filter */
+                has_gps?: "true" | "false";
+                /** @description restrict to photos or videos */
+                media_type?: "photo" | "video";
+                /** @description include media whose timestamp is at or after this RFC3339 instant */
+                date_after?: string;
+                /** @description include media whose timestamp is before this RFC3339 instant */
+                date_before?: string;
+                /** @description exact location label */
+                location?: string;
+                /** @description include hidden media; requires a hidden-unlock cookie */
+                include_hidden?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FacetsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     healthz: {
         parameters: {
             query?: never;
@@ -2166,6 +2906,169 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MediaDTO"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "ai-media-view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    search: {
+        parameters: {
+            query?: {
+                /** @description free-text query (filter-only browse when empty) */
+                q?: string;
+                /** @description raw sort; engine may coerce (e.g. relevance + empty q → newest) */
+                sort?: "relevance" | "newest" | "oldest";
+                /** @description include media whose timestamp is at or after this RFC3339 instant */
+                date_after?: string;
+                /** @description include media whose timestamp is before this RFC3339 instant */
+                date_before?: string;
+                /** @description repeatable; each value is a tag label resolved server-side */
+                tag?: string[] | null;
+                /** @description exact location label */
+                location?: string;
+                /** @description restrict to photos or videos */
+                media_type?: "photo" | "video";
+                /** @description page size; default 60, max 200 */
+                limit?: number;
+                /** @description opaque next-page token from a previous response */
+                cursor?: string;
+                /** @description include hidden media; requires a hidden-unlock cookie */
+                include_hidden?: boolean;
+                /** @description return per-signal score components; gated on the AI Inspection setting */
+                explain?: boolean;
+                /** @description narrow to rows whose '<make> <model>' matches any value (OR-composed sidebar facet) */
+                camera?: string[] | null;
+                /** @description narrow to rows whose lens_model matches any value (OR-composed sidebar facet) */
+                lens?: string[] | null;
+                /** @description narrow to rows that carry at least one tag matching any key (OR-composed sidebar facet, distinct from typed-chip 'tag') */
+                facet_tag?: string[] | null;
+                /** @description true: only geotagged rows; false: only non-geotagged */
+                has_gps?: "true" | "false";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "search-autocomplete-locations": {
+        parameters: {
+            query?: {
+                /** @description substring fragment; matched against location_label with LIKE %substring% */
+                substring?: string;
+                /** @description page size; default 10, max 50 */
+                limit?: number;
+                /** @description include locations attached only to hidden media; requires a hidden-unlock cookie */
+                include_hidden?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutocompleteLocationsBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "search-autocomplete-tags": {
+        parameters: {
+            query?: {
+                /** @description prefix fragment; matched against tag_label with LIKE prefix% */
+                prefix?: string;
+                /** @description page size; default 10, max 50 */
+                limit?: number;
+                /** @description include tags attached only to hidden media; requires a hidden-unlock cookie */
+                include_hidden?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutocompleteTagsBody"];
                 };
             };
             /** @description Error */

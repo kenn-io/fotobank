@@ -1,8 +1,7 @@
 // Package httpapi — /api/v1/ai/* routes are split into this file so the
 // AI surface can be reasoned about independently of the rest of the API.
-// Routes are only registered when an AIService is wired into Deps; the
-// OpenAPI dumper passes Deps{} so the AI surface is absent from the
-// dumped spec while the runtime wires it explicitly.
+// Operations are registered without runtime services so schema generation
+// includes the same contract as the configured server.
 package httpapi
 
 import (
@@ -20,14 +19,10 @@ import (
 	aiservice "go.kenn.io/fotobank/internal/service/ai"
 )
 
-// registerAIRoutes mounts /api/v1/ai/* on api. svc==nil leaves the
-// routes unregistered (no handlers, no schemas) so the OpenAPI dumper
-// can pass Deps{} unchanged. probe==nil falls back to a never-reachable
-// stub so the health endpoint still returns a structured response.
+// registerAIRoutes registers the AI contract even when svc is nil; handlers
+// report service unavailability after resolving identity. A nil probe reports
+// the gateway as unreachable in the health response.
 func registerAIRoutes(api huma.API, svc *aiservice.Service, probe aiservice.Probe, enabled bool) {
-	if svc == nil {
-		return
-	}
 	if probe == nil {
 		probe = nilProbe{}
 	}
@@ -51,6 +46,9 @@ func registerAIHealth(api huma.API, svc *aiservice.Service, probe aiservice.Prob
 		if !ok {
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
 		}
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("AI service not configured")
+		}
 		h := svc.Health(ctx, id.Principal.OwnersPrincipal(), aiservice.HealthInput{
 			Enabled: enabled,
 			Probe:   probe,
@@ -69,6 +67,9 @@ func registerAIFailures(api huma.API, svc *aiservice.Service) {
 		id, ok := IdentityFromContext(ctx)
 		if !ok {
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
+		}
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("AI service not configured")
 		}
 		limit := in.Limit
 		if limit <= 0 {
@@ -93,6 +94,9 @@ func registerAIBackfill(api huma.API, svc *aiservice.Service) {
 		if !ok {
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
 		}
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("AI service not configured")
+		}
 		n, err := svc.Backfill(ctx, id.Principal.OwnersPrincipal(), ai.Task(in.Body.Task), in.Body.Force)
 		if err != nil {
 			return nil, Translate(err)
@@ -111,6 +115,9 @@ func registerAIRetryFailed(api huma.API, svc *aiservice.Service) {
 		id, ok := IdentityFromContext(ctx)
 		if !ok {
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
+		}
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("AI service not configured")
 		}
 		n, err := svc.RetryFailed(ctx, id.Principal.OwnersPrincipal(), ai.Task(in.Body.Task))
 		if err != nil {
@@ -131,6 +138,9 @@ func registerAIRetryPhoto(api huma.API, svc *aiservice.Service) {
 		if !ok {
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
 		}
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("AI service not configured")
+		}
 		err := svc.RetryPhoto(ctx, id.Principal.OwnersPrincipal(), in.Body.MediaID, ai.Task(in.Body.Task))
 		if err != nil {
 			return nil, Translate(err)
@@ -149,6 +159,9 @@ func registerAIAcknowledge(api huma.API, svc *aiservice.Service) {
 		id, ok := IdentityFromContext(ctx)
 		if !ok {
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
+		}
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("AI service not configured")
 		}
 		if in.Body.Kind != "hidden_processing" {
 			return nil, huma.Error400BadRequest("unknown ack kind")
@@ -170,6 +183,9 @@ func registerAIMediaView(api huma.API, svc *aiservice.Service) {
 		id, ok := IdentityFromContext(ctx)
 		if !ok {
 			return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
+		}
+		if svc == nil {
+			return nil, huma.Error503ServiceUnavailable("AI service not configured")
 		}
 		caller := id.Principal.OwnersPrincipal()
 		// Mirror the direct media-detail route: a hidden-unlock claim

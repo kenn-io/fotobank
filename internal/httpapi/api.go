@@ -38,9 +38,8 @@ type Deps struct {
 	// Task 25). Left nil when only endpoints that do not touch owners
 	// are registered.
 	OwnerService *service.OwnerService
-	// MediaService powers /api/v1/media list + detail + original. Nil
-	// means those routes aren't registered; existing tests that don't
-	// need them can pass Deps without a MediaService.
+	// MediaService powers /api/v1/media list + detail + original. JSON
+	// operations remain registered without it; raw content routes do not.
 	MediaService *service.MediaService
 	// ThumbService powers /api/v1/media/{id}/thumb. Nil means that route
 	// isn't registered; tests and the OpenAPI spec dumper that don't
@@ -92,9 +91,8 @@ type Deps struct {
 	// the middleware honours the configured proxy header in header
 	// mode (and ignores any request-supplied value in stub mode).
 	RequestIDHeader string
-	// AIService backs /api/v1/ai/*. Nil leaves those routes unregistered
-	// so the OpenAPI dumper can pass an empty Deps without wiring an AI
-	// service.
+	// AIService backs the AI operations. Nil keeps their schemas registered;
+	// authenticated requests return 503 Service Unavailable.
 	AIService *aiservice.Service
 	// AIVisionProbe drives /api/v1/ai/health's reachability probe. Nil
 	// means health reports the gateway as unreachable without attempting
@@ -110,15 +108,14 @@ type Deps struct {
 	// shape. Backend share APIs and the `fotobank shares ...` CLI work
 	// regardless of this flag.
 	SharingEnabled bool
-	// Search backs GET /api/v1/search. Nil leaves the route unregistered
-	// so the OpenAPI dumper can pass an empty Deps without wiring a
-	// search service.
+	// Search backs search and autocomplete operations. Nil keeps their
+	// schemas registered; authenticated requests return 503.
 	Search *searchsvc.Service
-	// Facets backs GET /api/v1/facets. Nil leaves the route
-	// unregistered so the OpenAPI dumper can pass an empty Deps.
+	// Facets backs GET /api/v1/facets. Nil keeps its schema registered;
+	// authenticated requests return 503.
 	Facets *facetssvc.Service
-	// AdminSettings backs /api/v1/admin/settings. Nil leaves admin
-	// settings routes unregistered.
+	// AdminSettings backs /api/v1/admin/settings. Its operations remain
+	// registered without a service.
 	AdminSettings *appsettingssvc.Service
 	// AdminPrincipals is the TOML-configured allowlist for admin routes.
 	AdminPrincipals []owners.Principal
@@ -159,13 +156,9 @@ func New(deps Deps) (http.Handler, error) {
 	return handler, nil
 }
 
-// buildAPI creates the shared mux + huma API and registers every
-// operation exposed under /api/v1/. Both the runtime handler (New) and
-// the spec dumper (OpenAPISpec) use it so that the served API and the
-// documented API cannot drift apart. Registrations that depend on a
-// collaborator (such as MediaService) are no-ops when the collaborator
-// on deps is nil; OpenAPISpec can therefore pass Deps{} and still emit
-// a spec for the routes that need no wiring.
+// buildAPI registers the JSON contract independently of runtime services so
+// New and OpenAPISpec share operation definitions. Handlers resolve services
+// only when called. Raw byte and event routes are outside the JSON contract.
 func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("Fotobank", version.Short)

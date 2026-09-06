@@ -77,9 +77,12 @@ The HTTP API and CLI share application services, but not every command has a
 machine-readable form yet. An agent should fail on unexpected output rather
 than guessing from partially parsed text.
 
-The checked-in OpenAPI schema is also incomplete: search, AI, and facets are
-omitted by the generator's dependency-free setup. Raw byte and event routes
-are outside that JSON contract. Consult the [HTTP architecture](../architecture/runtime.md#http)
-and route implementations for those surfaces. Scripts should use supported
+Discover JSON operations, including search, AI, and filter counts, through
+`/api/openapi.json` on the running server or the repository's `openapi.json`.
+Interactive documentation is at `/api/docs`. A documented operation can still
+report that its service is unavailable; schema presence does not mean AI is
+enabled. Raw byte and event routes are outside that JSON contract. Consult the
+[HTTP architecture](../architecture/runtime.md#http) and route implementations
+for those surfaces. Scripts should use supported
 commands and API operations rather than writing directly to the catalog or
 Docbank's storage.
