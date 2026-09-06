@@ -209,11 +209,10 @@ type BrokerExec struct {
 }
 
 type Backup struct {
-	Enabled    bool   `toml:"enabled"`
-	Dir        string `toml:"dir"`
-	Keep15Min  int    `toml:"keep_15min"`
-	KeepHourly int    `toml:"keep_hourly"`
-	KeepDaily  int    `toml:"keep_daily"`
+	Enabled    bool          `toml:"enabled"`
+	Repository string        `toml:"repository"`
+	Interval   time.Duration `toml:"interval"`
+	KeepLast   int           `toml:"keep_last"`
 }
 
 type Observability struct {
@@ -301,6 +300,12 @@ func rejectRemovedConfig(meta toml.MetaData) error {
 				errs.ErrBadConfiguration)
 		}
 	}
+	for _, key := range []string{"dir", "keep_15min", "keep_hourly", "keep_daily"} {
+		if meta.IsDefined("backup", key) {
+			return fmt.Errorf("%w: backup.%s is obsolete; remove it, initialize a complete archive repository with fotobank backup init --repo PATH, and configure backup.repository, backup.interval, and backup.keep_last before setting backup.enabled=true",
+				errs.ErrBadConfiguration, key)
+		}
+	}
 	return nil
 }
 
@@ -317,6 +322,7 @@ func expandHomePaths(c *Config) error {
 		&c.Docbank.Root,
 		&c.NAS.Root,
 		&c.Imports.FileLockPath,
+		&c.Backup.Repository,
 	}
 	for _, p := range fields {
 		expanded, err := expandHome(*p)
@@ -478,22 +484,17 @@ func (c *Config) ValidateWithOptions(options ValidationOptions) error {
 		return fmt.Errorf("%w: [broker].mode=%q (must be stub|exec)",
 			errs.ErrBadConfiguration, c.Broker.Mode)
 	}
-	// Retention validation only applies when the worker will actually run.
-	// An operator who set enabled=false should be free to leave keep_*
-	// at zero or unset; the values would never be consulted.
-	if c.Backup.Enabled {
-		if c.Backup.Keep15Min < 1 {
-			return fmt.Errorf("%w: backup.keep_15min must be >= 1", errs.ErrBadConfiguration)
-		}
-		if c.Backup.KeepHourly < 1 {
-			return fmt.Errorf("%w: backup.keep_hourly must be >= 1", errs.ErrBadConfiguration)
-		}
-		if c.Backup.KeepDaily < 1 {
-			return fmt.Errorf("%w: backup.keep_daily must be >= 1", errs.ErrBadConfiguration)
-		}
+	if c.Backup.Enabled && c.Backup.Repository == "" {
+		return fmt.Errorf("%w: backup.repository is required when backup.enabled=true; initialize it with fotobank backup init --repo PATH", errs.ErrBadConfiguration)
 	}
-	if c.Backup.Dir != "" && !filepath.IsAbs(c.Backup.Dir) {
-		return fmt.Errorf("%w: backup.dir must be absolute when set", errs.ErrBadConfiguration)
+	if c.Backup.Repository != "" && !filepath.IsAbs(c.Backup.Repository) {
+		return fmt.Errorf("%w: backup.repository must be absolute when set", errs.ErrBadConfiguration)
+	}
+	if c.Backup.Interval <= 0 {
+		return fmt.Errorf("%w: backup.interval must be positive", errs.ErrBadConfiguration)
+	}
+	if c.Backup.KeepLast < 1 {
+		return fmt.Errorf("%w: backup.keep_last must be >= 1", errs.ErrBadConfiguration)
 	}
 	if c.Observability.AdminEnabled {
 		if !isLoopbackOrUnixListen(c.Observability.AdminListen) {
@@ -794,20 +795,13 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	if c.Broker.Exec.CallTimeout == 0 {
 		c.Broker.Exec.CallTimeout = 30 * time.Second
 	}
-	// Default Enabled to true unless the operator explicitly set it.
-	if !meta.IsDefined("backup", "enabled") {
-		c.Backup.Enabled = true
+	// Scheduling is opt-in. Preserve explicit zero values so validation
+	// rejects them instead of silently substituting defaults.
+	if !meta.IsDefined("backup", "interval") {
+		c.Backup.Interval = 24 * time.Hour
 	}
-	// Default keep counts only when the operator did not set them; an
-	// explicit 0 is preserved so Validate rejects it as out of range.
-	if !meta.IsDefined("backup", "keep_15min") {
-		c.Backup.Keep15Min = 4
-	}
-	if !meta.IsDefined("backup", "keep_hourly") {
-		c.Backup.KeepHourly = 24
-	}
-	if !meta.IsDefined("backup", "keep_daily") {
-		c.Backup.KeepDaily = 7
+	if !meta.IsDefined("backup", "keep_last") {
+		c.Backup.KeepLast = 30
 	}
 	// Observability defaults: admin listener on by default at loopback
 	// 9090; auto-format logging at info; pprof off; add_source off.

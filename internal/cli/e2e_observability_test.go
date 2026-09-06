@@ -19,8 +19,7 @@ import (
 
 // writeObsConfig produces a TOML config with a free-port admin listener
 // so concurrent e2e tests don't fight for 127.0.0.1:9090. Backup is
-// disabled so the snapshot_dir readyz probe doesn't fail before the
-// backup worker has had a chance to create the snapshot directory.
+// disabled because repository scheduling is not under test here.
 func writeObsConfig(t *testing.T, tmp string) (cfgPath, adminAddrSink string) {
 	t.Helper()
 	r := require.New(t)

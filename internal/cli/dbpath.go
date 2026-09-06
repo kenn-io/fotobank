@@ -8,8 +8,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	"go.kenn.io/fotobank/internal/config"
 )
 
@@ -96,20 +94,8 @@ func rawDBPathParent(value string) (string, string) {
 }
 
 // lockPathFor returns the canonical lock-file path for a given dbPath.
-// Both the server and backup.Restore use this so the lock is consistent
+// All database users use this so the lock is consistent
 // regardless of FOTOBANK_DB_PATH overrides.
 func lockPathFor(dbPath string) string {
 	return dbPath + ".lock"
-}
-
-// loadConfigFromCmd reads the --config flag from cmd, falling back to
-// config.DefaultConfigPath() when unset, and returns the parsed config.
-// Subcommands that need both the config and the DB path go through this
-// helper so the precedence rules stay in one place.
-func loadConfigFromCmd(cmd *cobra.Command) (*config.Config, error) {
-	cfgPath, _ := cmd.Flags().GetString("config")
-	if cfgPath == "" {
-		cfgPath = config.DefaultConfigPath()
-	}
-	return config.Load(cfgPath)
 }

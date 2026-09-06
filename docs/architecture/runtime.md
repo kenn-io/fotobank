@@ -105,5 +105,17 @@ The server may start while the external NAS root is absent, including when a
 configured NAS symlink has no reachable target, so `/readyz` can report the
 outage. Checkout and import root validation still fails closed until every
 managed boundary resolves; the scanner retries after the NAS returns.
-NAS artifact and default-backup writers open the externally managed root rather
-than creating it, so an absent mount cannot silently become a local directory.
+NAS artifact writers open the externally managed root rather than creating it,
+so an absent mount cannot silently become a local directory.
+
+The optional archive worker also belongs to the server. `[backup].enabled`
+defaults to false; enabling it requires an explicit initialized
+`backup.repository`. The worker reuses the server's live Docbank adapter and
+catalog path to capture complete archives. It reads the latest persisted
+scheduled recovery point at startup, captures immediately if none exists, and
+otherwise honors `backup.interval` across restarts. Failed attempts retry after
+the shorter of that interval and five minutes. Successful capture precedes
+scheduled retention and pruning through the content boundary. Shutdown waits
+for this worker before closing its storage collaborators. See
+[backup and restore](operations.md#backup-and-restore) for capture and retention
+ownership.

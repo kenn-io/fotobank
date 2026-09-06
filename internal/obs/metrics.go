@@ -119,7 +119,7 @@ func NewTestMetrics() *Metrics {
 }
 
 // SetBackupLastSuccess records the unix-seconds time of the last
-// successful backup snapshot. Called from backup.Worker after each
+// successful complete archive. Called from backup.Worker after each
 // successful Snapshot. Concurrent-safe.
 func (m *Metrics) SetBackupLastSuccess(unix int64) {
 	m.lastBackupUnix.Store(unix)
@@ -206,13 +206,13 @@ func (m *Metrics) ShareRevokeDuration(result string) *metrics.PrometheusHistogra
 	)
 }
 
-// BackupSnapshots counts per-tick backup snapshot outcomes.
+// BackupSnapshots counts scheduled complete-archive outcomes.
 // result ∈ {"ok", "failed"}.
 func (m *Metrics) BackupSnapshots(result string) *metrics.Counter {
 	return m.set.GetOrCreateCounter(`fotobank_backup_snapshots_total{result="` + escapeLabel(result) + `"}`)
 }
 
-// BackupSnapshotDuration is the snapshot-outcome histogram.
+// BackupSnapshotDuration is the complete-archive outcome histogram.
 // result ∈ {"ok", "failed"}; uses workerDurationBuckets.
 func (m *Metrics) BackupSnapshotDuration(result string) *metrics.PrometheusHistogram {
 	return m.getOrCreatePrometheusHistogram(

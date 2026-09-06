@@ -110,10 +110,18 @@ bytes or can rewrite ancestor directories between filesystem calls.
 Server startup deliberately tolerates an absent external NAS so readiness can
 report the outage. Import and checkout root validation continues to fail closed
 until every configured managed boundary resolves; scanner retries are expected.
-NAS artifact writes and backups using the default NAS path must open the
-externally managed root and must never create that root when it is missing.
-Default NAS snapshot publication, inspection, and retention use the same
-retained root; SQLite's required pathname is satisfied by private local staging.
+NAS artifact writes must open the externally managed root and must never
+create that root when it is missing.
+
+Scheduled complete archives are opt-in and use an explicitly initialized
+repository. The server reuses its live Docbank vault for capture. Fotobank
+selects retention candidates only from the reserved `fotobank:scheduled` tag
+after a new archive succeeds; manual archives are retained. Repository forget,
+prune, and their locking belong to Docbank through the content adapter, not
+direct filesystem deletion in the worker. Cleanup failure does not invalidate
+the new recovery point and is retried after the next successful archive.
+Partially used archive packs can retain unused bytes; full pack compaction is
+not part of the current retention contract.
 
 Fotobank does not claim to stop a hostile local actor who can rename an opened
 checkout directory into a managed root. Such an actor already needs write

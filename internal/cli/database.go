@@ -15,8 +15,8 @@ import (
 )
 
 // databaseLifetime is the shared process-lifetime fence used by every CLI
-// command that opens the metadata database. Backup restore takes the same lock
-// exclusively before it replaces the database files.
+// command that opens the metadata database. Keep this lifetime separate from
+// short mutation locks used by individual commands.
 type databaseLifetime struct {
 	path      string
 	lock      *flock.Flock

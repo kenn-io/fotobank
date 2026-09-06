@@ -20,6 +20,8 @@ func TestTranslateError(t *testing.T) {
 		{name: "content conflict", upstream: docbank.ErrContentConflict, want: errs.ErrContentConflict},
 		{name: "content unavailable", upstream: docbank.ErrContentUnavailable, want: errs.ErrContentUnavailable},
 		{name: "not found", upstream: docbank.ErrNotFound, want: errs.ErrNotFound},
+		{name: "last recovery point", upstream: docbank.ErrBackupLastSnapshot, want: errs.ErrInvalidArgument},
+		{name: "snapshot required", upstream: docbank.ErrBackupSnapshotRequired, want: errs.ErrInvalidArgument},
 		{name: "backup repository locked", upstream: docbank.ErrBackupRepositoryLocked, want: errs.ErrBackupRepositoryLocked},
 		{name: "backup restore target active", upstream: docbank.ErrBackupRestoreTargetActive, want: errs.ErrBackupRestoreTargetActive},
 		{name: "backup restore target changed", upstream: docbank.ErrBackupRestoreTargetChanged, want: errs.ErrBackupRestoreTargetChanged},

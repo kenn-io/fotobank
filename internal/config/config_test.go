@@ -186,7 +186,7 @@ func TestExplicitTOMLValuesWinOverDefaults(t *testing.T) {
 	p := filepath.Join(tmp, "c.toml")
 	nasRoot := filepath.Join(tmp, "custom-nas")
 	flashRoot := filepath.Join(tmp, "custom-flash")
-	backupDir := filepath.Join(tmp, "custom-backup")
+	backupRepository := filepath.Join(tmp, "custom-backup")
 	require.NoError(t, os.WriteFile(p, fmt.Appendf(nil, `
 [nas]
 root = %q
@@ -214,11 +214,11 @@ mode = "exec"
 [broker.exec]
 command = "/bin/true"
 [backup]
-dir = %q
-keep_15min = 8
-keep_hourly = 12
-keep_daily = 14
-`, nasRoot, flashRoot, backupDir), 0o600))
+enabled = true
+repository = %q
+interval = "12h"
+keep_last = 14
+`, nasRoot, flashRoot, backupRepository), 0o600))
 	cfg, err := config.Load(p)
 	require.NoError(t, err)
 	canonicalTmp, err := filepath.EvalSymlinks(tmp)
@@ -239,10 +239,10 @@ keep_daily = 14
 	r.Equal(2*time.Minute, cfg.Thumbs.LeaseTimeout)
 	r.False(cfg.Thumbs.CacheEnabled)
 	r.Equal("exec", cfg.Broker.Mode)
-	r.Equal(backupDir, cfg.Backup.Dir)
-	r.Equal(8, cfg.Backup.Keep15Min)
-	r.Equal(12, cfg.Backup.KeepHourly)
-	r.Equal(14, cfg.Backup.KeepDaily)
+	r.True(cfg.Backup.Enabled)
+	r.Equal(backupRepository, cfg.Backup.Repository)
+	r.Equal(12*time.Hour, cfg.Backup.Interval)
+	r.Equal(14, cfg.Backup.KeepLast)
 }
 
 func TestValidateRequiresNASRoot(t *testing.T) {
@@ -640,11 +640,10 @@ func TestBackupDefaults(t *testing.T) {
 	r := require.New(t)
 	cfg, err := config.Load(filepath.Join("..", "..", "testdata", "config", "minimal.toml"))
 	r.NoError(err)
-	r.True(cfg.Backup.Enabled) // defaulted true when [backup] absent
-	r.Empty(cfg.Backup.Dir)    // empty = derive from nas.root at use site
-	r.Equal(4, cfg.Backup.Keep15Min)
-	r.Equal(24, cfg.Backup.KeepHourly)
-	r.Equal(7, cfg.Backup.KeepDaily)
+	r.False(cfg.Backup.Enabled) // scheduling requires an explicit opt-in
+	r.Empty(cfg.Backup.Repository)
+	r.Equal(24*time.Hour, cfg.Backup.Interval)
+	r.Equal(30, cfg.Backup.KeepLast)
 }
 
 func TestBackupExplicitDisabledHonored(t *testing.T) {
@@ -661,51 +660,45 @@ enabled = false
 	require.False(t, cfg.Backup.Enabled)
 }
 
-func TestBackupValidationRejectsZeroKeepCount(t *testing.T) {
-	tmp := t.TempDir()
-	p := filepath.Join(tmp, "c.toml")
-	require.NoError(t, os.WriteFile(p, []byte(`
-[nas]
-root = "/tmp/nas"
-[backup]
-keep_15min = 0
-`), 0o600))
-	_, err := config.Load(p)
-	require.ErrorIs(t, err, errs.ErrBadConfiguration)
+func TestBackupValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		settings string
+		wantKey  string
+	}{
+		{"enabled without repository", "enabled = true", "backup.repository"},
+		{"relative repository", `repository = "relative/path"`, "backup.repository"},
+		{"zero interval", `interval = "0s"`, "backup.interval"},
+		{"negative interval", `interval = "-1h"`, "backup.interval"},
+		{"zero keep count", "keep_last = 0", "backup.keep_last"},
+		{"negative keep count", "keep_last = -1", "backup.keep_last"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(p, fmt.Appendf(nil, "[nas]\nroot = %q\n[backup]\n%s\n", filepath.Join(t.TempDir(), "nas"), tt.settings), 0o600))
+			_, err := config.Load(p)
+			require.ErrorIs(t, err, errs.ErrBadConfiguration)
+			require.ErrorContains(t, err, tt.wantKey)
+		})
+	}
 }
 
-func TestBackupValidationRejectsRelativeDir(t *testing.T) {
-	tmp := t.TempDir()
-	p := filepath.Join(tmp, "c.toml")
-	require.NoError(t, os.WriteFile(p, []byte(`
-[nas]
-root = "/tmp/nas"
-[backup]
-dir = "relative/path"
-`), 0o600))
-	_, err := config.Load(p)
-	require.ErrorIs(t, err, errs.ErrBadConfiguration)
-}
-
-// When backups are disabled, retention counts are never consulted, so
-// keep_* validation must not block boot. An absolute dir is still
-// validated because the dir field is read by the CLI snapshot/list/
-// restore subcommands regardless of the worker being enabled.
-func TestBackupDisabledSkipsKeepValidation(t *testing.T) {
-	tmp := t.TempDir()
-	p := filepath.Join(tmp, "c.toml")
-	require.NoError(t, os.WriteFile(p, []byte(`
-[nas]
-root = "/tmp/nas"
-[backup]
-enabled = false
-keep_15min = 0
-keep_hourly = 0
-keep_daily = 0
-`), 0o600))
-	cfg, err := config.Load(p)
-	require.NoError(t, err)
-	require.False(t, cfg.Backup.Enabled)
+func TestLoadRejectsObsoleteBackupSettings(t *testing.T) {
+	for _, key := range []string{"dir", "keep_15min", "keep_hourly", "keep_daily"} {
+		t.Run(key, func(t *testing.T) {
+			r := require.New(t)
+			value := "0"
+			if key == "dir" {
+				value = `""`
+			}
+			p := filepath.Join(t.TempDir(), "config.toml")
+			r.NoError(os.WriteFile(p, fmt.Appendf(nil, "[backup]\nenabled = false\n%s = %s\n", key, value), 0o600))
+			_, err := config.LoadUnchecked(p)
+			r.ErrorIs(err, errs.ErrBadConfiguration)
+			r.ErrorContains(err, "backup."+key)
+			r.ErrorContains(err, "backup init --repo")
+		})
+	}
 }
 
 func TestObservabilityDefaults(t *testing.T) {
@@ -921,6 +914,8 @@ root = "~/flash-state"
 root = "~/photos"
 [imports]
 file_lock_path = "~/locks/import.lock"
+[backup]
+repository = "~/archives"
 [identity]
 mode = "stub"
 [identity.stub]
@@ -936,6 +931,7 @@ listen_address = "127.0.0.1:0"
 	r.Equal(filepath.Join(canonicalHome, "flash-state"), cfg.Flash.Root)
 	r.Equal(filepath.Join(canonicalHome, "photos"), cfg.NAS.Root)
 	r.Equal(filepath.Join(home, "locks", "import.lock"), cfg.Imports.FileLockPath)
+	r.Equal(filepath.Join(home, "archives"), cfg.Backup.Repository)
 }
 
 // TestLoadCanonicalizesAbsoluteAndRelativeStoragePaths proves paths that do
