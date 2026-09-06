@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -132,25 +131,13 @@ func diagnoseConfig(path string) []configDiagnostic {
 		})
 		return checks
 	}
-	backupDir := backupDirFor(cfg)
-	if cfg.Backup.Dir == "" && nasErr != nil {
+	if _, err := content.OpenBackupRepository(cfg.Backup.Repository); err != nil {
 		checks = append(checks, configDiagnostic{
-			name: "backups", status: "error",
-			detail: fmt.Sprintf("%s: [nas].root is unavailable: %v", backupDir, nasErr),
-			action: "mount [nas].root before Fotobank creates or writes the default backup directory",
-		})
-		return checks
-	}
-	status, detail, err := inspectBackupDestination(backupDir)
-	if err != nil {
-		checks = append(checks, configDiagnostic{
-			name: "backups", status: "error", detail: fmt.Sprintf("%s: %v", backupDir, err),
-			action: "make [backup].dir, or its existing parent, available to the Fotobank service account",
+			name: "backups", status: "error", detail: fmt.Sprintf("%s: %v", cfg.Backup.Repository, err),
+			action: "make [backup].repository available; initialize a new repository with fotobank backup init --repo PATH",
 		})
 	} else {
-		checks = append(checks, configDiagnostic{
-			name: "backups", status: status, detail: detail,
-		})
+		checks = append(checks, configDiagnostic{name: "backups", status: "ok", detail: cfg.Backup.Repository + " is an initialized archive repository"})
 	}
 	return checks
 }
@@ -196,37 +183,4 @@ func inspectDirectory(path string) (retErr error) {
 		return errors.New("not a directory")
 	}
 	return nil
-}
-
-func inspectBackupDestination(path string) (string, string, error) {
-	ancestor := path
-	for {
-		info, err := os.Lstat(ancestor)
-		if err == nil {
-			if info.Mode()&os.ModeSymlink != 0 {
-				info, err = os.Stat(ancestor)
-				if err != nil {
-					return "", "", fmt.Errorf("resolve %s: %w", ancestor, err)
-				}
-			}
-			if !info.IsDir() {
-				if ancestor == path {
-					return "", "", errors.New("destination is not a directory")
-				}
-				return "", "", fmt.Errorf("existing parent %s is not a directory", ancestor)
-			}
-			if ancestor == path {
-				return "ok", path + " is available", nil
-			}
-			return "ready", fmt.Sprintf("%s will be created beneath %s", path, ancestor), nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", "", err
-		}
-		parent := filepath.Dir(ancestor)
-		if parent == ancestor {
-			return "", "", fmt.Errorf("no existing parent: %w", os.ErrNotExist)
-		}
-		ancestor = parent
-	}
 }

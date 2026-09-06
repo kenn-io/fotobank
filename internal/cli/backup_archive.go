@@ -49,6 +49,9 @@ func newBackupCreateCmd() *cobra.Command {
 		Long: "Create a complete recovery archive in an initialized repository. Stop the Fotobank server first so this command can own the embedded vault. Includes hidden media and all owners. Configuration, credentials, caches, and writable checkout files are not captured.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) (retErr error) {
+			if tag == backup.ScheduledTag {
+				return errors.New("this tag is reserved for scheduled recovery points")
+			}
 			if repositoryPath == "" {
 				return errors.New("--repo is required; initialize it with backup init first")
 			}
@@ -187,7 +190,7 @@ func restoreArchive(cmd *cobra.Command, repositoryPath, snapshotID, target strin
 		return err
 	}
 	protected := []string{configuredVault, cfg.Docbank.Root, cfg.ConfiguredNASRoot(), cfg.NAS.Root,
-		cfg.ConfiguredFlashRoot(), cfg.Flash.Root, cfg.Backup.Dir}
+		cfg.ConfiguredFlashRoot(), cfg.Flash.Root, cfg.Backup.Repository}
 	target, protected, err = config.ArchiveRestorePaths(target, configuredDBPath(cfg), protected)
 	if err != nil {
 		return err

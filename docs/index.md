@@ -29,8 +29,8 @@ The most important split is simple:
   interrupted imports.
 - [Work with checkouts](guides/checkouts.md) — materialize ordinary writable
   files and commit tracked edits.
-- [Back up and restore](guides/backup.md) — create complete archives and metadata
-  snapshots, and understand the current recovery limits.
+- [Back up and restore](guides/backup.md) — create or schedule complete archives
+  and recover into separate storage.
 - [Automate Fotobank](guides/automation.md) — invoke commands predictably from
   scripts and agents.
 

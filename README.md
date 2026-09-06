@@ -64,7 +64,9 @@ The codebase currently includes:
   This is not encryption.
 - Optional AI tagging, captioning, and hybrid search using OpenAI-compatible
   endpoints, SQLite FTS5, and sqlite-vec embeddings.
-- Operational basics: backup snapshots and restore, structured logging,
+- Complete archives of the catalog and original media, optional scheduled
+  backups with retention, and restore into separate storage.
+- Operational basics: structured logging,
   readiness checks, Prometheus metrics, OpenAPI generation, and frontend tests.
 
 This list describes the development state, not a support guarantee.
@@ -175,8 +177,8 @@ Fotobank uses TOML. The loader resolves the config path with this precedence:
 The command never overwrites an existing file. Edit `[docbank].root` and
 `[nas].root` before first use. They should be separate directories on durable
 storage: Docbank holds original media, while the NAS artifact root holds
-rebuildable files and Fotobank metadata snapshots. The default stub identity is
-usable for local development.
+rebuildable files. Complete backups use a separately initialized repository.
+The default stub identity is usable for local development.
 
 Validate and run:
 
@@ -187,6 +189,15 @@ bin/fotobank serve
 ```
 
 By default the server listens on `127.0.0.1:8090`.
+
+Scheduled backups are disabled by default. Initialize an archive repository
+with `bin/fotobank backup init --repo /backups/photos`, then set
+`[backup].enabled = true` and `[backup].repository = "/backups/photos"` in the
+configuration. The default schedule captures a complete archive every 24 hours
+and retains 30 scheduled recovery points. Manual archives are retained
+independently.
+See the [backup guide](docs/guides/backup.md) for configuration and recovery
+drills.
 
 Common commands:
 
@@ -203,7 +214,7 @@ bin/fotobank shares            # CRUD over share scopes (CLI works regardless of
 bin/fotobank hidden            # manage the hidden-privacy passcode
 bin/fotobank ai                # AI status / backfill / retry / acknowledge
 bin/fotobank gps               # GPS metadata management
-bin/fotobank backup            # create / verify complete archives; metadata snapshot / restore
+bin/fotobank backup            # init / create / list / verify / restore complete archives
 bin/fotobank owners            # list / register principals
 ```
 

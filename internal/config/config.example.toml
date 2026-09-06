@@ -7,8 +7,8 @@ root = "~/.fotobank"                 # default; ~ expanded
 # Keep it distinct from import sources and the NAS artifact root.
 root = "/mnt/nas/docbank"
 
-# Rebuildable artifacts and metadata snapshots. Original media lives in
-# Docbank, not here. This must not contain or overlap the Docbank root.
+# Rebuildable artifacts. Original media lives in Docbank, not here.
+# This must not contain or overlap the Docbank root.
 [nas]
 root = "/mnt/nas/fotobank-artifacts" # required
 
@@ -92,11 +92,12 @@ mode = "stub"
 # env = ["FB_BROKER_ENV=prod"]
 
 [backup]
-# enabled = true                     # default; set to false to disable scheduled snapshots
-# dir = ""                           # absolute path; default: {nas.root}/.fotobank/snapshots/
-# keep_15min = 4                     # last hour of 15-min slots
-# keep_hourly = 24                   # last day of hourly slots
-# keep_daily = 7                     # last week of daily slots
+# Complete archives include the catalog and authoritative Docbank media.
+# Initialize the repository first: fotobank backup init --repo /backups/photos
+# enabled = false                    # default; opt in to scheduled complete archives
+# repository = "/backups/photos"     # required when enabled; absolute path, ~ expanded
+# interval = "24h"                   # positive duration between scheduled archives
+# keep_last = 30                     # retain this many scheduled archives; manual archives are kept
 
 [ui]
 # Enable the in-app sharing UI. Backend share APIs and the

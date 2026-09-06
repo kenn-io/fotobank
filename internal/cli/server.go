@@ -16,7 +16,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"uuid"
 
 	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
@@ -42,7 +41,6 @@ import (
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/contentresolver"
-	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
 	"go.kenn.io/fotobank/internal/media"
@@ -879,48 +877,11 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		runEmbedGapScan(sigCtx, aiGap, embedGens, embedPrincp, aiProvider, gapInterval, opts.stderr)
 	})
 
-	// backupDir is captured outside the cfg.Backup.Enabled block so the
-	// admin listener's snapshot_dir readyz check can refer to it. The
-	// helper itself short-circuits to a no-op when backups are disabled,
-	// so an empty value here is harmless.
-	backupDir := backupDirFor(cfg)
 	if cfg.Backup.Enabled {
-		// Pre-create the snapshot dir at boot so /readyz's snapshot_dir
-		// probe doesn't report 503 during the window between server
-		// start and the worker's first 15-minute tick. The retention
-		// worker would otherwise create it lazily on first Snapshot.
-		if err := prepareBackupDir(cfg, backupDir); err != nil &&
-			!errors.Is(err, errs.ErrContentUnavailable) {
-			return fmt.Errorf("create backup dir: %w", err)
-		}
-		interval := 15 * time.Minute
-		if raw := os.Getenv("FOTOBANK_TEST_BACKUP_INTERVAL"); raw != "" {
-			dur, err := time.ParseDuration(raw)
-			switch {
-			case err != nil:
-				fmt.Fprintf(opts.stderr, "FOTOBANK_TEST_BACKUP_INTERVAL parse error: %v\n", err)
-			case dur <= 0:
-				// Non-positive durations would panic time.NewTicker;
-				// fall back to the production cadence.
-				fmt.Fprintf(opts.stderr,
-					"FOTOBANK_TEST_BACKUP_INTERVAL must be positive, got %s; using default %s\n",
-					dur, interval)
-			default:
-				interval = dur
-			}
-		}
 		bw := backup.NewWorker(backup.Config{
-			DB:           d.WriteDB(),
-			Dir:          backupDir,
-			RequiredRoot: backupRequiredRoot(cfg),
-			Interval:     interval,
-			Policy: backup.Policy{
-				Keep15Min:  cfg.Backup.Keep15Min,
-				KeepHourly: cfg.Backup.KeepHourly,
-				KeepDaily:  cfg.Backup.KeepDaily,
-			},
-			Logger:  logger.With("component", "backup"),
-			Metrics: metricsObj,
+			DatabasePath: d.Path(), Vault: contentStore, Repository: cfg.Backup.Repository,
+			Interval: cfg.Backup.Interval, KeepLast: cfg.Backup.KeepLast,
+			Logger: logger.With("component", "backup"), Metrics: metricsObj,
 		})
 		bgWG.Go(func() {
 			if err := bw.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
@@ -947,7 +908,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 						return d.WriteDB().PingContext(ctx)
 					},
 				},
-				obsBackupCheck(cfg, backupDir),
+				obsBackupCheck(cfg),
 				{
 					Name: "nas_root",
 					Fn: func(_ context.Context) error {
@@ -1063,63 +1024,16 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	}
 }
 
-// obsBackupCheck builds the snapshot_dir readyz probe. When backups
-// are disabled the probe is a no-op so the admin listener doesn't
-// fail readiness on a path the operator never asked us to maintain.
-// When enabled, it round-trips a probe file through the snapshot dir
-// to verify both directory existence and write permission — the
-// retention worker hits both as part of its tick, so a passing probe
-// proves the worker would also succeed.
-func obsBackupCheck(cfg *config.Config, dir string) obs.ReadyCheck {
-	if !cfg.Backup.Enabled {
-		return obs.ReadyCheck{
-			Name: "snapshot_dir",
-			Fn:   func(context.Context) error { return nil },
+// obsBackupCheck checks repository availability without initializing it.
+// Capture/cleanup failures are reported separately through worker metrics.
+func obsBackupCheck(cfg *config.Config) obs.ReadyCheck {
+	return obs.ReadyCheck{Name: "archive_repository", Fn: func(context.Context) error {
+		if !cfg.Backup.Enabled {
+			return nil
 		}
-	}
-	return obs.ReadyCheck{
-		Name: "snapshot_dir",
-		Fn: func(_ context.Context) (retErr error) {
-			root, relativeDir, err := openBackupReadyRoot(cfg, dir)
-			if err != nil {
-				return err
-			}
-			defer func() { retErr = errors.Join(retErr, root.Close()) }()
-			probe := filepath.Join(relativeDir, ".readyz-probe-"+uuid.New().String())
-			f, err := root.OpenFile(probe, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-			if err != nil {
-				return err
-			}
-			_, writeErr := f.Write([]byte{0})
-			closeErr := f.Close()
-			removeErr := root.Remove(probe)
-			return errors.Join(writeErr, closeErr, removeErr)
-		},
-	}
-}
-
-func openBackupReadyRoot(cfg *config.Config, dir string) (*os.Root, string, error) {
-	if cfg.Backup.Dir != "" {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, "", err
-		}
-		root, err := os.OpenRoot(dir)
-		return root, ".", err
-	}
-	root, err := openBackupNASRoot(cfg)
-	if err != nil {
-		return nil, "", err
-	}
-	relativeDir, err := filepath.Rel(cfg.NAS.Root, dir)
-	if err != nil || !filepath.IsLocal(relativeDir) || relativeDir == "." {
-		_ = root.Close()
-		return nil, "", fmt.Errorf("backup directory %q is outside NAS root", dir)
-	}
-	if err := root.MkdirAll(relativeDir, 0o700); err != nil {
-		_ = root.Close()
-		return nil, "", err
-	}
-	return root, relativeDir, nil
+		_, err := content.OpenBackupRepository(cfg.Backup.Repository)
+		return err
+	}}
 }
 
 // bindListener dispatches on the "unix:" prefix: addresses starting

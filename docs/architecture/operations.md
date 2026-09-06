@@ -14,15 +14,17 @@ feature flags. Defaults and the narrow documented environment overrides are
 applied before validation. Database-backed application overrides are merged
 before validating the effective runtime view.
 
-All configured roots are canonical absolute paths after load. Invalid enum
-values, unsafe overlaps, incomplete identity boundaries, non-loopback admin
-listeners, and impossible retention settings fail before server startup.
+The flash, Docbank, and NAS roots become canonical absolute paths during
+validation. Invalid enum values, unsafe overlaps, incomplete identity
+boundaries, non-loopback admin listeners, and impossible retention settings
+fail before server startup.
 
 `fotobank config diagnose` is the read-only operational check. It reports the
 effective file, environment, and default configuration together with the
 availability of SQLite, the Docbank catalog and blob directory, NAS artifacts,
-checkout boundary configuration, identity mode, and the backup destination. It
-never initializes or migrates SQLite, opens Docbank through its mutating vault
+checkout boundary configuration, identity mode, and the initialized backup
+repository when scheduling is enabled. It never initializes or migrates SQLite,
+opens Docbank through its mutating vault
 lifecycle, creates directories, or tests storage by writing a file. A healthy
 result therefore establishes readable structure and valid boundaries, not a
 full database integrity check or proof that the service account can write.
@@ -43,51 +45,65 @@ closes database resources. A worker must not outlive a collaborator it uses.
 
 ## Backup and restore
 
-`internal/backup` creates timestamped SQLite snapshots, lists them, applies
-tiered retention, and restores through an explicit command. Snapshot names use
-a filesystem-portable UTC format and the reader accepts the formats that may
-still be inside the configured retention window.
+`internal/backup` coordinates complete recovery archives containing the Fotobank
+catalog and authoritative Docbank content. Repository storage, manifests,
+locking, verification, forgetting recovery points, and pruning belong to
+Docbank and are exposed through `internal/content`. Fotobank owns the capture
+schedule and which recovery points scheduled retention selects.
 
-SQLite backup uses SQLite's online backup behavior rather than copying a live
-database file without its WAL state. For the default NAS destination, SQLite
-first writes a private local staging snapshot because `VACUUM INTO` requires a
-pathname. Fotobank then copies, syncs, and atomically publishes that snapshot
-through one retained NAS root; stat and retention operations use the same root.
-This requires temporary local space equal to the metadata snapshot but prevents
-mount disappearance or replacement from redirecting backup writes. Retention
-never treats an unparseable file as a valid managed snapshot. Readiness opens
-the NAS root and creates and probes the relative snapshot directory on every
-check, so it recovers as soon as a missing mount returns without waiting for a
-backup tick. Snapshot-copy cancellation closes both transfer handles;
-completion still depends on the operating system returning from any filesystem
-call already in progress.
-
-Every CLI database user canonicalizes the SQLite path through existing
-symlinks—or through the deepest existing ancestor for a new database—before
-opening it or deriving process-lock paths. Database users acquire one shared
-lifetime lock before opening SQLite and retain it until their pools close.
-Restore takes that same lock exclusively, so it refuses to replace the database
-while the server, an import, or another command is using it, including when
-configuration names the database through an alias.
-
-`backup init`, `backup create`, `backup list --repo`, and `backup verify`
-manage complete recovery archives through `internal/content`. They require an
-explicit repository path; creation opens an initialized repository rather than
-silently creating a missing destination. Repository listing and verification
-require neither configuration nor the original vault.
+`backup init`, `backup create`, `backup list`, `backup verify`, and
+`backup restore` require an explicit `--repo`. Creation opens an initialized
+repository; only `init` creates one. Repository listing and verification
+require neither configuration nor the original vault. Restore additionally
+requires `--target` and uses a separate empty directory.
 
 `internal/backup.CreateArchive` snapshots Fotobank SQLite into private temporary
 storage during Docbank's mutation freeze and declares it as
 `application/catalog.sqlite` in the same manifest. Preparation first checks
 SQLite integrity and the `schema_migrations` marker using `ValidateSnapshot`;
-empty or unrelated databases are rejected before snapshot creation. SQLite uses a separate
-connection without running Fotobank migrations. The temporary snapshot remains
+empty or unrelated databases are rejected before snapshot creation. SQLite uses
+a separate connection without running Fotobank migrations and captures live
+WAL state with `VACUUM INTO`. The temporary snapshot remains
 until archive creation returns, then is removed. Content already referenced by
 that catalog exists before Docbank pins its state; later content appends do not
 invalidate the recovery point. The CLI holds the shared database lifetime lock
 and owns the embedded vault for the operation, so `backup create` requires the
-server to be stopped. A future in-process caller can reuse the same capture
-operation with its already-open vault.
+server to be stopped. The server's scheduled worker calls the same operation
+with its existing vault and catalog path, so scheduled capture runs while the
+server remains available.
+
+Scheduling is opt-in through `[backup].enabled`, which defaults to false. When
+enabled, `backup.repository` must explicitly name an initialized repository
+with an absolute path; home expansion is supported. `backup.interval` defaults
+to 24 hours and `backup.keep_last` to 30; both must be positive. Configuration
+validation checks values without initializing or opening the repository.
+Runtime readiness and diagnostics inspect the configured repository rather
+than creating a destination directory.
+
+`internal/backup.Worker` runs serially and reads the latest persisted
+`fotobank:scheduled` timestamp to decide when capture is due. No scheduled point
+means capture is due immediately. Restarts preserve the schedule; a failed
+attempt retries after `min(interval, 5 minutes)`. A stored timestamp in the
+future makes capture due immediately, so clock rollback cannot postpone it
+indefinitely. The server owns the worker's context and waits for it to exit
+before closing the vault or catalog.
+
+`internal/backup/scheduled_retention.go` selects only recovery points tagged
+`fotobank:scheduled`. The tag is reserved and rejected by manual
+`backup create --tag`. After a successful capture, the worker retains the point
+just created and the newest remaining scheduled points up to `keep_last`.
+Manual archives are never selected for forgetting. The worker calls
+`BackupRepository.Forget` and then `BackupRepository.Prune`; it does not delete
+repository files itself. Docbank coordinates those operations and preserves
+content referenced by retained recovery points.
+
+Capture failure does not run cleanup. Cleanup failure preserves the newly
+created archive, logs a warning, and records a separate retention failure
+metric. The next successful capture retries cleanup. Archive-success metrics
+therefore describe successful publication independently of retention outcomes.
+Pruning removes unused packs and rewrites sparse packs with less than 50% live
+indexed bytes. Packs at or above that threshold can retain unused bytes;
+pruning does not rewrite every partially used pack.
 
 Complete archives include all owners and hidden media. They do not include
 configuration files, provider credentials, disposable artifacts, or checkout
@@ -100,8 +116,8 @@ test restores both databases and resolves a catalog file through
 `internal/backup.RestoreArchive` and the repository-only content restore API.
 It never opens or creates the original vault or catalog. Configuration loading
 permits absent source storage but retains the configured aliases and validated
-roots, plus the database directory (including `FOTOBANK_DB_PATH`) and metadata
-backup destination, as protected roots for Docbank's target validation.
+roots, plus the database directory (including `FOTOBANK_DB_PATH`) and configured
+backup repository, as protected roots for Docbank's target validation.
 The target must be separate and empty; the CLI does not expose overwrite.
 `config.ArchiveRestorePaths` permits dangling source database symlinks, including
 parent-directory links, without opening or recreating them. It checks configured
@@ -124,10 +140,6 @@ working files, relocate checkout roots, or activate the recovered deployment.
 Operators must review those paths before running its checkout scanner. Archive
 verification establishes byte integrity, and restore adds the named reference
 checks; neither claims whole-application metadata validation.
-
-Scheduled snapshots, their tiered retention, and `backup restore` without
-`--repo` still apply only to metadata SQLite files. Complete-archive retention
-is not exposed yet.
 
 ## Observability
 
@@ -158,9 +170,11 @@ The command also walks each owner's Docbank media subtree through the bounded
 embedded traversal API and reports files with no operation-ledger row. It never
 deletes, moves, or overwrites unmatched authority.
 
-Garbage collection and destructive pruning are deliberate maintenance actions,
-not side effects of ordinary reads or cache eviction. Rebuildable caches may be
-evicted automatically; authoritative content may not.
+Garbage collection of live authoritative content is an explicit maintenance
+action. Rebuildable caches may be evicted automatically. Archive retention is
+separately authorized by enabling the backup schedule: it removes only expired
+scheduled recovery points and unused repository storage after a new archive
+succeeds. Ordinary reads do not prune either live content or archive storage.
 
 `fotobank checkout commit <checkout-id>` is an explicit writeback operation for
 settled tracked edits. It does not import untracked files, apply working-file

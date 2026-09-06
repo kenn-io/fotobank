@@ -2,45 +2,32 @@ package backup
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"time"
 
+	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/obs"
 )
 
-// Config configures a Worker. Production constructs one from
-// config.Backup; tests construct one directly.
+// Config uses the server's live authority and catalog lifetime.
 type Config struct {
-	DB  *sql.DB
-	Dir string
-	// RequiredRoot is an externally managed directory that must already
-	// exist before a snapshot may create directories beneath it.
-	RequiredRoot string
+	DatabasePath string
+	Vault        *content.Adapter
+	Repository   string
 	Interval     time.Duration
-	Policy       Policy
+	KeepLast     int
 	Logger       *slog.Logger
 	Metrics      *obs.Metrics
 }
 
-// Worker takes periodic snapshots and runs retention sweeps. One
-// goroutine, single serial loop. Skipped ticks coalesce naturally.
+// Worker serially captures complete archives and then applies scheduled-only
+// retention. It never initializes a repository or deletes its files directly.
 type Worker struct {
 	cfg             Config
 	lastSuccessAt   time.Time
 	lastStaleWarnAt time.Time
 }
-
-// staleAfter is the threshold past which a worker that has not had a
-// successful snapshot warns. staleSuppress is the minimum interval
-// between consecutive stale warnings to keep the log readable.
-const (
-	staleAfter    = 48 * time.Hour
-	staleSuppress = 48 * time.Hour
-)
 
 func NewWorker(cfg Config) *Worker {
 	if cfg.Logger == nil {
@@ -50,149 +37,124 @@ func NewWorker(cfg Config) *Worker {
 }
 
 func (w *Worker) Run(ctx context.Context) error {
-	// time.NewTicker panics on a non-positive duration. Validate up
-	// front so an operator misconfiguration surfaces as a clean error
-	// rather than a goroutine panic that crashes the server.
-	if w.cfg.Interval <= 0 {
-		return fmt.Errorf("backup worker: interval must be positive, got %s", w.cfg.Interval)
+	if w.cfg.Interval <= 0 || w.cfg.KeepLast < 1 || w.cfg.Repository == "" || w.cfg.DatabasePath == "" || w.cfg.Vault == nil {
+		return fmt.Errorf("backup worker requires a catalog, vault, repository, positive interval and keep_last")
 	}
-	w.cfg.Logger.Info("backup worker starting",
-		"dir", w.cfg.Dir,
-		"interval", w.cfg.Interval,
-		"keep_15min", w.cfg.Policy.Keep15Min,
-		"keep_hourly", w.cfg.Policy.KeepHourly,
-		"keep_daily", w.cfg.Policy.KeepDaily)
-	defer w.cfg.Logger.Info("backup worker stopped")
-
-	// Suppress false-stale: treat "never succeeded" as "just succeeded"
-	// for the first 48h of uptime.
+	w.cfg.Logger.Info("archive scheduling started", "repository", w.cfg.Repository, "interval", w.cfg.Interval, "keep_last", w.cfg.KeepLast)
 	w.lastSuccessAt = time.Now()
-
-	t := time.NewTicker(w.cfg.Interval)
-	defer t.Stop()
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-t.C:
-			w.tick(ctx)
+		case <-timer.C:
+			if ctx.Err() != nil {
+				return nil
+			}
+			delay := w.runDue(ctx)
 			w.maybeWarnStale(time.Now())
+			timer.Reset(delay)
 		}
 	}
 }
 
-// tick takes one snapshot and runs one retention sweep. The ticker
-// channel is treated as a wakeup signal, NOT a clock — every time
-// reading happens via time.Now() so the snapshot filename, the
-// lastSuccessAt stamp, and Sweep's age-bucketing all reference the
-// same real-time instant. Otherwise, on a slow NAS where Snapshot
-// stretches past one tick interval, a tick-time filename combined
-// with a time.Now()-based file mtime can land "in the future"
-// relative to a tick-time Sweep `now`, and the just-written snapshot
-// gets deleted as a future-dated file.
-func (w *Worker) tick(ctx context.Context) {
-	now := time.Now()
-	dst := filepath.Join(w.cfg.Dir, now.UTC().Format(StampLayout)+SnapshotExt)
-	start := now
-	var (
-		root        *os.Root
-		relativeDst string
-		snapshotErr error
-	)
-	if w.cfg.RequiredRoot == "" {
-		snapshotErr = Snapshot(ctx, w.cfg.DB, dst)
-	} else {
-		root, snapshotErr = os.OpenRoot(w.cfg.RequiredRoot)
-		if snapshotErr == nil {
-			defer root.Close()
-			relativeDst, snapshotErr = filepath.Rel(w.cfg.RequiredRoot, dst)
-			if snapshotErr == nil && (!filepath.IsLocal(relativeDst) || relativeDst == ".") {
-				snapshotErr = fmt.Errorf("backup destination %q is outside required root", dst)
-			}
-			if snapshotErr == nil {
-				snapshotErr = SnapshotToRoot(ctx, w.cfg.DB, root, relativeDst)
-			}
-		}
+// Consult persisted timestamps on startup/retry so restarts do not postpone
+// backups. Missing repositories are retried, never implicitly initialized.
+func (w *Worker) runDue(ctx context.Context) time.Duration {
+	retry := min(w.cfg.Interval, 5*time.Minute)
+	repository, err := content.OpenBackupRepository(w.cfg.Repository)
+	if err != nil {
+		w.cfg.Logger.Error("backup repository unavailable", "err", err)
+		return retry
 	}
-	if snapshotErr != nil {
-		w.cfg.Logger.Error("backup snapshot failed",
-			"err", snapshotErr, "dst", dst,
-			"dur_ms", time.Since(start).Milliseconds())
-		if w.cfg.Metrics != nil {
-			w.cfg.Metrics.BackupSnapshots("failed").Inc()
-			w.cfg.Metrics.BackupSnapshotDuration("failed").
-				Update(time.Since(start).Seconds())
-		}
-		return
+	points, err := repository.Snapshots()
+	if err != nil {
+		w.cfg.Logger.Error("list recovery points", "err", err)
+		return retry
+	}
+	delay, err := nextArchiveDelay(points, time.Now(), w.cfg.Interval)
+	if err != nil {
+		w.cfg.Logger.Error("read backup schedule", "err", err)
+		return retry
+	}
+	if delay > 0 {
+		return delay
+	}
+	point, err := w.capture(ctx, repository)
+	if err != nil {
+		w.cfg.Logger.Error("archive capture failed", "err", err)
+		return retry
+	}
+	delay, err = nextArchiveDelay([]content.BackupSnapshot{point}, time.Now(), w.cfg.Interval)
+	if err != nil {
+		w.cfg.Logger.Error("read new recovery point timestamp", "err", err)
+		return retry
+	}
+	return delay
+}
+
+func (w *Worker) capture(ctx context.Context, repository *content.BackupRepository) (content.BackupSnapshot, error) {
+	start := time.Now()
+	point, err := CreateArchive(ctx, w.cfg.DatabasePath, w.cfg.Vault, repository, ScheduledTag)
+	status := "ok"
+	if err != nil {
+		status = "failed"
+	}
+	if w.cfg.Metrics != nil {
+		w.cfg.Metrics.BackupSnapshots(status).Inc()
+		w.cfg.Metrics.BackupSnapshotDuration(status).Update(time.Since(start).Seconds())
+	}
+	if err != nil {
+		return content.BackupSnapshot{}, err
 	}
 	w.lastSuccessAt = time.Now()
 	if w.cfg.Metrics != nil {
-		w.cfg.Metrics.BackupSnapshots("ok").Inc()
-		w.cfg.Metrics.BackupSnapshotDuration("ok").
-			Update(time.Since(start).Seconds())
 		w.cfg.Metrics.SetBackupLastSuccess(w.lastSuccessAt.Unix())
 	}
-	var size int64
-	var info os.FileInfo
-	var statErr error
-	if root == nil {
-		info, statErr = os.Stat(dst)
-	} else {
-		info, statErr = root.Stat(relativeDst)
-	}
-	if statErr == nil {
-		size = info.Size()
-	}
-
-	var res SweepResult
-	var sweepErr error
-	if root == nil {
-		res, sweepErr = Sweep(w.cfg.Dir, w.cfg.Policy, time.Now(), w.cfg.Logger)
-	} else {
-		res, sweepErr = sweepRoot(
-			root,
-			filepath.Dir(relativeDst),
-			w.cfg.Policy,
-			time.Now(),
-			w.cfg.Logger,
-		)
-	}
-	if sweepErr != nil {
-		w.cfg.Logger.Warn("backup retention sweep failed",
-			"err", sweepErr, "dir", w.cfg.Dir)
+	w.cfg.Logger.Info("recovery point created", "snapshot", point.ID, "duration", time.Since(start))
+	// Cleanup failure does not invalidate the newly published archive.
+	deleted, err := w.retain(ctx, repository, point.ID)
+	if err != nil {
+		w.cfg.Logger.Warn("recovery point retained; archive cleanup failed", "snapshot", point.ID, "err", err)
 		if w.cfg.Metrics != nil {
 			w.cfg.Metrics.BackupRetentionSweeps("failed").Inc()
 		}
 	} else if w.cfg.Metrics != nil {
 		w.cfg.Metrics.BackupRetentionSweeps("ok").Inc()
-		w.cfg.Metrics.BackupRetentionDeleted().Add(res.Deleted)
+		w.cfg.Metrics.BackupRetentionDeleted().Add(deleted)
 	}
+	return point, nil
+}
 
-	attrs := []any{
-		"path", dst,
-		"size_bytes", size,
-		"dur_ms", time.Since(start).Milliseconds(),
+func (w *Worker) retain(ctx context.Context, repository *content.BackupRepository, current string) (int, error) {
+	points, err := repository.Snapshots()
+	if err != nil {
+		return 0, err
 	}
-	if sweepErr == nil {
-		attrs = append(attrs,
-			"kept_15min", res.Kept15Min,
-			"kept_hourly", res.KeptHourly,
-			"kept_daily", res.KeptDaily,
-			"deleted", res.Deleted)
+	remove, err := scheduledRemovals(points, current, w.cfg.KeepLast)
+	if err != nil {
+		return 0, err
 	}
-	w.cfg.Logger.Debug("backup snapshot ok", attrs...)
+	deleted := 0
+	if len(remove) > 0 {
+		report, err := repository.Forget(ctx, remove, false)
+		deleted = len(report.Forgotten)
+		if err != nil {
+			return deleted, err
+		}
+	}
+	_, err = repository.Prune(ctx, false)
+	return deleted, err
 }
 
 func (w *Worker) maybeWarnStale(now time.Time) {
-	staleness := now.Sub(w.lastSuccessAt)
-	if staleness <= staleAfter {
+	if now.Sub(w.lastSuccessAt) <= max(48*time.Hour, 2*w.cfg.Interval) {
 		return
 	}
-	if !w.lastStaleWarnAt.IsZero() && now.Sub(w.lastStaleWarnAt) < staleSuppress {
+	if !w.lastStaleWarnAt.IsZero() && now.Sub(w.lastStaleWarnAt) < 48*time.Hour {
 		return
 	}
-	w.cfg.Logger.Warn("backup snapshot stale",
-		"last_success_at", w.lastSuccessAt,
-		"hours_since", staleness.Hours())
+	w.cfg.Logger.Warn("scheduled archives are overdue", "last_success_at", w.lastSuccessAt)
 	w.lastStaleWarnAt = now
 }

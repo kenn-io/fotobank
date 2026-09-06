@@ -131,7 +131,7 @@ root = %q
 	} {
 		r.Contains(out.String(), check)
 	}
-	r.Contains(out.String(), "ready")
+	r.Contains(out.String(), "backups              disabled")
 }
 
 func TestConfigDiagnoseDoesNotInitializeMissingStorage(t *testing.T) {
@@ -157,7 +157,7 @@ root = %q
 	r.Contains(out.String(), "missing-flash")
 	r.Contains(out.String(), "missing-docbank")
 	r.Contains(out.String(), "missing-nas")
-	r.Contains(out.String(), "backups              error")
+	r.Contains(out.String(), "backups              disabled")
 	r.Contains(out.String(), "action:")
 	r.Contains(eout.String(), "configuration diagnostics failed")
 	r.NoDirExists(flashRoot)
@@ -195,7 +195,7 @@ root = %q
 	r.Contains(out.String(), "configuration        ok")
 	r.Contains(out.String(), "missing-docbank-target")
 	r.Contains(out.String(), "nas artifacts        error")
-	r.Contains(out.String(), "backups              error")
+	r.Contains(out.String(), "backups              disabled")
 	r.NotContains(out.String(), "backups              ready")
 	r.Contains(eout.String(), "configuration diagnostics failed")
 }
@@ -217,7 +217,8 @@ root = %q
 [nas]
 root = %q
 [backup]
-dir = %q
+enabled = true
+repository = %q
 `, filepath.Join(tmp, "flash"), filepath.Join(tmp, "docbank"),
 		filepath.Join(tmp, "nas"), backupDir), 0o600))
 	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))

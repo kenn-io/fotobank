@@ -4,9 +4,10 @@
 
 Docbank is authoritative for every imported photo, video, RAW file, and XMP
 sidecar. Fotobank SQLite stores product meaning and the exact Docbank node,
-virtual path, version, SHA-256, and size for each file. NAS and flash storage
-hold rebuildable artifacts and backups, not a second copy used as media
-authority.
+virtual path, version, SHA-256, and size for each file. NAS and flash artifact
+storage holds rebuildable files. Complete recovery archives live in explicitly
+initialized backup repositories; the running library reads its media from
+Docbank.
 
 ## Import semantics
 
@@ -45,7 +46,8 @@ Only `internal/content` imports `go.kenn.io/docbank`. It owns:
 - exact-version source-metadata processing and projection into dependency-free
   values;
 - exact-version canonical visual-preview processing and verified reads;
-- backup repository creation, verification, and isolated restore;
+- backup repository creation, verification, isolated restore, and coordinated
+  forgetting and pruning;
 - bounded traversal of an owner's media subtree for reconciliation;
 - error translation into Fotobank sentinels; and
 - serialization of content mutations to bound local concurrency.
@@ -57,8 +59,9 @@ content snapshot, and releases content writers before immutable backup bytes
 stream. Host files that contain credentials or tokens retain Docbank's
 sensitivity marker and require an explicit plaintext-backup opt-in. Backup and
 restore reports are projected into Fotobank types, and restore always targets a
-separate vault root rather than replacing
-the open authority. The adapter supplies Docbank with every configured NAS and
+separate vault root rather than replacing the open authority. Manual capture
+owns a vault opened by the CLI; scheduled capture reuses the server's live
+adapter. The adapter supplies Docbank with every configured NAS and
 flash-managed root as protected storage, so restore rejects their descendants
 and filesystem aliases before it creates or overwrites a target. One boundary
 set retains each configured alias, its validated destination, and the target
@@ -74,6 +77,15 @@ target coordination to Docbank. The product archive command supplies those
 roots from configuration, restores into an empty separate target, and checks
 the restored Fotobank catalog's references before reporting success. It does
 not bootstrap a new source vault to recover an old one.
+
+Fotobank owns scheduled retention selection: only points tagged
+`fotobank:scheduled` are eligible, and selection runs only after a complete
+archive is published. `BackupRepository.Forget` and `BackupRepository.Prune`
+delegate mutation and repository locking to Docbank. Retained manual archives
+continue to protect their referenced bytes during pruning. The scheduler
+never removes repository files directly or prunes the live vault. Unused packs
+can be reclaimed, while partially used packs may retain unused bytes. Full
+pack compaction is outside the current retention contract.
 
 `internal/contentresolver` is the shared product-to-content boundary above the
 adapter. It resolves a ready asset and either its primary or a named attached

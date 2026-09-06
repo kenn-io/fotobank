@@ -1,9 +1,8 @@
 # Back up and restore
 
-Fotobank can create a recovery archive containing its SQLite catalog and the
-authoritative Docbank content in one manifest. Scheduled backups and the
-`snapshot` command still produce metadata-only SQLite files. Choose the
-complete archive commands explicitly when backing up original media.
+Fotobank backs up its SQLite catalog and authoritative Docbank content together
+in a complete recovery archive. You can create an archive manually or enable a
+schedule in the running server. Scheduling is disabled by default.
 
 ## Create a complete archive
 
@@ -30,9 +29,52 @@ provider credentials, disposable thumbnails, and working checkout files are
 excluded. Commit checkout edits before taking the archive if you need those
 edits captured. Keep the configuration and credentials separately.
 
-Repositories are not encrypted. Store them on protected storage. Archive
-retention is not yet exposed; these commands retain every recovery point.
-The existing retention settings apply only to scheduled metadata snapshots.
+Repositories are not encrypted. Store them on protected storage. Manual
+archives are retained independently of the schedule. The tag
+`fotobank:scheduled` is reserved for the scheduler and cannot be passed to
+`backup create --tag`.
+
+## Enable scheduled archives
+
+Initialize a repository with `fotobank backup init --repo /backups/photos`,
+then add this configuration and start or restart the server:
+
+```toml
+[backup]
+enabled = true
+repository = "/backups/photos"
+interval = "24h"
+keep_last = 30
+```
+
+`repository` must be an absolute path to an initialized repository; a leading
+`~` is expanded. Fotobank does not create a missing repository when the server
+starts. `interval` must be a positive duration and defaults to `24h`.
+`keep_last` must be positive and defaults to 30. Leaving out `enabled`, or
+setting it to `false`, disables scheduling.
+
+The server captures the first archive immediately when the repository has no
+scheduled recovery point. Otherwise it schedules from the latest saved
+scheduled timestamp, so restarting the server does not restart the waiting
+period. Failed attempts retry after the shorter of the configured interval
+and five minutes. Scheduled capture uses the server's open vault; you do not
+need to stop the server for it.
+
+After successfully creating an archive, Fotobank keeps the newest `keep_last`
+scheduled recovery points, including the one just created. It forgets older
+points bearing `fotobank:scheduled` and asks Docbank to prune unused archive
+storage. Manual archives are untouched. A failed capture never starts cleanup.
+If cleanup fails, the new archive remains available, a warning and failure
+metric report the problem, and cleanup retries after the next successful
+archive. Pruning removes unused packs and rewrites sparse packs whose retained
+content occupies less than half their indexed bytes. Fuller packs can keep
+unused bytes; pruning does not compact every partially used pack.
+
+Configurations containing `backup.dir`, `backup.keep_15min`,
+`backup.keep_hourly`, or `backup.keep_daily` are rejected with migration
+instructions. Remove those settings and configure the complete-archive
+repository above. Existing metadata-only SQLite backup files are not deleted
+automatically; retire them only after verifying a complete recovery.
 
 ## Restore a complete archive
 
@@ -48,9 +90,10 @@ fotobank backup restore --repo /backups/photos \
 ```
 
 The latest recovery point is selected by default. Pass a snapshot ID after
-`restore` to select an older point. There is no overwrite option for archive
-recovery; `--yes` and `--dry-run` belong to metadata restore only. Use
-`backup verify --repo /backups/photos` for a read-only archive check.
+`restore` to select an older point. Both `--repo` and `--target` are required.
+Recovery always uses a separate target; it has no overwrite, `--yes`, or
+`--dry-run` option. Use `backup verify --repo /backups/photos` for a read-only
+archive check.
 
 The result names the restored vault and catalog and reports how many content
 references were verified. Restore checks the catalog's current file mappings,
@@ -68,43 +111,6 @@ checkout paths, but the archive does not contain those working files: review
 those paths before starting the server, whose scanner will inspect active
 checkouts. This command does not relocate checkouts or automate deployment
 cutover.
-
-## Snapshot the Fotobank catalog
-
-```sh
-fotobank backup snapshot
-fotobank backup list
-```
-
-By default, snapshots go beneath
-`[nas].root/.fotobank/snapshots/`. Set `[backup].dir` to use another absolute
-directory. Scheduled snapshots use the configured 15-minute, hourly, and daily
-retention counts.
-
-For automation, both commands support `--json`:
-
-```sh
-fotobank backup snapshot --json
-fotobank backup list --json
-```
-
-## Validate and restore metadata
-
-Stop the server and every other Fotobank command that uses the database. Check
-the snapshot and database lock without changing files:
-
-```sh
-fotobank backup restore --dry-run /path/to/snapshot.sqlite
-```
-
-Then restore interactively, or use `--yes` only in automation that has already
-selected and validated the exact snapshot:
-
-```sh
-fotobank backup restore /path/to/snapshot.sqlite
-```
-
-Restore moves the previous database files aside instead of deleting them.
 
 ## What a recovery drill must prove
 

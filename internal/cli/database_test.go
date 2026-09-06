@@ -6,23 +6,27 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/fotobank/internal/backup"
+	"github.com/gofrs/flock"
 	"go.kenn.io/fotobank/internal/db"
 )
 
-func TestDatabaseHandleBlocksRestore(t *testing.T) {
+func TestDatabaseHandleRetainsLifetimeLock(t *testing.T) {
 	r := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "fotobank.sqlite")
 	database, err := db.Open(dbPath)
 	r.NoError(err)
 	r.NoError(database.Close())
-	snapshotPath := filepath.Join(t.TempDir(), "snapshot.sqlite")
-	r.NoError(backup.SnapshotPath(t.Context(), dbPath, snapshotPath))
-
 	handle, err := openDatabasePath(dbPath)
 	r.NoError(err)
 	t.Cleanup(func() { r.NoError(handle.Close()) })
 
-	_, err = backup.Restore(t.Context(), snapshotPath, dbPath, lockPathFor(handle.Path()))
-	r.ErrorIs(err, backup.ErrServerHoldsLock)
+	lock := flock.New(lockPathFor(handle.Path()))
+	acquired, err := lock.TryLock()
+	r.NoError(err)
+	r.False(acquired)
+	r.NoError(handle.Close())
+	acquired, err = lock.TryLock()
+	r.NoError(err)
+	r.True(acquired)
+	r.NoError(lock.Unlock())
 }

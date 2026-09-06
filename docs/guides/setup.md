@@ -4,7 +4,7 @@ Fotobank needs three separate storage locations:
 
 - a local state directory for SQLite and disposable cache data;
 - a durable Docbank vault for original media and immutable versions; and
-- a durable artifact directory for thumbnails and Fotobank metadata snapshots.
+- an artifact directory for rebuildable thumbnails.
 
 The Docbank and artifact directories may be siblings on the same mounted
 filesystem, but neither may contain the other.
@@ -12,6 +12,9 @@ filesystem, but neither may contain the other.
 Generated thumbnails are written to the artifact directory. By default they
 are also cached beneath the local state directory; set
 `thumbs.cache_enabled = false` when a second local copy is not useful.
+
+Backups use a separately initialized repository and are disabled by default.
+See [Back up and restore](backup.md) to enable scheduled complete archives.
 
 ## Create the configuration
 
