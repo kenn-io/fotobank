@@ -33,12 +33,16 @@ Temporary design notes and execution checklists are not committed.
 2. Public media and share identifiers are opaque UUIDs. Storage paths and
    Docbank catalog identifiers are internal coordinates, not authorization.
 3. Imported source files are copied and left untouched.
-4. Fotobank owns product meaning: assets, file relationships, metadata,
-   albums, sharing, privacy, thumbnails, search, and AI projections.
+4. Fotobank owns product meaning: assets, file relationships, albums, sharing,
+   and privacy. Its metadata projections and browsing thumbnails use Docbank's
+   source extraction and canonical previews. Search and AI jobs still run in
+   Fotobank; shared intelligence belongs in Docbank as its APIs are integrated.
 5. Docbank is the authority for imported media bytes and immutable
    versions. Fotobank accesses it only through `internal/content`.
 6. Thumbnails, full-text indexes, vectors, and extracted metadata are
-   rebuildable projections. They never become media-byte authority.
+   rebuildable projections. They never become media-byte authority. The
+   Fotobank catalog's curation cannot be rebuilt from Docbank alone; recovery
+   archives preserve both the catalog and content.
 7. Hidden-media controls are application privacy, not encryption. User-facing
    lists, search, shares, thumbnail serving, and byte reads enforce hidden
    visibility. Hiding does not delete local projections or cancel work already

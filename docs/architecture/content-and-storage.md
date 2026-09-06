@@ -98,8 +98,7 @@ Current references use the version cached on the file and require Docbank's
 SHA-256 and size to match the Fotobank projection. Historical references may
 name any immutable version of the same Docbank node; a version belonging to a
 different file is rejected even when the caller can access the asset. This is
-the read primitive used by current downloads and projections and reserved for
-later checkout materialization and rebuilds.
+the read primitive used by downloads, projections, and checkout materialization.
 
 The embedded vault is configured with loose compression disabled and Fotobank
 does not pack imported media. Callers still use public Docbank read APIs and

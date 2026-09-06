@@ -71,11 +71,15 @@ vectors in one search space.
 Only one generation is active for search. Thumbnail regeneration invalidates
 the affected media's current mapping because the visual input changed.
 
-Vectors remain Fotobank-owned while the Docbank content integration is proven.
-They key source projections by Fotobank media/asset identity and exact input
-versions. Docbank owns reusable source extraction, including camera evidence;
-Fotobank owns the photographer-facing projection, prompts, and search
-lifecycle.
+The current implementation keeps vectors, prompts, job queues, and search
+lifecycle in Fotobank. Source projections use Fotobank media/asset identity and
+exact input versions. Docbank already supplies source extraction, including
+camera evidence, and canonical image previews through `internal/content`.
+
+The accepted boundary places reusable model outputs, embeddings, and retrieval
+in Docbank. Fotobank will consume those results and apply photographer-facing
+curation, ownership, visibility, and query behavior. That integration is not
+implemented yet; the packages above describe the code that runs today.
 
 ## Failure and privacy rules
 

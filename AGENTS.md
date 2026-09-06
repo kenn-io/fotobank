@@ -1,6 +1,11 @@
 # AGENTS.md — fotobank
 
-Personal photo management. A self-hosted alternative to cloud photo services: deduplication, consistent file naming, a metadata registry, and (in progress) thumbnails, albums, and sharing.
+Fotobank is a self-hosted photo system of record built on embedded Docbank.
+Docbank stores exact files and immutable versions and supplies source metadata
+and canonical image previews. Fotobank owns the photo catalog: related files,
+albums, privacy, sharing, browsing, and writable checkouts. Optional AI and
+search code still runs in Fotobank; reusable intelligence belongs in Docbank
+as its public APIs become available. This is pre-alpha software.
 
 This is a **Go project**. An earlier Python prototype was deleted at 2026-04-23; don't look for `.py` files.
 
@@ -94,6 +99,12 @@ system that exists.
 - Track proposed and incomplete work in kata. Put review-specific reasoning in
   the pull request. Architecture docs may state an accepted boundary or
   current behavior, but they are not the implementation tracker.
+- Keep the website's paired HTML and Markdown pages in sync:
+  `website/index.html` with `website/index.md`, and
+  `website/guide/index.html` with `website/guide.md`. Check capability claims
+  against the code and distinguish implemented behavior from aspirations.
+  Keep `website/llms.txt` linked to the current operational guides. A successful
+  docs build checks links, not whether the prose describes the implementation.
 
 ## Task tracking
 
