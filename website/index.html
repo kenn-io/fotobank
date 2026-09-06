@@ -55,7 +55,7 @@
           <li><strong>Store</strong><p>Keep exact bytes and immutable versions in Docbank.</p></li>
           <li><strong>Link</strong><p>Group JPEG, RAW, sidecar, and edited files as one photograph.</p></li>
           <li><strong>Edit</strong><p>Put selected versions in a writable checkout.</p></li>
-          <li><strong>Recover</strong><p>Verify stored content before rebuilding the catalog and its derived data.</p></li>
+          <li><strong>Recover</strong><p>Restore the photo catalog and stored content together, then rebuild derived data.</p></li>
         </ol>
       </section>
 
@@ -63,6 +63,7 @@
         <div>
           <h2 id="authority-title">Docbank stores files. Fotobank models photographs.</h2>
           <p class="section-lede">Each Fotobank file record points to one exact Docbank version. That reference is the boundary between the archive and the photo catalog.</p>
+          <p>Both must be backed up. Albums, file relationships, and sharing choices cannot be reconstructed from Docbank's files alone. Fotobank's recovery archives capture the catalog and Docbank content together.</p>
         </div>
         <div class="layer-stack">
           <article class="layer photo">
@@ -103,7 +104,7 @@
         </div>
         <div class="proof-grid">
           <article><h3>Import never changes the source.</h3><p>Fotobank reads a stable file, computes its identity, and copies it into Docbank. A retry finds the same content or reports a conflict.</p></article>
-          <article><h3>An editor cannot silently replace the archive.</h3><p>External tools edit checkout files. Fotobank records a settled edit as a new Docbank version and rejects a stale base.</p></article>
+          <article><h3>An editor cannot silently replace the archive.</h3><p>External tools edit checkout files. An explicit <code>checkout commit</code> saves a settled edit as a new Docbank version and rejects a changed base.</p></article>
           <article><h3>A lost index does not mean a lost photograph.</h3><p>Thumbnails, extracted metadata, and search data can be rebuilt from the exact stored version.</p></article>
           <article><h3>A file identifier does not grant access.</h3><p>Fotobank checks ownership and visibility before it lists, serves, exports, or shares a file.</p></article>
         </div>
@@ -111,12 +112,12 @@
 
       <section class="site-section direction" aria-labelledby="direction-title">
         <div>
-          <h2 id="direction-title">Planned work in Docbank</h2>
-          <p>Docbank is adding source metadata, image previews, embeddings, and retrieval for exact content versions. Fotobank will use those APIs instead of keeping separate generic processing code.</p>
+          <h2 id="direction-title">Shared intelligence, built on Docbank</h2>
+          <p>Docbank already supplies source metadata and canonical image previews for supported formats. Fotobank uses them for photo details and thumbnails.</p>
         </div>
         <div class="direction-details">
-          <p><strong>Docbank will own</strong> results that describe one file version, including extracted metadata, retained previews, model output, embeddings, and retrieval indexes.</p>
-          <p><strong>Fotobank will own</strong> decisions about a photograph, including file relationships, albums, ratings, privacy, sharing, and people curation.</p>
+          <p>Optional AI jobs, embeddings, and search still run in Fotobank. Moving reusable intelligence into Docbank is the direction; it is not yet the implemented integration.</p>
+          <p>Photo relationships, albums, privacy, and sharing stay in Fotobank.</p>
         </div>
       </section>
     </main>

@@ -14,8 +14,8 @@ archive.
 2. **Store:** Keep exact bytes and immutable versions in Docbank.
 3. **Link:** Group JPEG, RAW, sidecar, and edited files as one photograph.
 4. **Edit:** Put selected versions in a writable checkout.
-5. **Recover:** Verify stored content before rebuilding the catalog and its
-   derived data.
+5. **Recover:** Restore the photo catalog and stored content together, then
+   rebuild derived data.
 
 ## Docbank stores files; Fotobank models photographs
 
@@ -29,6 +29,10 @@ such as timelines, maps, review, and writable checkouts.
 Each Fotobank file record points to one exact Docbank version. That reference
 is the boundary between the archive and the photo catalog.
 
+Both must be backed up. Albums, file relationships, and sharing choices cannot
+be reconstructed from Docbank's files alone. Fotobank's recovery archives
+capture the catalog and Docbank content together.
+
 ## Related files stay related
 
 Fotobank can record a primary JPEG, camera RAW file, and XMP sidecar as one
@@ -39,21 +43,21 @@ relationship instead of inferring it every time from filenames.
 
 - Import does not mutate the source. A retry finds the same content or reports
   a conflict.
-- External tools edit checkout files. A settled edit becomes a new Docbank
-  version and cannot overwrite a newer base.
+- External tools edit checkout files. An explicit `checkout commit` saves a
+  settled edit as a new Docbank version and rejects a changed base.
 - Thumbnails, extracted metadata, and search data can be rebuilt from the exact
   stored version.
 - Fotobank checks ownership and visibility before it lists, serves, exports, or
   shares a file.
 
-## Planned work in Docbank
+## Shared intelligence, built on Docbank
 
-Docbank is adding source metadata, image previews, embeddings, and retrieval
-for exact content versions. Fotobank will use those APIs instead of keeping
-separate generic processing code.
+Docbank already supplies source metadata and canonical image previews for
+supported formats. Fotobank uses them for photo details and thumbnails.
 
-Results that describe one file version will live in Docbank. Decisions about a
-photograph will remain in Fotobank.
+Optional AI jobs, embeddings, and search still run in Fotobank. Moving reusable
+intelligence into Docbank is the direction; it is not yet the implemented
+integration. Photo relationships, albums, privacy, and sharing stay in Fotobank.
 
 Continue with the [guide to storage and editing](/guide/) or the [technical
 documentation](/docs/).

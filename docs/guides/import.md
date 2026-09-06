@@ -3,6 +3,9 @@
 An import copies supported media into Docbank. It does not rename, move, or
 delete the source directory.
 
+Stop the Fotobank server and wait for shutdown before importing. This command
+opens the embedded Docbank vault itself; it does not send work to the server.
+
 ```sh
 fotobank import /media/card-or-export
 ```
@@ -17,10 +20,13 @@ writes content. Stop if those paths are not the intended locations. The source
 must not be inside Docbank, the artifact root, or the flash directory, and
 symbolic-link media files are rejected.
 
+Start the server again after the import finishes to browse the results and let
+background workers build thumbnails and other enabled projections.
+
 ## Interrupted imports
 
 Import uses durable operation records across Fotobank SQLite and Docbank. Run
-the recovery command after a crash or interrupted copy:
+the recovery command after a crash or interrupted copy, with the server stopped:
 
 ```sh
 fotobank content recover

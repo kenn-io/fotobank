@@ -24,10 +24,12 @@ recovery point by default; pass its ID or `--all` to select older points.
 
 The archive includes all owners and hidden media. The catalog is captured as
 `application/catalog.sqlite` during Docbank's brief metadata freeze and is
-covered by the same manifest checks as the content. Configuration files,
-provider credentials, disposable thumbnails, and working checkout files are
-excluded. Commit checkout edits before taking the archive if you need those
-edits captured. Keep the configuration and credentials separately.
+covered by the same manifest checks as the content. Catalog settings and stored
+authentication hashes, including hidden-media passcode hashes, are preserved.
+Configuration files, provider credentials, disposable thumbnails, and working
+checkout files are excluded. Commit checkout edits before taking the archive
+if you need those
+edits captured. Keep configuration files and provider credentials separately.
 
 Repositories are not encrypted. Store them on protected storage. Manual
 archives are retained independently of the schedule. The tag
@@ -106,9 +108,10 @@ for inspection. Use a different empty target for another attempt.
 For a recovery drill, keep the restored copy offline. Before starting it, make
 a separate configuration with `[docbank].root` set to the reported `vault_root`
 and separate NAS and flash roots. Set `FOTOBANK_DB_PATH` to the reported
-`catalog_path`. Restore credentials separately. The catalog retains old
-checkout paths, but the archive does not contain those working files: review
-those paths before starting the server, whose scanner will inspect active
+`catalog_path`. Restore configuration files and provider credentials separately.
+The catalog retains old checkout paths, but the archive does not contain those
+working files: review those paths before starting the server, whose scanner
+will inspect active
 checkouts. This command does not relocate checkouts or automate deployment
 cutover.
 

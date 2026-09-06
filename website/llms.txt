@@ -15,6 +15,14 @@
 - [Data model](/docs/architecture/data-model/): Assets, files, albums, shares, and ownership.
 - [Search and AI](/docs/architecture/search-and-ai/): Current search and optional AI implementation.
 
+## User and agent workflows
+
+- [Setup](/docs/guides/setup/): Configure storage, diagnose availability, and start the server.
+- [Import and recover](/docs/guides/import/): Copy sources and resume interrupted imports with the server stopped.
+- [Checkouts](/docs/guides/checkouts/): Create working copies, scan edits, inspect saved state, and explicitly commit.
+- [Backup and restore](/docs/guides/backup/): Archive both the catalog and content, schedule backups, and restore separately.
+- [Automation](/docs/guides/automation/): Structured output, server-stop requirements, and current API limits.
+
 ## Status
 
-The repository contains working archive components but is not yet a supported photo product. Material labeled “planned” or “direction” is not implemented product behavior.
+Docbank already supplies exact versions, source metadata, and canonical image previews. Optional AI jobs, embeddings, and search still run in Fotobank; their move into Docbank is not yet integrated. The project is not yet a supported photo product. Material labeled “planned” or “direction” is not implemented product behavior.

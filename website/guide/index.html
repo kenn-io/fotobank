@@ -43,27 +43,27 @@
           <div class="stop-card code"><strong>Docbank receipt</strong><span>node 481 · version 7</span><span>sha256: 71b8…09e4</span></div>
         </li>
         <li id="relate">
-          <div class="stop-copy"><h2>Record the file relationships.</h2><p>Fotobank records which file is primary, which is the camera source, and which sidecar belongs to it. Each relationship points to an exact Docbank version.</p><a href="/docs/architecture/data-model/">Asset data model</a></div>
+          <div class="stop-copy"><h2>Record the file relationships.</h2><p>Fotobank records which file is primary, which is the camera source, and which sidecar belongs to it. Each file points to an exact Docbank version.</p><a href="/docs/architecture/data-model/">Asset data model</a></div>
           <div class="mini-graph"><strong>Photograph</strong><span>JPEG — primary display file</span><span>RAW — camera source</span><span>XMP — edit metadata</span></div>
         </li>
         <li id="project">
-          <div class="stop-copy"><h2>Build disposable data for browsing.</h2><p>Fotobank extracts EXIF and GPS metadata, generates thumbnails, and updates search from the recorded version. These outputs can be deleted and rebuilt without changing the stored photograph.</p></div>
+          <div class="stop-copy"><h2>Build disposable data for browsing.</h2><p>Docbank extracts source metadata, including EXIF and GPS, and supplies canonical image previews for supported formats. Fotobank projects those facts into its catalog, sizes thumbnails for browsing, and maintains search indexes. These derived outputs can be rebuilt from the stored versions.</p></div>
         </li>
         <li id="work">
-          <div class="stop-copy"><h2>Edit files through a checkout.</h2><p>A checkout copies selected versions into a working directory. External editors, file managers, and shell tools can use normal files there.</p><p>When a tracked file stops changing, Fotobank records it as a new Docbank version. A checkout is never the only copy of the archive.</p></div>
+          <div class="stop-copy"><h2>Edit files through a checkout.</h2><p>A checkout copies selected versions into a working directory. External editors, file managers, and shell tools can use normal files there.</p><p>The running server scans tracked files and marks settled edits as pending. Only an explicit <code>fotobank checkout commit</code> saves them as new Docbank versions. Uncommitted edits exist only in the working copy and are not in archive backups.</p><p>Today, stop the server before import, checkout creation, or checkout commit; these commands need to open the vault themselves. Start it again to scan edits and refresh browsing data.</p><a href="/docs/guides/checkouts/">Checkout workflow and current limits</a></div>
         </li>
         <li id="curate">
           <div class="stop-copy"><h2>Keep catalog decisions in Fotobank.</h2><p>Albums, visibility, sharing, and other catalog choices can change without copying the original or changing what a Docbank version means.</p></div>
         </li>
         <li id="recover">
-          <div class="stop-copy"><h2>Verify content before rebuilding.</h2><p>Docbank verifies retained content. Fotobank snapshots and restores its catalog under a coordinated database lock. Checkouts, thumbnails, metadata, and search data can then be rebuilt.</p><a href="/docs/architecture/operations/">Operations and recovery</a></div>
-          <div class="stop-card code"><strong>Recovery order</strong><span>Stored content → catalog → derived data</span></div>
+          <div class="stop-copy"><h2>Restore content and catalog together.</h2><p>Fotobank's recovery archive captures its SQLite catalog and Docbank content in one manifest. Restore verifies the saved bytes and the catalog's references to those bytes. Albums and other catalog choices need that saved catalog; they cannot be rebuilt from the files alone.</p><p>Configuration files, provider credentials, disposable thumbnails, and working checkout files are not included. Catalog settings and stored authentication hashes, including hidden-media passcode hashes, are preserved. Restore into a separate directory and review configuration and saved checkout paths before starting the recovered deployment.</p><a href="/docs/guides/backup/">Backup and restore</a></div>
+          <div class="stop-card code"><strong>One recovery archive</strong><span>Docbank content + Fotobank catalog</span><span>Rebuild derived data after restore</span></div>
         </li>
       </ol>
 
       <section class="guide-direction">
-        <h2>Planned Docbank work</h2>
-        <p>Metadata, image previews, embeddings, and retrieval results that describe one exact file version will live in Docbank. Ratings, picks, albums, people identities, and other catalog decisions will remain in Fotobank.</p>
+        <h2>Intelligence today and next</h2>
+        <p>Metadata extraction and canonical previews already come from Docbank. Optional AI jobs, embeddings, and search still run in Fotobank. Moving that reusable intelligence into Docbank remains work ahead. Photographer decisions stay in Fotobank; planned features such as ratings and people curation are not yet available.</p>
       </section>
     </main>
 

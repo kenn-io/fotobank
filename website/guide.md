@@ -17,21 +17,28 @@ node.
 ## Record the file relationships
 
 Fotobank records which file is primary, which is the camera source, and which
-sidecar belongs to it. Each relationship points to an exact Docbank version.
+sidecar belongs to it. Each file points to an exact Docbank version.
 
 ## Build disposable data for browsing
 
-Fotobank extracts EXIF and GPS metadata, generates thumbnails, and updates
-search from the recorded version. These outputs can be deleted and rebuilt
-without changing the stored photograph.
+Docbank extracts source metadata, including EXIF and GPS, and supplies canonical
+image previews for supported formats. Fotobank projects those facts into its
+catalog, sizes thumbnails for browsing, and maintains search indexes. These
+derived outputs can be rebuilt from the stored versions.
 
 ## Edit files through a checkout
 
 A checkout copies selected versions into a working directory. External editors,
 file managers, and shell tools can use normal files there.
 
-When a tracked file stops changing, Fotobank records it as a new Docbank
-version. A checkout is never the only copy of the archive.
+The running server scans tracked files and marks settled edits as pending.
+Only an explicit `fotobank checkout commit` saves them as new Docbank versions.
+Uncommitted edits exist only in the working copy and are not in archive backups.
+
+Today, stop the server before import, checkout creation, or checkout commit;
+these commands need to open the vault themselves. Start it again to scan edits
+and refresh browsing data. See the [checkout workflow](/docs/guides/checkouts/)
+for the full sequence and current limits.
 
 ## Keep catalog decisions in Fotobank
 
@@ -39,16 +46,26 @@ Albums, visibility, sharing, and other catalog choices stay in Fotobank. They
 can change without copying the original or changing what a Docbank version
 means.
 
-## Verify content before rebuilding
+## Restore content and catalog together
 
-Docbank verifies retained content. Fotobank snapshots and restores its catalog
-under a coordinated database lock. Checkouts, thumbnails, metadata, and search
-data can then be rebuilt.
+Fotobank's recovery archive captures its SQLite catalog and Docbank content in
+one manifest. Restore verifies the saved bytes and the catalog's references to
+those bytes. Albums and other catalog choices need that saved catalog; they
+cannot be rebuilt from the files alone.
 
-## Planned Docbank work
+Configuration files, provider credentials, disposable thumbnails, and working
+checkout files are not included. Catalog settings and stored authentication
+hashes, including hidden-media passcode hashes, are preserved. Restore into a
+separate directory and review configuration and saved checkout paths before
+starting the recovered deployment. See
+[backup and restore](/docs/guides/backup/).
 
-Metadata, image previews, embeddings, and retrieval results that describe one
-exact file version will live in Docbank. Ratings, picks, albums, people
-identities, and other catalog decisions will remain in Fotobank.
+## Intelligence today and next
+
+Metadata extraction and canonical previews already come from Docbank. Optional
+AI jobs, embeddings, and search still run in Fotobank. Moving that reusable
+intelligence into Docbank remains work ahead. Photographer decisions stay in
+Fotobank; planned features such as ratings and people curation are not yet
+available.
 
 Continue with the [technical documentation](/docs/).

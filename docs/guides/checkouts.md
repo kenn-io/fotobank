@@ -21,7 +21,9 @@ cannot silently create a second full archive copy.
 
 ## Create the working tree
 
-Create an empty directory outside every Fotobank-managed storage root, then run:
+Stop the Fotobank server and wait for it to exit: creation needs exclusive
+ownership of the embedded Docbank vault. Create an empty directory outside
+every Fotobank-managed storage root, then run:
 
 ```sh
 mkdir -p /work/photos-2025
@@ -37,8 +39,10 @@ fotobank checkout create /work/all-photos --all --max-bytes 500000000000
 Do not open or edit the directory until creation finishes. Fotobank copies exact
 Docbank versions and never hardlinks writable files to content-addressed blobs.
 
-The running server scans active checkouts. A tracked file must remain unchanged
-across the configured settle interval before it becomes pending for writeback.
+Start the server again after creation. It scans active checkouts while you edit.
+A tracked file must remain unchanged across separate scans spanning
+`checkouts.settle_interval` before it becomes pending for writeback. Scanning
+never commits an edit by itself.
 
 ## Inspect working-copy state
 
@@ -56,12 +60,18 @@ fotobank checkout status <checkout-uuid>
 
 The status view shows pending edits, conflicts, missing files, and scan errors.
 Use `--json` with either command for structured output in scripts and agent
-workflows. These commands read the catalog only; they do not scan, commit,
-rebuild, or remove working files.
+workflows. They may run alongside the server and do not open the Docbank vault.
+They report saved catalog observations; they do not scan, commit, rebuild, or
+remove working files. Startup still opens the normal database and ensures the
+configured owner, so use them against an initialized deployment rather than as
+strictly read-only database probes. New untracked files are not included in
+this status view.
 
 ## Commit tracked edits
 
-Use the checkout identifier printed by `checkout create`:
+Wait for the server's scanner to mark the edits pending, check status, then
+stop the server and wait for shutdown. Do not edit the working files during
+commit. Use the checkout identifier printed by `checkout create`:
 
 ```sh
 fotobank checkout commit <checkout-uuid>
@@ -71,3 +81,8 @@ Each changed tracked file becomes a new immutable Docbank version. Concurrent
 changes become visible conflicts rather than overwriting newer authority.
 Current writeback does not import new untracked files, apply deletions, infer
 renames, or resolve conflicts.
+
+Start the server again when the command finishes. Uncommitted working files
+are excluded from archive backups, so commit edits before capturing an archive
+that must include them. Checkout retirement and automatic reconstruction of
+working trees are not yet exposed as commands.

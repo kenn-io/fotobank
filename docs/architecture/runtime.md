@@ -31,8 +31,9 @@ HTTP or CLI transport → authorization service → domain repository → SQLite
 - Services under `internal/service` are the authorization boundary. Every
   user-scoped operation receives an `owners.Principal`, clamps queries to that
   caller, and normally returns `errs.ErrNotFound` for another owner's object.
-- HTTP and CLI transports call services. A CLI command is not trusted merely
-  because it runs locally.
+- HTTP and CLI transports call services to keep owner scoping consistent.
+  The host operator is trusted to control local configuration and storage;
+  application ownership checks do not isolate data from that operator.
 - Background workers claim durable queue rows, perform bounded work, and
   finalize the claim. They do not depend on request goroutines remaining alive.
 
@@ -51,9 +52,12 @@ JSON operations. Raw handlers own byte streams and server-sent events:
 - shared media byte routes
 - `/api/v1/events`
 
-The runtime API and OpenAPI generator use the same registration function.
-Generated `openapi.json` and frontend TypeScript bindings therefore change with
-the served contract.
+The runtime API and OpenAPI generator use the same registration function, but
+the generator passes empty dependencies. Search, AI, and facets skip
+registration when their service is absent, so checked-in `openapi.json` and
+generated frontend bindings currently cover only a subset of the served JSON
+API. Raw byte and event routes are outside that contract too. See
+[`frontend.md`](frontend.md#api-contract) for the frontend boundary.
 
 The middleware execution order is request metrics and recovery, identity,
 hidden-media unlock validation, principal-display caching, then routing.
@@ -92,6 +96,14 @@ The server owns one embedded Docbank adapter for its whole lifetime. Shutdown
 stops incoming requests and workers before closing storage and database
 resources. The content adapter translates errors that happen during streaming,
 not only errors returned while opening a reader.
+
+Docbank holds an exclusive vault lock for that lifetime. Standalone import,
+content recovery, checkout creation and commit, and manual archive creation
+also open the vault, so the server must be stopped before those commands run.
+The CLI does not forward those operations to the server. Scheduled archives
+and checkout scanning reuse the server's adapter. Checkout estimate, list, and
+status omit the adapter and can run alongside the server, although their CLI
+startup still opens the normal database and ensures the configured owner.
 
 Long-running operations honor `context.Context`. Background loops use bounded
 polling, concurrency, and shutdown waits; they do not start untracked
