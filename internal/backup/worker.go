@@ -81,14 +81,20 @@ func (w *Worker) runDue(ctx context.Context) time.Duration {
 	if delay > 0 {
 		return delay
 	}
-	if err := w.capture(ctx, repository); err != nil {
+	point, err := w.capture(ctx, repository)
+	if err != nil {
 		w.cfg.Logger.Error("archive capture failed", "err", err)
 		return retry
 	}
-	return w.cfg.Interval
+	delay, err = nextArchiveDelay([]content.BackupSnapshot{point}, time.Now(), w.cfg.Interval)
+	if err != nil {
+		w.cfg.Logger.Error("read new recovery point timestamp", "err", err)
+		return retry
+	}
+	return delay
 }
 
-func (w *Worker) capture(ctx context.Context, repository *content.BackupRepository) error {
+func (w *Worker) capture(ctx context.Context, repository *content.BackupRepository) (content.BackupSnapshot, error) {
 	start := time.Now()
 	point, err := CreateArchive(ctx, w.cfg.DatabasePath, w.cfg.Vault, repository, ScheduledTag)
 	status := "ok"
@@ -100,7 +106,7 @@ func (w *Worker) capture(ctx context.Context, repository *content.BackupReposito
 		w.cfg.Metrics.BackupSnapshotDuration(status).Update(time.Since(start).Seconds())
 	}
 	if err != nil {
-		return err
+		return content.BackupSnapshot{}, err
 	}
 	w.lastSuccessAt = time.Now()
 	if w.cfg.Metrics != nil {
@@ -118,7 +124,7 @@ func (w *Worker) capture(ctx context.Context, repository *content.BackupReposito
 		w.cfg.Metrics.BackupRetentionSweeps("ok").Inc()
 		w.cfg.Metrics.BackupRetentionDeleted().Add(deleted)
 	}
-	return nil
+	return point, nil
 }
 
 func (w *Worker) retain(ctx context.Context, repository *content.BackupRepository, current string) (int, error) {

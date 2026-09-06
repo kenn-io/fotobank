@@ -30,8 +30,10 @@ func TestWorkerKeepsCompleteArchivesAndManualPoints(t *testing.T) {
 	manual, err := CreateArchive(t.Context(), databasePath, vault, repository, "manual")
 	r.NoError(err)
 	worker := NewWorker(Config{DatabasePath: databasePath, Vault: vault, Repository: repository.Root(), Interval: time.Hour, KeepLast: 1})
-	r.NoError(worker.capture(t.Context(), repository))
-	r.NoError(worker.capture(t.Context(), repository))
+	_, err = worker.capture(t.Context(), repository)
+	r.NoError(err)
+	_, err = worker.capture(t.Context(), repository)
+	r.NoError(err)
 	points, err := repository.Snapshots()
 	r.NoError(err)
 	r.Len(points, 2)
@@ -55,10 +57,17 @@ func TestWorkerKeepsCompleteArchivesAndManualPoints(t *testing.T) {
 	// A failed capture must not consume earlier recovery points.
 	worker.cfg.DatabasePath = filepath.Join(t.TempDir(), "invalid.sqlite")
 	r.NoError(os.WriteFile(worker.cfg.DatabasePath, nil, 0o600))
-	r.Error(worker.capture(t.Context(), repository))
+	_, err = worker.capture(t.Context(), repository)
+	r.Error(err)
 	after, err := repository.Snapshots()
 	r.NoError(err)
 	r.Equal(points, after)
+
+	// The next interval starts at the published recovery point, so cleanup
+	// and other work after publication cannot push the cadence later.
+	worker.cfg.DatabasePath = databasePath
+	worker.cfg.Interval = time.Nanosecond
+	r.Zero(worker.runDue(t.Context()))
 }
 
 func TestWorkerRetriesUnavailableRepositoryWithoutCreatingIt(t *testing.T) {
