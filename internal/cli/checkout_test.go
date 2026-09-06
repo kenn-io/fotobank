@@ -3,8 +3,11 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	json "encoding/json/v2"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +23,111 @@ import (
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
+
+func TestCheckoutListAndStatus(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "fotobank.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+
+	database, err := db.Open(dbPath)
+	r.NoError(err)
+	owner := owners.Principal{Hub: "h", UserID: "u"}
+	other := owners.Principal{Hub: "h", UserID: "other"}
+	for _, principal := range []owners.Principal{owner, other} {
+		_, err = database.WriteDB().ExecContext(t.Context(),
+			`INSERT INTO owners(hub, user_id, storage_key, created_at) VALUES (?, ?, ?, ?)`,
+			principal.Hub, principal.UserID, uuid.NewString(), time.Now().UTC())
+		r.NoError(err)
+	}
+	repo := checkout.NewRepo(database.WriteDB(), database.ReadDB())
+	now := time.Date(2026, time.September, 6, 14, 0, 0, 0, time.UTC)
+	checkoutID := uuid.NewString()
+	r.NoError(repo.Insert(t.Context(), checkout.Checkout{
+		ID: checkoutID, Owner: owner, Root: filepath.Join(tmp, "working"),
+		Layout: "capture_date", Selection: checkout.Selection{Years: []checkout.YearRange{{Start: 2025, End: 2026}}},
+		State: checkout.StateActive, CreatedAt: now, UpdatedAt: now,
+	}))
+	for index, state := range []checkout.EntryState{checkout.EntryPending, checkout.EntryConflict} {
+		fileID := uuid.NewString()
+		r.NoError(repo.InsertEntry(t.Context(), checkout.Entry{
+			CheckoutID: checkoutID, FileID: fileID, RelativePath: "2025/photo-" + fileID + ".jpg",
+			BaseVersionID: "version-1", BaseSHA256: strings.Repeat("a", 64), BaseSize: 10,
+			ObservedSize: 10, ObservedMTime: now, ObservedIdentity: fmt.Sprintf("identity-%d", index),
+			ObservedSHA256: strings.Repeat("b", 64), State: state,
+			LastError: "newer authority exists", CreatedAt: now, UpdatedAt: now,
+		}))
+	}
+	_, err = database.WriteDB().ExecContext(t.Context(), `UPDATE checkout_entries
+		SET last_error = 'newer authority exists' WHERE checkout_id = ? AND state = 'conflict'`, checkoutID)
+	r.NoError(err)
+	otherID := uuid.NewString()
+	r.NoError(repo.Insert(t.Context(), checkout.Checkout{
+		ID: otherID, Owner: other, Root: filepath.Join(tmp, "other-working"),
+		Layout: "capture_date", Selection: checkout.Selection{All: true}, State: checkout.StateActive,
+		CreatedAt: now, UpdatedAt: now,
+	}))
+	r.NoError(database.Close())
+
+	var stdout, stderr bytes.Buffer
+	code := cli.RunContext(t.Context(), []string{
+		"checkout", "list", "--config", cfgPath, "--json",
+	}, &stdout, &stderr)
+	r.Zero(code, "stderr=%s", stderr.String())
+	var listed []struct {
+		ID      string `json:"id"`
+		Entries struct {
+			Total    int `json:"total"`
+			Pending  int `json:"pending"`
+			Conflict int `json:"conflict"`
+		} `json:"entries"`
+	}
+	r.NoError(json.Unmarshal(stdout.Bytes(), &listed))
+	r.Len(listed, 1)
+	r.Equal(checkoutID, listed[0].ID)
+	r.Equal(2, listed[0].Entries.Total)
+	r.Equal(1, listed[0].Entries.Pending)
+	r.Equal(1, listed[0].Entries.Conflict)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
+		"checkout", "status", checkoutID, "--config", cfgPath, "--json",
+	}, &stdout, &stderr)
+	r.Zero(code, "stderr=%s", stderr.String())
+	var status struct {
+		Checkout struct {
+			ID string `json:"id"`
+		} `json:"checkout"`
+		Selection struct {
+			Years []struct {
+				Start int `json:"start"`
+				End   int `json:"end"`
+			} `json:"years"`
+		} `json:"selection"`
+		Problems []struct {
+			State     checkout.EntryState `json:"state"`
+			LastError string              `json:"last_error"`
+		} `json:"problems"`
+	}
+	r.NoError(json.Unmarshal(stdout.Bytes(), &status))
+	r.Equal(checkoutID, status.Checkout.ID)
+	r.Equal([]struct {
+		Start int `json:"start"`
+		End   int `json:"end"`
+	}{{Start: 2025, End: 2026}}, status.Selection.Years)
+	r.Len(status.Problems, 2)
+	r.Equal("newer authority exists", status.Problems[0].LastError+status.Problems[1].LastError)
+
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
+		"checkout", "status", otherID, "--config", cfgPath, "--json",
+	}, &stdout, &stderr)
+	r.NotZero(code)
+	r.Contains(stderr.String(), "not found")
+}
 
 func TestCheckoutEstimateAndCreate(t *testing.T) {
 	r := require.New(t)

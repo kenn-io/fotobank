@@ -2,10 +2,13 @@ package cli
 
 import (
 	"context"
+	json "encoding/json/v2"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -27,6 +30,44 @@ func newCheckoutCmd() *cobra.Command {
 	cmd.AddCommand(newCheckoutEstimateCmd())
 	cmd.AddCommand(newCheckoutCreateCmd())
 	cmd.AddCommand(newCheckoutCommitCmd())
+	cmd.AddCommand(newCheckoutListCmd())
+	cmd.AddCommand(newCheckoutStatusCmd())
+	return cmd
+}
+
+func newCheckoutListCmd() *cobra.Command {
+	var (
+		configPath string
+		asJSON     bool
+	)
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List writable checkouts and their current state",
+		Args:  usageArgs(cobra.NoArgs),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runCheckoutList(cmd.Context(), configPath, asJSON, cmd.OutOrStdout())
+		},
+	}
+	cmd.Flags().StringVar(&configPath, "config", "", "path to config file")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON to stdout")
+	return cmd
+}
+
+func newCheckoutStatusCmd() *cobra.Command {
+	var (
+		configPath string
+		asJSON     bool
+	)
+	cmd := &cobra.Command{
+		Use:   "status <checkout-id>",
+		Short: "Show checkout state and files that need attention",
+		Args:  usageArgs(cobra.ExactArgs(1)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCheckoutStatus(cmd.Context(), configPath, args[0], asJSON, cmd.OutOrStdout())
+		},
+	}
+	cmd.Flags().StringVar(&configPath, "config", "", "path to config file")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON to stdout")
 	return cmd
 }
 
@@ -193,6 +234,197 @@ func runCheckoutCommit(
 	fmt.Fprintf(stdout, "pending=%d\tcommitted=%d\tconflicts=%d\n",
 		result.Pending, result.Committed, result.Conflicts)
 	return commitErr
+}
+
+type checkoutSummaryOutput struct {
+	ID        string                    `json:"id"`
+	State     checkout.State            `json:"state"`
+	Root      string                    `json:"root"`
+	Layout    string                    `json:"layout"`
+	LastError string                    `json:"last_error"`
+	Entries   checkoutEntryCountsOutput `json:"entries"`
+	CreatedAt time.Time                 `json:"created_at"`
+	UpdatedAt time.Time                 `json:"updated_at"`
+}
+
+type checkoutEntryCountsOutput struct {
+	Total    int `json:"total"`
+	Clean    int `json:"clean"`
+	Pending  int `json:"pending"`
+	Conflict int `json:"conflict"`
+	Missing  int `json:"missing"`
+	Error    int `json:"error"`
+}
+
+type checkoutSelectionOutput struct {
+	All      bool                 `json:"all"`
+	AssetIDs []string             `json:"asset_ids"`
+	AlbumIDs []string             `json:"album_ids"`
+	Years    []checkoutYearOutput `json:"years"`
+}
+
+type checkoutYearOutput struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
+}
+
+type checkoutProblemOutput struct {
+	FileID         string              `json:"file_id"`
+	Path           string              `json:"path"`
+	State          checkout.EntryState `json:"state"`
+	LastError      string              `json:"last_error"`
+	BaseVersionID  string              `json:"base_version_id"`
+	BaseSHA256     string              `json:"base_sha256"`
+	ObservedSHA256 string              `json:"observed_sha256"`
+	UpdatedAt      time.Time           `json:"updated_at"`
+}
+
+type checkoutStatusOutput struct {
+	Checkout  checkoutSummaryOutput   `json:"checkout"`
+	Selection checkoutSelectionOutput `json:"selection"`
+	Problems  []checkoutProblemOutput `json:"problems"`
+}
+
+func runCheckoutList(
+	ctx context.Context,
+	configPath string,
+	asJSON bool,
+	stdout io.Writer,
+) error {
+	runtime, err := openCheckoutRuntime(ctx, configPath, false)
+	if err != nil {
+		return err
+	}
+	defer runtime.close()
+	rows, err := runtime.service.List(ctx, runtime.owner)
+	if err != nil {
+		return err
+	}
+	out := make([]checkoutSummaryOutput, len(rows))
+	for index, row := range rows {
+		out[index] = projectCheckoutSummary(row)
+	}
+	if asJSON {
+		return writeCheckoutJSON(stdout, out)
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tSTATE\tFILES\tPENDING\tCONFLICTS\tMISSING\tERRORS\tUPDATED\tROOT")
+	for _, row := range rows {
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+			row.ID, row.State, row.Entries.Total, row.Entries.Pending,
+			row.Entries.Conflict, row.Entries.Missing, row.Entries.Error,
+			row.UpdatedAt.Format(time.RFC3339), row.Root)
+	}
+	return tw.Flush()
+}
+
+func runCheckoutStatus(
+	ctx context.Context,
+	configPath, checkoutID string,
+	asJSON bool,
+	stdout io.Writer,
+) error {
+	runtime, err := openCheckoutRuntime(ctx, configPath, false)
+	if err != nil {
+		return err
+	}
+	defer runtime.close()
+	status, err := runtime.service.Status(ctx, runtime.owner, checkoutID)
+	if err != nil {
+		return err
+	}
+	out := projectCheckoutStatus(status)
+	if asJSON {
+		return writeCheckoutJSON(stdout, out)
+	}
+	fmt.Fprintf(stdout, "Checkout: %s\nState: %s\nRoot: %s\nSelection: %s\n",
+		status.Checkout.ID, status.Checkout.State, status.Checkout.Root,
+		formatCheckoutSelection(status.Selection))
+	fmt.Fprintf(stdout, "Files: %d total; %d clean, %d pending, %d conflicts, %d missing, %d errors\n",
+		status.Checkout.Entries.Total, status.Checkout.Entries.Clean,
+		status.Checkout.Entries.Pending, status.Checkout.Entries.Conflict,
+		status.Checkout.Entries.Missing, status.Checkout.Entries.Error)
+	if status.Checkout.LastError != "" {
+		fmt.Fprintf(stdout, "Checkout error: %s\n", status.Checkout.LastError)
+	}
+	if len(status.Problems) == 0 {
+		_, err := fmt.Fprintln(stdout, "Files needing attention: none")
+		return err
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "STATE\tPATH\tFILE ID\tLAST ERROR")
+	for _, entry := range status.Problems {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
+			entry.State, entry.RelativePath, entry.FileID, entry.LastError)
+	}
+	return tw.Flush()
+}
+
+func projectCheckoutSummary(summary checkout.Summary) checkoutSummaryOutput {
+	return checkoutSummaryOutput{
+		ID: summary.ID, State: summary.State, Root: summary.Root, Layout: summary.Layout,
+		LastError: summary.LastError, Entries: checkoutEntryCountsOutput{
+			Total: summary.Entries.Total, Clean: summary.Entries.Clean,
+			Pending: summary.Entries.Pending, Conflict: summary.Entries.Conflict,
+			Missing: summary.Entries.Missing, Error: summary.Entries.Error,
+		},
+		CreatedAt: summary.CreatedAt, UpdatedAt: summary.UpdatedAt,
+	}
+}
+
+func projectCheckoutStatus(status checkout.Status) checkoutStatusOutput {
+	years := make([]checkoutYearOutput, len(status.Selection.Years))
+	for index, yearRange := range status.Selection.Years {
+		years[index] = checkoutYearOutput{Start: yearRange.Start, End: yearRange.End}
+	}
+	problems := make([]checkoutProblemOutput, len(status.Problems))
+	for index, entry := range status.Problems {
+		problems[index] = checkoutProblemOutput{
+			FileID: entry.FileID, Path: entry.RelativePath, State: entry.State,
+			LastError: entry.LastError, BaseVersionID: entry.BaseVersionID,
+			BaseSHA256: entry.BaseSHA256, ObservedSHA256: entry.ObservedSHA256,
+			UpdatedAt: entry.UpdatedAt,
+		}
+	}
+	return checkoutStatusOutput{
+		Checkout: projectCheckoutSummary(status.Checkout),
+		Selection: checkoutSelectionOutput{
+			All:      status.Selection.All,
+			AssetIDs: append([]string(nil), status.Selection.AssetIDs...),
+			AlbumIDs: append([]string(nil), status.Selection.AlbumIDs...),
+			Years:    years,
+		},
+		Problems: problems,
+	}
+}
+
+func formatCheckoutSelection(selection checkout.Selection) string {
+	if selection.All {
+		return "all visible assets"
+	}
+	parts := make([]string, 0, len(selection.AssetIDs)+len(selection.AlbumIDs)+len(selection.Years))
+	for _, id := range selection.AssetIDs {
+		parts = append(parts, "asset "+id)
+	}
+	for _, id := range selection.AlbumIDs {
+		parts = append(parts, "album "+id)
+	}
+	for _, years := range selection.Years {
+		if years.Start == years.End {
+			parts = append(parts, fmt.Sprintf("year %d", years.Start))
+		} else {
+			parts = append(parts, fmt.Sprintf("years %d:%d", years.Start, years.End))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func writeCheckoutJSON(w io.Writer, value any) error {
+	if err := json.MarshalWrite(w, value); err != nil {
+		return fmt.Errorf("write checkout JSON: %w", err)
+	}
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 type checkoutRuntime struct {

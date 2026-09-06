@@ -178,8 +178,13 @@ succeeds. Ordinary reads do not prune either live content or archive storage.
 
 `fotobank checkout commit <checkout-id>` is an explicit writeback operation for
 settled tracked edits. It does not import untracked files, apply working-file
-deletions, infer renames, or resolve conflicts. Those states remain visible in
-the checkout ledger for their dedicated lifecycle operations. A primary edit
+deletions, infer renames, or resolve conflicts. Operators inspect the durable
+state first with `fotobank checkout list` and `fotobank checkout status
+<checkout-id>`; these database-only commands do not scan or mutate the working
+copy. The status view shows the saved selection, entry-state totals, and every
+file that is pending, conflicted, missing, or errored.
+Those states remain visible in the checkout ledger for their dedicated
+lifecycle operations. A primary edit
 is not settled in Fotobank until Docbank source metadata for the committed
 version is available; the pending checkout entry is the retry record.
 

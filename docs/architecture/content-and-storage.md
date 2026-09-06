@@ -292,6 +292,14 @@ always skips its reserved staging directory. Operator-supplied
 untracked files, so they can exclude tool-specific transient files without
 hiding a tracked media edit.
 
+`fotobank checkout list` and `fotobank checkout status <checkout-id>` expose
+the durable ledger without opening Docbank or inspecting the working tree. The
+list view reports checkout state and entry counts. The status view includes the
+saved selection and every non-clean entry with its recorded error and version
+identity. Both operations run through the owner-scoped checkout service, so a
+checkout belonging to another owner is indistinguishable from a missing one.
+Their JSON forms are the automation boundary for agents and scripts.
+
 Scanning does not write new Docbank versions. `fotobank checkout commit
 <checkout-id>` consumes settled tracked `pending` entries. Each replacement is
 bound to the Docbank node revision for the entry's exact base version, so a

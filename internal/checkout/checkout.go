@@ -118,6 +118,35 @@ type CommitResult struct {
 	Conflicts int
 }
 
+// EntryCounts summarizes the durable states of files in a checkout.
+type EntryCounts struct {
+	Total    int
+	Clean    int
+	Pending  int
+	Conflict int
+	Missing  int
+	Error    int
+}
+
+// Summary is the operator-facing state of one checkout.
+type Summary struct {
+	ID        string
+	Root      string
+	Layout    string
+	State     State
+	LastError string
+	Entries   EntryCounts
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Status includes the saved selection and entries that need attention.
+type Status struct {
+	Checkout  Summary
+	Selection Selection
+	Problems  []Entry
+}
+
 // ScanCandidate is a durable local-file observation. FileID is empty for a
 // newly discovered working file and identifies an Entry for a tracked change.
 type ScanCandidate struct {
