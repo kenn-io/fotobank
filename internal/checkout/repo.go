@@ -373,38 +373,11 @@ func (r *Repo) ListByOwner(ctx context.Context, owner owners.Principal) ([]Summa
 	return summaries, nil
 }
 
-func (r *Repo) EntryCounts(ctx context.Context, checkoutID string) (EntryCounts, error) {
-	var counts EntryCounts
-	err := r.ro.QueryRowContext(ctx, `SELECT
-		COUNT(*),
-		COALESCE(SUM(CASE WHEN state = 'clean' THEN 1 ELSE 0 END), 0),
-		COALESCE(SUM(CASE WHEN state = 'pending' THEN 1 ELSE 0 END), 0),
-		COALESCE(SUM(CASE WHEN state = 'conflict' THEN 1 ELSE 0 END), 0),
-		COALESCE(SUM(CASE WHEN state = 'missing' THEN 1 ELSE 0 END), 0),
-		COALESCE(SUM(CASE WHEN state = 'error' THEN 1 ELSE 0 END), 0)
-		FROM checkout_entries WHERE checkout_id = ?`, checkoutID).Scan(
-		&counts.Total, &counts.Clean, &counts.Pending, &counts.Conflict,
-		&counts.Missing, &counts.Error,
-	)
-	if err != nil {
-		return EntryCounts{}, fmt.Errorf("count checkout entries: %w", err)
-	}
-	return counts, nil
-}
-
-func (r *Repo) ListProblemEntries(ctx context.Context, checkoutID string) ([]Entry, error) {
-	return r.listEntries(ctx, checkoutID, " AND state != 'clean'")
-}
-
 func (r *Repo) ListEntries(ctx context.Context, checkoutID string) ([]Entry, error) {
-	return r.listEntries(ctx, checkoutID, "")
-}
-
-func (r *Repo) listEntries(ctx context.Context, checkoutID, condition string) ([]Entry, error) {
 	rows, err := r.ro.QueryContext(ctx, `SELECT checkout_id, file_id,
 		relative_path, base_version_id, base_sha256, base_size, observed_size,
 		observed_mtime, observed_identity, observed_sha256, state, last_error, created_at, updated_at
-		FROM checkout_entries WHERE checkout_id = ?`+condition+` ORDER BY relative_path`, checkoutID)
+		FROM checkout_entries WHERE checkout_id = ? ORDER BY relative_path`, checkoutID)
 	if err != nil {
 		return nil, fmt.Errorf("list checkout entries: %w", err)
 	}

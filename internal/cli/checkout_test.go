@@ -98,7 +98,12 @@ func TestCheckoutListAndStatus(t *testing.T) {
 	r.Zero(code, "stderr=%s", stderr.String())
 	var status struct {
 		Checkout struct {
-			ID string `json:"id"`
+			ID      string `json:"id"`
+			Entries struct {
+				Total    int `json:"total"`
+				Pending  int `json:"pending"`
+				Conflict int `json:"conflict"`
+			} `json:"entries"`
 		} `json:"checkout"`
 		Selection struct {
 			Years []struct {
@@ -113,6 +118,9 @@ func TestCheckoutListAndStatus(t *testing.T) {
 	}
 	r.NoError(json.Unmarshal(stdout.Bytes(), &status))
 	r.Equal(checkoutID, status.Checkout.ID)
+	r.Equal(2, status.Checkout.Entries.Total)
+	r.Equal(1, status.Checkout.Entries.Pending)
+	r.Equal(1, status.Checkout.Entries.Conflict)
 	r.Equal([]struct {
 		Start int `json:"start"`
 		End   int `json:"end"`

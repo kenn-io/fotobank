@@ -53,13 +53,28 @@ func (s *CheckoutService) Status(
 	if row.Owner != caller {
 		return checkout.Status{}, fmt.Errorf("checkout status: %w", errs.ErrNotFound)
 	}
-	counts, err := s.repo.EntryCounts(ctx, checkoutID)
+	entries, err := s.repo.ListEntries(ctx, checkoutID)
 	if err != nil {
 		return checkout.Status{}, err
 	}
-	problems, err := s.repo.ListProblemEntries(ctx, checkoutID)
-	if err != nil {
-		return checkout.Status{}, err
+	counts := checkout.EntryCounts{Total: len(entries)}
+	problems := make([]checkout.Entry, 0, len(entries))
+	for _, entry := range entries {
+		switch entry.State {
+		case checkout.EntryClean:
+			counts.Clean++
+		case checkout.EntryPending:
+			counts.Pending++
+		case checkout.EntryConflict:
+			counts.Conflict++
+		case checkout.EntryMissing:
+			counts.Missing++
+		case checkout.EntryError:
+			counts.Error++
+		}
+		if entry.State != checkout.EntryClean {
+			problems = append(problems, entry)
+		}
 	}
 	return checkout.Status{
 		Checkout: checkout.Summary{
