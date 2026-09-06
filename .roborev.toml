@@ -32,6 +32,21 @@ Focus security findings on a concrete capability gained across an actual trust
 boundary. Focus other review findings on correctness, data integrity,
 portability, and maintainability.
 
+## Local checkout inspection
+
+`checkout list` and `checkout status` are local CLI commands. They run only in
+stub identity mode as the owner configured by the trusted operator. That
+operator already controls and can inspect the local catalog. Extra context in
+an internal or CLI error therefore does not reveal data across a trust
+boundary. Do not report checkout-ID enumeration based only on differences in
+local CLI error text.
+
+Service methods must still return `ErrNotFound` for both missing records and
+records owned by another principal. Any future remote transport must map that
+sentinel to a generic response and must not expose the wrapped internal error.
+Do flag a remote route that returns different public responses for those cases
+or allows one owner to read another owner's checkout.
+
 ## Go toolchain
 
 Fotobank pins Go 1.27 through `go.mod`, and CI installs the version declared
@@ -122,6 +137,17 @@ direct filesystem deletion in the worker. Cleanup failure does not invalidate
 the new recovery point and is retried after the next successful archive.
 Partially used archive packs can retain unused bytes; full pack compaction is
 not part of the current retention contract.
+
+The backup repository is unencrypted, and its configured path is controlled by
+the trusted operator or service account, not by photo users. The operator must
+keep the repository private from untrusted writers. An actor who can rewrite
+repository directories or manifests already has full authority to read,
+alter, or delete its recovery points; internal symlink or forged-manifest
+attacks by that actor do not cross a Fotobank trust boundary. Do flag any path
+where an untrusted caller can select the repository or control a repository
+path component. During restore, Docbank always protects the repository that was
+actually opened, including a CLI `--repo` override; do not require Fotobank to
+duplicate that protection, but do flag a path that bypasses it.
 
 Fotobank does not claim to stop a hostile local actor who can rename an opened
 checkout directory into a managed root. Such an actor already needs write

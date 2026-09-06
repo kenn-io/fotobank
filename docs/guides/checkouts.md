@@ -40,6 +40,25 @@ Docbank versions and never hardlinks writable files to content-addressed blobs.
 The running server scans active checkouts. A tracked file must remain unchanged
 across the configured settle interval before it becomes pending for writeback.
 
+## Inspect working-copy state
+
+List your checkouts and their file-state totals:
+
+```sh
+fotobank checkout list
+```
+
+Inspect one checkout's saved selection and the files that need attention:
+
+```sh
+fotobank checkout status <checkout-uuid>
+```
+
+The status view shows pending edits, conflicts, missing files, and scan errors.
+Use `--json` with either command for structured output in scripts and agent
+workflows. These commands read the catalog only; they do not scan, commit,
+rebuild, or remove working files.
+
 ## Commit tracked edits
 
 Use the checkout identifier printed by `checkout create`:

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,20 +36,27 @@ func TestE2EBackupWorkerProducesCompleteArchive(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	done := make(chan int, 1)
 	go func() { done <- cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &stdout, &stderr) }()
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case code := <-done:
-			r.Equal(0, code, "%s", stderr.String())
-		case <-time.After(10 * time.Second):
-			r.Fail("server did not shut down")
-		}
-	})
+	var stopOnce sync.Once
+	stopServer := func() {
+		stopOnce.Do(func() {
+			cancel()
+			select {
+			case code := <-done:
+				r.Equal(0, code, "%s", stderr.String())
+			case <-time.After(10 * time.Second):
+				r.Fail("server did not shut down")
+			}
+		})
+	}
+	t.Cleanup(stopServer)
 	r.NotEmpty(waitForSink(t, sink))
 	r.Eventually(func() bool {
 		points, err := repository.Snapshots()
 		return err == nil && len(points) > 0
 	}, 10*time.Second, 30*time.Millisecond)
+	// A recovery point is visible before the worker finishes retention. Join
+	// the server so verification observes the completed repository operation.
+	stopServer()
 	// The first complete archive is published immediately, not after the
 	// hour-long configured interval. Restore checks the captured catalog.
 	points, err := repository.Snapshots()
