@@ -1,8 +1,10 @@
 package cli_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -14,7 +16,52 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 )
+
+func TestDaemonShutdownClosesOperatorBeforeDraining(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	configPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "catalog.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	record := startCheckoutServer(t, configPath, dbPath)
+
+	// Keep a real photo request in flight while shutdown drains that listener.
+	photoAddress := strings.TrimPrefix(record.Metadata["web_url"], "http://")
+	connection, err := net.DialTimeout("tcp", photoAddress, 5*time.Second)
+	r.NoError(err)
+	defer connection.Close()
+	r.NoError(connection.SetDeadline(time.Now().Add(10 * time.Second)))
+	_, err = fmt.Fprintf(connection, "POST /api/v1/albums HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\nExpect: 100-continue\r\n\r\n", photoAddress)
+	r.NoError(err)
+	response, err := http.ReadResponse(bufio.NewReader(connection), nil)
+	r.NoError(err)
+	r.NoError(response.Body.Close())
+	r.Equal(http.StatusContinue, response.StatusCode)
+
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, record.Endpoint().BaseURL()+"/api/v1/operator/daemon/stop", nil)
+	r.NoError(err)
+	request.Header.Set("Authorization", "Bearer "+record.Metadata["token"])
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err = client.Do(request)
+	r.NoError(err)
+	r.NoError(response.Body.Close())
+	r.Equal(http.StatusNoContent, response.StatusCode)
+	r.Eventually(func() bool {
+		conn, err := net.DialTimeout("tcp", record.Address, 100*time.Millisecond)
+		if err != nil {
+			return true
+		}
+		_ = conn.Close()
+		return false
+	}, 2*time.Second, 10*time.Millisecond, "operator listener still accepts connections during shutdown")
+	// Discovery stays reserved until the photo request and storage have drained.
+	recordPath, err := (daemon.RuntimeStore{Dir: dbPath + ".operator"}).Path(record.PID)
+	r.NoError(err)
+	_, err = os.Stat(recordPath)
+	r.NoError(err)
+}
 
 func TestDaemonLifecycle(t *testing.T) {
 	r := require.New(t)

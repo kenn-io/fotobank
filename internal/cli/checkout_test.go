@@ -471,7 +471,7 @@ func TestCheckoutCommandsDoNotOpenStorageWhenLaunchFails(t *testing.T) {
 	r.ErrorIs(err, os.ErrNotExist)
 }
 
-func TestCheckoutCreateRejectsAmbiguousWindowsDestinations(t *testing.T) {
+func TestOperatorCommandsRejectAmbiguousWindowsPaths(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows path forms")
 	}
@@ -480,16 +480,19 @@ func TestCheckoutCreateRejectsAmbiguousWindowsDestinations(t *testing.T) {
 	cfgPath := writeBasicConfig(t, tmp)
 	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "new.sqlite"))
 	for _, root := range []string{`\photos`, `/photos`, `D:photos`} {
-		var stdout, stderr bytes.Buffer
-		code := cli.RunContext(t.Context(), []string{
-			"checkout", "create", root, "--all", "--max-bytes", "100", "--config", cfgPath, "--json",
-		}, &stdout, &stderr)
-		r.NotZero(code)
-		var failure struct {
-			Error string `json:"error"`
+		for _, args := range [][]string{
+			{"checkout", "create", root, "--all", "--max-bytes", "100"},
+			{"backup", "create", "--repo", root},
+		} {
+			var stdout, stderr bytes.Buffer
+			code := cli.RunContext(t.Context(), append(args, "--config", cfgPath, "--json"), &stdout, &stderr)
+			r.NotZero(code)
+			var failure struct {
+				Error string `json:"error"`
+			}
+			r.NoError(json.Unmarshal(stdout.Bytes(), &failure))
+			r.Contains(failure.Error, "fully qualified")
 		}
-		r.NoError(json.Unmarshal(stdout.Bytes(), &failure))
-		r.Contains(failure.Error, "fully qualified")
 	}
 }
 

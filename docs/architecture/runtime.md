@@ -139,7 +139,9 @@ with `http.listen_address`, `daemon.listen_address`, and
 `observability.admin_listen`. See [setup](../guides/setup.md).
 
 Stop/status never launch a process. The stop endpoint acknowledges before
-canceling the server, and the client waits for the runtime record to disappear
+canceling the server. Every shutdown path closes the operator listener before
+draining the photo listener and workers, so it cannot accept new commands
+during that drain. The client waits for the runtime record to disappear
 after workers, storage, and lifetime locks have closed. Restart then starts
 the replacement. Stop uses `daemon.stop_timeout`; startup/replacement uses
 `daemon.start_timeout`. Timeouts report an error rather than force-killing

@@ -1003,6 +1003,9 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	}
 	select {
 	case err := <-operatorFatal:
+		if op != nil {
+			op.Close()
+		}
 		ready.Store(false)
 		stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -1015,6 +1018,9 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		shutdownAdmin()
 		return err
 	case err := <-serveErr:
+		if op != nil {
+			op.Close()
+		}
 		// Serve exited on its own (bind loss, unrecoverable error).
 		// srv has stopped accepting new connections, but in-flight
 		// handlers (notably long-lived /api/v1/events SSE streams) are
@@ -1034,6 +1040,9 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		shutdownAdmin()
 		return err
 	case err := <-adminFatal:
+		if op != nil {
+			op.Close()
+		}
 		// Admin Serve crashed unexpectedly (e.g. listener died after
 		// boot). Without surfacing this, the server would keep running
 		// invisibly without /metrics or /readyz — operators wouldn't
@@ -1052,6 +1061,9 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		<-adminDone
 		return fmt.Errorf("admin listener: %w", err)
 	case <-sigCtx.Done():
+		if op != nil {
+			op.Close()
+		}
 		// 1. Flip readiness false so /readyz returns 503 — load
 		//    balancers see "shutting down" before requests start
 		//    failing.
