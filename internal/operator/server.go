@@ -74,6 +74,7 @@ func Start(ctx context.Context, dbPath, version string, owner owners.Principal, 
 	}
 	mux := http.NewServeMux()
 	api := humago.New(mux, huma.DefaultConfig("Fotobank operator API", version))
+	registerCheckouts(api, owner, checkouts)
 	huma.Register(api, huma.Operation{
 		OperationID: "commit-checkout", Method: http.MethodPost,
 		Path: "/checkouts/{id}/commit", Summary: "Commit settled tracked edits",

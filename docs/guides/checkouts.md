@@ -6,6 +6,11 @@ tracked edit.
 
 ## Estimate the copy
 
+Keep `fotobank serve` running for estimate, create, and commit. Run these
+commands on the server host under the same OS account, with the same stub-mode
+configuration and application version. They use the local operator connection,
+not the photo API, and never start a server or open a second vault.
+
 Select assets, albums, capture years, or the complete visible library:
 
 ```sh
@@ -13,6 +18,7 @@ fotobank checkout estimate --year 2025
 fotobank checkout estimate --album <album-uuid>
 fotobank checkout estimate --asset <asset-uuid>
 fotobank checkout estimate --all
+fotobank checkout estimate --year 2025 --json
 ```
 
 Selectors are repeatable and may be combined. Hidden assets are excluded. An
@@ -21,9 +27,8 @@ cannot silently create a second full archive copy.
 
 ## Create the working tree
 
-Stop the Fotobank server and wait for it to exit: creation needs exclusive
-ownership of the embedded Docbank vault. Create an empty directory outside
-every Fotobank-managed storage root, then run:
+With the server running, create an empty directory outside every
+Fotobank-managed storage root, then run:
 
 ```sh
 mkdir -p /work/photos-2025
@@ -39,7 +44,21 @@ fotobank checkout create /work/all-photos --all --max-bytes 500000000000
 Do not open or edit the directory until creation finishes. Fotobank copies exact
 Docbank versions and never hardlinks writable files to content-addressed blobs.
 
-Start the server again after creation. It scans active checkouts while you edit.
+Relative destinations are resolved from the command's working directory. The
+server validates the destination against its own storage configuration.
+On Windows, use a fully qualified path such as `C:\work\photos` or an ordinary
+relative path such as `.\photos`; drive-relative and drive-less rooted paths
+such as `C:photos` and `\photos` are rejected.
+
+Use `--json` for `checkout_id`, `root`, selected `files` and `bytes`, and
+`materialized` (files recorded so far). Errors exit nonzero and include `error`.
+If creation fails after reserving a checkout, the result retains its ID so you
+can inspect `checkout status <checkout-uuid> --json`. Partial working files are
+not rolled back. If the connection is lost, inspect `checkout list --json` for
+the destination before retrying; a lost response does not mean no files were
+created. Creation is not automatically retried or resumed.
+
+The server scans active checkouts while you edit.
 A tracked file must remain unchanged across separate scans spanning
 `checkouts.settle_interval` before it becomes pending for writeback. Scanning
 never commits an edit by itself.

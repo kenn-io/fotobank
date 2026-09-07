@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -15,10 +17,6 @@ import (
 
 	"go.kenn.io/fotobank/internal/checkout"
 	"go.kenn.io/fotobank/internal/config"
-	"go.kenn.io/fotobank/internal/content"
-	"go.kenn.io/fotobank/internal/contentresolver"
-	"go.kenn.io/fotobank/internal/geo"
-	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/operator"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/service"
@@ -118,17 +116,21 @@ func newCheckoutEstimateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "estimate",
 		Short: "Estimate the files and bytes selected for a checkout",
-		Args:  usageArgs(cobra.NoArgs),
+		Long: "Estimate selected files through the running Fotobank server. " +
+			"Use the same OS account, stub-mode configuration, and application version as serve.",
+		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			selection, err := flags.selection()
 			if err != nil {
 				return err
 			}
 			cfgPath, _ := cmd.Flags().GetString("config")
-			return runCheckoutEstimate(cmd.Context(), cfgPath, selection, cmd.OutOrStdout())
+			asJSON, _ := cmd.Flags().GetBool("json")
+			return runCheckoutEstimate(cmd.Context(), cfgPath, selection, asJSON, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().String("config", "", "path to config file")
+	cmd.Flags().Bool("json", false, "write structured file and byte estimates")
 	flags.bind(cmd)
 	return cmd
 }
@@ -141,7 +143,8 @@ func newCheckoutCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <empty-root>",
 		Short: "Materialize an exact-version writable checkout",
-		Long: "Materialize an exact-version writable checkout. " +
+		Long: "Materialize an exact-version writable checkout through the running Fotobank server. " +
+			"Use the same OS account, stub-mode configuration, and application version as serve. " +
 			"Do not open or edit the checkout root until this command finishes.",
 		Args: usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -150,10 +153,12 @@ func newCheckoutCreateCmd() *cobra.Command {
 				return err
 			}
 			cfgPath, _ := cmd.Flags().GetString("config")
-			return runCheckoutCreate(cmd.Context(), cfgPath, args[0], selection, maxBytes, cmd.OutOrStdout())
+			asJSON, _ := cmd.Flags().GetBool("json")
+			return runCheckoutCreate(cmd.Context(), cfgPath, args[0], selection, maxBytes, asJSON, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().String("config", "", "path to config file")
+	cmd.Flags().Bool("json", false, "write structured checkout results and errors")
 	cmd.Flags().Int64Var(&maxBytes, "max-bytes", 0,
 		"refuse materialization above this byte count (required with --all)")
 	flags.bind(cmd)
@@ -180,19 +185,27 @@ func runCheckoutEstimate(
 	ctx context.Context,
 	configPath string,
 	selection checkout.Selection,
+	asJSON bool,
 	stdout io.Writer,
 ) error {
-	runtime, err := openCheckoutRuntime(ctx, configPath, false)
+	dbPath, owner, err := checkoutOperatorConfig(configPath)
+	var result operator.EstimateResult
+	if err == nil {
+		result, err = operator.Estimate(ctx, dbPath, version.Short, operator.EstimateRequest{
+			Hub: owner.Hub, UserID: owner.UserID, Selection: selection,
+		})
+	}
+	if asJSON {
+		if err != nil {
+			result.Error = err.Error()
+		}
+		return errors.Join(err, writeCheckoutJSON(stdout, result))
+	}
 	if err != nil {
 		return err
 	}
-	defer runtime.close()
-	estimate, err := runtime.service.Estimate(ctx, runtime.owner, selection)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(stdout, "files=%d\tbytes=%d\n", estimate.Files, estimate.Bytes)
-	return nil
+	_, err = fmt.Fprintf(stdout, "files=%d\tbytes=%d\n", result.Files, result.Bytes)
+	return err
 }
 
 func runCheckoutCreate(
@@ -201,27 +214,56 @@ func runCheckoutCreate(
 	root string,
 	selection checkout.Selection,
 	maxBytes int64,
+	asJSON bool,
 	stdout io.Writer,
 ) error {
-	runtime, err := openCheckoutRuntime(ctx, configPath, true)
-	if err != nil {
+	dbPath, owner, err := checkoutOperatorConfig(configPath)
+	// Preserve symlink/.. semantics for server-side canonicalization. Abs/Join
+	// would clean the path before the server resolves symlinks.
+	if err == nil && !filepath.IsAbs(root) {
+		if filepath.VolumeName(root) != "" || (os.PathSeparator == '\\' && len(root) > 0 && os.IsPathSeparator(root[0])) {
+			err = fmt.Errorf("checkout destination must be a fully qualified path or relative to the working directory")
+		} else {
+			var cwd string
+			cwd, err = os.Getwd()
+			if err == nil {
+				root = cwd + string(os.PathSeparator) + root
+			}
+		}
+	}
+	result := operator.CreateResult{Root: root}
+	if err == nil {
+		result, err = operator.Create(ctx, dbPath, version.Short, operator.CreateRequest{
+			Hub: owner.Hub, UserID: owner.UserID, Root: root, Selection: selection, MaxBytes: maxBytes,
+		})
+	}
+	if asJSON {
+		if err != nil {
+			result.Error = err.Error()
+		}
+		return errors.Join(err, writeCheckoutJSON(stdout, result))
+	}
+	if err != nil && result.CheckoutID == "" {
 		return err
 	}
-	defer runtime.close()
-	resolvedRoot, err := runtime.content.ResolveCheckoutRoot(root)
-	if err != nil {
-		return err
+	_, outputErr := fmt.Fprintf(stdout, "checkout=%s\tfiles=%d\tbytes=%d\tmaterialized=%d\troot=%s\n",
+		result.CheckoutID, result.Files, result.Bytes, result.Materialized, result.Root)
+	return errors.Join(err, outputErr)
+}
+
+func checkoutOperatorConfig(configPath string) (string, owners.Principal, error) {
+	if configPath == "" {
+		configPath = config.DefaultConfigPath()
 	}
-	defer resolvedRoot.Close()
-	result, err := runtime.service.Create(ctx, runtime.owner, checkout.CreateRequest{
-		Root: resolvedRoot, Selection: selection, CapacityLimit: maxBytes,
-	})
+	cfg, err := config.LoadUnchecked(configPath)
 	if err != nil {
-		return err
+		return "", owners.Principal{}, err
 	}
-	fmt.Fprintf(stdout, "checkout=%s\tfiles=%d\tbytes=%d\troot=%s\n",
-		result.Checkout.ID, result.Estimate.Files, result.Estimate.Bytes, result.Checkout.Root)
-	return nil
+	if cfg.Identity.Mode != "stub" {
+		return "", owners.Principal{}, fmt.Errorf("fotobank checkout requires identity.mode = stub")
+	}
+	dbPath, err := resolveDBPath(cfg)
+	return dbPath, owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}, err
 }
 
 func runCheckoutCommit(
@@ -231,22 +273,12 @@ func runCheckoutCommit(
 	jsonOutput bool,
 	stdout io.Writer,
 ) error {
-	if configPath == "" {
-		configPath = config.DefaultConfigPath()
-	}
-	cfg, err := config.LoadUnchecked(configPath)
-	if err != nil {
-		return err
-	}
-	if cfg.Identity.Mode != "stub" {
-		return fmt.Errorf("fotobank checkout commit requires identity.mode = stub")
-	}
-	dbPath, err := resolveDBPath(cfg)
+	dbPath, owner, err := checkoutOperatorConfig(configPath)
 	if err != nil {
 		return err
 	}
 	result, commitErr := operator.Commit(ctx, dbPath, version.Short, checkoutID,
-		owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID})
+		owner)
 	if jsonOutput {
 		if commitErr != nil && result.Error == "" {
 			result.Error = commitErr.Error()
@@ -316,7 +348,7 @@ func runCheckoutList(
 	asJSON bool,
 	stdout io.Writer,
 ) error {
-	runtime, err := openCheckoutRuntime(ctx, configPath, false)
+	runtime, err := openCheckoutRuntime(ctx, configPath)
 	if err != nil {
 		return err
 	}
@@ -349,7 +381,7 @@ func runCheckoutStatus(
 	asJSON bool,
 	stdout io.Writer,
 ) error {
-	runtime, err := openCheckoutRuntime(ctx, configPath, false)
+	runtime, err := openCheckoutRuntime(ctx, configPath)
 	if err != nil {
 		return err
 	}
@@ -454,12 +486,11 @@ func writeCheckoutJSON(w io.Writer, value any) error {
 
 type checkoutRuntime struct {
 	db      *databaseHandle
-	content *content.Adapter
 	service *service.CheckoutService
 	owner   owners.Principal
 }
 
-func openCheckoutRuntime(ctx context.Context, configPath string, withContent bool) (*checkoutRuntime, error) {
+func openCheckoutRuntime(ctx context.Context, configPath string) (*checkoutRuntime, error) {
 	if configPath == "" {
 		configPath = config.DefaultConfigPath()
 	}
@@ -486,31 +517,11 @@ func openCheckoutRuntime(ctx context.Context, configPath string, withContent boo
 		return nil, err
 	}
 	checkoutRepo := checkout.NewRepo(database.WriteDB(), database.ReadDB())
-	if !withContent {
-		runtime.service = service.NewCheckoutService(checkoutRepo, nil, nil, "", nil)
-		return runtime, nil
-	}
-	contentStore, err := content.Open(ctx, contentAdapterConfig(cfg, false))
-	if err != nil {
-		runtime.close()
-		return nil, fmt.Errorf("open Docbank vault: %w", err)
-	}
-	runtime.content = contentStore
-	places, err := geo.NewNaturalEarth()
-	if err != nil {
-		runtime.close()
-		return nil, fmt.Errorf("load geo gazetteer: %w", err)
-	}
-	resolver := contentresolver.New(media.NewRepo(database.WriteDB(), database.ReadDB()), contentStore)
-	runtime.service = service.NewCheckoutService(
-		checkoutRepo, resolver, contentStore, dbPath+".checkout.lock", places)
+	runtime.service = service.NewCheckoutService(checkoutRepo, nil, nil, "", nil)
 	return runtime, nil
 }
 
 func (r *checkoutRuntime) close() {
-	if r.content != nil {
-		_ = r.content.Close()
-	}
 	if r.db != nil {
 		_ = r.db.Close()
 	}

@@ -176,6 +176,14 @@ separately authorized by enabling the backup schedule: it removes only expired
 scheduled recovery points and unused repository storage after a new archive
 succeeds. Ordinary reads do not prune either live content or archive storage.
 
+`fotobank checkout estimate` and `checkout create` use the running server's
+local operator interface. The server resolves selections for its configured
+owner, validates destination storage boundaries, and holds the creation lock
+through materialization. Their CLI opens neither Docbank nor SQLite. Creation
+results preserve the reserved checkout ID and completed-file count on failure;
+partial files remain for inspection. Connection loss requires checking the
+saved checkout list/status before retrying, not assuming creation did nothing.
+
 `fotobank checkout commit <checkout-id>` is an explicit writeback operation for
 settled tracked edits. It does not import untracked files, apply working-file
 deletions, infer renames, or resolve conflicts. It uses the running server's authenticated local

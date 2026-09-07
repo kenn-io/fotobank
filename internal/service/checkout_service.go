@@ -18,6 +18,7 @@ type CheckoutService struct {
 	repo         *checkout.Repo
 	materializer *checkout.Materializer
 	committer    *checkout.Committer
+	contentStore *content.Adapter
 }
 
 func NewCheckoutService(
@@ -31,6 +32,7 @@ func NewCheckoutService(
 		repo:         repo,
 		materializer: checkout.NewMaterializer(repo, resolver, creationLockPath),
 		committer:    checkout.NewCommitter(repo, contentStore, places),
+		contentStore: contentStore,
 	}
 }
 
@@ -109,4 +111,16 @@ func (s *CheckoutService) Create(
 	request checkout.CreateRequest,
 ) (checkout.CreateResult, error) {
 	return s.materializer.Create(ctx, caller, request)
+}
+
+// CreateAt validates a local operator's destination using the server's storage
+// configuration before handing the bound directory to the materializer.
+func (s *CheckoutService) CreateAt(ctx context.Context, caller owners.Principal, root string, selection checkout.Selection, maxBytes int64) (checkout.CreateResult, error) {
+	resolved, err := s.contentStore.ResolveCheckoutRoot(root)
+	if err != nil {
+		return checkout.CreateResult{}, err
+	}
+	return s.Create(ctx, caller, checkout.CreateRequest{
+		Root: resolved, Selection: selection, CapacityLimit: maxBytes,
+	})
 }

@@ -41,15 +41,15 @@ const (
 )
 
 type YearRange struct {
-	Start int
-	End   int
+	Start int `json:"start"`
+	End   int `json:"end"`
 }
 
 type Selection struct {
-	All      bool
-	AssetIDs []string
-	AlbumIDs []string
-	Years    []YearRange
+	All      bool        `json:"all"`
+	AssetIDs []string    `json:"asset_ids"`
+	AlbumIDs []string    `json:"album_ids"`
+	Years    []YearRange `json:"years"`
 }
 
 type Checkout struct {
