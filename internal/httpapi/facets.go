@@ -21,9 +21,6 @@ import (
 // the service handle — the unlock-claim check is plumbed into the
 // service via facets.New, not threaded through here.
 func registerFacetsRoutes(api huma.API, svc *facets.Service) {
-	if svc == nil {
-		return
-	}
 	huma.Register(api, huma.Operation{
 		OperationID: "facets",
 		Method:      http.MethodGet,
@@ -114,6 +111,9 @@ func handleFacets(
 	id, ok := IdentityFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
+	}
+	if svc == nil {
+		return nil, huma.Error503ServiceUnavailable("facets service not configured")
 	}
 	caller := id.Principal.OwnersPrincipal()
 

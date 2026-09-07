@@ -48,15 +48,22 @@ delegate the rest.
 JSON operations. Raw handlers own byte streams and server-sent events:
 
 - `/api/v1/media/{id}/original`
+- `/api/v1/media/{id}/files/{fileID}/content`
 - `/api/v1/media/{id}/thumb`
-- shared media byte routes
+- `/api/v1/shared/media/{id}/original`
+- `/api/v1/shared/media/{id}/thumb`
 - `/api/v1/events`
 
-The runtime API and OpenAPI generator use the same registration function, but
-the generator passes empty dependencies. Search, AI, and facets skip
-registration when their service is absent, so checked-in `openapi.json` and
-generated frontend bindings currently cover only a subset of the served JSON
-API. Raw byte and event routes are outside that contract too. See
+The runtime API and OpenAPI generator use the same JSON operation definitions,
+including search, AI, and facets. Registration does not need a database,
+Docbank vault, or provider. Missing search, AI, or facets services produce a
+503 response after the handler's identity check, rather than removing the
+operation from the contract. A configured server keeps its existing behavior.
+
+The server publishes the contract at `/api/openapi.json` and interactive docs
+at `/api/docs`. `make api-generate` writes the checked-in `openapi.json` and
+frontend TypeScript bindings. Raw byte and event routes remain outside Huma's
+JSON contract; their handlers own streaming, headers, and range behavior. See
 [`frontend.md`](frontend.md#api-contract) for the frontend boundary.
 
 The middleware execution order is request metrics and recovery, identity,

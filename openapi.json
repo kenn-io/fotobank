@@ -97,6 +97,237 @@
         ],
         "type": "object"
       },
+      "AiAckBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AiAckBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "type": "object"
+      },
+      "AiAcknowledgeInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AiAcknowledgeInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "hidden_processing"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AiBackfillInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AiBackfillInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "force": {
+            "description": "include media that already have an active result",
+            "type": "boolean"
+          },
+          "scope": {
+            "description": "reserved for future scoping",
+            "enum": [
+              "all"
+            ],
+            "type": "string"
+          },
+          "task": {
+            "description": "AI task to enqueue",
+            "enum": [
+              "tag",
+              "caption"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "type": "object"
+      },
+      "AiEnqueuedBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AiEnqueuedBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "enqueued": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enqueued"
+        ],
+        "type": "object"
+      },
+      "AiFailureDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "failed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "input_profile": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "last_error_kind": {
+            "type": "string"
+          },
+          "media_id": {
+            "type": "string"
+          },
+          "model_id": {
+            "type": "string"
+          },
+          "prompt_version": {
+            "type": "string"
+          },
+          "task": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_id",
+          "task",
+          "model_id",
+          "prompt_version",
+          "input_profile",
+          "last_error",
+          "last_error_kind",
+          "attempt_count",
+          "failed_at"
+        ],
+        "type": "object"
+      },
+      "AiFailuresBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AiFailuresBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/AiFailureDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "type": "object"
+      },
+      "AiRetryFailedInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AiRetryFailedInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "task": {
+            "enum": [
+              "tag",
+              "caption"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "type": "object"
+      },
+      "AiRetryPhotoInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AiRetryPhotoInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "media_id": {
+            "type": "string"
+          },
+          "task": {
+            "enum": [
+              "tag",
+              "caption"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_id",
+          "task"
+        ],
+        "type": "object"
+      },
       "AlbumDTO": {
         "additionalProperties": false,
         "properties": {
@@ -168,6 +399,85 @@
         },
         "required": [
           "effective"
+        ],
+        "type": "object"
+      },
+      "AutocompleteLocationsBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AutocompleteLocationsBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "locations": {
+            "items": {
+              "$ref": "#/components/schemas/LocationSuggestionDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "locations"
+        ],
+        "type": "object"
+      },
+      "AutocompleteTagsBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AutocompleteTagsBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagSuggestionDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "tags"
+        ],
+        "type": "object"
+      },
+      "CaptionItem": {
+        "additionalProperties": false,
+        "properties": {
+          "generated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "model_id": {
+            "type": "string"
+          },
+          "prompt_version": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "model_id",
+          "prompt_version",
+          "generated_at"
         ],
         "type": "object"
       },
@@ -365,6 +675,105 @@
         ],
         "type": "object"
       },
+      "EmbedTaskPart": {
+        "additionalProperties": false,
+        "properties": {
+          "active_fingerprint": {
+            "type": "string"
+          },
+          "blocked": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "done": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "failed_active": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "last_completed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "paused_reason": {
+            "type": "string"
+          },
+          "pending": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "skipped": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "throughput_per_min": {
+            "format": "double",
+            "type": "number"
+          },
+          "working": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "paused_reason",
+          "active_fingerprint",
+          "pending",
+          "working",
+          "blocked",
+          "failed_active",
+          "skipped",
+          "done",
+          "throughput_per_min"
+        ],
+        "type": "object"
+      },
+      "EmbeddingGenerationSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "activated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "eligible_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "embedded_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "retired_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "fingerprint",
+          "state",
+          "embedded_count",
+          "eligible_count",
+          "created_at"
+        ],
+        "type": "object"
+      },
       "ErrorDetail": {
         "additionalProperties": false,
         "properties": {
@@ -446,6 +855,123 @@
         },
         "type": "object"
       },
+      "FacetPlacesDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "with_gps": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "without_gps": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "with_gps",
+          "without_gps"
+        ],
+        "type": "object"
+      },
+      "FacetTagDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count"
+        ],
+        "type": "object"
+      },
+      "FacetValueDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "count"
+        ],
+        "type": "object"
+      },
+      "FacetsOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/FacetsOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "cameras": {
+            "items": {
+              "$ref": "#/components/schemas/FacetValueDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "lenses": {
+            "items": {
+              "$ref": "#/components/schemas/FacetValueDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "media_types": {
+            "items": {
+              "$ref": "#/components/schemas/FacetValueDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "places": {
+            "$ref": "#/components/schemas/FacetPlacesDTO"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/FacetTagDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "cameras",
+          "lenses",
+          "tags",
+          "places",
+          "media_types"
+        ],
+        "type": "object"
+      },
       "FeaturesStruct": {
         "additionalProperties": false,
         "properties": {
@@ -492,6 +1018,57 @@
           "original_filename",
           "size",
           "sha256"
+        ],
+        "type": "object"
+      },
+      "Health": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/Health.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "caption": {
+            "$ref": "#/components/schemas/TaskPart"
+          },
+          "embed": {
+            "$ref": "#/components/schemas/EmbedTaskPart"
+          },
+          "embedding_generations": {
+            "items": {
+              "$ref": "#/components/schemas/EmbeddingGenerationSummary"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "paused_reason": {
+            "type": "string"
+          },
+          "tag": {
+            "$ref": "#/components/schemas/TaskPart"
+          },
+          "vision": {
+            "$ref": "#/components/schemas/VisionPart"
+          }
+        },
+        "required": [
+          "enabled",
+          "paused_reason",
+          "vision",
+          "tag",
+          "caption",
+          "embed",
+          "embedding_generations"
         ],
         "type": "object"
       },
@@ -865,6 +1442,23 @@
         ],
         "type": "object"
       },
+      "LocationSuggestionDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "count"
+        ],
+        "type": "object"
+      },
       "MeOutputBody": {
         "additionalProperties": false,
         "properties": {
@@ -1014,6 +1608,58 @@
           "thumb_status",
           "thumb_version"
         ],
+        "type": "object"
+      },
+      "MediaFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "type": "object"
+      },
+      "MediaView": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/MediaView.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "caption": {
+            "$ref": "#/components/schemas/CaptionItem"
+          },
+          "caption_failure": {
+            "$ref": "#/components/schemas/MediaFailure"
+          },
+          "skipped": {
+            "$ref": "#/components/schemas/SkippedItem"
+          },
+          "tag_failure": {
+            "$ref": "#/components/schemas/MediaFailure"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagItem"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "OverrideMetadata": {
@@ -1360,6 +2006,171 @@
         ],
         "type": "object"
       },
+      "ScoreComponentsDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "bm25": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "rank_bm25": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rank_vector": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rrf": {
+            "format": "double",
+            "type": "number"
+          },
+          "vector": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "rrf",
+          "bm25",
+          "vector",
+          "rank_bm25",
+          "rank_vector"
+        ],
+        "type": "object"
+      },
+      "SearchBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/SearchBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "effective_sort": {
+            "type": "string"
+          },
+          "embedding_completeness": {
+            "format": "double",
+            "type": "number"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SearchResultDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "semantic_unavailable": {
+            "type": "boolean"
+          },
+          "semantic_unavailable_reason": {
+            "type": "string"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "results",
+          "next_cursor",
+          "has_more",
+          "effective_sort",
+          "embedding_completeness",
+          "semantic_unavailable",
+          "semantic_unavailable_reason"
+        ],
+        "type": "object"
+      },
+      "SearchResultDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "imported_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "media_id": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          },
+          "score_components": {
+            "$ref": "#/components/schemas/ScoreComponentsDTO"
+          },
+          "thumb_status": {
+            "type": "string"
+          },
+          "thumb_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "width": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "media_id",
+          "media_type",
+          "timestamp",
+          "imported_at",
+          "width",
+          "height",
+          "thumb_version",
+          "thumb_status"
+        ],
+        "type": "object"
+      },
       "SharedAlbumCoverDTO": {
         "additionalProperties": false,
         "properties": {
@@ -1659,6 +2470,60 @@
         ],
         "type": "object"
       },
+      "SkippedItem": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
+      "TagItem": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "rank": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "rank"
+        ],
+        "type": "object"
+      },
+      "TagSuggestionDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count"
+        ],
+        "type": "object"
+      },
       "TargetSummaryDTO": {
         "additionalProperties": false,
         "properties": {
@@ -1672,6 +2537,57 @@
         },
         "required": [
           "label"
+        ],
+        "type": "object"
+      },
+      "TaskPart": {
+        "additionalProperties": false,
+        "properties": {
+          "active_fingerprint": {
+            "type": "string"
+          },
+          "blocked": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "done": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "failed_active": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "last_completed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "pending": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "skipped": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "throughput_per_min": {
+            "format": "double",
+            "type": "number"
+          },
+          "working": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "active_fingerprint",
+          "pending",
+          "working",
+          "blocked",
+          "failed_active",
+          "skipped",
+          "done",
+          "throughput_per_min"
         ],
         "type": "object"
       },
@@ -1744,6 +2660,26 @@
           "endpoint",
           "model",
           "api_key_env"
+        ],
+        "type": "object"
+      },
+      "VisionPart": {
+        "additionalProperties": false,
+        "properties": {
+          "last_check_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "reachable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reachable",
+          "last_check_at"
         ],
         "type": "object"
       }
@@ -1980,6 +2916,243 @@
           }
         },
         "summary": "Probe pending vision endpoint settings"
+      }
+    },
+    "/api/v1/ai/acknowledge": {
+      "post": {
+        "operationId": "ai-acknowledge",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiAcknowledgeInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAckBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Record per-principal hidden-processing acknowledgement"
+      }
+    },
+    "/api/v1/ai/backfill": {
+      "post": {
+        "operationId": "ai-backfill",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiBackfillInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiEnqueuedBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Enqueue missing-fingerprint AI jobs for the caller's library"
+      }
+    },
+    "/api/v1/ai/failures": {
+      "get": {
+        "operationId": "ai-failures",
+        "parameters": [
+          {
+            "description": "AI task to query",
+            "explode": false,
+            "in": "query",
+            "name": "task",
+            "schema": {
+              "description": "AI task to query",
+              "enum": [
+                "tag",
+                "caption"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "max rows to return (default 5)",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "max rows to return (default 5)",
+              "format": "int64",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailuresBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Recent AI failures for the active fingerprint"
+      }
+    },
+    "/api/v1/ai/health": {
+      "get": {
+        "operationId": "ai-health",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "AI status snapshot"
+      }
+    },
+    "/api/v1/ai/retry-failed": {
+      "post": {
+        "operationId": "ai-retry-failed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiRetryFailedInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiEnqueuedBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Re-enqueue all current-fingerprint failures for a task"
+      }
+    },
+    "/api/v1/ai/retry-photo": {
+      "post": {
+        "operationId": "ai-retry-photo",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiRetryPhotoInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiAckBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Re-enqueue a single (media, task) job"
       }
     },
     "/api/v1/albums": {
@@ -2535,6 +3708,170 @@
         "summary": "Verify passcode and issue a hidden-unlock session cookie"
       }
     },
+    "/api/v1/facets": {
+      "get": {
+        "operationId": "facets",
+        "parameters": [
+          {
+            "description": "repeatable; each value is a canonical \"make model\" bucket",
+            "explode": true,
+            "in": "query",
+            "name": "camera",
+            "schema": {
+              "description": "repeatable; each value is a canonical \"make model\" bucket",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "repeatable; each value is a lens_model string",
+            "explode": true,
+            "in": "query",
+            "name": "lens",
+            "schema": {
+              "description": "repeatable; each value is a lens_model string",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "repeatable; each value is a tag_key (any-of semantics for sidebar tag chips)",
+            "explode": true,
+            "in": "query",
+            "name": "facet_tag",
+            "schema": {
+              "description": "repeatable; each value is a tag_key (any-of semantics for sidebar tag chips)",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "repeatable; each value is a tag label resolved server-side (and-of semantics for typed-chip strip)",
+            "explode": true,
+            "in": "query",
+            "name": "tag",
+            "schema": {
+              "description": "repeatable; each value is a tag label resolved server-side (and-of semantics for typed-chip strip)",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "true narrows to geotagged rows; false to non-geotagged; omit for no filter",
+            "explode": false,
+            "in": "query",
+            "name": "has_gps",
+            "schema": {
+              "description": "true narrows to geotagged rows; false to non-geotagged; omit for no filter",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "restrict to photos or videos",
+            "explode": false,
+            "in": "query",
+            "name": "media_type",
+            "schema": {
+              "description": "restrict to photos or videos",
+              "enum": [
+                "photo",
+                "video"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "include media whose timestamp is at or after this RFC3339 instant",
+            "explode": false,
+            "in": "query",
+            "name": "date_after",
+            "schema": {
+              "description": "include media whose timestamp is at or after this RFC3339 instant",
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "include media whose timestamp is before this RFC3339 instant",
+            "explode": false,
+            "in": "query",
+            "name": "date_before",
+            "schema": {
+              "description": "include media whose timestamp is before this RFC3339 instant",
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "exact location label",
+            "explode": false,
+            "in": "query",
+            "name": "location",
+            "schema": {
+              "description": "exact location label",
+              "type": "string"
+            }
+          },
+          {
+            "description": "include hidden media; requires a hidden-unlock cookie",
+            "explode": false,
+            "in": "query",
+            "name": "include_hidden",
+            "schema": {
+              "description": "include hidden media; requires a hidden-unlock cookie",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FacetsOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Per-facet counts for the caller's library (exclude-self semantics)"
+      }
+    },
     "/api/v1/healthz": {
       "get": {
         "operationId": "healthz",
@@ -2991,6 +4328,392 @@
           }
         },
         "summary": "Return the detail for a single media item"
+      }
+    },
+    "/api/v1/media/{media_id}/ai": {
+      "get": {
+        "operationId": "ai-media-view",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "media_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaView"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get AI artifacts (tags, caption, skip, failures) for a media"
+      }
+    },
+    "/api/v1/search": {
+      "get": {
+        "operationId": "search",
+        "parameters": [
+          {
+            "description": "free-text query (filter-only browse when empty)",
+            "explode": false,
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "description": "free-text query (filter-only browse when empty)",
+              "type": "string"
+            }
+          },
+          {
+            "description": "raw sort; engine may coerce (e.g. relevance + empty q → newest)",
+            "explode": false,
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "description": "raw sort; engine may coerce (e.g. relevance + empty q → newest)",
+              "enum": [
+                "relevance",
+                "newest",
+                "oldest"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "include media whose timestamp is at or after this RFC3339 instant",
+            "explode": false,
+            "in": "query",
+            "name": "date_after",
+            "schema": {
+              "description": "include media whose timestamp is at or after this RFC3339 instant",
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "include media whose timestamp is before this RFC3339 instant",
+            "explode": false,
+            "in": "query",
+            "name": "date_before",
+            "schema": {
+              "description": "include media whose timestamp is before this RFC3339 instant",
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "repeatable; each value is a tag label resolved server-side",
+            "explode": true,
+            "in": "query",
+            "name": "tag",
+            "schema": {
+              "description": "repeatable; each value is a tag label resolved server-side",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "exact location label",
+            "explode": false,
+            "in": "query",
+            "name": "location",
+            "schema": {
+              "description": "exact location label",
+              "type": "string"
+            }
+          },
+          {
+            "description": "restrict to photos or videos",
+            "explode": false,
+            "in": "query",
+            "name": "media_type",
+            "schema": {
+              "description": "restrict to photos or videos",
+              "enum": [
+                "photo",
+                "video"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "page size; default 60, max 200",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "page size; default 60, max 200",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "opaque next-page token from a previous response",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "opaque next-page token from a previous response",
+              "type": "string"
+            }
+          },
+          {
+            "description": "include hidden media; requires a hidden-unlock cookie",
+            "explode": false,
+            "in": "query",
+            "name": "include_hidden",
+            "schema": {
+              "description": "include hidden media; requires a hidden-unlock cookie",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "return per-signal score components; gated on the AI Inspection setting",
+            "explode": false,
+            "in": "query",
+            "name": "explain",
+            "schema": {
+              "description": "return per-signal score components; gated on the AI Inspection setting",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "narrow to rows whose '\u003cmake\u003e \u003cmodel\u003e' matches any value (OR-composed sidebar facet)",
+            "explode": true,
+            "in": "query",
+            "name": "camera",
+            "schema": {
+              "description": "narrow to rows whose '\u003cmake\u003e \u003cmodel\u003e' matches any value (OR-composed sidebar facet)",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "narrow to rows whose lens_model matches any value (OR-composed sidebar facet)",
+            "explode": true,
+            "in": "query",
+            "name": "lens",
+            "schema": {
+              "description": "narrow to rows whose lens_model matches any value (OR-composed sidebar facet)",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "narrow to rows that carry at least one tag matching any key (OR-composed sidebar facet, distinct from typed-chip 'tag')",
+            "explode": true,
+            "in": "query",
+            "name": "facet_tag",
+            "schema": {
+              "description": "narrow to rows that carry at least one tag matching any key (OR-composed sidebar facet, distinct from typed-chip 'tag')",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "true: only geotagged rows; false: only non-geotagged",
+            "explode": false,
+            "in": "query",
+            "name": "has_gps",
+            "schema": {
+              "description": "true: only geotagged rows; false: only non-geotagged",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Hybrid search across the caller's library"
+      }
+    },
+    "/api/v1/search/autocomplete/locations": {
+      "get": {
+        "operationId": "search-autocomplete-locations",
+        "parameters": [
+          {
+            "description": "substring fragment; matched against location_label with LIKE %substring%",
+            "explode": false,
+            "in": "query",
+            "name": "substring",
+            "schema": {
+              "description": "substring fragment; matched against location_label with LIKE %substring%",
+              "type": "string"
+            }
+          },
+          {
+            "description": "page size; default 10, max 50",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "page size; default 10, max 50",
+              "format": "int64",
+              "maximum": 50,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "include locations attached only to hidden media; requires a hidden-unlock cookie",
+            "explode": false,
+            "in": "query",
+            "name": "include_hidden",
+            "schema": {
+              "description": "include locations attached only to hidden media; requires a hidden-unlock cookie",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutocompleteLocationsBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Substring-match location-label autocomplete for the caller's library"
+      }
+    },
+    "/api/v1/search/autocomplete/tags": {
+      "get": {
+        "operationId": "search-autocomplete-tags",
+        "parameters": [
+          {
+            "description": "prefix fragment; matched against tag_label with LIKE prefix%",
+            "explode": false,
+            "in": "query",
+            "name": "prefix",
+            "schema": {
+              "description": "prefix fragment; matched against tag_label with LIKE prefix%",
+              "type": "string"
+            }
+          },
+          {
+            "description": "page size; default 10, max 50",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "page size; default 10, max 50",
+              "format": "int64",
+              "maximum": 50,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "include tags attached only to hidden media; requires a hidden-unlock cookie",
+            "explode": false,
+            "in": "query",
+            "name": "include_hidden",
+            "schema": {
+              "description": "include tags attached only to hidden media; requires a hidden-unlock cookie",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutocompleteTagsBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Prefix-match tag-label autocomplete for the caller's library"
       }
     },
     "/api/v1/settings/user/{key}": {

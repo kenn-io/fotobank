@@ -1064,12 +1064,24 @@ admin_listen = "127.0.0.1:0"
 	}
 	r.NotEmpty(resolved, "server never published its bind address")
 
-	// 1. /api/v1/search returns 404 — search service is not registered.
+	// 1. Search remains discoverable even though its service is unavailable.
 	resp, err := http.Get("http://" + resolved + "/api/v1/search?q=")
 	r.NoError(err)
 	_ = resp.Body.Close()
-	r.Equal(http.StatusNotFound, resp.StatusCode,
-		"search route must be unregistered when embed is disabled")
+	r.Equal(http.StatusServiceUnavailable, resp.StatusCode,
+		"search must report its unavailable service when embed is disabled")
+	resp, err = http.Get("http://" + resolved + "/api/openapi.json")
+	r.NoError(err)
+	var contract struct {
+		Paths map[string]json.RawMessage `json:"paths"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&contract)
+	_ = resp.Body.Close()
+	r.NoError(err)
+	r.Equal(http.StatusOK, resp.StatusCode)
+	r.Contains(contract.Paths, "/api/v1/search")
+	r.Contains(contract.Paths, "/api/v1/facets")
+	r.Contains(contract.Paths, "/api/v1/ai/health")
 
 	// 2. Pending embed job stays pending — no worker is consuming it.
 	// Wait briefly to give a hypothetical leaked worker time to claim;
