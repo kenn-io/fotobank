@@ -5,6 +5,8 @@ import (
 	"context"
 	json "encoding/json/v2"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 
 	"go.kenn.io/fotobank/internal/checkout"
 	"go.kenn.io/fotobank/internal/cli"
@@ -224,19 +227,108 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	r.NoError(contentStore.Close())
 	r.NoError(database.Close())
 
+	// Commit must use the server-owned vault, not open a competing one.
+	serverCtx, stopServer := context.WithCancel(t.Context())
+	serverDone := make(chan int, 1)
+	var serverErrors lockedBuffer
+	go func() {
+		serverDone <- cli.RunContext(serverCtx, []string{
+			"serve", "--config", cfgPath, "--listen", "127.0.0.1:0",
+		}, io.Discard, &serverErrors)
+	}()
+	t.Cleanup(func() {
+		stopServer()
+		select {
+		case code := <-serverDone:
+			require.Zero(t, code, "%s", serverErrors.String())
+		case <-time.After(10 * time.Second):
+			r.Fail("server did not stop")
+		}
+	})
+	r.Eventually(func() bool {
+		paths, err := filepath.Glob(dbPath + ".operator/daemon.*.json")
+		return err == nil && len(paths) == 1
+	}, 10*time.Second, 20*time.Millisecond, "%s", serverErrors.String())
+	store := daemon.RuntimeStore{Dir: dbPath + ".operator"}
+	records, err := store.List()
+	r.NoError(err)
+	r.Len(records, 1)
+	record := records[0]
+	for _, denied := range []struct {
+		name   string
+		token  string
+		hub    string
+		status int
+	}{
+		{name: "no operator token", hub: "h", status: http.StatusUnauthorized},
+		{name: "different configured owner", token: record.Metadata["token"], hub: "other", status: http.StatusForbidden},
+	} {
+		t.Run(denied.name, func(t *testing.T) {
+			check := require.New(t)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+				record.Endpoint().BaseURL()+"/checkouts/"+checkoutID+"/commit",
+				strings.NewReader(fmt.Sprintf(`{"hub":%q,"user_id":"u"}`, denied.hub)))
+			check.NoError(err)
+			request.Header.Set("Content-Type", "application/json")
+			if denied.token != "" {
+				request.Header.Set("Authorization", "Bearer "+denied.token)
+			}
+			response, err := record.Endpoint().HTTPClient(daemon.HTTPClientOptions{Timeout: 5 * time.Second}).Do(request)
+			check.NoError(err)
+			defer response.Body.Close()
+			check.Equal(denied.status, response.StatusCode)
+		})
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
+		"checkout", "commit", "--config", cfgPath, checkoutID, "--json",
+	}, &stdout, &stderr)
+	r.Zero(code, "stderr=%s", stderr.String())
+	r.JSONEq(fmt.Sprintf(`{"checkout_id":%q,"pending":1,"committed":1,"conflicts":0}`, checkoutID), stdout.String())
 	stdout.Reset()
 	stderr.Reset()
 	code = cli.RunContext(t.Context(), []string{
 		"checkout", "commit", "--config", cfgPath, checkoutID,
 	}, &stdout, &stderr)
 	r.Zero(code, "stderr=%s", stderr.String())
-	r.Equal("pending=1\tcommitted=1\tconflicts=0\n", stdout.String())
+	r.Equal("pending=0\tcommitted=0\tconflicts=0\n", stdout.String())
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
+		"checkout", "commit", "--config", cfgPath, "missing", "--json",
+	}, &stdout, &stderr)
+	r.NotZero(code)
+	var failure struct {
+		CheckoutID string `json:"checkout_id"`
+		Error      string `json:"error"`
+	}
+	r.NoError(json.Unmarshal(stdout.Bytes(), &failure))
+	r.Equal("missing", failure.CheckoutID)
+	r.Contains(failure.Error, "not found")
 	database, err = db.Open(dbPath)
 	r.NoError(err)
 	updated, err := media.NewRepo(database.WriteDB(), database.ReadDB()).GetByID(t.Context(), item.ID)
 	r.NoError(err)
 	r.NotEqual(item.CurrentVersionID, updated.CurrentVersionID)
 	r.NoError(database.Close())
+}
+
+func TestCheckoutCommitRequiresRunningServer(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfgPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "new.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	var stdout, stderr bytes.Buffer
+	code := cli.RunContext(t.Context(), []string{
+		"checkout", "commit", "missing", "--config", cfgPath, "--json",
+	}, &stdout, &stderr)
+	r.NotZero(code)
+	r.Contains(stderr.String(), "start fotobank serve")
+	_, err := os.Stat(dbPath)
+	r.ErrorIs(err, os.ErrNotExist)
 }
 
 func TestCheckoutEstimateUsesCanonicalDatabaseLock(t *testing.T) {

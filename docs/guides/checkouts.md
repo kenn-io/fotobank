@@ -69,12 +69,13 @@ this status view.
 
 ## Commit tracked edits
 
-Wait for the server's scanner to mark the edits pending, check status, then
-stop the server and wait for shutdown. Do not edit the working files during
+Wait for the server's scanner to mark the edits pending and check status.
+Keep the server running. Do not edit the working files during
 commit. Use the checkout identifier printed by `checkout create`:
 
 ```sh
 fotobank checkout commit <checkout-uuid>
+fotobank checkout commit <checkout-uuid> --json
 ```
 
 Each changed tracked file becomes a new immutable Docbank version. Concurrent
@@ -82,7 +83,18 @@ changes become visible conflicts rather than overwriting newer authority.
 Current writeback does not import new untracked files, apply deletions, infer
 renames, or resolve conflicts.
 
-Start the server again when the command finishes. Uncommitted working files
+Commit connects to the running server using local operator authentication. Run
+it under the same OS account, with the same configuration and application
+version as `serve`. This currently requires stub identity mode. The command
+does not start the server or fall back to opening the vault when it is stopped.
+
+JSON output contains `checkout_id`, `pending`, `committed`, and `conflicts`, with
+an `error` when work fails. Some entries may commit before another fails; inspect
+the counts even on a nonzero exit. If you cancel or lose the connection, inspect
+`checkout status --json` before retrying. Committed versions remain committed;
+retrying does not repeat an already completed entry.
+
+Uncommitted working files
 are excluded from archive backups, so commit edits before capturing an archive
 that must include them. Checkout retirement and automatic reconstruction of
 working trees are not yet exposed as commands.

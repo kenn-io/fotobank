@@ -35,9 +35,9 @@ The running server scans tracked files and marks settled edits as pending.
 Only an explicit `fotobank checkout commit` saves them as new Docbank versions.
 Uncommitted edits exist only in the working copy and are not in archive backups.
 
-Today, stop the server before import, checkout creation, or checkout commit;
-these commands need to open the vault themselves. Start it again to scan edits
-and refresh browsing data. See the [checkout workflow](/docs/guides/checkouts/)
+Today, stop the server before import or checkout creation; these commands need
+to open the vault themselves. Keep it running to scan and commit tracked edits,
+and to browse your library. See the [checkout workflow](/docs/guides/checkouts/)
 for the full sequence and current limits.
 
 ## Keep catalog decisions in Fotobank
