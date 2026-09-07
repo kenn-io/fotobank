@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	json "encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -18,8 +19,10 @@ import (
 	"go.kenn.io/fotobank/internal/contentresolver"
 	"go.kenn.io/fotobank/internal/geo"
 	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/operator"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/version"
 )
 
 func newCheckoutCmd() *cobra.Command {
@@ -164,10 +167,12 @@ func newCheckoutCommitCmd() *cobra.Command {
 		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfgPath, _ := cmd.Flags().GetString("config")
-			return runCheckoutCommit(cmd.Context(), cfgPath, args[0], cmd.OutOrStdout())
+			jsonOutput, _ := cmd.Flags().GetBool("json")
+			return runCheckoutCommit(cmd.Context(), cfgPath, args[0], jsonOutput, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().String("config", "", "path to config file")
+	cmd.Flags().Bool("json", false, "write structured commit counts and errors")
 	return cmd
 }
 
@@ -223,17 +228,37 @@ func runCheckoutCommit(
 	ctx context.Context,
 	configPath string,
 	checkoutID string,
+	jsonOutput bool,
 	stdout io.Writer,
 ) error {
-	runtime, err := openCheckoutRuntime(ctx, configPath, true)
+	if configPath == "" {
+		configPath = config.DefaultConfigPath()
+	}
+	cfg, err := config.LoadUnchecked(configPath)
 	if err != nil {
 		return err
 	}
-	defer runtime.close()
-	result, commitErr := runtime.service.Commit(ctx, runtime.owner, checkoutID)
-	fmt.Fprintf(stdout, "pending=%d\tcommitted=%d\tconflicts=%d\n",
+	if cfg.Identity.Mode != "stub" {
+		return fmt.Errorf("fotobank checkout commit requires identity.mode = stub")
+	}
+	dbPath, err := resolveDBPath(cfg)
+	if err != nil {
+		return err
+	}
+	result, commitErr := operator.Commit(ctx, dbPath, version.Short, checkoutID,
+		owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID})
+	if jsonOutput {
+		if commitErr != nil && result.Error == "" {
+			result.Error = commitErr.Error()
+		}
+		if err := json.MarshalWrite(stdout, result); err != nil {
+			return errors.Join(commitErr, err)
+		}
+		return commitErr
+	}
+	_, outputErr := fmt.Fprintf(stdout, "pending=%d\tcommitted=%d\tconflicts=%d\n",
 		result.Pending, result.Committed, result.Conflicts)
-	return commitErr
+	return errors.Join(commitErr, outputErr)
 }
 
 type checkoutSummaryOutput struct {

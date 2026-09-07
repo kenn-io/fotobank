@@ -178,7 +178,10 @@ succeeds. Ordinary reads do not prune either live content or archive storage.
 
 `fotobank checkout commit <checkout-id>` is an explicit writeback operation for
 settled tracked edits. It does not import untracked files, apply working-file
-deletions, infer renames, or resolve conflicts. Operators inspect the durable
+deletions, infer renames, or resolve conflicts. It uses the running server's authenticated local
+operator interface (`internal/operator`). `--json` preserves result counts and
+errors, including partial completion. The CLI never opens a second vault for
+commits. Operators inspect the durable
 state first with `fotobank checkout list` and `fotobank checkout status
 <checkout-id>`; these database-only commands do not scan or mutate the working
 copy. The status view shows the saved selection, entry-state totals, and every

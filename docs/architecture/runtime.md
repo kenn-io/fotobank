@@ -105,12 +105,39 @@ resources. The content adapter translates errors that happen during streaming,
 not only errors returned while opening a reader.
 
 Docbank holds an exclusive vault lock for that lifetime. Standalone import,
-content recovery, checkout creation and commit, and manual archive creation
+content recovery, checkout creation, and manual archive creation
 also open the vault, so the server must be stopped before those commands run.
-The CLI does not forward those operations to the server. Scheduled archives
+The CLI does not forward those operations to the server. Checkout commits, scheduled archives
 and checkout scanning reuse the server's adapter. Checkout estimate, list, and
 status omit the adapter and can run alongside the server, although their CLI
 startup still opens the normal database and ensures the configured owner.
+
+### Local operator commands
+
+In stub identity mode, `serve` also owns a separate ephemeral loopback listener
+from `internal/operator`. `checkout commit` discovers it beside the canonical
+SQLite path, in `<database>.operator/`. Kit publishes a runtime record atomically
+inside a current-user-only directory. A fresh random credential lives in that
+record. The client requires Kit's possession proof before sending the bearer
+credential and accepts only loopback endpoints with a matching service and
+reported application version. It does not start a server or open the database
+or vault itself. No record, a stale record, or an incompatible server means the
+operator must start the matching server explicitly.
+
+The listener requires the credential for commands and its separate Huma
+`/openapi.json` and `/docs` endpoints. It is not mounted on the photo API or the
+observability listener. `POST /checkouts/{id}/commit` accepts the configured hub
+and user ID, checks them against the server's stub owner, and calls the existing
+`CheckoutService.Commit`. No request selects an arbitrary host path or caller.
+Header identity mode does not start this interface.
+
+The command returns pending, committed, and conflict counts plus an optional
+error. An operation may finish some entries before failing; its result retains
+those counts and the CLI exits nonzero. Connection loss is not automatically
+retried: the operator checks saved status before retrying. Existing exact-version
+receipts handle retries without appending an already-adopted version. Request
+cancellation reaches commit processing. Shutdown cancels operator requests,
+removes discovery, stops accepting work, and joins handlers before storage closes.
 
 Long-running operations honor `context.Context`. Background loops use bounded
 polling, concurrency, and shutdown waits; they do not start untracked

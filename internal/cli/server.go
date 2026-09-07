@@ -41,10 +41,12 @@ import (
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/contentresolver"
+	"go.kenn.io/fotobank/internal/geo"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/obs"
+	"go.kenn.io/fotobank/internal/operator"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/search/hybrid"
 	"go.kenn.io/fotobank/internal/search/index"
@@ -630,6 +632,24 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	if err != nil {
 		return err
 	}
+	defer ln.Close()
+	var operatorFatal <-chan error
+	if cfg.Identity.Mode == "stub" {
+		places, err := geo.NewNaturalEarth()
+		if err != nil {
+			return fmt.Errorf("load checkout geocoder: %w", err)
+		}
+		checkoutService := service.NewCheckoutService(
+			checkout.NewRepo(d.WriteDB(), d.ReadDB()), contentResolver,
+			contentStore, dbPath+".checkout.lock", places)
+		closeOperator, fatal, err := operator.Start(sigCtx, dbPath, version.Short,
+			owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}, checkoutService)
+		if err != nil {
+			return fmt.Errorf("start operator interface: %w", err)
+		}
+		defer closeOperator()
+		operatorFatal = fatal
+	}
 	if sink := os.Getenv("FOTOBANK_TEST_LISTEN_ADDR_SINK"); sink != "" {
 		if werr := os.WriteFile(sink, []byte(ln.Addr().String()), 0o600); werr != nil {
 			fmt.Fprintln(opts.stderr, "test sink write failed:", werr)
@@ -956,6 +976,18 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	}
 
 	select {
+	case err := <-operatorFatal:
+		ready.Store(false)
+		stop()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if serr := srv.Shutdown(shutdownCtx); serr != nil {
+			_ = srv.Close()
+		}
+		<-serveErr
+		bgWG.Wait()
+		shutdownAdmin()
+		return err
 	case err := <-serveErr:
 		// Serve exited on its own (bind loss, unrecoverable error).
 		// srv has stopped accepting new connections, but in-flight
