@@ -2,6 +2,7 @@ package ingest_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -21,6 +22,30 @@ import (
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil"
 )
+
+func TestImportCancellationStopsBeforeDispatch(t *testing.T) {
+	r := require.New(t)
+	imp, _, _, _, owner, ro := newImporterFixture(t)
+	source := t.TempDir()
+	writeSource(t, source, "one.jpg", []byte("one"))
+	writeSource(t, source, "two.jpg", []byte("two"))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result, err := imp.ImportDirectory(ctx, source, ingest.Options{
+		Owner: owner, ConcurrentWorkers: 1, SettleInterval: time.Millisecond,
+		Progress: func(p ingest.ProgressEvent) {
+			if p.Done == 0 {
+				cancel()
+			}
+		},
+	})
+	r.ErrorIs(err, context.Canceled)
+	r.Zero(result.Imported)
+	r.Empty(result.Failures, "unstarted files are not failed imports")
+	var assets int
+	r.NoError(ro.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM assets").Scan(&assets))
+	r.Zero(assets)
+}
 
 func newImporterFixture(t *testing.T) (*ingest.Importer, *media.AssetRepo, *media.Repo, *content.Adapter, owners.Principal, *sql.DB) {
 	t.Helper()

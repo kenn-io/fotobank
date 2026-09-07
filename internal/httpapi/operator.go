@@ -16,6 +16,7 @@ type OperatorDeps struct {
 	Owner     owners.Principal
 	Checkouts *service.CheckoutService
 	Backups   *service.BackupService
+	Imports   *service.ImportService
 }
 
 type CheckoutCommitResult struct {
@@ -38,6 +39,7 @@ func registerOperator(api huma.API, deps *OperatorDeps) {
 	registerOperatorCheckouts(api, deps)
 	registerOperatorInspection(api, deps)
 	registerOperatorBackups(api, deps)
+	registerOperatorImports(api, deps)
 	huma.Register(api, huma.Operation{
 		OperationID: "commit-checkout", Method: http.MethodPost,
 		Path: "/api/v1/operator/checkouts/{id}/commit", Summary: "Commit settled tracked edits",

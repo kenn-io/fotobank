@@ -3,21 +3,132 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 
 	"go.kenn.io/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/client"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/version"
 )
+
+func TestLiveImportPartialResultsAndAuthorization(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	configPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "catalog.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	record := startCheckoutServer(t, configPath, dbPath)
+	source := seedImportSource(t, "photo-no-exif.jpg")
+	r.NoError(os.WriteFile(filepath.Join(source, "orphan.xmp"), []byte("sidecar"), 0o600))
+	for run := range 2 {
+		var stdout, stderr bytes.Buffer
+		code := cli.RunContext(t.Context(), []string{"import", source, "--config", configPath, "--json"}, &stdout, &stderr)
+		r.Equal(1, code)
+		var result httpapi.ImportResult
+		r.NoError(json.Unmarshal(stdout.Bytes(), &result))
+		r.Equal(1-run, result.Imported)
+		r.Equal(run, result.Duplicates)
+		r.Len(result.Failures, 1)
+		r.NotEmpty(result.Error)
+		r.Contains(stderr.String(), "Discovered")
+	}
+	for _, tc := range []struct {
+		base, token, user string
+		status            int
+	}{
+		{record.Endpoint().BaseURL(), record.Metadata["token"], "u", http.StatusOK},
+		{record.Endpoint().BaseURL(), "", "u", http.StatusUnauthorized},
+		{record.Endpoint().BaseURL(), record.Metadata["token"], "other", http.StatusForbidden},
+		{record.Metadata["web_url"], record.Metadata["token"], "u", http.StatusForbidden},
+	} {
+		// API callers may omit workers and wait to use the daemon defaults.
+		body, err := json.Marshal(map[string]string{"hub": "h", "user_id": tc.user, "source": source})
+		r.NoError(err)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, tc.base+"/api/v1/operator/imports", bytes.NewReader(body))
+		r.NoError(err)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+tc.token)
+		response, err := http.DefaultClient.Do(request)
+		r.NoError(err)
+		_, err = io.Copy(io.Discard, response.Body)
+		r.NoError(err)
+		r.NoError(response.Body.Close())
+		r.Equal(tc.status, response.StatusCode)
+		if tc.status == http.StatusOK {
+			r.Equal("application/x-ndjson", response.Header.Get("Content-Type"))
+		}
+	}
+}
+
+func TestLiveImportDisconnectReleasesImportLock(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	configPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "catalog.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	startCheckoutServer(t, configPath, dbPath)
+	source := seedImportSource(t, "photo-no-exif.jpg")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	input := httpapi.ImportRequest{Hub: "h", UserID: "u", Source: source, Workers: 1, Wait: "0s"}
+	_, err := client.Import(ctx, dbPath, version.Short, input, func(httpapi.ImportProgress) { cancel() })
+	r.Error(err)
+	// A new request must acquire the released lock, without stopping the daemon.
+	input.Wait = "5s"
+	retryCtx, retryCancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer retryCancel()
+	result, err := client.Import(retryCtx, dbPath, version.Short, input, nil)
+	r.NoError(err)
+	r.Equal(1, result.Imported+result.Duplicates)
+}
+
+func TestLiveImportShutdownReportsInterruptedResult(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	configPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "catalog.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	record := startCheckoutServer(t, configPath, dbPath)
+	source := seedImportSource(t, "photo-no-exif.jpg")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	stopped := false
+	_, err := client.Import(ctx, dbPath, version.Short,
+		httpapi.ImportRequest{Hub: "h", UserID: "u", Source: source, Wait: "0s"},
+		func(httpapi.ImportProgress) {
+			if stopped {
+				return
+			}
+			stopped = true
+			request, err := http.NewRequestWithContext(ctx, http.MethodPost, record.Endpoint().BaseURL()+"/api/v1/operator/daemon/stop", nil)
+			r.NoError(err)
+			request.Header.Set("Authorization", "Bearer "+record.Metadata["token"])
+			response, err := http.DefaultClient.Do(request)
+			r.NoError(err)
+			r.NoError(response.Body.Close())
+			r.Equal(http.StatusNoContent, response.StatusCode)
+		})
+	r.True(stopped)
+	r.Error(err, "an interrupted stream must not report success")
+	recordPath, err := (daemon.RuntimeStore{Dir: dbPath + ".operator"}).Path(record.PID)
+	r.NoError(err)
+	r.Eventually(func() bool { _, err := os.Stat(recordPath); return os.IsNotExist(err) }, 5*time.Second, 10*time.Millisecond)
+}
 
 // fixtureDir mirrors the ingest_test helper: tests run from the package
 // dir, so the shared fixtures live two levels up.
@@ -49,6 +160,19 @@ func seedImportSource(t *testing.T, names ...string) string {
 		copyFixture(t, filepath.Join(importFixtureDir(t), name), filepath.Join(src, name))
 	}
 	return src
+}
+
+// runLiveImport owns a temporary server for tests that inspect or reopen the
+// vault after importing. The CLI still exercises the real operator connection.
+func runLiveImport(t *testing.T, ctx context.Context, configPath, dbPath string, args []string, out, errOut io.Writer) int {
+	t.Helper()
+	code := 1
+	t.Run("live import", func(t *testing.T) {
+		t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", "")
+		startCheckoutServer(t, configPath, dbPath)
+		code = cli.RunContext(ctx, args, out, errOut)
+	})
+	return code
 }
 
 func TestFotobankImportImportsMedia(t *testing.T) {
@@ -85,7 +209,7 @@ file_lock_path = %q
 	)
 
 	var out, eout bytes.Buffer
-	code := cli.RunContext(context.Background(),
+	code := runLiveImport(t, t.Context(), cfgPath, dbPath,
 		[]string{"import", "--config", cfgPath, src},
 		&out, &eout)
 	r.Equal(0, code, "stderr=%s stdout=%s", eout.String(), out.String())
@@ -125,7 +249,7 @@ file_lock_path = %q
 	// Second run of the same source should see three duplicates.
 	out.Reset()
 	eout.Reset()
-	code = cli.RunContext(context.Background(),
+	code = runLiveImport(t, t.Context(), cfgPath, dbPath,
 		[]string{"import", "--config", cfgPath, src},
 		&out, &eout)
 	r.Equal(0, code, "stderr=%s stdout=%s", eout.String(), out.String())
@@ -140,6 +264,28 @@ func TestFotobankImportRejectsMissingSource(t *testing.T) {
 	code := cli.Run([]string{"import"}, &out, &eout)
 	r.Equal(2, code)
 	r.Contains(eout.String(), "usage")
+}
+
+func TestImportValidatesArgumentsBeforeStartingDaemon(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	configPath := writeBasicConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "catalog.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	for _, args := range [][]string{
+		{"import", ""},
+		{"import", tmp, "--workers", "-1"},
+		{"import", tmp, "--wait=-1s"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := cli.RunContext(t.Context(), append(args, "--config", configPath, "--json"), &stdout, &stderr)
+		r.NotZero(code)
+		var result httpapi.ImportResult
+		r.NoError(json.Unmarshal(stdout.Bytes(), &result))
+		r.NotEmpty(result.Error)
+		_, err := os.Stat(dbPath + ".operator")
+		r.ErrorIs(err, os.ErrNotExist, "invalid arguments must not reach automatic launch")
+	}
 }
 
 func TestFotobankImportRejectsManagedStorageSource(t *testing.T) {
@@ -164,7 +310,7 @@ file_lock_path = %q
 	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
 
 	var out, eout bytes.Buffer
-	code := cli.RunContext(t.Context(),
+	code := runLiveImport(t, t.Context(), cfgPath, filepath.Join(tmp, "fotobank.sqlite"),
 		[]string{"import", "--config", cfgPath, nasRoot}, &out, &eout)
 	r.Equal(1, code)
 	r.Contains(eout.String(), "import root overlaps managed storage")
@@ -235,7 +381,7 @@ file_lock_path = %q
 	src := seedImportSource(t, "photo-with-gps.jpg")
 
 	var out, eout bytes.Buffer
-	code := cli.RunContext(context.Background(),
+	code := runLiveImport(t, t.Context(), cfgPath, dbPath,
 		[]string{"import", "--config", cfgPath, src}, &out, &eout)
 	r.Equal(0, code, "stderr=%s stdout=%s", eout.String(), out.String())
 	r.Contains(out.String(), "imported=1")
@@ -253,22 +399,8 @@ file_lock_path = %q
 		"geo resolver wiring missing — LocationLabel was not populated")
 }
 
-// TestFotobankImportColdStartFromTildePaths is the end-to-end regression
-// the existing tests didn't cover. It pins the fresh-install
-// expectations the user actually faces:
-//
-//  1. Config contains tilde-prefixed paths ("~/fotobank", "~/.fotobank").
-//     The loader expands them to $HOME/... rather than treating "~" as
-//     a literal directory.
-//  2. Neither the NAS root, the flash root, nor the DB parent dir
-//     exist on the user's machine yet. The import command creates them.
-//  3. After import, photos land in $HOME/fotobank and the SQLite DB
-//     lands in $HOME/.fotobank — not in a literal "~" subdir of CWD.
-//
-// Three previously-shipped bugs would each fail at least one assertion
-// here: the missing-tilde-expansion bug (#1), the missing-parent-dir
-// MkdirAll bug (#2 — db.Open), and any future regression where the
-// default flash root quietly drifts (#3 from the same incident).
+// Import through the daemon with tilde-configured roots and a different cwd.
+// NAS must exist; the daemon creates its local vault and database directories.
 func TestFotobankImportColdStartFromTildePaths(t *testing.T) {
 	r := require.New(t)
 
@@ -314,21 +446,14 @@ storage_key = "550e8400-e29b-41d4-a716-446655440000"
 	r.NoError(os.MkdirAll(filepath.Join(home, "fotobank"), 0o700))
 
 	var out, eout bytes.Buffer
-	code := cli.RunContext(context.Background(),
+	code := runLiveImport(t, t.Context(), cfgPath, filepath.Join(home, ".fotobank", "fotobank.sqlite"),
 		[]string{"import", "--config", cfgPath, src},
 		&out, &eout)
 	r.Equal(0, code, "stderr=%s stdout=%s", eout.String(), out.String())
 	r.Contains(out.String(), "imported=2", "stdout=%s", out.String())
 
-	// Resolved paths are visible up-front so a bad config can't sneak
-	// past the user. The startup banner is part of the contract.
-	canonicalHome, err := filepath.EvalSymlinks(home)
-	r.NoError(err)
-	r.Contains(out.String(), filepath.Join(canonicalHome, ".fotobank", "docbank"))
-	r.Contains(out.String(), filepath.Join(canonicalHome, ".fotobank", "fotobank.sqlite"))
-
 	// The vault and DB landed under $HOME/.fotobank, not in CWD or under a literal "~".
-	_, err = os.Stat(filepath.Join(home, ".fotobank", "docbank"))
+	_, err := os.Stat(filepath.Join(home, ".fotobank", "docbank"))
 	r.NoError(err)
 	_, err = os.Stat(filepath.Join(home, ".fotobank", "fotobank.sqlite"))
 	r.NoError(err)

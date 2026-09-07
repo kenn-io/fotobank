@@ -43,19 +43,36 @@ func call(ctx context.Context, dbPath, version, method, path string, input, outp
 }
 
 func callRecord(ctx context.Context, rec daemon.RuntimeRecord, method, path string, input, output any, recoveryHint string) error {
-	proof, err := daemon.NewProof([]byte(rec.Metadata["token"]))
+	response, err := requestRecord(ctx, rec, method, path, input, recoveryHint)
 	if err != nil {
 		return err
 	}
+	defer response.Body.Close()
+	if output == nil {
+		return nil
+	}
+	if err := json.NewDecoder(response.Body).Decode(output); err != nil {
+		return fmt.Errorf("read operator result; %s: %w", recoveryHint, err)
+	}
+	return nil
+}
+
+// requestRecord returns an authenticated response whose body the caller owns.
+// Both JSON results and progress streams share this proof and no-retry policy.
+func requestRecord(ctx context.Context, rec daemon.RuntimeRecord, method, path string, input any, recoveryHint string) (*http.Response, error) {
+	proof, err := daemon.NewProof([]byte(rec.Metadata["token"]))
+	if err != nil {
+		return nil, err
+	}
 	if _, err := proof.Probe(ctx, rec, daemon.ProbeOptions{ExpectedService: "fotobank-operator"}); err != nil {
-		return err
+		return nil, err
 	}
 	credential := rec.Metadata["token"]
 	var body io.Reader
 	if input != nil {
 		encoded, err := json.Marshal(input)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		body = bytes.NewReader(encoded)
 	}
@@ -63,7 +80,7 @@ func callRecord(ctx context.Context, rec daemon.RuntimeRecord, method, path stri
 	req, err := http.NewRequestWithContext(ctx, method,
 		ep.BaseURL()+path, body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+credential)
 	req.Header.Set("Content-Type", "application/json")
@@ -71,21 +88,12 @@ func callRecord(ctx context.Context, rec daemon.RuntimeRecord, method, path stri
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	response, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("operator response unavailable; %s: %w", recoveryHint, err)
+		return nil, fmt.Errorf("operator response unavailable; %s: %w", recoveryHint, err)
 	}
-	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		defer response.Body.Close()
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("operator command returned %s: %s", response.Status, body)
+		return nil, fmt.Errorf("operator command returned %s: %s", response.Status, body)
 	}
-	if output == nil {
-		return nil
-	}
-	// Inspection can legitimately return more than a megabyte of file
-	// problems. Decode the proven daemon's complete result; cancellation
-	// remains bound to the request context.
-	if err := json.NewDecoder(response.Body).Decode(output); err != nil {
-		return fmt.Errorf("read operator result; %s: %w", recoveryHint, err)
-	}
-	return nil
+	return response, nil
 }

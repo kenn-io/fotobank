@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -12,29 +13,20 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"go.kenn.io/fotobank/internal/ai/jobs"
-	airuntime "go.kenn.io/fotobank/internal/ai/runtime"
-	"go.kenn.io/fotobank/internal/ai/skipped"
-	appsettingsstore "go.kenn.io/fotobank/internal/appsettings"
-	"go.kenn.io/fotobank/internal/config"
-	"go.kenn.io/fotobank/internal/content"
-	"go.kenn.io/fotobank/internal/db"
-	"go.kenn.io/fotobank/internal/errs"
-	"go.kenn.io/fotobank/internal/geo"
-	"go.kenn.io/fotobank/internal/ingest"
-	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/client"
+	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/owners"
-	"go.kenn.io/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/version"
 )
 
 // newImportCmd wires the `fotobank import` subcommand. It takes a single
-// positional source directory and runs the ingest importer against the
-// currently configured Docbank vault and media repo.
+// positional source directory and submits it to the daemon's import service.
 func newImportCmd() *cobra.Command {
 	var (
 		cfgPath string
 		workers int
 		wait    time.Duration
+		asJSON  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "import <source-dir>",
@@ -46,6 +38,7 @@ func newImportCmd() *cobra.Command {
 				source:  args[0],
 				workers: workers,
 				wait:    wait,
+				asJSON:  asJSON,
 				stdout:  cmd.OutOrStdout(),
 				stderr:  cmd.ErrOrStderr(),
 			})
@@ -54,10 +47,12 @@ func newImportCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
 	cmd.Flags().IntVar(&workers, "workers", 0, "import worker count (0 uses [imports].concurrent_workers)")
 	cmd.Flags().DurationVar(&wait, "wait", 0, "max wait for the import lock before failing (0 = fail fast)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the final import result as JSON; progress goes to stderr")
 	return cmd
 }
 
 type importOpts struct {
+	asJSON  bool
 	cfgPath string
 	source  string
 	workers int
@@ -66,141 +61,46 @@ type importOpts struct {
 	stderr  io.Writer
 }
 
-// runImport loads the config, opens the DB, resolves the owner from the
-// stub-identity config, acquires the import file lock, and drives
-// ingest.Importer.ImportDirectory. A non-empty Result.Failures causes a
-// non-nil return so the CLI exits with code 1.
+// runImport validates local arguments, ensures the daemon, and renders the
+// daemon's progress and final result. It never opens application storage.
 func runImport(ctx context.Context, opts importOpts) error {
-	path := opts.cfgPath
-	if path == "" {
-		path = config.DefaultConfigPath()
+	source, err := localOperatorPath(opts.source)
+	if opts.source == "" {
+		err = errors.New("source directory is required")
 	}
-	cfg, err := config.Load(path)
-	if err != nil {
-		return err
+	if err == nil && (opts.workers < 0 || opts.wait < 0) {
+		err = errors.New("workers and wait must be non-negative")
 	}
-	if cfg.Identity.Mode != "stub" {
-		return fmt.Errorf("fotobank import requires identity.mode = stub (got %q)", cfg.Identity.Mode)
+	result := httpapi.ImportResult{Failures: []string{}}
+	progressOutput := opts.stdout
+	if opts.asJSON {
+		progressOutput = opts.stderr
 	}
-
-	dbPath, err := resolveDBPath(cfg)
-	if err != nil {
-		return err
-	}
-	// Print resolved paths up front so a user with a misconfigured root
-	// (e.g. an unexpanded "~" or a typo) sees IMMEDIATELY where bytes
-	// will land, instead of discovering minutes later that the import
-	// landed in the wrong directory. Source path is the canonicalized
-	// form of the user's argument.
-	absSource, _ := filepath.Abs(opts.source)
-	fmt.Fprintf(opts.stdout, "source:    %s\n", absSource)
-	fmt.Fprintf(opts.stdout, "docbank:   %s\n", cfg.Docbank.Root)
-	fmt.Fprintf(opts.stdout, "flash db:  %s\n", dbPath)
-	d, err := openDatabasePath(dbPath)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	appSettingsRepo := appsettingsstore.NewRepo(d.WriteDB(), d.ReadDB())
-	aiProvider, err := airuntime.NewProvider(ctx, airuntime.Source{
-		FilePath: path,
-		Repo:     appSettingsRepo,
-	})
-	if err != nil {
-		return fmt.Errorf("load effective ai config: %w", err)
-	}
-	aiSnap := aiProvider.Effective()
-	cfg.AI = aiSnap.Config
-
-	owner := owners.Principal{
-		Hub:    cfg.Identity.Stub.Hub,
-		UserID: cfg.Identity.Stub.UserID,
-	}
-	ownerSvc := service.NewOwnerService(owners.NewRepo(d.WriteDB(), d.ReadDB()))
-	registeredOwner, err := ownerSvc.Ensure(ctx, owner, cfg.Identity.Stub.StorageKey)
-	if err != nil {
-		return err
-	}
-
-	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
-	assetRepo := media.NewAssetRepo(d.WriteDB(), d.ReadDB())
-	contentStore, err := content.Open(ctx, contentAdapterConfig(cfg, false))
-	if err != nil {
-		return fmt.Errorf("open Docbank vault: %w", err)
-	}
-	defer contentStore.Close()
-
-	lockPath := cfg.Imports.FileLockPath
-	if lockPath == "" {
-		lockPath = filepath.Join(cfg.Flash.Root, ".fotobank", "import.lock")
-	}
-	unlock, err := ingest.Acquire(ctx, lockPath, opts.wait)
-	if err != nil {
-		if errors.Is(err, errs.ErrConcurrentImport) {
-			return fmt.Errorf("another import is in progress (lock: %s)", lockPath)
+	if err == nil {
+		var databasePath string
+		var owner owners.Principal
+		databasePath, owner, err = localOperatorConfig(ctx, opts.cfgPath)
+		if err == nil {
+			fmt.Fprintf(progressOutput, "source:    %s\n", source)
+			progress := newImportProgress(progressOutput)
+			result, err = client.Import(ctx, databasePath, version.Short, httpapi.ImportRequest{
+				Hub: owner.Hub, UserID: owner.UserID, Source: source, Workers: opts.workers, Wait: opts.wait.String(),
+			}, progress.handle)
+			progress.finish()
 		}
-		return err
 	}
-	defer unlock()
-
-	workers := opts.workers
-	if workers <= 0 {
-		workers = cfg.Imports.ConcurrentWorkers
-	}
-
-	places, err := geo.NewNaturalEarth()
 	if err != nil {
-		return fmt.Errorf("load geo gazetteer: %w", err)
+		result.Error = err.Error()
 	}
-	imp := ingest.NewImporter(contentStore, assetRepo, repo, registeredOwner.StorageKey, places)
-
-	// Wire the production AIEnqueuer so an offline import auto-enqueues
-	// for AI processing. Queue rows use runtime claim fingerprints so
-	// server workers claim the same settings identity that admin Apply
-	// publishes.
-	imp.SetAIEnqueuer(newIngestAIEnqueuer(d.DB, aiSnap))
-
-	progress := newImportProgress(opts.stdout)
-	res, err := imp.ImportDirectory(ctx, opts.source, ingest.Options{
-		Owner:             owner,
-		ConcurrentWorkers: workers,
-		SettleInterval:    cfg.Imports.SettleInterval,
-		Progress:          progress.handle,
-	})
-	if err != nil {
-		return err
+	if opts.asJSON {
+		return errors.Join(err, json.MarshalWrite(opts.stdout, result))
 	}
-	progress.finish()
-
 	fmt.Fprintf(opts.stdout, "imported=%d\tduplicates=%d\tconflicts=%d\tfailures=%d\n",
-		res.Imported, res.Duplicates, res.Conflicts, len(res.Failures))
-
-	if len(res.Failures) > 0 {
-		for _, f := range res.Failures {
-			fmt.Fprintln(opts.stderr, f)
-		}
-		return fmt.Errorf("import completed with %d failure(s)", len(res.Failures))
+		result.Imported, result.Duplicates, result.Conflicts, len(result.Failures))
+	for _, failure := range result.Failures {
+		fmt.Fprintln(opts.stderr, failure)
 	}
-	return nil
-}
-
-func newIngestAIEnqueuer(d *db.DB, snapshot airuntime.Snapshot) ingest.AIEnqueuer {
-	aiQueue := jobs.NewQueue(d.WriteDB(), d.ReadDB())
-	aiSkippedRepo := skipped.NewRepo(d.WriteDB(), d.ReadDB())
-	enqueuer := ingest.NewRealAIEnqueuer(
-		snapshot.Result.Tag,
-		snapshot.Result.Caption,
-		aiQueue.Enqueue,
-		aiSkippedRepo.Record,
-	).WithClaimFingerprints(
-		snapshot.Claim.Tag,
-		snapshot.Claim.Caption,
-		aiQueue.EnqueueClaim,
-	)
-	if snapshot.Config.Embed.Enabled {
-		enqueuer.WithEmbedClaim(snapshot.Result.Embed, snapshot.Claim.Embed)
-	}
-	return enqueuer
+	return err
 }
 
 // importProgress prints live progress for `fotobank import`. On a TTY
@@ -221,7 +121,7 @@ func newImportProgress(w io.Writer) *importProgress {
 	return &importProgress{w: w, tty: isTerminal(w)}
 }
 
-func (p *importProgress) handle(ev ingest.ProgressEvent) {
+func (p *importProgress) handle(ev httpapi.ImportProgress) {
 	// Discovery announcement (Done=0) — print once unconditionally so the
 	// user knows discovery completed and how big the run is.
 	if ev.Done == 0 && !p.announced {
@@ -261,7 +161,7 @@ func (p *importProgress) finish() {
 	}
 }
 
-func formatProgressLine(ev ingest.ProgressEvent) string {
+func formatProgressLine(ev httpapi.ImportProgress) string {
 	name := filepath.Base(ev.Path)
 	return fmt.Sprintf(
 		"  %d/%d · imported=%d dup=%d conflict=%d fail=%d · %s",

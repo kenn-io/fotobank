@@ -125,6 +125,9 @@ func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Opti
 	}
 	var candidates []Candidate
 	if err := Discover(sourceRoot, func(candidate Candidate) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		candidates = append(candidates, candidate)
 		return nil
 	}); err != nil {
@@ -136,6 +139,9 @@ func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Opti
 		opts.Progress(ProgressEvent{Total: total})
 	}
 	result := Result{Failures: groupingFailures}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	if len(groups) == 0 {
 		return result, nil
 	}
@@ -150,17 +156,26 @@ func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Opti
 	for range max(opts.ConcurrentWorkers, 1) {
 		wg.Go(func() {
 			for group := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
 				outcomes <- imp.processGroup(ctx, sourceRoot, group, opts.Owner, interval)
 			}
 		})
 	}
 	go func() {
+		defer func() {
+			close(jobs)
+			wg.Wait()
+			close(outcomes)
+		}()
 		for _, group := range groups {
-			jobs <- group
+			select {
+			case jobs <- group:
+			case <-ctx.Done():
+				return
+			}
 		}
-		close(jobs)
-		wg.Wait()
-		close(outcomes)
 	}()
 
 	done := len(groupingFailures)
@@ -185,7 +200,7 @@ func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Opti
 			})
 		}
 	}
-	return result, nil
+	return result, ctx.Err()
 }
 
 func groupCandidates(candidates []Candidate) ([]candidateGroup, []error) {

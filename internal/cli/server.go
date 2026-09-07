@@ -44,6 +44,7 @@ import (
 	"go.kenn.io/fotobank/internal/geo"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/identity"
+	"go.kenn.io/fotobank/internal/ingest"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/obs"
 	"go.kenn.io/fotobank/internal/operator"
@@ -652,9 +653,16 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 			checkout.NewRepo(d.WriteDB(), d.ReadDB()), contentResolver,
 			contentStore, dbPath+".checkout.lock", places)
 		operatorOwner := owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
+		importLockPath := cfg.Imports.FileLockPath
+		if importLockPath == "" {
+			importLockPath = filepath.Join(cfg.Flash.Root, ".fotobank", "import.lock")
+		}
 		operatorDeps.Operator = &httpapi.OperatorDeps{
 			Owner: operatorOwner, Checkouts: checkoutService,
 			Backups: service.NewBackupService(operatorOwner, dbPath, contentStore),
+			Imports: service.NewImportService(operatorOwner, d.DB, contentStore, places, service.ImportConfig{
+				LockPath: importLockPath, Workers: cfg.Imports.ConcurrentWorkers, SettleInterval: cfg.Imports.SettleInterval,
+			}, func() ingest.AIEnqueuer { return newIngestAIEnqueuer(d.DB, aiProvider.Effective()) }),
 		}
 	} else {
 		// Local lifecycle uses the host credential, not proxy identity headers.

@@ -66,7 +66,7 @@ admin_listen = "127.0.0.1:0"
 	src := seedImportSource(t, "photo-with-timestamp.jpg")
 
 	var impOut, impErr bytes.Buffer
-	code := cli.RunContext(context.Background(),
+	code := runLiveImport(t, t.Context(), cfg, filepath.Join(tmp, "fotobank.sqlite"),
 		[]string{"import", "--config", cfg, src},
 		&impOut, &impErr)
 	r.Equal(0, code, "import failed: stdout=%s stderr=%s", impOut.String(), impErr.String())

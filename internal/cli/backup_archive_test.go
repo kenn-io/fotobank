@@ -23,7 +23,7 @@ func TestBackupArchiveCLI(t *testing.T) {
 	cfgPath := writeBackupConfig(t, tmp)
 	source := seedImportSource(t, "photo-no-exif.jpg")
 	var stdout, stderr bytes.Buffer
-	code := cli.RunContext(t.Context(), []string{"import", "--config", cfgPath, source}, &stdout, &stderr)
+	code := runLiveImport(t, t.Context(), cfgPath, filepath.Join(tmp, "flash", "fotobank.sqlite"), []string{"import", "--config", cfgPath, source}, &stdout, &stderr)
 	r.Equal(0, code, "%s", stderr.String())
 	repository := filepath.Join(tmp, "repository")
 	t.Run("capture with running server", func(t *testing.T) {

@@ -656,6 +656,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import host files and stream progress
+         * @description Returns newline-delimited JSON progress followed by one result, including partial counts and errors. HTTP 200 only means the stream started. Disconnect cancels unfinished work; completed files remain imported.
+         */
+        post: operations["import-media"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/search": {
         parameters: {
             query?: never;
@@ -1584,6 +1604,64 @@ export interface components {
             /** Format: date-time */
             expires_at?: string;
             unlocked: boolean;
+        };
+        ImportEvent: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ImportEvent.json
+             */
+            readonly $schema?: string;
+            progress?: components["schemas"]["ImportProgress"];
+            result?: components["schemas"]["ImportResult"];
+            /** @enum {string} */
+            type: "progress" | "result";
+        };
+        ImportProgress: {
+            /** Format: int64 */
+            conflicts: number;
+            /** Format: int64 */
+            done: number;
+            /** Format: int64 */
+            duplicates: number;
+            /** Format: int64 */
+            failures: number;
+            /** Format: int64 */
+            imported: number;
+            path?: string;
+            /** Format: int64 */
+            total: number;
+        };
+        ImportRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ImportRequest.json
+             */
+            readonly $schema?: string;
+            hub: string;
+            source: string;
+            user_id: string;
+            /**
+             * @description Maximum wait for the import lock, e.g. 30s. Zero fails immediately if busy.
+             * @default 0s
+             */
+            wait: string;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            workers: number;
+        };
+        ImportResult: {
+            /** Format: int64 */
+            conflicts: number;
+            /** Format: int64 */
+            duplicates: number;
+            error?: string;
+            failures: string[] | null;
+            /** Format: int64 */
+            imported: number;
         };
         ListAlbumMediaOutputBody: {
             /**
@@ -3523,6 +3601,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "import-media": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Progress followed by a terminal import result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": components["schemas"]["ImportEvent"];
+                };
             };
             /** @description Error */
             default: {
