@@ -981,8 +981,7 @@ admin_listen = "127.0.0.1:0"
 // with [ai.embed].enabled=false and asserts:
 //
 //  1. The server boots successfully (no probe runs, no embed wiring).
-//  2. /api/v1/search returns 404 — deps.Search is nil so the route is
-//     not registered.
+//  2. Search remains in the contract but returns service unavailable.
 //  3. A pre-seeded TaskEmbed job stays in 'pending' for the duration
 //     of the boot — confirming no embed worker is consuming the queue.
 func TestServer_LeavesEmbedSubsystemDormantWhenDisabled(t *testing.T) {
@@ -1051,31 +1050,39 @@ admin_listen = "127.0.0.1:0"
 	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	errCh := make(chan int, 1)
+	done := make(chan struct{})
+	var out, eout lockedBuffer
+	var serverCode int
 	go func() {
-		var out, eout bytes.Buffer
-		errCh <- cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &out, &eout)
+		defer close(done)
+		serverCode = cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &out, &eout)
 	}()
+	t.Cleanup(func() {
+		check := assert.New(t)
+		cancel()
+		select {
+		case <-done:
+			check.Zero(serverCode, "server stderr: %s", eout.String())
+		case <-time.After(10 * time.Second):
+			var stacks bytes.Buffer
+			_ = pprof.Lookup("goroutine").WriteTo(&stacks, 2)
+			check.Fail("server cleanup did not finish within 10s", "stderr: %s\ngoroutines:\n%s", eout.String(), stacks.String())
+		}
+	})
 
 	// Wait for boot.
-	var resolved string
-	for range 200 {
-		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
-			resolved = strings.TrimSpace(string(b))
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	r.NotEmpty(resolved, "server never published its bind address")
+	resolved := waitForSink(t, addrFile)
+	r.NotEmpty(resolved, "server never published its bind address: %s", eout.String())
+	client := &http.Client{Transport: &http.Transport{}, Timeout: 10 * time.Second}
+	t.Cleanup(client.CloseIdleConnections)
 
 	// 1. Search remains discoverable even though its service is unavailable.
-	resp, err := http.Get("http://" + resolved + "/api/v1/search?q=")
+	resp, err := client.Get("http://" + resolved + "/api/v1/search?q=")
 	r.NoError(err)
 	_ = resp.Body.Close()
 	r.Equal(http.StatusServiceUnavailable, resp.StatusCode,
 		"search must report its unavailable service when embed is disabled")
-	resp, err = http.Get("http://" + resolved + "/api/openapi.json")
+	resp, err = client.Get("http://" + resolved + "/api/openapi.json")
 	r.NoError(err)
 	var contract struct {
 		Paths map[string]json.RawMessage `json:"paths"`
@@ -1101,10 +1108,16 @@ admin_listen = "127.0.0.1:0"
 	r.Equal("pending", status,
 		"embed job must stay pending when embed is disabled; got status=%q", status)
 
+	// Release this test's HTTP connections before timing server shutdown.
+	// An unused pooled connection can otherwise hold Shutdown in its
+	// grace period for a client that has not sent a request yet.
+	client.CloseIdleConnections()
 	cancel()
 	select {
-	case <-errCh:
+	case <-done:
 	case <-time.After(5 * time.Second):
-		r.Fail("server did not shut down within 5s")
+		var stacks bytes.Buffer
+		_ = pprof.Lookup("goroutine").WriteTo(&stacks, 2)
+		r.Fail("server did not shut down within 5s", "stderr: %s\ngoroutines:\n%s", eout.String(), stacks.String())
 	}
 }
