@@ -45,12 +45,13 @@ func TestCreateRecordsActivationCancellationAsError(t *testing.T) {
 		return time.Now()
 	}
 
-	_, err = materializer.Create(ctx, owner, CreateRequest{
+	result, err := materializer.Create(ctx, owner, CreateRequest{
 		Root: root, Selection: Selection{All: true}, CapacityLimit: 1,
 	})
 	r.ErrorIs(err, context.Canceled)
+	r.NotEmpty(result.Checkout.ID)
 	var state string
 	r.NoError(database.ReadDB().QueryRowContext(t.Context(),
-		`SELECT state FROM checkouts`).Scan(&state))
+		`SELECT state FROM checkouts WHERE id = ?`, result.Checkout.ID).Scan(&state))
 	r.Equal(string(StateError), state)
 }

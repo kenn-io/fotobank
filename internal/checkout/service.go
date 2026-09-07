@@ -56,8 +56,9 @@ type CreateRequest struct {
 }
 
 type CreateResult struct {
-	Checkout Checkout
-	Estimate Estimate
+	Checkout     Checkout
+	Estimate     Estimate
+	Materialized int
 }
 
 func (s *Materializer) Estimate(
@@ -155,9 +156,11 @@ func (s *Materializer) Create(
 	if err := s.repo.Insert(ctx, checkout); err != nil {
 		return CreateResult{}, err
 	}
+	// Preserve the durable ID and completed-file count on partial failure.
+	result := CreateResult{Checkout: checkout, Estimate: estimate}
 	const stagingDirectory = ".fotobank-staging"
 	if err := workingRoot.Mkdir(stagingDirectory, 0o700); err != nil {
-		return CreateResult{}, s.fail(ctx, checkout.ID,
+		return result, s.fail(ctx, checkout.ID,
 			fmt.Errorf("create checkout: create staging directory: %w", err))
 	}
 	removeStaging := true
@@ -171,39 +174,41 @@ func (s *Materializer) Create(
 	for _, candidate := range candidates {
 		relativePath, err := workingPath(candidate)
 		if err != nil {
-			return CreateResult{}, s.fail(ctx, checkout.ID, err)
+			return result, s.fail(ctx, checkout.ID, err)
 		}
 		if existing, ok := paths[relativePath]; ok {
 			err := fmt.Errorf("create checkout: %w: files %s and %s map to %s",
 				errs.ErrContentConflict, existing, candidate.FileID, relativePath)
-			return CreateResult{}, s.fail(ctx, checkout.ID, err)
+			return result, s.fail(ctx, checkout.ID, err)
 		}
 		paths[relativePath] = candidate.FileID
 		if err := s.materialize(
 			ctx, request.Root, workingRoot, checkout, candidate, relativePath, stagingDirectory,
 		); err != nil {
-			return CreateResult{}, s.fail(ctx, checkout.ID, err)
+			return result, s.fail(ctx, checkout.ID, err)
 		}
+		result.Materialized++
 	}
 	if err := workingRoot.Remove(stagingDirectory); err != nil {
-		return CreateResult{}, s.fail(ctx, checkout.ID,
+		return result, s.fail(ctx, checkout.ID,
 			fmt.Errorf("activate checkout: remove staging directory: %w", err))
 	}
 	removeStaging = false
 	if err := syncCheckoutDirectories(workingRoot, "."); err != nil {
-		return CreateResult{}, s.fail(ctx, checkout.ID,
+		return result, s.fail(ctx, checkout.ID,
 			fmt.Errorf("activate checkout: sync staging removal: %w", err))
 	}
 	if err := request.Root.Revalidate(); err != nil {
-		return CreateResult{}, s.fail(ctx, checkout.ID,
+		return result, s.fail(ctx, checkout.ID,
 			fmt.Errorf("activate checkout: root changed during materialization: %w", err))
 	}
 	if err := s.repo.SetState(ctx, checkout.ID, StateActive, "", s.now().UTC()); err != nil {
-		return CreateResult{}, s.fail(ctx, checkout.ID, fmt.Errorf("activate checkout: %w", err))
+		return result, s.fail(ctx, checkout.ID, fmt.Errorf("activate checkout: %w", err))
 	}
 	checkout.State = StateActive
 	checkout.UpdatedAt = s.now().UTC()
-	return CreateResult{Checkout: checkout, Estimate: estimate}, nil
+	result.Checkout = checkout
+	return result, nil
 }
 
 func (s *Materializer) fail(ctx context.Context, checkoutID string, cause error) error {

@@ -226,10 +226,12 @@ if that database write also fails, the returned error reports both failures.
 Materialization repeats the retained-directory check before recording each
 entry and before activation. A root moved during creation therefore leaves an
 explicit errored checkout instead of an active ledger for a different path.
-Every checkout command acquires a shared database lifetime lock before opening
-or migrating SQLite and retains it until the connection pools close. Restore
-requires the same lock exclusively, so database replacement cannot overlap an
-estimate or materialization. Creation also holds its exclusive creation lock.
+Estimate, create, and commit run through the authenticated local operator
+interface using the server's database and vault. The server holds the shared
+database lifetime lock before opening SQLite until its pools close. List and
+status remain database-only commands and hold that same lifetime lock. Restore
+requires it exclusively, so database replacement cannot overlap an estimate
+or materialization. Creation also holds its exclusive creation lock.
 After acquiring the creation lock, the next creator marks any
 remaining `building` rows for its owner as interrupted; a live creator cannot
 be misclassified because it would still hold the lock. A `building` or `active`

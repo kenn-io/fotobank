@@ -95,12 +95,14 @@ identity validation under the stated trusted-local-source model.
 
 ## Local checkout trust boundary
 
-Tracked checkout commits use a separate loopback operator listener in the
+Checkout estimate, creation, and tracked commits use a separate loopback operator listener in the
 existing server. Its private runtime directory and bearer credential belong to
 the server's OS account. That account and administrators are trusted host
 operators, not ordinary photo API users. The listener checks the credential and
 configured stub owner before invoking the owner-scoped checkout service; it
-accepts checkout IDs, not arbitrary host paths. Do flag unauthenticated or
+accepts checkout IDs for commits and absolute host destinations for creation.
+Creation validates those destinations through the server's content adapter,
+retaining the existing storage-boundary and no-overwrite rules. Do flag unauthenticated or
 photo-API access to this capability. Do not treat an operator who already owns
 the vault and credential as an untrusted remote user. Remote administration and
 header-mode operator commands are not supported.

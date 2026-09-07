@@ -23,14 +23,16 @@ fotobank backup verify --repo /backups/photos --all --json
 fotobank backup restore --repo /backups/photos --target /recovery/photos --json
 fotobank checkout list --json
 fotobank checkout status <checkout-uuid> --json
+fotobank checkout estimate --year 2025 --json
+fotobank checkout create /work/photos-2025 --year 2025 --json
 fotobank checkout commit <checkout-uuid> --json
 ```
 
 Do not parse human progress output when a JSON form exists. Commands return zero
 on success, one for runtime failures, and two for invalid command usage.
 
-`config diagnose`, `import`, and checkout `estimate` and `create`
-currently produce human-readable output only. Checkout list and status report
+`config diagnose` and `import` currently produce human-readable output only.
+Checkout list and status report
 saved catalog observations, not a fresh filesystem scan. Their startup still
 opens the normal database and ensures the configured owner, so they are not
 strictly read-only database probes. Use them against an initialized deployment.
@@ -42,20 +44,20 @@ that open that same vault cannot run alongside it. For the configured deployment
 
 | Operation | Server state |
 | --- | --- |
-| Import, content recovery, checkout create, manual backup create | Stop the server first; restart after the command finishes. |
-| Checkout commit | Requires the running server, the same OS account, configuration, and application version. |
+| Import, content recovery, manual backup create | Stop the server first; restart after the command finishes. |
+| Checkout estimate, create, or commit | Requires the running server, the same OS account, configuration, and application version. |
 | Browse or use the HTTP API, scan checkout edits, scheduled backups | Keep the server running. |
-| Checkout estimate, list, or status | May run alongside the server; these do not open Docbank. |
+| Checkout list or status | May run alongside the server; these do not open Docbank. |
 | Backup init, list with `--repo`, verify, or restore to a separate target | Do not need the source vault open. |
 
 Stop the service through the supervisor you use to run it, or interrupt a
 foreground `fotobank serve`, and wait for shutdown to complete. Do not remove
 lock files or start a second vault owner to work around this limitation. The
-CLI submits tracked checkout commits to the server; other vault-writing commands
+CLI submits checkout estimates, creation, and tracked commits to the server; other vault-writing commands
 still run offline.
 
-For tracked edits: create the checkout with the server stopped, run the server
-while editing and settling, inspect `checkout status --json`, then explicitly
+For tracked edits: keep the server running to create the checkout, edit and
+settle files, inspect `checkout status --json`, then explicitly
 commit with the server still running. See
 [checkouts](checkouts.md) for the complete workflow.
 
