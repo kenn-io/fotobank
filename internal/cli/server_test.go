@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"testing"
@@ -209,12 +210,23 @@ admin_listen = "127.0.0.1:0"
 	t.Setenv("FOTOBANK_TEST_ADMIN_ADDR_SINK", adminSink)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	done := make(chan int, 1)
 	var stdout, stderr lockedBuffer
 	go func() {
 		done <- cli.RunContext(ctx, []string{"serve", "--config", cfgPath}, &stdout, &stderr)
 	}()
+	t.Cleanup(func() {
+		check := assert.New(t)
+		cancel()
+		select {
+		case code := <-done:
+			check.Equal(0, code, "server stderr: %s", stderr.String())
+		case <-time.After(10 * time.Second):
+			var stacks bytes.Buffer
+			_ = pprof.Lookup("goroutine").WriteTo(&stacks, 2)
+			check.Fail("server did not shut down within 10s", "stderr: %s\ngoroutines:\n%s", stderr.String(), stacks.String())
+		}
+	})
 
 	mainAddr := waitForSink(t, mainSink)
 	r.NotEmpty(mainAddr, "server did not start: %s", stderr.String())
@@ -230,14 +242,6 @@ admin_listen = "127.0.0.1:0"
 	r.NoError(resp.Body.Close())
 	r.Equal(http.StatusServiceUnavailable, resp.StatusCode)
 	r.NoDirExists(nasTarget)
-
-	cancel()
-	select {
-	case code := <-done:
-		r.Equal(0, code, "server stderr: %s", stderr.String())
-	case <-time.After(5 * time.Second):
-		r.Fail("server did not shut down within 5s", stderr.String())
-	}
 }
 
 func TestRunServerOwnsDocbankVaultForLifetime(t *testing.T) {
@@ -527,13 +531,9 @@ admin_listen = "127.0.0.1:0"
 }
 
 func TestServerShutdownEvictsSSEConnections(t *testing.T) {
-	// Regression: srv.Shutdown waits for in-flight handlers to return,
-	// but the /api/v1/events SSE stream blocks on r.Context().Done()
-	// indefinitely. Without BaseContext wiring sigCtx into request
-	// contexts, an open SSE subscriber holds Shutdown until the 30s
-	// shutdownTimeout force-closes it — the symptom that made Ctrl-C
-	// feel hung. With BaseContext set, sigCtx cancellation propagates
-	// to every r.Context() and the SSE handler exits immediately.
+	// Regression: srv.Shutdown waits for in-flight handlers to return.
+	// Closing the event bus on shutdown releases SSE subscribers without
+	// canceling ordinary API requests during their drain window.
 	//
 	// Strategy: boot the server, open an SSE connection, read the
 	// "hello" frame so we know the handler is parked in its select
@@ -568,22 +568,27 @@ admin_listen = "127.0.0.1:0"
 	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 	errCh := make(chan int, 1)
+	finished := make(chan struct{})
+	var out, eout lockedBuffer
 	go func() {
-		var out, eout bytes.Buffer
+		defer close(finished)
 		errCh <- cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &out, &eout)
 	}()
-
-	var resolved string
-	for range 200 {
-		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
-			resolved = strings.TrimSpace(string(b))
-			break
+	t.Cleanup(func() {
+		check := assert.New(t)
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(10 * time.Second):
+			var stacks bytes.Buffer
+			_ = pprof.Lookup("goroutine").WriteTo(&stacks, 2)
+			check.Fail("server did not shut down within 10s", "stderr: %s\ngoroutines:\n%s", eout.String(), stacks.String())
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	r.NotEmpty(resolved, "server never published its bind address")
+	})
+
+	resolved := waitForSink(t, addrFile)
+	r.NotEmpty(resolved, "server never published its bind address; stderr: %s", eout.String())
 
 	// Open the SSE subscription. We read until we see the "hello"
 	// frame so we know the handler has flushed its bootstrap and is
