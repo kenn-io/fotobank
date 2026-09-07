@@ -1,4 +1,4 @@
-package operator_test
+package client_test
 
 import (
 	"context"
@@ -10,7 +10,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/fotobank/internal/operator"
+	"go.kenn.io/fotobank/internal/client"
+	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/kit/daemon"
 )
@@ -34,10 +35,10 @@ func TestCommitDoesNotSendCredentialToUnprovenEndpoint(t *testing.T) {
 	record := daemon.NewRuntimeRecord("fotobank-operator", "test", daemon.Endpoint{
 		Network: daemon.NetworkTCP, Address: strings.TrimPrefix(server.URL, "http://"),
 	})
-	record.Metadata = map[string]string{"token": "synthetic-operator-credential"}
+	record.Metadata = map[string]string{"token": "synthetic-operator-credential", "api_protocol": httpapi.OperatorProtocolVersion}
 	_, err := store.Write(record)
 	r.NoError(err)
-	_, err = operator.Commit(context.Background(), dbPath, "test", "checkout", owners.Principal{Hub: "h", UserID: "u"})
+	_, err = client.Commit(context.Background(), dbPath, "test", "checkout", owners.Principal{Hub: "h", UserID: "u"})
 	r.ErrorContains(err, "start fotobank serve")
 	r.False(credentialSeen.Load())
 	r.False(commitSeen.Load())

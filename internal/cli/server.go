@@ -539,7 +539,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	adminSettingsSvc := appsettingssvc.NewService(d.WriteDB(), aiProvider, embedGens)
 	adminPrincipals := configuredAdminPrincipals(cfg)
 
-	apiHandler, err := httpapi.New(httpapi.Deps{
+	apiDeps := httpapi.Deps{
 		IdentityProvider: idp,
 		OwnerService:     ownerSvc,
 		MediaService:     mediaSvc,
@@ -573,7 +573,8 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		AdminSettings:    adminSettingsSvc,
 		AdminPrincipals:  adminPrincipals,
 		AdminProbeLogger: logger.With("component", "admin-settings"),
-	})
+	}
+	apiHandler, err := httpapi.New(apiDeps)
 	if err != nil {
 		return err
 	}
@@ -642,9 +643,13 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		checkoutService := service.NewCheckoutService(
 			checkout.NewRepo(d.WriteDB(), d.ReadDB()), contentResolver,
 			contentStore, dbPath+".checkout.lock", places)
-		closeOperator, fatal, err := operator.Start(sigCtx, dbPath, version.Short,
-			owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}, checkoutService,
-			service.NewBackupService(owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}, dbPath, contentStore))
+		operatorDeps := apiDeps
+		operatorOwner := owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
+		operatorDeps.Operator = &httpapi.OperatorDeps{
+			Owner: operatorOwner, Checkouts: checkoutService,
+			Backups: service.NewBackupService(operatorOwner, dbPath, contentStore),
+		}
+		closeOperator, fatal, err := operator.Start(sigCtx, dbPath, version.Short, operatorDeps)
 		if err != nil {
 			return fmt.Errorf("start operator interface: %w", err)
 		}

@@ -104,33 +104,56 @@ stops incoming requests and workers before closing storage and database
 resources. The content adapter translates errors that happen during streaming,
 not only errors returned while opening a reader.
 
-Docbank holds an exclusive vault lock for that lifetime. Standalone import and
-content recovery also open the vault, so the server must be stopped before
+Docbank holds an exclusive vault lock for that lifetime. Standalone import,
+content recovery, and GPS backfill also open the vault, so the server must be stopped before
 those commands run.
 The CLI does not forward those operations to the server. Checkout creation,
 commits, manual and scheduled archives, and checkout scanning reuse the server's
 adapter.
-Checkout list and status omit the adapter and can run alongside the server, although their CLI
-startup still opens the normal database and ensures the configured owner.
+Every checkout command uses the daemon. List and status inspect saved catalog
+state there; the CLI opens neither the catalog nor the vault.
 
 ### Local operator commands
 
 In stub identity mode, `serve` also owns a separate ephemeral loopback listener
-from `internal/operator`. Checkout estimate, create, commit, and manual backup
-creation discover it beside the canonical SQLite path, in
+from `internal/operator`. Every checkout command and manual backup creation
+use the typed `internal/client` HTTP client to discover it beside the canonical SQLite path, in
 `<database>.operator/`. Kit publishes a runtime record atomically
 inside a current-user-only directory. A fresh random credential lives in that
 record. The client requires Kit's possession proof before sending the bearer
 credential and accepts only loopback endpoints with a matching service and
-reported application version. It does not start a server or open the database
+reported application version and API protocol revision. The revision rejects
+older development daemons even when both binaries report `dev`; restart the
+server after updating the CLI. The client does not start a server or open the database
 or vault itself. No record, a stale record, or an incompatible server means the
 operator must start the matching server explicitly.
 
-The listener requires the credential for commands and its separate Huma
-`/openapi.json` and `/docs` endpoints. It is not mounted on the photo API or the
-observability listener. `POST /checkouts/{id}/commit` accepts the configured hub
+The local and photo listeners use the same `httpapi.New` registrations and
+OpenAPI document at `/api/openapi.json`, with documentation at `/api/docs`.
+`internal/httpapi` owns the wire types shared with `internal/client`, following
+Docbank's typed-client pattern. Kit owns runtime records, endpoints and proof;
+Fotobank owns authorization and application services. There is no separate
+operator-only schema. The local listener requires its credential before any
+API request. Only it receives `OperatorDeps`; the photo listener rejects
+operator operations even for an authenticated photo owner. The shared schema
+marks these operations with the `localOperator` bearer requirement.
+
+The migrated command/API pairs are below (paths start with
+`/api/v1/operator`). List and status take `hub` and `user_id` query parameters;
+the other operations take the configured principal in their JSON body.
+
+| CLI command | HTTP operation |
+| --- | --- |
+| `checkout list` | `GET /checkouts` |
+| `checkout status <id>` | `GET /checkouts/{checkout_id}` |
+| `checkout estimate` | `POST /checkouts/estimate` |
+| `checkout create <root>` | `POST /checkouts` |
+| `checkout commit <id>` | `POST /checkouts/{id}/commit` |
+| `backup create` | `POST /backups` |
+
+`POST /api/v1/operator/checkouts/{id}/commit` accepts the configured hub
 and user ID, checks them against the server's stub owner, and calls the existing
-`CheckoutService.Commit`. `POST /checkouts/estimate` and `POST /checkouts` use
+`CheckoutService.Commit`. Estimate and create use
 the same owner check and service for selection and creation. The create request
 includes an absolute local destination, selectors, and capacity limit. The CLI
 prefixes relative destinations with its working directory without cleaning
@@ -139,7 +162,7 @@ the destination through the server's content adapter before materialization.
 Only authenticated local operators can request host-file creation, not photo users.
 Header identity mode does not start this interface.
 
-`POST /backups` checks the same configured stub principal and invokes
+`POST /api/v1/operator/backups` checks the same configured stub principal and invokes
 `BackupService.Create` with an absolute repository path and optional tag. It
 captures all owners and hidden media, not just the configured owner's photos.
 Only initialized repositories are accepted, and the scheduler's reserved tag
@@ -162,6 +185,15 @@ checkout without deleting partial working files; an interrupted process is
 reconciled by the next creation under the existing creation lock. Creation is
 not automatically retried. Shutdown cancels operator requests,
 removes discovery, stops accepting work, and joins handlers before storage closes.
+
+The daemon-only command boundary is not yet complete. Import, content recovery,
+and GPS backfill still open Docbank directly. Albums, shares, owners,
+privacy/admin, thumbnails, and AI commands still construct catalog services in
+the CLI. Backup repository inspection and restore also still run in the CLI.
+These existing paths are migration work in kata, not exceptions to extend.
+The accepted boundary is one daemon-owned implementation per application
+operation, shared by HTTP, the CLI, and a future MCP client. Bootstrap and
+lost-source recovery must retain that ownership boundary.
 
 Long-running operations honor `context.Context`. Background loops use bounded
 polling, concurrency, and shutdown waits; they do not start untracked

@@ -82,7 +82,7 @@ func TestCheckoutListAndStatus(t *testing.T) {
 	r.NoError(repo.Insert(t.Context(), checkout.Checkout{
 		ID: checkoutID, Owner: owner, Root: filepath.Join(tmp, "working"),
 		Layout: "capture_date", Selection: checkout.Selection{Years: []checkout.YearRange{{Start: 2025, End: 2026}}},
-		State: checkout.StateActive, CreatedAt: now, UpdatedAt: now,
+		State: checkout.StateError, CreatedAt: now, UpdatedAt: now,
 	}))
 	for index, state := range []checkout.EntryState{checkout.EntryPending, checkout.EntryConflict} {
 		fileID := uuid.NewString()
@@ -100,10 +100,45 @@ func TestCheckoutListAndStatus(t *testing.T) {
 	otherID := uuid.NewString()
 	r.NoError(repo.Insert(t.Context(), checkout.Checkout{
 		ID: otherID, Owner: other, Root: filepath.Join(tmp, "other-working"),
-		Layout: "capture_date", Selection: checkout.Selection{All: true}, State: checkout.StateActive,
+		Layout: "capture_date", Selection: checkout.Selection{All: true}, State: checkout.StateError,
 		CreatedAt: now, UpdatedAt: now,
 	}))
 	r.NoError(database.Close())
+	addressFile := filepath.Join(tmp, "listen-address")
+	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addressFile)
+	record := startCheckoutServer(t, cfgPath, dbPath)
+	r.Eventually(func() bool { _, err := os.Stat(addressFile); return err == nil }, 5*time.Second, 10*time.Millisecond)
+	address, err := os.ReadFile(addressFile)
+	r.NoError(err)
+	for _, tc := range []struct {
+		name, base, token, hub string
+		status                 int
+	}{
+		{"operator inspection", record.Endpoint().BaseURL(), record.Metadata["token"], "h", http.StatusOK},
+		{"missing credential", record.Endpoint().BaseURL(), "", "h", http.StatusUnauthorized},
+		{"wrong owner", record.Endpoint().BaseURL(), record.Metadata["token"], "other", http.StatusForbidden},
+		{"photo listener", "http://" + string(address), record.Metadata["token"], "h", http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
+				tc.base+"/api/v1/operator/checkouts?hub="+tc.hub+"&user_id=u", nil)
+			r.NoError(err)
+			request.Header.Set("Authorization", "Bearer "+tc.token)
+			response, err := http.DefaultClient.Do(request)
+			r.NoError(err)
+			defer response.Body.Close()
+			r.Equal(tc.status, response.StatusCode)
+			if tc.status == http.StatusOK {
+				var listed []struct {
+					ID string `json:"id"`
+				}
+				r.NoError(json.UnmarshalRead(response.Body, &listed))
+				r.Len(listed, 1)
+				r.Equal(checkoutID, listed[0].ID)
+			}
+		})
+	}
 
 	var stdout, stderr bytes.Buffer
 	code := cli.RunContext(t.Context(), []string{
@@ -170,6 +205,17 @@ func TestCheckoutListAndStatus(t *testing.T) {
 	}, &stdout, &stderr)
 	r.NotZero(code)
 	r.Contains(stderr.String(), "not found")
+
+	// A development daemon can have the same version string but an older
+	// command contract. Do not send it requests under the new contract.
+	record.Metadata["api_protocol"] = "incompatible"
+	_, err = (daemon.RuntimeStore{Dir: dbPath + ".operator"}).Write(record)
+	r.NoError(err)
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{"checkout", "list", "--config", cfgPath, "--json"}, &stdout, &stderr)
+	r.NotZero(code)
+	r.Contains(stderr.String(), "start fotobank serve")
 }
 
 func TestCheckoutEstimateAndCreate(t *testing.T) {
@@ -346,12 +392,12 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	} {
 		t.Run(denied.name, func(t *testing.T) {
 			check := require.New(t)
-			for _, endpoint := range []string{"/checkouts/" + checkoutID + "/commit", "/checkouts/estimate", "/checkouts"} {
+			for _, endpoint := range []string{"/api/v1/operator/checkouts/" + checkoutID + "/commit", "/api/v1/operator/checkouts/estimate", "/api/v1/operator/checkouts"} {
 				body := map[string]any{"hub": denied.hub, "user_id": "u"}
-				if endpoint == "/checkouts/estimate" || endpoint == "/checkouts" {
+				if endpoint == "/api/v1/operator/checkouts/estimate" || endpoint == "/api/v1/operator/checkouts" {
 					body["selection"] = map[string]any{"all": true, "asset_ids": []string{}, "album_ids": []string{}, "years": []any{}}
 				}
-				if endpoint == "/checkouts" {
+				if endpoint == "/api/v1/operator/checkouts" {
 					body["root"] = root
 					body["max_bytes"] = 100
 				}
@@ -415,6 +461,8 @@ func TestCheckoutCommandsRequireRunningServer(t *testing.T) {
 	dbPath := filepath.Join(tmp, "new.sqlite")
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 	for _, args := range [][]string{
+		{"checkout", "list"},
+		{"checkout", "status", "missing"},
 		{"checkout", "commit", "missing"},
 		{"checkout", "estimate", "--all"},
 		{"checkout", "create", filepath.Join(tmp, "working"), "--all", "--max-bytes", "100"},

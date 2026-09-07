@@ -8,9 +8,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/fotobank/internal/backup"
+	"go.kenn.io/fotobank/internal/client"
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
-	"go.kenn.io/fotobank/internal/operator"
+	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/version"
 )
 
@@ -65,7 +66,7 @@ func newBackupCreateCmd() *cobra.Command {
 			}
 			var snapshot content.BackupSnapshot
 			if err == nil {
-				snapshot, err = operator.CreateBackup(cmd.Context(), databasePath, version.Short, operator.BackupRequest{
+				snapshot, err = client.CreateBackup(cmd.Context(), databasePath, version.Short, httpapi.BackupRequest{
 					Hub: owner.Hub, UserID: owner.UserID, Repository: absoluteRepository, Tag: tag,
 				})
 			}
