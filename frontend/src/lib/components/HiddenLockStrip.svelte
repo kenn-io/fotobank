@@ -9,8 +9,9 @@
   let { hiddenStore }: { hiddenStore: HiddenStore } = $props();
 
   // Seconds remaining, updated every second via setInterval.
-  // svelte-ignore state_referenced_locally — hiddenStore is a stable
+  // hiddenStore is a stable
   // constructor reference; the $effect below re-reads it reactively.
+  // svelte-ignore state_referenced_locally
   let secondsLeft = $state(computeSecondsLeft(hiddenStore.expiresAt));
 
   function computeSecondsLeft(expiresAt: string | null): number {

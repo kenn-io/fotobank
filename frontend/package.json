@@ -30,6 +30,7 @@
     "panzoom": "^9.4.4"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "1.55.1",
     "@sveltejs/vite-plugin-svelte": "7.0.0",
     "@testing-library/svelte": "5.2.8",

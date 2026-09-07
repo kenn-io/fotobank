@@ -96,7 +96,7 @@
     if (!containerEl) return;
     // Read months so Svelte tracks it as a dep — the body uses
     // querySelectorAll, not the array, so we need the explicit read.
-    months.length;
+    void months.length;
     const root = findScrollParent(containerEl);
     const io = new IntersectionObserver((entries) => {
       for (const entry of entries) {
@@ -132,7 +132,7 @@
   // observed state; everything else is in-window by absence.
   $effect(() => {
     if (!containerEl) return;
-    months.length;
+    void months.length;
     const root = findScrollParent(containerEl);
     const io = new IntersectionObserver((entries) => {
       for (const entry of entries) {
