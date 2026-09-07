@@ -110,6 +110,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newServerCmd())
+	root.AddCommand(newDaemonCmd())
 	root.AddCommand(newOwnersCmd())
 	root.AddCommand(newImportCmd())
 	root.AddCommand(newContentCmd())

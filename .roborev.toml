@@ -105,12 +105,13 @@ Creation validates those destinations through the server's content adapter,
 retaining the existing storage-boundary and no-overwrite rules. Do flag unauthenticated or
 photo-API access to this capability. Do not treat an operator who already owns
 the vault and credential as an untrusted remote user. Remote administration and
-header-mode operator commands are not supported.
+header-mode photo-management commands are not supported. Local daemon status
+and shutdown are host operations and work in either identity mode.
 
 Both listeners use the same Huma operation definitions and OpenAPI document.
 Operator routes live under /api/v1/operator and declare localOperator bearer
 authentication. Publishing their schemas on the photo listener does not grant
-access: that listener has no OperatorDeps and rejects their execution. The
+access: that listener has no OperatorDeps or DaemonDeps and rejects their execution. The
 local listener checks its credential before dispatch and invokes the same
 application services. The CLI shares API wire types through internal/client;
 checkout inspection no longer opens or bootstraps the catalog itself.

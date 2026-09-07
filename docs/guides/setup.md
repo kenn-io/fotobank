@@ -72,7 +72,46 @@ storage root, or backup directory, and it never writes a probe file.
 Start the application after validation:
 
 ```sh
-fotobank serve
+fotobank daemon start
 ```
 
-The default web address is `http://127.0.0.1:8090`.
+The command starts Fotobank in the background and prints the web UI URL.
+The default is `http://127.0.0.1:8090`. Configure the listeners in `config.toml`:
+
+```toml
+[http]
+listen_address = "127.0.0.1:8090"
+base_url = "" # optional browser-facing URL when using a reverse proxy
+
+[daemon]
+listen_address = "127.0.0.1:0" # local control port; 0 selects an available port
+start_timeout = "1m"
+stop_timeout = "2m"
+
+[observability]
+admin_listen = "127.0.0.1:9090" # readiness and metrics
+```
+
+The web listener can use a fixed port or port `0`; startup prints the actual
+bound URL unless `http.base_url` is set. The control listener must use a numeric
+loopback address. It is separate from the web UI and photo API.
+
+```sh
+fotobank daemon status --json
+fotobank daemon restart
+fotobank daemon stop
+```
+
+Repeated `start` calls reuse the running daemon. Restart applies configuration
+changes and prints the new web UI URL. Status and stop never start a daemon.
+Stop waits for requests, workers, and storage to close; it reports a timeout
+instead of force-killing unfinished writes. Background output goes to
+`<database>.operator/daemon.log` and is replaced on the next launch. Startup
+errors include that path and recent output.
+
+Use `fotobank daemon run` or `fotobank serve` for foreground operation under a
+supervisor or while developing. Lifecycle commands use the same configuration
+selection as the rest of Fotobank (`--config` or `FOTOBANK_CONFIG`).
+
+Checkout commands and `backup create` automatically start a missing daemon.
+Other CLI families still need migration; see [automation](automation.md).

@@ -72,6 +72,7 @@ type Config struct {
 	NAS           NAS           `toml:"nas"`
 	Identity      Identity      `toml:"identity"`
 	HTTP          HTTP          `toml:"http"`
+	Daemon        Daemon        `toml:"daemon"`
 	Imports       Imports       `toml:"imports"`
 	Checkouts     Checkouts     `toml:"checkouts"`
 	Thumbs        Thumbs        `toml:"thumbs"`
@@ -113,6 +114,27 @@ func (c *Config) ConfiguredNASRoot() string {
 
 type Admin struct {
 	Principals []AdminPrincipal `toml:"principals"`
+}
+
+// Daemon controls the local operator endpoint and lifecycle wait budgets.
+type Daemon struct {
+	ListenAddress string        `toml:"listen_address"`
+	StartTimeout  time.Duration `toml:"start_timeout"`
+	StopTimeout   time.Duration `toml:"stop_timeout"`
+}
+
+func (d Daemon) Validate() error {
+	host, port, err := net.SplitHostPort(d.ListenAddress)
+	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+		return fmt.Errorf("[daemon].listen_address must be a numeric loopback TCP address")
+	}
+	if _, err := net.LookupPort("tcp", port); err != nil {
+		return fmt.Errorf("[daemon].listen_address port: %w", err)
+	}
+	if d.StartTimeout <= 0 || d.StopTimeout <= 0 {
+		return fmt.Errorf("[daemon] start_timeout and stop_timeout must be positive")
+	}
+	return nil
 }
 
 type AdminPrincipal struct {
@@ -268,6 +290,9 @@ func LoadUnchecked(path string) (*Config, error) {
 	}
 	applyDefaults(&cfg, meta)
 	applyEnvOverrides(&cfg)
+	if err := cfg.Daemon.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %w", errs.ErrBadConfiguration, err)
+	}
 	if err := expandHomePaths(&cfg); err != nil {
 		return nil, err
 	}
@@ -761,6 +786,15 @@ func applyDefaults(c *Config, meta toml.MetaData) {
 	}
 	if c.HTTP.ListenAddress == "" {
 		c.HTTP.ListenAddress = "127.0.0.1:8090"
+	}
+	if c.Daemon.ListenAddress == "" {
+		c.Daemon.ListenAddress = "127.0.0.1:0"
+	}
+	if c.Daemon.StartTimeout == 0 {
+		c.Daemon.StartTimeout = time.Minute
+	}
+	if c.Daemon.StopTimeout == 0 {
+		c.Daemon.StopTimeout = 2 * time.Minute
 	}
 	if c.HTTP.RequestTimeout == 0 {
 		c.HTTP.RequestTimeout = 30 * time.Second

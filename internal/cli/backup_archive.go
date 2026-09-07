@@ -59,7 +59,7 @@ func newBackupCreateCmd() *cobra.Command {
 				return errors.New("--repo is required; initialize it with backup init first")
 			}
 			cfgPath, _ := cmd.Flags().GetString("config")
-			databasePath, owner, err := localOperatorConfig(cfgPath)
+			databasePath, owner, err := localOperatorConfig(cmd.Context(), cfgPath)
 			var absoluteRepository string
 			if err == nil {
 				absoluteRepository, err = localOperatorPath(repositoryPath)

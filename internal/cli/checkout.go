@@ -184,7 +184,7 @@ func runCheckoutEstimate(
 	asJSON bool,
 	stdout io.Writer,
 ) error {
-	dbPath, owner, err := localOperatorConfig(configPath)
+	dbPath, owner, err := localOperatorConfig(ctx, configPath)
 	var result httpapi.CheckoutEstimateResult
 	if err == nil {
 		result, err = client.Estimate(ctx, dbPath, version.Short, httpapi.CheckoutEstimateRequest{
@@ -213,7 +213,7 @@ func runCheckoutCreate(
 	asJSON bool,
 	stdout io.Writer,
 ) error {
-	dbPath, owner, err := localOperatorConfig(configPath)
+	dbPath, owner, err := localOperatorConfig(ctx, configPath)
 	if err == nil {
 		root, err = localOperatorPath(root)
 	}
@@ -244,12 +244,12 @@ func runCheckoutCommit(
 	jsonOutput bool,
 	stdout io.Writer,
 ) error {
-	dbPath, owner, err := localOperatorConfig(configPath)
-	if err != nil {
-		return err
+	dbPath, owner, err := localOperatorConfig(ctx, configPath)
+	result := httpapi.CheckoutCommitResult{CheckoutID: checkoutID}
+	commitErr := err
+	if err == nil {
+		result, commitErr = client.Commit(ctx, dbPath, version.Short, checkoutID, owner)
 	}
-	result, commitErr := client.Commit(ctx, dbPath, version.Short, checkoutID,
-		owner)
 	if jsonOutput {
 		if commitErr != nil && result.Error == "" {
 			result.Error = commitErr.Error()
@@ -270,7 +270,7 @@ func runCheckoutList(
 	asJSON bool,
 	stdout io.Writer,
 ) error {
-	dbPath, owner, err := localOperatorConfig(configPath)
+	dbPath, owner, err := localOperatorConfig(ctx, configPath)
 	var rows []httpapi.CheckoutSummaryOutput
 	if err == nil {
 		rows, err = client.ListCheckouts(ctx, dbPath, version.Short, owner)
@@ -303,7 +303,7 @@ func runCheckoutStatus(
 	asJSON bool,
 	stdout io.Writer,
 ) error {
-	dbPath, owner, err := localOperatorConfig(configPath)
+	dbPath, owner, err := localOperatorConfig(ctx, configPath)
 	var status httpapi.CheckoutStatusOutput
 	if err == nil {
 		status, err = client.CheckoutStatus(ctx, dbPath, version.Short, checkoutID, owner)

@@ -129,6 +129,13 @@ type serverOpts struct {
 // and HTTP handler, binds the configured listen address, and serves until
 // ctx is cancelled or the process receives SIGINT/SIGTERM.
 func runServer(ctx context.Context, opts serverOpts) (retErr error) {
+	// Keep discovery until all deferred storage and lock cleanup has completed.
+	var removeRuntime func()
+	defer func() {
+		if removeRuntime != nil {
+			removeRuntime()
+		}
+	}()
 	path := opts.cfgPath
 	if path == "" {
 		path = config.DefaultConfigPath()
@@ -635,6 +642,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	}
 	defer ln.Close()
 	var operatorFatal <-chan error
+	operatorDeps := apiDeps
 	if cfg.Identity.Mode == "stub" {
 		places, err := geo.NewNaturalEarth()
 		if err != nil {
@@ -643,18 +651,15 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		checkoutService := service.NewCheckoutService(
 			checkout.NewRepo(d.WriteDB(), d.ReadDB()), contentResolver,
 			contentStore, dbPath+".checkout.lock", places)
-		operatorDeps := apiDeps
 		operatorOwner := owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
 		operatorDeps.Operator = &httpapi.OperatorDeps{
 			Owner: operatorOwner, Checkouts: checkoutService,
 			Backups: service.NewBackupService(operatorOwner, dbPath, contentStore),
 		}
-		closeOperator, fatal, err := operator.Start(sigCtx, dbPath, version.Short, operatorDeps)
-		if err != nil {
-			return fmt.Errorf("start operator interface: %w", err)
-		}
-		defer closeOperator()
-		operatorFatal = fatal
+	} else {
+		// Local lifecycle uses the host credential, not proxy identity headers.
+		operatorDeps.IdentityProvider = nil
+		operatorDeps.PrincipalDisplay = nil
 	}
 	if sink := os.Getenv("FOTOBANK_TEST_LISTEN_ADDR_SINK"); sink != "" {
 		if werr := os.WriteFile(sink, []byte(ln.Addr().String()), 0o600); werr != nil {
@@ -981,6 +986,21 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		<-adminDone
 	}
 
+	// Publish discovery only after the photo listener and workers have started.
+	webURL := cfg.HTTP.BaseURL
+	if webURL == "" {
+		webURL = listenURL(ln.Addr())
+	}
+	op, err := operator.Start(sigCtx, dbPath, version.Short, cfg.Daemon.ListenAddress, webURL, stop, operatorDeps)
+	if err != nil {
+		failed := make(chan error, 1)
+		failed <- fmt.Errorf("start operator interface: %w", err)
+		operatorFatal = failed
+	} else {
+		defer op.Close()
+		removeRuntime = op.RemoveRecord
+		operatorFatal = op.Fatal
+	}
 	select {
 	case err := <-operatorFatal:
 		ready.Store(false)
