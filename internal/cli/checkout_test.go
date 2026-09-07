@@ -248,7 +248,13 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	r.Equal(1, created.Materialized)
 	r.Equal(1, created.Files)
 	r.Equal(int64(14), created.Bytes)
-	r.Equal(root, created.Root)
+	// Canonical paths may expand Windows short names or temporary-directory aliases.
+	r.True(filepath.IsAbs(created.Root))
+	wantedRoot, err := os.Stat(root)
+	r.NoError(err)
+	reportedRoot, err := os.Stat(created.Root)
+	r.NoError(err)
+	r.True(os.SameFile(wantedRoot, reportedRoot), "creation must report the requested directory")
 	checkoutID := created.CheckoutID
 	got, err := os.ReadFile(filepath.Join(root, "undated", item.ID, "IMG_0100.JPG"))
 	r.NoError(err)
