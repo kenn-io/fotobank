@@ -14,10 +14,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/fotobank/internal/checkout"
-	"go.kenn.io/fotobank/internal/config"
-	"go.kenn.io/fotobank/internal/operator"
-	"go.kenn.io/fotobank/internal/owners"
-	"go.kenn.io/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/client"
+	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/version"
 )
 
@@ -187,9 +185,9 @@ func runCheckoutEstimate(
 	stdout io.Writer,
 ) error {
 	dbPath, owner, err := localOperatorConfig(configPath)
-	var result operator.EstimateResult
+	var result httpapi.CheckoutEstimateResult
 	if err == nil {
-		result, err = operator.Estimate(ctx, dbPath, version.Short, operator.EstimateRequest{
+		result, err = client.Estimate(ctx, dbPath, version.Short, httpapi.CheckoutEstimateRequest{
 			Hub: owner.Hub, UserID: owner.UserID, Selection: selection,
 		})
 	}
@@ -219,9 +217,9 @@ func runCheckoutCreate(
 	if err == nil {
 		root, err = localOperatorPath(root)
 	}
-	result := operator.CreateResult{Root: root}
+	result := httpapi.CheckoutCreateResult{Root: root}
 	if err == nil {
-		result, err = operator.Create(ctx, dbPath, version.Short, operator.CreateRequest{
+		result, err = client.Create(ctx, dbPath, version.Short, httpapi.CheckoutCreateRequest{
 			Hub: owner.Hub, UserID: owner.UserID, Root: root, Selection: selection, MaxBytes: maxBytes,
 		})
 	}
@@ -250,7 +248,7 @@ func runCheckoutCommit(
 	if err != nil {
 		return err
 	}
-	result, commitErr := operator.Commit(ctx, dbPath, version.Short, checkoutID,
+	result, commitErr := client.Commit(ctx, dbPath, version.Short, checkoutID,
 		owner)
 	if jsonOutput {
 		if commitErr != nil && result.Error == "" {
@@ -266,76 +264,27 @@ func runCheckoutCommit(
 	return errors.Join(commitErr, outputErr)
 }
 
-type checkoutSummaryOutput struct {
-	ID        string                    `json:"id"`
-	State     checkout.State            `json:"state"`
-	Root      string                    `json:"root"`
-	Layout    string                    `json:"layout"`
-	LastError string                    `json:"last_error"`
-	Entries   checkoutEntryCountsOutput `json:"entries"`
-	CreatedAt time.Time                 `json:"created_at"`
-	UpdatedAt time.Time                 `json:"updated_at"`
-}
-
-type checkoutEntryCountsOutput struct {
-	Total    int `json:"total"`
-	Clean    int `json:"clean"`
-	Pending  int `json:"pending"`
-	Conflict int `json:"conflict"`
-	Missing  int `json:"missing"`
-	Error    int `json:"error"`
-}
-
-type checkoutSelectionOutput struct {
-	All      bool                 `json:"all"`
-	AssetIDs []string             `json:"asset_ids"`
-	AlbumIDs []string             `json:"album_ids"`
-	Years    []checkoutYearOutput `json:"years"`
-}
-
-type checkoutYearOutput struct {
-	Start int `json:"start"`
-	End   int `json:"end"`
-}
-
-type checkoutProblemOutput struct {
-	FileID         string              `json:"file_id"`
-	Path           string              `json:"path"`
-	State          checkout.EntryState `json:"state"`
-	LastError      string              `json:"last_error"`
-	BaseVersionID  string              `json:"base_version_id"`
-	BaseSHA256     string              `json:"base_sha256"`
-	ObservedSHA256 string              `json:"observed_sha256"`
-	UpdatedAt      time.Time           `json:"updated_at"`
-}
-
-type checkoutStatusOutput struct {
-	Checkout  checkoutSummaryOutput   `json:"checkout"`
-	Selection checkoutSelectionOutput `json:"selection"`
-	Problems  []checkoutProblemOutput `json:"problems"`
-}
-
 func runCheckoutList(
 	ctx context.Context,
 	configPath string,
 	asJSON bool,
 	stdout io.Writer,
 ) error {
-	runtime, err := openCheckoutRuntime(ctx, configPath)
-	if err != nil {
-		return err
+	dbPath, owner, err := localOperatorConfig(configPath)
+	var rows []httpapi.CheckoutSummaryOutput
+	if err == nil {
+		rows, err = client.ListCheckouts(ctx, dbPath, version.Short, owner)
 	}
-	defer runtime.close()
-	rows, err := runtime.service.List(ctx, runtime.owner)
 	if err != nil {
+		if asJSON {
+			return errors.Join(err, writeCheckoutJSON(stdout, struct {
+				Error string `json:"error"`
+			}{err.Error()}))
+		}
 		return err
-	}
-	out := make([]checkoutSummaryOutput, len(rows))
-	for index, row := range rows {
-		out[index] = projectCheckoutSummary(row)
 	}
 	if asJSON {
-		return writeCheckoutJSON(stdout, out)
+		return writeCheckoutJSON(stdout, rows)
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tSTATE\tFILES\tPENDING\tCONFLICTS\tMISSING\tERRORS\tUPDATED\tROOT")
@@ -354,18 +303,21 @@ func runCheckoutStatus(
 	asJSON bool,
 	stdout io.Writer,
 ) error {
-	runtime, err := openCheckoutRuntime(ctx, configPath)
+	dbPath, owner, err := localOperatorConfig(configPath)
+	var status httpapi.CheckoutStatusOutput
+	if err == nil {
+		status, err = client.CheckoutStatus(ctx, dbPath, version.Short, checkoutID, owner)
+	}
 	if err != nil {
+		if asJSON {
+			return errors.Join(err, writeCheckoutJSON(stdout, struct {
+				Error string `json:"error"`
+			}{err.Error()}))
+		}
 		return err
 	}
-	defer runtime.close()
-	status, err := runtime.service.Status(ctx, runtime.owner, checkoutID)
-	if err != nil {
-		return err
-	}
-	out := projectCheckoutStatus(status)
 	if asJSON {
-		return writeCheckoutJSON(stdout, out)
+		return writeCheckoutJSON(stdout, status)
 	}
 	fmt.Fprintf(stdout, "Checkout: %s\nState: %s\nRoot: %s\nSelection: %s\n",
 		status.Checkout.ID, status.Checkout.State, status.Checkout.Root,
@@ -385,50 +337,12 @@ func runCheckoutStatus(
 	fmt.Fprintln(tw, "STATE\tPATH\tFILE ID\tLAST ERROR")
 	for _, entry := range status.Problems {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
-			entry.State, entry.RelativePath, entry.FileID, entry.LastError)
+			entry.State, entry.Path, entry.FileID, entry.LastError)
 	}
 	return tw.Flush()
 }
 
-func projectCheckoutSummary(summary checkout.Summary) checkoutSummaryOutput {
-	return checkoutSummaryOutput{
-		ID: summary.ID, State: summary.State, Root: summary.Root, Layout: summary.Layout,
-		LastError: summary.LastError, Entries: checkoutEntryCountsOutput{
-			Total: summary.Entries.Total, Clean: summary.Entries.Clean,
-			Pending: summary.Entries.Pending, Conflict: summary.Entries.Conflict,
-			Missing: summary.Entries.Missing, Error: summary.Entries.Error,
-		},
-		CreatedAt: summary.CreatedAt, UpdatedAt: summary.UpdatedAt,
-	}
-}
-
-func projectCheckoutStatus(status checkout.Status) checkoutStatusOutput {
-	years := make([]checkoutYearOutput, len(status.Selection.Years))
-	for index, yearRange := range status.Selection.Years {
-		years[index] = checkoutYearOutput{Start: yearRange.Start, End: yearRange.End}
-	}
-	problems := make([]checkoutProblemOutput, len(status.Problems))
-	for index, entry := range status.Problems {
-		problems[index] = checkoutProblemOutput{
-			FileID: entry.FileID, Path: entry.RelativePath, State: entry.State,
-			LastError: entry.LastError, BaseVersionID: entry.BaseVersionID,
-			BaseSHA256: entry.BaseSHA256, ObservedSHA256: entry.ObservedSHA256,
-			UpdatedAt: entry.UpdatedAt,
-		}
-	}
-	return checkoutStatusOutput{
-		Checkout: projectCheckoutSummary(status.Checkout),
-		Selection: checkoutSelectionOutput{
-			All:      status.Selection.All,
-			AssetIDs: append([]string(nil), status.Selection.AssetIDs...),
-			AlbumIDs: append([]string(nil), status.Selection.AlbumIDs...),
-			Years:    years,
-		},
-		Problems: problems,
-	}
-}
-
-func formatCheckoutSelection(selection checkout.Selection) string {
+func formatCheckoutSelection(selection httpapi.CheckoutSelectionOutput) string {
 	if selection.All {
 		return "all visible assets"
 	}
@@ -455,47 +369,4 @@ func writeCheckoutJSON(w io.Writer, value any) error {
 	}
 	_, err := fmt.Fprintln(w)
 	return err
-}
-
-type checkoutRuntime struct {
-	db      *databaseHandle
-	service *service.CheckoutService
-	owner   owners.Principal
-}
-
-func openCheckoutRuntime(ctx context.Context, configPath string) (*checkoutRuntime, error) {
-	if configPath == "" {
-		configPath = config.DefaultConfigPath()
-	}
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		return nil, err
-	}
-	if cfg.Identity.Mode != "stub" {
-		return nil, fmt.Errorf("fotobank checkout requires identity.mode = stub (got %q)", cfg.Identity.Mode)
-	}
-	dbPath, err := resolveDBPath(cfg)
-	if err != nil {
-		return nil, err
-	}
-	database, err := openDatabasePath(dbPath)
-	if err != nil {
-		return nil, err
-	}
-	owner := owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
-	runtime := &checkoutRuntime{db: database, owner: owner}
-	ownerService := service.NewOwnerService(owners.NewRepo(database.WriteDB(), database.ReadDB()))
-	if _, err := ownerService.Ensure(ctx, owner, cfg.Identity.Stub.StorageKey); err != nil {
-		runtime.close()
-		return nil, err
-	}
-	checkoutRepo := checkout.NewRepo(database.WriteDB(), database.ReadDB())
-	runtime.service = service.NewCheckoutService(checkoutRepo, nil, nil, "", nil)
-	return runtime, nil
-}
-
-func (r *checkoutRuntime) close() {
-	if r.db != nil {
-		_ = r.db.Close()
-	}
 }

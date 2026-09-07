@@ -33,10 +33,8 @@ Do not parse human progress output when a JSON form exists. Commands return zero
 on success, one for runtime failures, and two for invalid command usage.
 
 `config diagnose` and `import` currently produce human-readable output only.
-Checkout list and status report
-saved catalog observations, not a fresh filesystem scan. Their startup still
-opens the normal database and ensures the configured owner, so they are not
-strictly read-only database probes. Use them against an initialized deployment.
+Checkout list and status ask the daemon for saved catalog observations, not a
+fresh filesystem scan. They do not open or initialize a database in the CLI.
 
 ## Know which process owns the vault
 
@@ -46,16 +44,18 @@ that open that same vault cannot run alongside it. For the configured deployment
 | Operation | Server state |
 | --- | --- |
 | Import or content recovery | Stop the server first; restart after the command finishes. |
-| Checkout estimate, create, commit, or manual backup create | Requires the running server in stub mode, the same OS account, configuration, and application version. |
+| Every checkout command, or manual backup create | Requires the running server in stub mode, the same OS account, configuration, and application version. |
 | Browse or use the HTTP API, scan checkout edits, scheduled backups | Keep the server running. |
-| Checkout list or status | May run alongside the server; these do not open Docbank. |
 | Backup init, list with `--repo`, verify, or restore to a separate target | Do not need the source vault open. |
 
 Stop the service through the supervisor you use to run it, or interrupt a
 foreground `fotobank serve`, and wait for shutdown to complete. Do not remove
 lock files or start a second vault owner to work around this limitation. The
-CLI submits checkout estimates, creation, tracked commits, and manual backups
-to the server; import and content recovery still run offline.
+CLI submits every checkout command and manual backup creation to the server.
+Import, content recovery, and GPS backfill still open Docbank separately;
+albums, shares, owners, privacy/admin, thumbnails, and AI commands still use
+direct catalog connections. These are remaining migration gaps, not alternate
+ways to access a daemon-owned deployment.
 
 For tracked edits: keep the server running to create the checkout, edit and
 settle files, inspect `checkout status --json`, then explicitly
@@ -84,7 +84,8 @@ The HTTP API and CLI share application services, but not every command has a
 machine-readable form yet. An agent should fail on unexpected output rather
 than guessing from partially parsed text.
 
-Discover JSON operations, including search, AI, and filter counts, through
+Discover JSON operations, including checkout and backup commands, search, AI,
+and filter counts, through
 `/api/openapi.json` on the running server or the repository's `openapi.json`.
 Interactive documentation is at `/api/docs`. A documented operation can still
 report that its service is unavailable; schema presence does not mean AI is

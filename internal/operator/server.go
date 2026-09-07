@@ -14,36 +14,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/danielgtaylor/huma/v2"
-	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"go.kenn.io/kit/daemon"
 
-	"go.kenn.io/fotobank/internal/owners"
-	"go.kenn.io/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/httpapi"
 )
 
 const serviceName = "fotobank-operator"
 
-// CommitResult preserves completed work even when another entry fails.
-type CommitResult struct {
-	CheckoutID string `json:"checkout_id"`
-	Pending    int    `json:"pending"`
-	Committed  int    `json:"committed"`
-	Conflicts  int    `json:"conflicts"`
-	Error      string `json:"error,omitempty"`
-}
-
-type commitInput struct {
-	CheckoutID string `path:"id"`
-	Body       struct {
-		Hub    string `json:"hub"`
-		UserID string `json:"user_id"`
-	}
-}
-
 // Start serves only the configured owner. The caller already holds the server
 // lifetime lock. close must finish before its services or vault are closed.
-func Start(ctx context.Context, dbPath, version string, owner owners.Principal, checkouts *service.CheckoutService, backups *service.BackupService) (stop func(), fatal <-chan error, err error) {
+func Start(ctx context.Context, dbPath, version string, deps httpapi.Deps) (stop func(), fatal <-chan error, err error) {
 	store := daemon.RuntimeStore{Dir: dbPath + ".operator"}
 	if err := store.CheckWritable(); err != nil {
 		return nil, nil, err
@@ -61,7 +41,7 @@ func Start(ctx context.Context, dbPath, version string, owner owners.Principal, 
 	rec := daemon.NewRuntimeRecord(serviceName, version, daemon.Endpoint{Network: daemon.NetworkTCP, Address: ln.Addr().String()})
 	// Kit atomically publishes the record inside a current-user-only directory.
 	// The credential is never sent until the peer proves possession of it.
-	rec.Metadata = map[string]string{"token": credential}
+	rec.Metadata = map[string]string{"token": credential, "api_protocol": httpapi.OperatorProtocolVersion}
 	proof, err := daemon.NewProof([]byte(credential))
 	if err != nil {
 		_ = ln.Close()
@@ -72,25 +52,11 @@ func Start(ctx context.Context, dbPath, version string, owner owners.Principal, 
 		_ = ln.Close()
 		return nil, nil, err
 	}
-	mux := http.NewServeMux()
-	api := humago.New(mux, huma.DefaultConfig("Fotobank operator API", version))
-	registerCheckouts(api, owner, checkouts)
-	registerBackups(api, backups)
-	huma.Register(api, huma.Operation{
-		OperationID: "commit-checkout", Method: http.MethodPost,
-		Path: "/checkouts/{id}/commit", Summary: "Commit settled tracked edits",
-		MaxBodyBytes: 4096,
-	}, func(ctx context.Context, input *commitInput) (*struct{ Body CommitResult }, error) {
-		if input.Body.Hub != owner.Hub || input.Body.UserID != owner.UserID {
-			return nil, huma.Error403Forbidden("configured owner does not match the running server")
-		}
-		result, err := checkouts.Commit(ctx, owner, input.CheckoutID)
-		out := CommitResult{CheckoutID: input.CheckoutID, Pending: result.Pending, Committed: result.Committed, Conflicts: result.Conflicts}
-		if err != nil {
-			out.Error = err.Error()
-		}
-		return &struct{ Body CommitResult }{out}, nil
-	})
+	handler, err := httpapi.New(deps)
+	if err != nil {
+		_ = ln.Close()
+		return nil, nil, err
+	}
 	requests, cancel := context.WithCancel(ctx)
 	var handlers sync.WaitGroup
 	var gate sync.Mutex
@@ -117,7 +83,7 @@ func Start(ctx context.Context, dbPath, version string, owner owners.Principal, 
 				http.Error(w, "operator authentication required", http.StatusUnauthorized)
 				return
 			}
-			mux.ServeHTTP(w, r)
+			handler.ServeHTTP(w, r)
 		}),
 	}
 	runtimePath, err := store.Write(rec)

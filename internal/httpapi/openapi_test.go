@@ -81,3 +81,38 @@ func TestOptionalServiceAPIContract(t *testing.T) {
 		})
 	}
 }
+
+func TestOperatorOperationsShareAPIContract(t *testing.T) {
+	spec := httpapi.OpenAPISpec()
+	handler, err := httpapi.New(httpapi.Deps{})
+	require.NoError(t, err)
+	for _, tc := range []struct{ method, path, operation, body string }{
+		{"GET", "/api/v1/operator/checkouts", "list-checkouts", ""},
+		{"GET", "/api/v1/operator/checkouts/{checkout_id}", "checkout-status", ""},
+		{"POST", "/api/v1/operator/checkouts/estimate", "estimate-checkout", `{"hub":"h","user_id":"u","selection":{"all":true,"asset_ids":[],"album_ids":[],"years":[]}}`},
+		{"POST", "/api/v1/operator/checkouts", "create-checkout", `{"hub":"h","user_id":"u","selection":{"all":true,"asset_ids":[],"album_ids":[],"years":[]},"root":"/tmp/working","max_bytes":10}`},
+		{"POST", "/api/v1/operator/checkouts/{id}/commit", "commit-checkout", `{"hub":"h","user_id":"u"}`},
+		{"POST", "/api/v1/operator/backups", "create-backup", `{"hub":"h","user_id":"u","repository":"/tmp/archive","tag":"manual"}`},
+	} {
+		t.Run(tc.operation, func(t *testing.T) {
+			r := require.New(t)
+			item := spec.Paths[tc.path]
+			r.NotNil(item, "operator operation missing from the shared schema")
+			op := item.Get
+			if tc.method == http.MethodPost {
+				op = item.Post
+			}
+			r.NotNil(op)
+			r.Equal(tc.operation, op.OperationID)
+			path := strings.ReplaceAll(strings.ReplaceAll(tc.path, "{id}", "checkout-a"), "{checkout_id}", "checkout-a")
+			req := httptest.NewRequest(tc.method, path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req = req.WithContext(httpapi.ContextWithIdentity(req.Context(), identity.Identity{
+				Principal: identity.Principal{Hub: "h", UserID: "u"},
+			}))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, req)
+			r.Equal(http.StatusForbidden, response.Code, "photo identity must not grant local operator access: %s", response.Body.String())
+		})
+	}
+}

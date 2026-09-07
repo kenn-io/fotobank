@@ -1,4 +1,6 @@
-package operator
+// Package client is Fotobank's typed daemon HTTP client. Wire types belong to
+// httpapi; discovery, endpoints and proof use Kit's daemon package.
+package client
 
 import (
 	"bytes"
@@ -11,16 +13,17 @@ import (
 	"net/url"
 	"os"
 
+	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/kit/daemon"
 )
 
 // Commit discovers a proven local server without opening SQLite or Docbank.
 // It never starts a server, falls back to offline writes, or retries a request.
-func Commit(ctx context.Context, dbPath, version, checkoutID string, owner owners.Principal) (CommitResult, error) {
-	out := CommitResult{CheckoutID: checkoutID}
-	err := call(ctx, dbPath, version, "/checkouts/"+url.PathEscape(checkoutID)+"/commit",
-		map[string]string{"hub": owner.Hub, "user_id": owner.UserID}, &out, "inspect checkout list/status before retrying")
+func Commit(ctx context.Context, dbPath, version, checkoutID string, owner owners.Principal) (httpapi.CheckoutCommitResult, error) {
+	out := httpapi.CheckoutCommitResult{CheckoutID: checkoutID}
+	err := call(ctx, dbPath, version, http.MethodPost, "/api/v1/operator/checkouts/"+url.PathEscape(checkoutID)+"/commit",
+		httpapi.CheckoutCommitRequest{Hub: owner.Hub, UserID: owner.UserID}, &out, "inspect checkout list/status before retrying")
 	if err == nil && out.Error != "" {
 		err = errors.New(out.Error)
 	}
@@ -29,7 +32,7 @@ func Commit(ctx context.Context, dbPath, version, checkoutID string, owner owner
 
 // call proves the peer before sending a command. Requests are never retried:
 // a lost response may follow a successful mutation.
-func call(ctx context.Context, dbPath, version, path string, input, output any, recoveryHint string) error {
+func call(ctx context.Context, dbPath, version, method, path string, input, output any, recoveryHint string) error {
 	store := daemon.RuntimeStore{Dir: dbPath + ".operator"}
 	if _, err := os.Stat(store.Dir); err != nil {
 		return fmt.Errorf("start fotobank serve with the same configuration before running this command: %w", err)
@@ -39,7 +42,7 @@ func call(ctx context.Context, dbPath, version, path string, input, output any, 
 		return fmt.Errorf("read operator discovery: %w", err)
 	}
 	for _, rec := range records {
-		if rec.Service != serviceName || rec.Version != version || rec.Network != daemon.NetworkTCP || daemon.RequireLoopback(rec.Address) != nil {
+		if rec.Service != "fotobank-operator" || rec.Version != version || rec.Metadata["api_protocol"] != httpapi.OperatorProtocolVersion || rec.Network != daemon.NetworkTCP || daemon.RequireLoopback(rec.Address) != nil {
 			continue
 		}
 		credential := rec.Metadata["token"]
@@ -47,16 +50,20 @@ func call(ctx context.Context, dbPath, version, path string, input, output any, 
 		if err != nil {
 			continue
 		}
-		if _, err := proof.Probe(ctx, rec, daemon.ProbeOptions{ExpectedService: serviceName}); err != nil {
+		if _, err := proof.Probe(ctx, rec, daemon.ProbeOptions{ExpectedService: "fotobank-operator"}); err != nil {
 			continue
 		}
-		body, err := json.Marshal(input)
-		if err != nil {
-			return err
+		var body io.Reader
+		if input != nil {
+			encoded, err := json.Marshal(input)
+			if err != nil {
+				return err
+			}
+			body = bytes.NewReader(encoded)
 		}
 		ep := rec.Endpoint()
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			ep.BaseURL()+path, bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, method,
+			ep.BaseURL()+path, body)
 		if err != nil {
 			return err
 		}
@@ -73,7 +80,10 @@ func call(ctx context.Context, dbPath, version, path string, input, output any, 
 			body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 			return fmt.Errorf("operator command returned %s: %s", response.Status, body)
 		}
-		if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(output); err != nil {
+		// Inspection can legitimately return more than a megabyte of file
+		// problems. Decode the proven daemon's complete result; cancellation
+		// remains bound to the request context.
+		if err := json.NewDecoder(response.Body).Decode(output); err != nil {
 			return fmt.Errorf("read operator result; %s: %w", recoveryHint, err)
 		}
 		return nil

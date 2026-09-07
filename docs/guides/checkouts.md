@@ -6,7 +6,7 @@ tracked edit.
 
 ## Estimate the copy
 
-Keep `fotobank serve` running for estimate, create, and commit. Run these
+Keep `fotobank serve` running for every checkout command. Run these
 commands on the server host under the same OS account, with the same stub-mode
 configuration and application version. They use the local operator connection,
 not the photo API, and never start a server or open a second vault.
@@ -79,12 +79,11 @@ fotobank checkout status <checkout-uuid>
 
 The status view shows pending edits, conflicts, missing files, and scan errors.
 Use `--json` with either command for structured output in scripts and agent
-workflows. They may run alongside the server and do not open the Docbank vault.
-They report saved catalog observations; they do not scan, commit, rebuild, or
-remove working files. Startup still opens the normal database and ensures the
-configured owner, so use them against an initialized deployment rather than as
-strictly read-only database probes. New untracked files are not included in
-this status view.
+workflows. Both require the running server under the same OS account,
+stub-mode configuration, and application version as other checkout commands.
+They report saved catalog observations through the daemon; the CLI does not
+open a database, scan, commit, rebuild, or remove working files. New untracked
+files are not included in this status view.
 
 ## Commit tracked edits
 

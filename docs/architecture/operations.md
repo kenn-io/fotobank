@@ -194,7 +194,7 @@ operator interface (`internal/operator`). `--json` preserves result counts and
 errors, including partial completion. The CLI never opens a second vault for
 commits. Operators inspect the durable
 state first with `fotobank checkout list` and `fotobank checkout status
-<checkout-id>`; these database-only commands do not scan or mutate the working
+<checkout-id>`; these daemon queries do not scan or mutate the working
 copy. The status view shows the saved selection, entry-state totals, and every
 file that is pending, conflicted, missing, or errored.
 Those states remain visible in the checkout ledger for their dedicated

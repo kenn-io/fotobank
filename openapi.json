@@ -456,6 +456,117 @@
         ],
         "type": "object"
       },
+      "BackupRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/BackupRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "hub": {
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id",
+          "repository",
+          "tag"
+        ],
+        "type": "object"
+      },
+      "BackupResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/BackupResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/BackupSnapshot"
+          }
+        },
+        "required": [
+          "snapshot"
+        ],
+        "type": "object"
+      },
+      "BackupSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "blob_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "blobs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "bytes_added": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "duration_seconds": {
+            "format": "double",
+            "type": "number"
+          },
+          "files": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "nodes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "parent_id",
+          "created_at",
+          "tag",
+          "nodes",
+          "files",
+          "blobs",
+          "blob_bytes",
+          "bytes_added",
+          "duration_seconds"
+        ],
+        "type": "object"
+      },
       "CaptionItem": {
         "additionalProperties": false,
         "properties": {
@@ -478,6 +589,425 @@
           "model_id",
           "prompt_version",
           "generated_at"
+        ],
+        "type": "object"
+      },
+      "CheckoutCommitRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/CheckoutCommitRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "hub": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id"
+        ],
+        "type": "object"
+      },
+      "CheckoutCommitResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/CheckoutCommitResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "checkout_id": {
+            "type": "string"
+          },
+          "committed": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "conflicts": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "pending": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "checkout_id",
+          "pending",
+          "committed",
+          "conflicts"
+        ],
+        "type": "object"
+      },
+      "CheckoutCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/CheckoutCreateRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "hub": {
+            "type": "string"
+          },
+          "max_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "root": {
+            "type": "string"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/Selection"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id",
+          "selection",
+          "root",
+          "max_bytes"
+        ],
+        "type": "object"
+      },
+      "CheckoutCreateResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/CheckoutCreateResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "checkout_id": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "files": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "materialized": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "root": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "root",
+          "files",
+          "bytes",
+          "materialized"
+        ],
+        "type": "object"
+      },
+      "CheckoutEntryCountsOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "clean": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "conflict": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "error": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "missing": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "pending": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "clean",
+          "pending",
+          "conflict",
+          "missing",
+          "error"
+        ],
+        "type": "object"
+      },
+      "CheckoutEstimateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/CheckoutEstimateRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "hub": {
+            "type": "string"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/Selection"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id",
+          "selection"
+        ],
+        "type": "object"
+      },
+      "CheckoutEstimateResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/CheckoutEstimateResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "files": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "files",
+          "bytes"
+        ],
+        "type": "object"
+      },
+      "CheckoutProblemOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "base_sha256": {
+            "type": "string"
+          },
+          "base_version_id": {
+            "type": "string"
+          },
+          "file_id": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "observed_sha256": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_id",
+          "path",
+          "state",
+          "last_error",
+          "base_version_id",
+          "base_sha256",
+          "observed_sha256",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "CheckoutSelectionOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "album_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "all": {
+            "type": "boolean"
+          },
+          "asset_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "years": {
+            "items": {
+              "$ref": "#/components/schemas/CheckoutYearOutput"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "all",
+          "asset_ids",
+          "album_ids",
+          "years"
+        ],
+        "type": "object"
+      },
+      "CheckoutStatusOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/CheckoutStatusOutput.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "checkout": {
+            "$ref": "#/components/schemas/CheckoutSummaryOutput"
+          },
+          "problems": {
+            "items": {
+              "$ref": "#/components/schemas/CheckoutProblemOutput"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "selection": {
+            "$ref": "#/components/schemas/CheckoutSelectionOutput"
+          }
+        },
+        "required": [
+          "checkout",
+          "selection",
+          "problems"
+        ],
+        "type": "object"
+      },
+      "CheckoutSummaryOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "entries": {
+            "$ref": "#/components/schemas/CheckoutEntryCountsOutput"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "layout": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "root",
+          "layout",
+          "last_error",
+          "entries",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "CheckoutYearOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "start": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
         ],
         "type": "object"
       },
@@ -2171,6 +2701,48 @@
         ],
         "type": "object"
       },
+      "Selection": {
+        "additionalProperties": false,
+        "properties": {
+          "album_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "all": {
+            "type": "boolean"
+          },
+          "asset_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "years": {
+            "items": {
+              "$ref": "#/components/schemas/YearRange"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "all",
+          "asset_ids",
+          "album_ids",
+          "years"
+        ],
+        "type": "object"
+      },
       "SharedAlbumCoverDTO": {
         "additionalProperties": false,
         "properties": {
@@ -2682,6 +3254,31 @@
           "last_check_at"
         ],
         "type": "object"
+      },
+      "YearRange": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "start": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "localOperator": {
+        "description": "Local operator credential, accepted only on the authenticated daemon listener. Photo-user authentication does not grant this capability.",
+        "scheme": "bearer",
+        "type": "http"
       }
     }
   },
@@ -4366,6 +4963,320 @@
           }
         },
         "summary": "Get AI artifacts (tags, caption, skip, failures) for a media"
+      }
+    },
+    "/api/v1/operator/backups": {
+      "post": {
+        "operationId": "create-backup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Capture a complete recovery archive",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/checkouts": {
+      "get": {
+        "operationId": "list-checkouts",
+        "parameters": [
+          {
+            "explode": false,
+            "in": "query",
+            "name": "hub",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "user_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CheckoutSummaryOutput"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "List saved checkout state",
+        "tags": [
+          "operator"
+        ]
+      },
+      "post": {
+        "operationId": "create-checkout",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckoutCreateResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Create a writable checkout",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/checkouts/estimate": {
+      "post": {
+        "operationId": "estimate-checkout",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutEstimateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckoutEstimateResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Estimate selected checkout files",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/checkouts/{checkout_id}": {
+      "get": {
+        "operationId": "checkout-status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "checkout_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "hub",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "user_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckoutStatusOutput"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Inspect saved checkout problems",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/checkouts/{id}/commit": {
+      "post": {
+        "operationId": "commit-checkout",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutCommitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckoutCommitResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Commit settled tracked edits",
+        "tags": [
+          "operator"
+        ]
       }
     },
     "/api/v1/search": {

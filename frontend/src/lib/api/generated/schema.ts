@@ -536,6 +536,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Capture a complete recovery archive */
+        post: operations["create-backup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/checkouts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List saved checkout state */
+        get: operations["list-checkouts"];
+        put?: never;
+        /** Create a writable checkout */
+        post: operations["create-checkout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/checkouts/estimate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Estimate selected checkout files */
+        post: operations["estimate-checkout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/checkouts/{checkout_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect saved checkout problems */
+        get: operations["checkout-status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/checkouts/{id}/commit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Commit settled tracked edits */
+        post: operations["commit-checkout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/search": {
         parameters: {
             query?: never;
@@ -982,12 +1068,193 @@ export interface components {
             readonly $schema?: string;
             tags: components["schemas"]["TagSuggestionDTO"][] | null;
         };
+        BackupRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/BackupRequest.json
+             */
+            readonly $schema?: string;
+            hub: string;
+            repository: string;
+            tag: string;
+            user_id: string;
+        };
+        BackupResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/BackupResult.json
+             */
+            readonly $schema?: string;
+            error?: string;
+            snapshot: components["schemas"]["BackupSnapshot"];
+        };
+        BackupSnapshot: {
+            /** Format: int64 */
+            blob_bytes: number;
+            /** Format: int64 */
+            blobs: number;
+            /** Format: int64 */
+            bytes_added: number;
+            created_at: string;
+            /** Format: double */
+            duration_seconds: number;
+            /** Format: int64 */
+            files: number;
+            id: string;
+            /** Format: int64 */
+            nodes: number;
+            parent_id: string;
+            tag: string;
+        };
         CaptionItem: {
             /** Format: date-time */
             generated_at: string;
             model_id: string;
             prompt_version: string;
             text: string;
+        };
+        CheckoutCommitRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CheckoutCommitRequest.json
+             */
+            readonly $schema?: string;
+            hub: string;
+            user_id: string;
+        };
+        CheckoutCommitResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CheckoutCommitResult.json
+             */
+            readonly $schema?: string;
+            checkout_id: string;
+            /** Format: int64 */
+            committed: number;
+            /** Format: int64 */
+            conflicts: number;
+            error?: string;
+            /** Format: int64 */
+            pending: number;
+        };
+        CheckoutCreateRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CheckoutCreateRequest.json
+             */
+            readonly $schema?: string;
+            hub: string;
+            /** Format: int64 */
+            max_bytes: number;
+            root: string;
+            selection: components["schemas"]["Selection"];
+            user_id: string;
+        };
+        CheckoutCreateResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CheckoutCreateResult.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            bytes: number;
+            checkout_id?: string;
+            error?: string;
+            /** Format: int64 */
+            files: number;
+            /** Format: int64 */
+            materialized: number;
+            root: string;
+        };
+        CheckoutEntryCountsOutput: {
+            /** Format: int64 */
+            clean: number;
+            /** Format: int64 */
+            conflict: number;
+            /** Format: int64 */
+            error: number;
+            /** Format: int64 */
+            missing: number;
+            /** Format: int64 */
+            pending: number;
+            /** Format: int64 */
+            total: number;
+        };
+        CheckoutEstimateRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CheckoutEstimateRequest.json
+             */
+            readonly $schema?: string;
+            hub: string;
+            selection: components["schemas"]["Selection"];
+            user_id: string;
+        };
+        CheckoutEstimateResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CheckoutEstimateResult.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            bytes: number;
+            error?: string;
+            /** Format: int64 */
+            files: number;
+        };
+        CheckoutProblemOutput: {
+            base_sha256: string;
+            base_version_id: string;
+            file_id: string;
+            last_error: string;
+            observed_sha256: string;
+            path: string;
+            state: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CheckoutSelectionOutput: {
+            album_ids: string[] | null;
+            all: boolean;
+            asset_ids: string[] | null;
+            years: components["schemas"]["CheckoutYearOutput"][] | null;
+        };
+        CheckoutStatusOutput: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CheckoutStatusOutput.json
+             */
+            readonly $schema?: string;
+            checkout: components["schemas"]["CheckoutSummaryOutput"];
+            problems: components["schemas"]["CheckoutProblemOutput"][] | null;
+            selection: components["schemas"]["CheckoutSelectionOutput"];
+        };
+        CheckoutSummaryOutput: {
+            /** Format: date-time */
+            created_at: string;
+            entries: components["schemas"]["CheckoutEntryCountsOutput"];
+            id: string;
+            last_error: string;
+            layout: string;
+            root: string;
+            state: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CheckoutYearOutput: {
+            /** Format: int64 */
+            end: number;
+            /** Format: int64 */
+            start: number;
         };
         CoverDTO: {
             media_id: string;
@@ -1571,6 +1838,12 @@ export interface components {
             /** Format: int64 */
             width: number | null;
         };
+        Selection: {
+            album_ids: string[] | null;
+            all: boolean;
+            asset_ids: string[] | null;
+            years: components["schemas"]["YearRange"][] | null;
+        };
         SharedAlbumCoverDTO: {
             media_id: string;
             /** Format: int64 */
@@ -1748,6 +2021,12 @@ export interface components {
             last_check_at: string;
             last_error?: string;
             reachable: boolean;
+        };
+        YearRange: {
+            /** Format: int64 */
+            end: number;
+            /** Format: int64 */
+            start: number;
         };
     };
     responses: never;
@@ -2937,6 +3216,206 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MediaView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "create-backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "list-checkouts": {
+        parameters: {
+            query?: {
+                hub?: string;
+                user_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckoutSummaryOutput"][] | null;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "create-checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckoutCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckoutCreateResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "estimate-checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckoutEstimateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckoutEstimateResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "checkout-status": {
+        parameters: {
+            query?: {
+                hub?: string;
+                user_id?: string;
+            };
+            header?: never;
+            path: {
+                checkout_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckoutStatusOutput"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "commit-checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckoutCommitRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckoutCommitResult"];
                 };
             };
             /** @description Error */

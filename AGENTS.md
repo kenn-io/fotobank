@@ -65,7 +65,28 @@ Three tiers per domain: **repo → service → transport**.
 
 - **Repo** (`internal/<domain>/repo.go`) is DB-only. No auth, no identity plumbing. Takes IDs, returns rows.
 - **Service** (`internal/service/*.go`) is the auth boundary. Every exported method takes `caller owners.Principal` and either scopes queries to that principal or returns `errs.ErrNotFound`.
-- **Transport** is either `internal/httpapi/` (huma routes, mounted on `http.ServeMux`) or `internal/cli/` (cobra subcommands). Both go through service — CLI must not call repos directly because the repos don't enforce ownership.
+- **HTTP transport** (`internal/httpapi/`) exposes application services through Huma routes. **CLI transport** (`internal/cli/`) parses arguments and formats results from the typed HTTP client (`internal/client/`), not repositories or locally constructed services.
+
+## Daemon and command ownership
+
+- The daemon owns application state and operations. CLI commands must not open
+  the catalog or Docbank, run migrations, or fall back to local mutations when
+  the daemon is unavailable. Starting the daemon is process lifecycle, not an
+  exception allowing commands to act as another storage owner.
+- Every application command must correspond to a documented daemon HTTP
+  operation. Huma registrations and their shared request/response types define
+  the contract; generate OpenAPI from those same registrations. Do not build a
+  separate CLI-only API or duplicate business logic in a future MCP server.
+- Reuse Docbank's typed-client/API pattern and Kit's daemon discovery,
+  endpoints, proof, and lifecycle machinery. Keep Fotobank-specific ownership
+  and photo behavior in Fotobank services.
+- Host-operator permissions and photo-user permissions remain distinct. A
+  shared OpenAPI contract does not grant ordinary photo users access to host
+  paths, whole-deployment backup, or administrative commands.
+- Existing direct-storage commands are outstanding migration work tracked in
+  kata, not a pattern to extend. Architecture documentation must distinguish
+  that remaining behavior from the target boundary. Bootstrap and recovery
+  must be designed around daemon ownership, not a CLI database escape hatch.
 
 Background workers (e.g. `internal/thumb/worker.go`) follow the same rule: they're driven from a queue populated via repo/service calls, not by fan-out from a transport.
 

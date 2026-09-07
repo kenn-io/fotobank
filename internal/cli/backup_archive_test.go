@@ -68,7 +68,7 @@ func TestBackupArchiveCLI(t *testing.T) {
 				r := require.New(t)
 				body, err := json.Marshal(map[string]string{"hub": denied.hub, "user_id": "alice", "repository": repository, "tag": denied.tag})
 				r.NoError(err)
-				request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, record.Endpoint().BaseURL()+"/backups", bytes.NewReader(body))
+				request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, record.Endpoint().BaseURL()+"/api/v1/operator/backups", bytes.NewReader(body))
 				r.NoError(err)
 				request.Header.Set("Content-Type", "application/json")
 				request.Header.Set("Authorization", "Bearer "+denied.token)
