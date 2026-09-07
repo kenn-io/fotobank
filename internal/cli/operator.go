@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 )
 
 // localOperatorConfig locates the server without opening SQLite or Docbank.
-func localOperatorConfig(configPath string) (string, owners.Principal, error) {
+func localOperatorConfig(ctx context.Context, configPath string) (string, owners.Principal, error) {
 	if configPath == "" {
 		configPath = config.DefaultConfigPath()
 	}
@@ -22,6 +23,9 @@ func localOperatorConfig(configPath string) (string, owners.Principal, error) {
 		return "", owners.Principal{}, fmt.Errorf("local operator commands require identity.mode = stub")
 	}
 	dbPath, err := resolveDBPath(cfg)
+	if err == nil {
+		err = ensureOperator(ctx, configPath)
+	}
 	return dbPath, owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}, err
 }
 

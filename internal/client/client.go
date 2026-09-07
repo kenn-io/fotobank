@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/owners"
@@ -19,7 +18,7 @@ import (
 )
 
 // Commit discovers a proven local server without opening SQLite or Docbank.
-// It never starts a server, falls back to offline writes, or retries a request.
+// The caller ensures the daemon first. Requests never fall back to local writes.
 func Commit(ctx context.Context, dbPath, version, checkoutID string, owner owners.Principal) (httpapi.CheckoutCommitResult, error) {
 	out := httpapi.CheckoutCommitResult{CheckoutID: checkoutID}
 	err := call(ctx, dbPath, version, http.MethodPost, "/api/v1/operator/checkouts/"+url.PathEscape(checkoutID)+"/commit",
@@ -33,60 +32,60 @@ func Commit(ctx context.Context, dbPath, version, checkoutID string, owner owner
 // call proves the peer before sending a command. Requests are never retried:
 // a lost response may follow a successful mutation.
 func call(ctx context.Context, dbPath, version, method, path string, input, output any, recoveryHint string) error {
-	store := daemon.RuntimeStore{Dir: dbPath + ".operator"}
-	if _, err := os.Stat(store.Dir); err != nil {
-		return fmt.Errorf("start fotobank serve with the same configuration before running this command: %w", err)
-	}
-	records, err := store.List()
+	rec, _, found, err := findDaemon(ctx, dbPath)
 	if err != nil {
-		return fmt.Errorf("read operator discovery: %w", err)
+		return err
 	}
-	for _, rec := range records {
-		if rec.Service != "fotobank-operator" || rec.Version != version || rec.Metadata["api_protocol"] != httpapi.OperatorProtocolVersion || rec.Network != daemon.NetworkTCP || daemon.RequireLoopback(rec.Address) != nil {
-			continue
-		}
-		credential := rec.Metadata["token"]
-		proof, err := daemon.NewProof([]byte(credential))
-		if err != nil {
-			continue
-		}
-		if _, err := proof.Probe(ctx, rec, daemon.ProbeOptions{ExpectedService: "fotobank-operator"}); err != nil {
-			continue
-		}
-		var body io.Reader
-		if input != nil {
-			encoded, err := json.Marshal(input)
-			if err != nil {
-				return err
-			}
-			body = bytes.NewReader(encoded)
-		}
-		ep := rec.Endpoint()
-		req, err := http.NewRequestWithContext(ctx, method,
-			ep.BaseURL()+path, body)
+	if !found || rec.Version != version {
+		return fmt.Errorf("no matching Fotobank server; run fotobank daemon start")
+	}
+	return callRecord(ctx, rec, method, path, input, output, recoveryHint)
+}
+
+func callRecord(ctx context.Context, rec daemon.RuntimeRecord, method, path string, input, output any, recoveryHint string) error {
+	proof, err := daemon.NewProof([]byte(rec.Metadata["token"]))
+	if err != nil {
+		return err
+	}
+	if _, err := proof.Probe(ctx, rec, daemon.ProbeOptions{ExpectedService: "fotobank-operator"}); err != nil {
+		return err
+	}
+	credential := rec.Metadata["token"]
+	var body io.Reader
+	if input != nil {
+		encoded, err := json.Marshal(input)
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Authorization", "Bearer "+credential)
-		req.Header.Set("Content-Type", "application/json")
-		client := ep.HTTPClient(daemon.HTTPClientOptions{DisableKeepAlives: true})
-		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-		response, err := client.Do(req)
-		if err != nil {
-			return fmt.Errorf("operator response unavailable; %s: %w", recoveryHint, err)
-		}
-		defer response.Body.Close()
-		if response.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-			return fmt.Errorf("operator command returned %s: %s", response.Status, body)
-		}
-		// Inspection can legitimately return more than a megabyte of file
-		// problems. Decode the proven daemon's complete result; cancellation
-		// remains bound to the request context.
-		if err := json.NewDecoder(response.Body).Decode(output); err != nil {
-			return fmt.Errorf("read operator result; %s: %w", recoveryHint, err)
-		}
+		body = bytes.NewReader(encoded)
+	}
+	ep := rec.Endpoint()
+	req, err := http.NewRequestWithContext(ctx, method,
+		ep.BaseURL()+path, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+credential)
+	req.Header.Set("Content-Type", "application/json")
+	client := ep.HTTPClient(daemon.HTTPClientOptions{DisableKeepAlives: true})
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("operator response unavailable; %s: %w", recoveryHint, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return fmt.Errorf("operator command returned %s: %s", response.Status, body)
+	}
+	if output == nil {
 		return nil
 	}
-	return fmt.Errorf("no matching Fotobank server; start fotobank serve with the same configuration and binary before running this command")
+	// Inspection can legitimately return more than a megabyte of file
+	// problems. Decode the proven daemon's complete result; cancellation
+	// remains bound to the request context.
+	if err := json.NewDecoder(response.Body).Decode(output); err != nil {
+		return fmt.Errorf("read operator result; %s: %w", recoveryHint, err)
+	}
+	return nil
 }

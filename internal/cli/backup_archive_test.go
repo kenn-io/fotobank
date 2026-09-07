@@ -174,18 +174,18 @@ func TestBackupCreateRequiresInitializedRepository(t *testing.T) {
 	r.NoDirExists(repository)
 }
 
-func TestBackupCreateRequiresRunningServer(t *testing.T) {
+func TestBackupCreateDoesNotOpenStorageWhenLaunchFails(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
 	cfgPath := writeBackupConfig(t, tmp)
 	var stdout, stderr bytes.Buffer
 	code := cli.RunContext(t.Context(), []string{"backup", "create", "--config", cfgPath, "--repo", filepath.Join(tmp, "repository"), "--json"}, &stdout, &stderr)
 	r.NotZero(code)
-	r.Contains(stderr.String(), "start fotobank serve")
+	r.Contains(stderr.String(), "build fotobank")
 	var failure struct {
 		Error string `json:"error"`
 	}
 	r.NoError(json.Unmarshal(stdout.Bytes(), &failure))
-	r.Contains(failure.Error, "start fotobank serve")
+	r.Contains(failure.Error, "build fotobank")
 	r.NoFileExists(filepath.Join(tmp, "flash", "fotobank.sqlite"))
 }

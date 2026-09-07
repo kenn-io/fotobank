@@ -36,6 +36,18 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	r.Equal("stub", cfg.Broker.Mode)
 }
 
+func TestDaemonControlConfiguration(t *testing.T) {
+	for _, address := range []string{"0.0.0.0:8091", "192.0.2.1:8091", "127.0.0.1:99999", "unix:/tmp/control"} {
+		t.Run(address, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(path, fmt.Appendf(nil, "[daemon]\nlisten_address = %q\n", address), 0o600))
+			_, err := config.LoadUnchecked(path)
+			require.ErrorIs(t, err, errs.ErrBadConfiguration)
+			require.ErrorContains(t, err, "[daemon].listen_address")
+		})
+	}
+}
+
 func TestLoadDocbankRoot(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()

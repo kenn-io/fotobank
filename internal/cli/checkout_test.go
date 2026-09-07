@@ -206,16 +206,6 @@ func TestCheckoutListAndStatus(t *testing.T) {
 	r.NotZero(code)
 	r.Contains(stderr.String(), "not found")
 
-	// A development daemon can have the same version string but an older
-	// command contract. Do not send it requests under the new contract.
-	record.Metadata["api_protocol"] = "incompatible"
-	_, err = (daemon.RuntimeStore{Dir: dbPath + ".operator"}).Write(record)
-	r.NoError(err)
-	stdout.Reset()
-	stderr.Reset()
-	code = cli.RunContext(t.Context(), []string{"checkout", "list", "--config", cfgPath, "--json"}, &stdout, &stderr)
-	r.NotZero(code)
-	r.Contains(stderr.String(), "start fotobank serve")
 }
 
 func TestCheckoutEstimateAndCreate(t *testing.T) {
@@ -454,7 +444,7 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	r.NoError(database.Close())
 }
 
-func TestCheckoutCommandsRequireRunningServer(t *testing.T) {
+func TestCheckoutCommandsDoNotOpenStorageWhenLaunchFails(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
 	cfgPath := writeBasicConfig(t, tmp)
@@ -470,7 +460,7 @@ func TestCheckoutCommandsRequireRunningServer(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		code := cli.RunContext(t.Context(), append(args, "--config", cfgPath, "--json"), &stdout, &stderr)
 		r.NotZero(code)
-		r.Contains(stderr.String(), "start fotobank serve")
+		r.Contains(stderr.String(), "build fotobank")
 		var failure struct {
 			Error string `json:"error"`
 		}
@@ -481,7 +471,7 @@ func TestCheckoutCommandsRequireRunningServer(t *testing.T) {
 	r.ErrorIs(err, os.ErrNotExist)
 }
 
-func TestCheckoutCreateRejectsAmbiguousWindowsDestinations(t *testing.T) {
+func TestOperatorCommandsRejectAmbiguousWindowsPaths(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows path forms")
 	}
@@ -490,16 +480,19 @@ func TestCheckoutCreateRejectsAmbiguousWindowsDestinations(t *testing.T) {
 	cfgPath := writeBasicConfig(t, tmp)
 	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "new.sqlite"))
 	for _, root := range []string{`\photos`, `/photos`, `D:photos`} {
-		var stdout, stderr bytes.Buffer
-		code := cli.RunContext(t.Context(), []string{
-			"checkout", "create", root, "--all", "--max-bytes", "100", "--config", cfgPath, "--json",
-		}, &stdout, &stderr)
-		r.NotZero(code)
-		var failure struct {
-			Error string `json:"error"`
+		for _, args := range [][]string{
+			{"checkout", "create", root, "--all", "--max-bytes", "100"},
+			{"backup", "create", "--repo", root},
+		} {
+			var stdout, stderr bytes.Buffer
+			code := cli.RunContext(t.Context(), append(args, "--config", cfgPath, "--json"), &stdout, &stderr)
+			r.NotZero(code)
+			var failure struct {
+				Error string `json:"error"`
+			}
+			r.NoError(json.Unmarshal(stdout.Bytes(), &failure))
+			r.Contains(failure.Error, "fully qualified")
 		}
-		r.NoError(json.Unmarshal(stdout.Bytes(), &failure))
-		r.Contains(failure.Error, "fully qualified")
 	}
 }
 

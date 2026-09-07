@@ -80,6 +80,11 @@ Three tiers per domain: **repo → service → transport**.
 - Reuse Docbank's typed-client/API pattern and Kit's daemon discovery,
   endpoints, proof, and lifecycle machinery. Keep Fotobank-specific ownership
   and photo behavior in Fotobank services.
+- Use the shared lifecycle path for explicit start/restart and automatic
+  startup before HTTP commands. Stop/status never launch a daemon. Keep
+  ports and lifecycle budgets configurable; start/restart show the web UI URL.
+- Fotobank has no released API to preserve. Change the single contract in
+  place; do not add protocol-version counters or compatibility fallbacks.
 - Host-operator permissions and photo-user permissions remain distinct. A
   shared OpenAPI contract does not grant ordinary photo users access to host
   paths, whole-deployment backup, or administrative commands.

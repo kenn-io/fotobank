@@ -19,7 +19,7 @@ fotobank backup verify --repo /backups/photos
 
 `create` requires an existing repository; it never initializes a missing one.
 Use `--config /path/to/fotobank.toml` on `create` to select the deployment.
-The CLI does not open a second vault or start the server automatically. If the
+The CLI starts a missing daemon and never opens a second vault. If the
 connection is interrupted, list and verify the repository before retrying:
 the server may already have published the recovery point.
 `init`, `list --repo`, and `verify` work without a Fotobank configuration or

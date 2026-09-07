@@ -33,6 +33,7 @@ type Deps struct {
 	// Operator is set only behind the daemon's local credential check.
 	// Nil keeps these operations documented but denies their execution.
 	Operator *OperatorDeps
+	Daemon   *DaemonDeps
 	// IdentityProvider resolves the caller's Identity from each request.
 	// Left nil for boot-only endpoints (such as /healthz) that do not
 	// require authentication.
@@ -181,6 +182,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	api.OpenAPI().Info.Description = "Fotobank HTTP API"
 	registerHealthz(api)
 	registerOperator(api, deps.Operator)
+	registerDaemon(api, deps.Daemon)
 	registerMe(api, deps.SharingEnabled, deps.AdminPrincipals)
 	registerMediaGeo(api, deps.MediaService, deps.HiddenAuth)
 	registerMedia(api, deps.MediaService)

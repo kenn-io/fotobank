@@ -27,6 +27,7 @@ fotobank checkout status <checkout-uuid> --json
 fotobank checkout estimate --year 2025 --json
 fotobank checkout create /work/photos-2025 --year 2025 --json
 fotobank checkout commit <checkout-uuid> --json
+fotobank daemon status --json
 ```
 
 Do not parse human progress output when a JSON form exists. Commands return zero
@@ -44,12 +45,13 @@ that open that same vault cannot run alongside it. For the configured deployment
 | Operation | Server state |
 | --- | --- |
 | Import or content recovery | Stop the server first; restart after the command finishes. |
-| Every checkout command, or manual backup create | Requires the running server in stub mode, the same OS account, configuration, and application version. |
+| Every checkout command, or manual backup create | Uses the daemon in stub mode and starts it if needed; run under the same OS account and configuration. |
 | Browse or use the HTTP API, scan checkout edits, scheduled backups | Keep the server running. |
 | Backup init, list with `--repo`, verify, or restore to a separate target | Do not need the source vault open. |
 
-Stop the service through the supervisor you use to run it, or interrupt a
-foreground `fotobank serve`, and wait for shutdown to complete. Do not remove
+Use `fotobank daemon stop` and `fotobank daemon start` for background operation.
+For a supervised service, use its supervisor; for a foreground `fotobank serve`,
+interrupt it and wait for shutdown to complete. Do not remove
 lock files or start a second vault owner to work around this limitation. The
 CLI submits every checkout command and manual backup creation to the server.
 Import, content recovery, and GPS backfill still open Docbank separately;

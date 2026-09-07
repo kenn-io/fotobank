@@ -6,10 +6,10 @@ tracked edit.
 
 ## Estimate the copy
 
-Keep `fotobank serve` running for every checkout command. Run these
+Every checkout command uses the daemon, starting it when needed. Run these
 commands on the server host under the same OS account, with the same stub-mode
 configuration and application version. They use the local operator connection,
-not the photo API, and never start a server or open a second vault.
+not the photo listener, and never open a second vault.
 
 Select assets, albums, capture years, or the complete visible library:
 
@@ -104,7 +104,8 @@ renames, or resolve conflicts.
 Commit connects to the running server using local operator authentication. Run
 it under the same OS account, with the same configuration and application
 version as `serve`. This currently requires stub identity mode. The command
-does not start the server or fall back to opening the vault when it is stopped.
+starts a missing daemon before sending its request; it never falls back to
+opening the vault itself.
 
 JSON output contains `checkout_id`, `pending`, `committed`, and `conflicts`, with
 an `error` when work fails. Some entries may commit before another fails; inspect

@@ -6,7 +6,7 @@ Fotobank is one Go binary with two main uses:
 
 - Cobra commands in `internal/cli` provide import, maintenance, administration,
   and server entry points.
-- `fotobank serve` composes the HTTP API, embedded frontend, repositories,
+- `fotobank daemon run` (or `serve`) composes the HTTP API, embedded frontend, repositories,
   services, content and artifact stores, and background workers.
 
 The Svelte application is built into `internal/web/dist` and embedded in the Go
@@ -115,32 +115,53 @@ state there; the CLI opens neither the catalog nor the vault.
 
 ### Local operator commands
 
-In stub identity mode, `serve` also owns a separate ephemeral loopback listener
+The server also owns a separate configurable loopback control listener
 from `internal/operator`. Every checkout command and manual backup creation
 use the typed `internal/client` HTTP client to discover it beside the canonical SQLite path, in
 `<database>.operator/`. Kit publishes a runtime record atomically
 inside a current-user-only directory. A fresh random credential lives in that
 record. The client requires Kit's possession proof before sending the bearer
 credential and accepts only loopback endpoints with a matching service and
-reported application version and API protocol revision. The revision rejects
-older development daemons even when both binaries report `dev`; restart the
-server after updating the CLI. The client does not start a server or open the database
-or vault itself. No record, a stale record, or an incompatible server means the
-operator must start the matching server explicitly.
+reported application version. `internal/client/lifecycle.go` uses Kit's Manager
+and start lock to coordinate automatic or explicit startup, and StartDetached
+to launch the current executable with the same configuration, working directory,
+and canonical database path. Neither discovery nor launch opens the database
+or vault in the client. A different running build version is stopped through
+the authenticated shutdown operation before replacement. Development builds
+with the same version string require explicit restart after rebuilding. There
+is one API contract, with no protocol negotiation or compatibility layer.
+
+`daemon start`, `restart`, `stop`, and `status` live in `internal/cli/daemon.go`.
+Start/status return the shared `DaemonStatus` result; start/restart print its
+web UI URL. The server derives that URL from `http.base_url`, or the actual
+bound web address if unset. The web, control, and metrics ports are configured
+with `http.listen_address`, `daemon.listen_address`, and
+`observability.admin_listen`. See [setup](../guides/setup.md).
+
+Stop/status never launch a process. The stop endpoint acknowledges before
+canceling the server. Every shutdown path closes the operator listener before
+draining the photo listener and workers, so it cannot accept new commands
+during that drain. The client waits for the runtime record to disappear
+after workers, storage, and lifetime locks have closed. Restart then starts
+the replacement. Stop uses `daemon.stop_timeout`; startup/replacement uses
+`daemon.start_timeout`. Timeouts report an error rather than force-killing
+unfinished writes. Background logs live at `<database>.operator/daemon.log`.
 
 The local and photo listeners use the same `httpapi.New` registrations and
 OpenAPI document at `/api/openapi.json`, with documentation at `/api/docs`.
 `internal/httpapi` owns the wire types shared with `internal/client`, following
-Docbank's typed-client pattern. Kit owns runtime records, endpoints and proof;
+Docbank's typed-client pattern. Kit owns runtime records, endpoints, proof,
+process identity, launch locking, and detached startup;
 Fotobank owns authorization and application services. There is no separate
 operator-only schema. The local listener requires its credential before any
-API request. Only it receives `OperatorDeps`; the photo listener rejects
+API request. Only it receives `OperatorDeps` and `DaemonDeps`; the photo listener rejects
 operator operations even for an authenticated photo owner. The shared schema
 marks these operations with the `localOperator` bearer requirement.
 
 The migrated command/API pairs are below (paths start with
 `/api/v1/operator`). List and status take `hub` and `user_id` query parameters;
-the other operations take the configured principal in their JSON body.
+photo operations take the configured principal in their JSON body. Lifecycle
+operations use the host credential without a photo principal.
 
 | CLI command | HTTP operation |
 | --- | --- |
@@ -150,6 +171,11 @@ the other operations take the configured principal in their JSON body.
 | `checkout create <root>` | `POST /checkouts` |
 | `checkout commit <id>` | `POST /checkouts/{id}/commit` |
 | `backup create` | `POST /backups` |
+| `daemon status` | `GET /daemon` |
+| `daemon stop` | `POST /daemon/stop`, then wait for cleanup |
+
+Start launches the process locally when needed; restart combines stop and
+start. They are process lifecycle operations, not alternate data paths.
 
 `POST /api/v1/operator/checkouts/{id}/commit` accepts the configured hub
 and user ID, checks them against the server's stub owner, and calls the existing
@@ -160,7 +186,8 @@ prefixes relative destinations with its working directory without cleaning
 symlink-sensitive `..` components. `CheckoutService.CreateAt` binds and validates
 the destination through the server's content adapter before materialization.
 Only authenticated local operators can request host-file creation, not photo users.
-Header identity mode does not start this interface.
+Header identity mode exposes only lifecycle operations on the local control
+interface; it does not grant photo-management permissions through that interface.
 
 `POST /api/v1/operator/backups` checks the same configured stub principal and invokes
 `BackupService.Create` with an absolute repository path and optional tag. It
@@ -184,7 +211,8 @@ checkout ID once reserved, including on failure. Failure records an errored
 checkout without deleting partial working files; an interrupted process is
 reconciled by the next creation under the existing creation lock. Creation is
 not automatically retried. Shutdown cancels operator requests,
-removes discovery, stops accepting work, and joins handlers before storage closes.
+stops accepting work, and joins handlers before storage closes. Discovery is
+removed only after all storage and lifetime-lock cleanup has completed.
 
 The daemon-only command boundary is not yet complete. Import, content recovery,
 and GPS backfill still open Docbank directly. Albums, shares, owners,

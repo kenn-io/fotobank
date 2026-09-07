@@ -9,10 +9,6 @@ import (
 	"go.kenn.io/fotobank/internal/service"
 )
 
-// OperatorProtocolVersion changes when a development daemon can no longer
-// serve the current client contract. Binary version strings can both be dev.
-const OperatorProtocolVersion = "1"
-
 // OperatorDeps is supplied only to the listener that verifies the local
 // operator credential. The photo listener publishes the same contract but
 // cannot execute operator operations, even for the configured photo owner.

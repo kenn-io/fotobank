@@ -21,41 +21,55 @@ import (
 
 const serviceName = "fotobank-operator"
 
-// Start serves only the configured owner. The caller already holds the server
-// lifetime lock. close must finish before its services or vault are closed.
-func Start(ctx context.Context, dbPath, version string, deps httpapi.Deps) (stop func(), fatal <-chan error, err error) {
+type Server struct {
+	Close        func()
+	RemoveRecord func()
+	Fatal        <-chan error
+}
+
+// Start serves host lifecycle and configured photo-owner operations. The caller
+// holds the server lifetime lock. Close must precede storage cleanup, and
+// RemoveRecord must follow storage and lifetime-lock cleanup.
+func Start(ctx context.Context, dbPath, version, address, webURL string, shutdown func(), deps httpapi.Deps) (*Server, error) {
 	store := daemon.RuntimeStore{Dir: dbPath + ".operator"}
 	if err := store.CheckWritable(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	ln, err := (daemon.Endpoint{Network: daemon.NetworkTCP, Address: "127.0.0.1:0"}).Listen()
+	if err := daemon.RequireLoopback(address); err != nil {
+		return nil, err
+	}
+	ln, err := (daemon.Endpoint{Network: daemon.NetworkTCP, Address: address}).Listen()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	token := make([]byte, 32)
 	if _, err := rand.Read(token); err != nil {
 		_ = ln.Close()
-		return nil, nil, err
+		return nil, err
 	}
 	credential := hex.EncodeToString(token)
 	rec := daemon.NewRuntimeRecord(serviceName, version, daemon.Endpoint{Network: daemon.NetworkTCP, Address: ln.Addr().String()})
 	// Kit atomically publishes the record inside a current-user-only directory.
 	// The credential is never sent until the peer proves possession of it.
-	rec.Metadata = map[string]string{"token": credential, "api_protocol": httpapi.OperatorProtocolVersion}
+	rec.Metadata = map[string]string{"token": credential, "web_url": webURL}
+	deps.Daemon = &httpapi.DaemonDeps{
+		Status:   httpapi.DaemonStatus{Running: true, PID: rec.PID, Version: version, Address: rec.Address, WebURL: webURL, StartedAt: &rec.StartedAt},
+		Shutdown: shutdown,
+	}
 	proof, err := daemon.NewProof([]byte(credential))
 	if err != nil {
 		_ = ln.Close()
-		return nil, nil, err
+		return nil, err
 	}
 	ping, err := proof.NewPingHandler(rec)
 	if err != nil {
 		_ = ln.Close()
-		return nil, nil, err
+		return nil, err
 	}
 	handler, err := httpapi.New(deps)
 	if err != nil {
 		_ = ln.Close()
-		return nil, nil, err
+		return nil, err
 	}
 	requests, cancel := context.WithCancel(ctx)
 	var handlers sync.WaitGroup
@@ -90,7 +104,7 @@ func Start(ctx context.Context, dbPath, version string, deps httpapi.Deps) (stop
 	if err != nil {
 		cancel()
 		_ = ln.Close()
-		return nil, nil, err
+		return nil, err
 	}
 	failures := make(chan error, 1)
 	done := make(chan struct{})
@@ -100,14 +114,13 @@ func Start(ctx context.Context, dbPath, version string, deps httpapi.Deps) (stop
 			failures <- fmt.Errorf("operator listener: %w", err)
 		}
 	}()
-	return sync.OnceFunc(func() {
+	return &Server{Close: sync.OnceFunc(func() {
 		gate.Lock()
 		closing = true
 		gate.Unlock()
-		_ = os.Remove(runtimePath)
 		cancel()
 		_ = srv.Close()
 		<-done
 		handlers.Wait()
-	}), failures, nil
+	}), RemoveRecord: sync.OnceFunc(func() { _ = os.Remove(runtimePath) }), Fatal: failures}, nil
 }

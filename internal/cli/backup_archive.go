@@ -12,6 +12,7 @@ import (
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/httpapi"
+	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/version"
 )
 
@@ -59,16 +60,17 @@ func newBackupCreateCmd() *cobra.Command {
 				return errors.New("--repo is required; initialize it with backup init first")
 			}
 			cfgPath, _ := cmd.Flags().GetString("config")
-			databasePath, owner, err := localOperatorConfig(cfgPath)
-			var absoluteRepository string
-			if err == nil {
-				absoluteRepository, err = localOperatorPath(repositoryPath)
-			}
+			absoluteRepository, err := localOperatorPath(repositoryPath)
 			var snapshot content.BackupSnapshot
 			if err == nil {
-				snapshot, err = client.CreateBackup(cmd.Context(), databasePath, version.Short, httpapi.BackupRequest{
-					Hub: owner.Hub, UserID: owner.UserID, Repository: absoluteRepository, Tag: tag,
-				})
+				var databasePath string
+				var owner owners.Principal
+				databasePath, owner, err = localOperatorConfig(cmd.Context(), cfgPath)
+				if err == nil {
+					snapshot, err = client.CreateBackup(cmd.Context(), databasePath, version.Short, httpapi.BackupRequest{
+						Hub: owner.Hub, UserID: owner.UserID, Repository: absoluteRepository, Tag: tag,
+					})
+				}
 			}
 			if err != nil {
 				if asJSON {
