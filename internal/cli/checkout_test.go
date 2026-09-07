@@ -259,22 +259,37 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(root, "undated", item.ID, "IMG_0100.JPG"))
 	r.NoError(err)
 	r.Equal(body, got)
-	t.Run("relative symlink parent", func(t *testing.T) {
+	t.Run("relative symlink", func(t *testing.T) {
 		check := require.New(t)
 		target := filepath.Join(tmp, "target")
 		check.NoError(os.MkdirAll(filepath.Join(target, "child"), 0o700))
-		check.NoError(os.Mkdir(filepath.Join(target, "working"), 0o700))
+		check.NoError(os.Mkdir(filepath.Join(target, "child", "working"), 0o700))
 		if err := os.Symlink(filepath.Join(target, "child"), filepath.Join(tmp, "shortcut")); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
 		var output, errors bytes.Buffer
 		code := cli.RunContext(t.Context(), []string{
-			"checkout", "create", "--config", cfgPath, "--asset", item.ID, "shortcut/../working", "--json",
+			"checkout", "create", "--config", cfgPath, "--asset", item.ID, "shortcut/working", "--json",
 		}, &output, &errors)
 		check.Zero(code, "stderr=%s", errors.String())
-		copied, err := os.ReadFile(filepath.Join(target, "working", "undated", item.ID, "IMG_0100.JPG"))
+		copied, err := os.ReadFile(filepath.Join(target, "child", "working", "undated", item.ID, "IMG_0100.JPG"))
 		check.NoError(err)
 		check.Equal(body, copied)
+		t.Run("Unix symlink parent", func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				t.Skip("Windows cleans parent components before following symlinks")
+			}
+			check := require.New(t)
+			check.NoError(os.Mkdir(filepath.Join(target, "working"), 0o700))
+			var output, errors bytes.Buffer
+			code := cli.RunContext(t.Context(), []string{
+				"checkout", "create", "--config", cfgPath, "--asset", item.ID, "shortcut/../working", "--json",
+			}, &output, &errors)
+			check.Zero(code, "stderr=%s", errors.String())
+			copied, err := os.ReadFile(filepath.Join(target, "working", "undated", item.ID, "IMG_0100.JPG"))
+			check.NoError(err)
+			check.Equal(body, copied)
+		})
 	})
 	for _, rejectedRoot := range []string{root, filepath.Join(tmp, "nas"), filepath.Join(tmp, "flash", "docbank")} {
 		stdout.Reset()
