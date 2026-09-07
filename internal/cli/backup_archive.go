@@ -10,6 +10,8 @@ import (
 	"go.kenn.io/fotobank/internal/backup"
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/operator"
+	"go.kenn.io/fotobank/internal/version"
 )
 
 func newBackupInitCmd() *cobra.Command {
@@ -46,49 +48,33 @@ func newBackupCreateCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use: "create", Short: "Back up the catalog and Docbank media together",
-		Long: "Create a complete recovery archive in an initialized repository. Stop the Fotobank server first so this command can own the embedded vault. Includes hidden media and all owners. Configuration, credentials, caches, and writable checkout files are not captured.",
+		Long: "Create a complete recovery archive through the running Fotobank server. Use the same OS account, stub-mode configuration, and application version. Includes hidden media and all owners. Configuration files, provider credentials, caches, and writable checkout files are not captured; catalog settings and authentication hashes are preserved.",
 		Args: usageArgs(cobra.NoArgs),
-		RunE: func(cmd *cobra.Command, _ []string) (retErr error) {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if tag == backup.ScheduledTag {
 				return errors.New("this tag is reserved for scheduled recovery points")
 			}
 			if repositoryPath == "" {
 				return errors.New("--repo is required; initialize it with backup init first")
 			}
-			repository, err := content.OpenBackupRepository(repositoryPath)
-			if err != nil {
-				return err
-			}
 			cfgPath, _ := cmd.Flags().GetString("config")
-			if cfgPath == "" {
-				cfgPath = config.DefaultConfigPath()
+			databasePath, owner, err := localOperatorConfig(cfgPath)
+			var absoluteRepository string
+			if err == nil {
+				absoluteRepository, err = localOperatorPath(repositoryPath)
 			}
-			cfg, err := config.LoadUnchecked(cfgPath)
+			var snapshot content.BackupSnapshot
+			if err == nil {
+				snapshot, err = operator.CreateBackup(cmd.Context(), databasePath, version.Short, operator.BackupRequest{
+					Hub: owner.Hub, UserID: owner.UserID, Repository: absoluteRepository, Tag: tag,
+				})
+			}
 			if err != nil {
-				return err
-			}
-			if err := cfg.ValidateWithOptions(config.ValidationOptions{AllowUnavailableNAS: true}); err != nil {
-				return err
-			}
-			if err := content.InspectVault(cfg.Docbank.Root); err != nil {
-				return fmt.Errorf("inspect existing archive source: %w", err)
-			}
-			databasePath, err := resolveDBPath(cfg)
-			if err != nil {
-				return err
-			}
-			lifetime, err := acquireDatabaseLifetime(databasePath)
-			if err != nil {
-				return err
-			}
-			defer func() { retErr = errors.Join(retErr, lifetime.Close()) }()
-			vault, err := content.Open(cmd.Context(), contentAdapterConfig(cfg, true))
-			if err != nil {
-				return fmt.Errorf("open archive source (stop the server first): %w", err)
-			}
-			defer func() { retErr = errors.Join(retErr, vault.Close()) }()
-			snapshot, err := backup.CreateArchive(cmd.Context(), lifetime.path, vault, repository, tag)
-			if err != nil {
+				if asJSON {
+					return errors.Join(err, json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
+						Error string `json:"error"`
+					}{err.Error()}))
+				}
 				return err
 			}
 			if asJSON {

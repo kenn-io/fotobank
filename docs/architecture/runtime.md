@@ -104,19 +104,21 @@ stops incoming requests and workers before closing storage and database
 resources. The content adapter translates errors that happen during streaming,
 not only errors returned while opening a reader.
 
-Docbank holds an exclusive vault lock for that lifetime. Standalone import,
-content recovery, and manual archive creation
-also open the vault, so the server must be stopped before those commands run.
+Docbank holds an exclusive vault lock for that lifetime. Standalone import and
+content recovery also open the vault, so the server must be stopped before
+those commands run.
 The CLI does not forward those operations to the server. Checkout creation,
-commits, scheduled archives and checkout scanning reuse the server's adapter.
+commits, manual and scheduled archives, and checkout scanning reuse the server's
+adapter.
 Checkout list and status omit the adapter and can run alongside the server, although their CLI
 startup still opens the normal database and ensures the configured owner.
 
 ### Local operator commands
 
 In stub identity mode, `serve` also owns a separate ephemeral loopback listener
-from `internal/operator`. Checkout estimate, create, and commit discover it beside the canonical
-SQLite path, in `<database>.operator/`. Kit publishes a runtime record atomically
+from `internal/operator`. Checkout estimate, create, commit, and manual backup
+creation discover it beside the canonical SQLite path, in
+`<database>.operator/`. Kit publishes a runtime record atomically
 inside a current-user-only directory. A fresh random credential lives in that
 record. The client requires Kit's possession proof before sending the bearer
 credential and accepts only loopback endpoints with a matching service and
@@ -137,7 +139,18 @@ the destination through the server's content adapter before materialization.
 Only authenticated local operators can request host-file creation, not photo users.
 Header identity mode does not start this interface.
 
-The command returns pending, committed, and conflict counts plus an optional
+`POST /backups` checks the same configured stub principal and invokes
+`BackupService.Create` with an absolute repository path and optional tag. It
+captures all owners and hidden media, not just the configured owner's photos.
+Only initialized repositories are accepted, and the scheduler's reserved tag
+is rejected by the service. Relative CLI repository paths are made absolute
+without cleaning symlink-sensitive parent components. Successful
+`backup create --json` output remains the snapshot itself. Failures exit nonzero; connection
+loss is not retried automatically because the archive may already be published.
+List and verify the repository before retrying. Request cancellation reaches
+archive capture, and shutdown joins the handler before closing the vault.
+
+Checkout commit returns pending, committed, and conflict counts plus an optional
 error. An operation may finish some entries before failing; its result retains
 those counts and the CLI exits nonzero. Connection loss is not automatically
 retried: the operator checks saved status before retrying. Existing exact-version

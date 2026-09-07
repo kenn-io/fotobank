@@ -6,8 +6,9 @@ schedule in the running server. Scheduling is disabled by default.
 
 ## Create a complete archive
 
-Initialize a separate repository once, then stop the server before capturing
-the archive. The command needs to own the embedded Docbank vault:
+Initialize a separate repository once, then capture the archive through the
+running server. Run the CLI as the server's OS account, using the same
+configuration and Fotobank version in stub identity mode:
 
 ```sh
 fotobank backup init --repo /backups/photos
@@ -18,6 +19,9 @@ fotobank backup verify --repo /backups/photos
 
 `create` requires an existing repository; it never initializes a missing one.
 Use `--config /path/to/fotobank.toml` on `create` to select the deployment.
+The CLI does not open a second vault or start the server automatically. If the
+connection is interrupted, list and verify the repository before retrying:
+the server may already have published the recovery point.
 `init`, `list --repo`, and `verify` work without a Fotobank configuration or
 source vault. Each command supports `--json`. Verification selects the latest
 recovery point by default; pass its ID or `--all` to select older points.

@@ -643,7 +643,8 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 			checkout.NewRepo(d.WriteDB(), d.ReadDB()), contentResolver,
 			contentStore, dbPath+".checkout.lock", places)
 		closeOperator, fatal, err := operator.Start(sigCtx, dbPath, version.Short,
-			owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}, checkoutService)
+			owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}, checkoutService,
+			service.NewBackupService(owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}, dbPath, contentStore))
 		if err != nil {
 			return fmt.Errorf("start operator interface: %w", err)
 		}
