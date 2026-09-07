@@ -43,7 +43,7 @@ type commitInput struct {
 
 // Start serves only the configured owner. The caller already holds the server
 // lifetime lock. close must finish before its services or vault are closed.
-func Start(ctx context.Context, dbPath, version string, owner owners.Principal, checkouts *service.CheckoutService) (stop func(), fatal <-chan error, err error) {
+func Start(ctx context.Context, dbPath, version string, owner owners.Principal, checkouts *service.CheckoutService, backups *service.BackupService) (stop func(), fatal <-chan error, err error) {
 	store := daemon.RuntimeStore{Dir: dbPath + ".operator"}
 	if err := store.CheckWritable(); err != nil {
 		return nil, nil, err
@@ -75,6 +75,7 @@ func Start(ctx context.Context, dbPath, version string, owner owners.Principal, 
 	mux := http.NewServeMux()
 	api := humago.New(mux, huma.DefaultConfig("Fotobank operator API", version))
 	registerCheckouts(api, owner, checkouts)
+	registerBackups(api, backups)
 	huma.Register(api, huma.Operation{
 		OperationID: "commit-checkout", Method: http.MethodPost,
 		Path: "/checkouts/{id}/commit", Summary: "Commit settled tracked edits",

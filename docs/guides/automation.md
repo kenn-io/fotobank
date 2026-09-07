@@ -18,6 +18,7 @@ Use `--json` where the command provides it, including:
 
 ```sh
 fotobank content recover --json
+fotobank backup create --repo /backups/photos --json
 fotobank backup list --repo /backups/photos --json
 fotobank backup verify --repo /backups/photos --all --json
 fotobank backup restore --repo /backups/photos --target /recovery/photos --json
@@ -44,8 +45,8 @@ that open that same vault cannot run alongside it. For the configured deployment
 
 | Operation | Server state |
 | --- | --- |
-| Import, content recovery, manual backup create | Stop the server first; restart after the command finishes. |
-| Checkout estimate, create, or commit | Requires the running server, the same OS account, configuration, and application version. |
+| Import or content recovery | Stop the server first; restart after the command finishes. |
+| Checkout estimate, create, commit, or manual backup create | Requires the running server in stub mode, the same OS account, configuration, and application version. |
 | Browse or use the HTTP API, scan checkout edits, scheduled backups | Keep the server running. |
 | Checkout list or status | May run alongside the server; these do not open Docbank. |
 | Backup init, list with `--repo`, verify, or restore to a separate target | Do not need the source vault open. |
@@ -53,8 +54,8 @@ that open that same vault cannot run alongside it. For the configured deployment
 Stop the service through the supervisor you use to run it, or interrupt a
 foreground `fotobank serve`, and wait for shutdown to complete. Do not remove
 lock files or start a second vault owner to work around this limitation. The
-CLI submits checkout estimates, creation, and tracked commits to the server; other vault-writing commands
-still run offline.
+CLI submits checkout estimates, creation, tracked commits, and manual backups
+to the server; import and content recovery still run offline.
 
 For tracked edits: keep the server running to create the checkout, edit and
 settle files, inspect `checkout status --json`, then explicitly
@@ -74,8 +75,9 @@ commit with the server still running. See
 
 For routine backups, initialize a repository and enable the server's
 [archive schedule](backup.md#enable-scheduled-archives). Manual
-`fotobank backup create --repo /backups/photos --json` requires the server to
-be stopped so the command can own the vault. Manual archives remain outside
+`fotobank backup create --repo /backups/photos --json` uses the running server's
+vault and captures all owners, including hidden media. After a lost connection,
+list and verify the repository before retrying. Manual archives remain outside
 scheduled retention; `fotobank:scheduled` is reserved for the server.
 
 The HTTP API and CLI share application services, but not every command has a

@@ -20,7 +20,7 @@ import (
 func Commit(ctx context.Context, dbPath, version, checkoutID string, owner owners.Principal) (CommitResult, error) {
 	out := CommitResult{CheckoutID: checkoutID}
 	err := call(ctx, dbPath, version, "/checkouts/"+url.PathEscape(checkoutID)+"/commit",
-		map[string]string{"hub": owner.Hub, "user_id": owner.UserID}, &out)
+		map[string]string{"hub": owner.Hub, "user_id": owner.UserID}, &out, "inspect checkout list/status before retrying")
 	if err == nil && out.Error != "" {
 		err = errors.New(out.Error)
 	}
@@ -29,7 +29,7 @@ func Commit(ctx context.Context, dbPath, version, checkoutID string, owner owner
 
 // call proves the peer before sending a command. Requests are never retried:
 // a lost response may follow a successful mutation.
-func call(ctx context.Context, dbPath, version, path string, input, output any) error {
+func call(ctx context.Context, dbPath, version, path string, input, output any, recoveryHint string) error {
 	store := daemon.RuntimeStore{Dir: dbPath + ".operator"}
 	if _, err := os.Stat(store.Dir); err != nil {
 		return fmt.Errorf("start fotobank serve with the same configuration before running this command: %w", err)
@@ -66,7 +66,7 @@ func call(ctx context.Context, dbPath, version, path string, input, output any) 
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		response, err := client.Do(req)
 		if err != nil {
-			return fmt.Errorf("operator response unavailable; inspect checkout list/status before retrying: %w", err)
+			return fmt.Errorf("operator response unavailable; %s: %w", recoveryHint, err)
 		}
 		defer response.Body.Close()
 		if response.StatusCode != http.StatusOK {
@@ -74,7 +74,7 @@ func call(ctx context.Context, dbPath, version, path string, input, output any) 
 			return fmt.Errorf("operator command returned %s: %s", response.Status, body)
 		}
 		if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(output); err != nil {
-			return fmt.Errorf("read operator result; inspect checkout list/status before retrying: %w", err)
+			return fmt.Errorf("read operator result; %s: %w", recoveryHint, err)
 		}
 		return nil
 	}

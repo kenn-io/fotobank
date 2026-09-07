@@ -93,7 +93,7 @@ against adversarial source-tree replacement. Do flag direct symlink following,
 managed-storage overlap, or ordinary source changes that can bypass content
 identity validation under the stated trusted-local-source model.
 
-## Local checkout trust boundary
+## Local operator trust boundary
 
 Checkout estimate, creation, and tracked commits use a separate loopback operator listener in the
 existing server. Its private runtime directory and bearer credential belong to
@@ -106,6 +106,15 @@ retaining the existing storage-boundary and no-overwrite rules. Do flag unauthen
 photo-API access to this capability. Do not treat an operator who already owns
 the vault and credential as an untrusted remote user. Remote administration and
 header-mode operator commands are not supported.
+
+Manual backup creation uses this same authenticated listener. The configured
+stub principal authorizes whole-deployment capture, including every owner's
+files and hidden media; it is not a photo-user permission. The request supplies
+an absolute initialized repository path and optional tag. The service rejects
+the scheduler's reserved tag. Repository paths and their parents are controlled
+by the trusted host operator, just as for scheduled archives. Do flag access
+without the local credential or configured principal, not the intended ability
+of that operator to back up all deployment data.
 
 The operator who invokes checkout creation is trusted. The checkout root and
 the parent directories of the checkout, Docbank, NAS, and flash roots must

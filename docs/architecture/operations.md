@@ -66,11 +66,14 @@ a separate connection without running Fotobank migrations and captures live
 WAL state with `VACUUM INTO`. The temporary snapshot remains
 until archive creation returns, then is removed. Content already referenced by
 that catalog exists before Docbank pins its state; later content appends do not
-invalidate the recovery point. The CLI holds the shared database lifetime lock
-and owns the embedded vault for the operation, so `backup create` requires the
-server to be stopped. The server's scheduled worker calls the same operation
-with its existing vault and catalog path, so scheduled capture runs while the
-server remains available.
+invalidate the recovery point. Manual `backup create` calls
+`BackupService.Create` through the running server's authenticated local operator
+interface. The service checks the configured stub principal and captures the
+whole deployment using the server's existing vault and catalog path; the CLI
+opens neither SQLite nor Docbank. This is a trusted host-operator capability,
+not an owner-scoped photo API. The scheduled worker calls the same archive
+operation independently. Both paths retain the existing repository locking and
+short mutation freeze, so capture runs while the server remains available.
 
 Scheduling is opt-in through `[backup].enabled`, which defaults to false. When
 enabled, `backup.repository` must explicitly name an initialized repository

@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -188,7 +186,7 @@ func runCheckoutEstimate(
 	asJSON bool,
 	stdout io.Writer,
 ) error {
-	dbPath, owner, err := checkoutOperatorConfig(configPath)
+	dbPath, owner, err := localOperatorConfig(configPath)
 	var result operator.EstimateResult
 	if err == nil {
 		result, err = operator.Estimate(ctx, dbPath, version.Short, operator.EstimateRequest{
@@ -217,19 +215,9 @@ func runCheckoutCreate(
 	asJSON bool,
 	stdout io.Writer,
 ) error {
-	dbPath, owner, err := checkoutOperatorConfig(configPath)
-	// Preserve symlink/.. semantics for server-side canonicalization. Abs/Join
-	// would clean the path before the server resolves symlinks.
-	if err == nil && !filepath.IsAbs(root) {
-		if filepath.VolumeName(root) != "" || (os.PathSeparator == '\\' && len(root) > 0 && os.IsPathSeparator(root[0])) {
-			err = fmt.Errorf("checkout destination must be a fully qualified path or relative to the working directory")
-		} else {
-			var cwd string
-			cwd, err = os.Getwd()
-			if err == nil {
-				root = cwd + string(os.PathSeparator) + root
-			}
-		}
+	dbPath, owner, err := localOperatorConfig(configPath)
+	if err == nil {
+		root, err = localOperatorPath(root)
 	}
 	result := operator.CreateResult{Root: root}
 	if err == nil {
@@ -251,21 +239,6 @@ func runCheckoutCreate(
 	return errors.Join(err, outputErr)
 }
 
-func checkoutOperatorConfig(configPath string) (string, owners.Principal, error) {
-	if configPath == "" {
-		configPath = config.DefaultConfigPath()
-	}
-	cfg, err := config.LoadUnchecked(configPath)
-	if err != nil {
-		return "", owners.Principal{}, err
-	}
-	if cfg.Identity.Mode != "stub" {
-		return "", owners.Principal{}, fmt.Errorf("fotobank checkout requires identity.mode = stub")
-	}
-	dbPath, err := resolveDBPath(cfg)
-	return dbPath, owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}, err
-}
-
 func runCheckoutCommit(
 	ctx context.Context,
 	configPath string,
@@ -273,7 +246,7 @@ func runCheckoutCommit(
 	jsonOutput bool,
 	stdout io.Writer,
 ) error {
-	dbPath, owner, err := checkoutOperatorConfig(configPath)
+	dbPath, owner, err := localOperatorConfig(configPath)
 	if err != nil {
 		return err
 	}

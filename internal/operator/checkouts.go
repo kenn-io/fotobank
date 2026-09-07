@@ -83,7 +83,7 @@ func registerCheckouts(api huma.API, owner owners.Principal, checkouts *service.
 
 func Estimate(ctx context.Context, dbPath, version string, request EstimateRequest) (EstimateResult, error) {
 	var out EstimateResult
-	err := call(ctx, dbPath, version, "/checkouts/estimate", request, &out)
+	err := call(ctx, dbPath, version, "/checkouts/estimate", request, &out, "retry the estimate")
 	if err == nil && out.Error != "" {
 		err = errors.New(out.Error)
 	}
@@ -92,7 +92,7 @@ func Estimate(ctx context.Context, dbPath, version string, request EstimateReque
 
 func Create(ctx context.Context, dbPath, version string, request CreateRequest) (CreateResult, error) {
 	out := CreateResult{Root: request.Root}
-	err := call(ctx, dbPath, version, "/checkouts", request, &out)
+	err := call(ctx, dbPath, version, "/checkouts", request, &out, "inspect checkout list/status before retrying")
 	if err == nil && out.Error != "" {
 		err = errors.New(out.Error)
 	}
