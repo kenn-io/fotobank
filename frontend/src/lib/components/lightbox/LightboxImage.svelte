@@ -145,7 +145,6 @@
 </script>
 
 <div class="lb-image-container" bind:this={container}>
-  <!-- svelte-ignore a11y_img_redundant_alt -->
   <img
     bind:this={imgEl}
     {src}

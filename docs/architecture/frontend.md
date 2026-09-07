@@ -95,7 +95,19 @@ includes a screenshot of the implemented result using synthetic data.
 
 ## Tests
 
-- `make frontend-check` runs type checking and frontend unit tests.
+- `make frontend-check` installs locked dependencies and runs ESLint, the
+  advisory kit-ui checker, Svelte/TypeScript checks, and frontend unit tests.
+- The CI web-application job runs those checks and `make frontend`, building
+  production assets from source and copying them into the Go embed directory.
+  Its Node pin matches `mise.toml`; Bun reads its pin from
+  `frontend/package.json`. Like the other Linux jobs, same-repository changes
+  use the trusted runner; fork changes use GitHub-hosted runners.
+- `frontend/eslint.config.js` applies recommended JavaScript, TypeScript, and
+  Svelte rules to hand-written code, including rune modules. Generated API
+  types and build/test output are excluded from lint (generated types still
+  participate in type checking). Documented exceptions allow non-reactive
+  collections, text-only unkeyed lists, and permissive test payloads; lint does
+  not require unrelated component refactoring.
 - Route tests use synthetic API data and exercise state and accessibility
   behavior.
 - Playwright tests run against `cmd/e2e-server`, which builds a self-contained

@@ -37,8 +37,6 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="lb-backdrop"
   class:fallback={mode === "fallback"}
@@ -47,8 +45,6 @@
   role="presentation"
   onclick={onClick}
 >
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="lb-stage" role="presentation" onclick={onClick}>
     {@render children()}
   </div>

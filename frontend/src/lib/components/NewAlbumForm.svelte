@@ -41,7 +41,6 @@
 
 <form onsubmit={submit} class="new-album-form">
   <label for="new-album-name">Name</label>
-  <!-- svelte-ignore a11y_autofocus -->
   <TextInput
     id="new-album-name"
     value={name}

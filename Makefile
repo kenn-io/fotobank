@@ -46,7 +46,7 @@ ensure-embed-dir: ## Ensure internal/web/dist has at least a stub
 # Preserves tracked placeholders (.gitignore, .gitkeep, stub.html) so a
 # fresh checkout still has them after a build.
 frontend: ## Build the SPA into internal/web/dist
-	cd frontend && bun install && bun run build
+	cd frontend && bun install --frozen-lockfile && bun run build
 	mkdir -p internal/web/dist
 	find internal/web/dist -mindepth 1 \
 		! -name .gitignore ! -name .gitkeep ! -name stub.html \
@@ -58,9 +58,8 @@ frontend-dev: ## Run vite dev server (use with `make dev`)
 	./scripts/frontend-dev.sh $(ARGS)
 
 # Lint + typecheck + unit-test the frontend.
-# TODO: re-enable lint once eslint config lands (Task 5 deferred it).
 frontend-check: ## Lint + typecheck + unit-test the frontend
-	cd frontend && bun install && bun run check:kit-ui && bun run typecheck && bun run test
+	cd frontend && bun install --frozen-lockfile && bun run lint && bun run check:kit-ui && bun run typecheck && bun run test
 
 # Install air for backend live reload.
 air-install: ## go install github.com/air-verse/air@latest

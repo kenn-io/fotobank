@@ -92,10 +92,8 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="modal-backdrop" role="presentation" onclick={() => { if (!pending) onClose(); }}>
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal" role="dialog" aria-modal="true" aria-label="Add to album" tabindex="-1" onclick={(e) => e.stopPropagation()}>
     <h2>Add to album</h2>
     <div class="subtitle">{subtitle}</div>

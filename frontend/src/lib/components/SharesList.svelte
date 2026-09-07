@@ -67,16 +67,12 @@
     {#each scopes as s (s.uuid)}
       <!-- Row click opens detail. The actions cell stops propagation so
            clicking Revoke/Retry doesn't also fire the row open. -->
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <tr onclick={() => onOpen(s.uuid)}>
         <td>{labelText(s)}</td>
         <td><span class="type">{s.target_type === "media_set" ? "Photos" : "Album"}</span></td>
         <td class="mono">{granteeText(s)}</td>
         <td><ShareStatePill scope={s} /></td>
         <td title={s.created_at}>{fmtRelative(s.created_at)}</td>
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
         <td class="actions-col" onclick={(e) => e.stopPropagation()}>
           {#if canRetry(s)}
             <button type="button" onclick={() => onRetry(s.uuid)}>Retry</button>
