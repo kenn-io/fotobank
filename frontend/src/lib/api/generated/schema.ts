@@ -676,6 +676,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/gps/backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh photo coordinates or place names
+         * @description Host operators may target one owner or all owners. Without an explicit scope, uses the configured stub owner. Returns partial counts and per-photo failures; an error means the run did not fully succeed.
+         */
+        post: operations["backfill-gps"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operator/imports": {
         parameters: {
             query?: never;
@@ -1569,6 +1589,50 @@ export interface components {
             sha256: string;
             /** Format: int64 */
             size: number;
+        };
+        GPSBackfillRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/GPSBackfillRequest.json
+             */
+            readonly $schema?: string;
+            all_owners?: boolean;
+            /**
+             * @default full
+             * @enum {string}
+             */
+            mode: "full" | "fill-missing" | "relabel";
+            /** @description Host-admin target in hub:user form; mutually exclusive with all_owners. */
+            owner?: string;
+            /**
+             * Format: date-time
+             * @description Only photos imported at or after this timestamp.
+             */
+            since?: string;
+        };
+        GPSBackfillResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/GPSBackfillResult.json
+             */
+            readonly $schema?: string;
+            error?: string;
+            /** Format: int64 */
+            failed: number;
+            failures: components["schemas"]["GPSFailure"][] | null;
+            /** Format: int64 */
+            processed: number;
+            /** Format: int64 */
+            unchanged: number;
+            /** Format: int64 */
+            updated: number;
+        };
+        GPSFailure: {
+            error: string;
+            id: string;
+            owner: components["schemas"]["Principal"];
         };
         Health: {
             /**
@@ -3695,6 +3759,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "backfill-gps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GPSBackfillRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GPSBackfillResult"];
+                };
             };
             /** @description Error */
             default: {

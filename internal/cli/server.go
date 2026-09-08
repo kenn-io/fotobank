@@ -644,15 +644,20 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	defer ln.Close()
 	var operatorFatal <-chan error
 	operatorDeps := apiDeps
+	gpsPlaces, err := geo.NewNaturalEarth()
+	if err != nil {
+		return fmt.Errorf("load GPS gazetteer: %w", err)
+	}
+	operatorDeps.GPSOperator = &httpapi.GPSOperatorDeps{
+		Service: service.NewGPSService(d.DB, contentStore, contentResolver, gpsPlaces),
+	}
 	if cfg.Identity.Mode == "stub" {
-		places, err := geo.NewNaturalEarth()
-		if err != nil {
-			return fmt.Errorf("load checkout geocoder: %w", err)
-		}
+		places := gpsPlaces
 		checkoutService := service.NewCheckoutService(
 			checkout.NewRepo(d.WriteDB(), d.ReadDB()), contentResolver,
 			contentStore, dbPath+".checkout.lock", places)
 		operatorOwner := owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
+		operatorDeps.GPSOperator.DefaultOwner = &operatorOwner
 		importLockPath := cfg.Imports.FileLockPath
 		if importLockPath == "" {
 			importLockPath = filepath.Join(cfg.Flash.Root, ".fotobank", "import.lock")

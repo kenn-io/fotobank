@@ -3,7 +3,10 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	json "encoding/json/v2"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +18,7 @@ import (
 
 	"go.kenn.io/fotobank/internal/cli"
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil"
@@ -22,7 +26,7 @@ import (
 )
 
 // runGPS invokes the gps subcommand and returns (exitCode, stdout, stderr).
-// Mirrors the existing thumbs_test pattern.
+// Invalid arguments are exercised without starting a server.
 func runGPS(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
@@ -41,6 +45,8 @@ root = %q
 root = %q
 [docbank]
 root = %q
+[observability]
+admin_listen = "127.0.0.1:0"
 [identity]
 mode = "stub"
 [identity.stub]
@@ -92,7 +98,7 @@ func TestGPSBackfillOwnerScopeBypassesStubModeRequirement(t *testing.T) {
 	dbPath := filepath.Join(tmp, "fotobank.sqlite")
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
-	code, _, stderr := runGPS(t, "backfill",
+	code, _, stderr := runLiveGPS(t, cfgPath, dbPath, "backfill",
 		"--config", cfgPath,
 		"--owner", "h:u",
 		"--mode", "relabel",
@@ -109,8 +115,27 @@ func TestGPSBackfillAllOwnersBypassesStubModeRequirement(t *testing.T) {
 	dbPath := filepath.Join(tmp, "fotobank.sqlite")
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
-	code, _, _ := runGPS(t, "backfill", "--config", cfgPath, "--all-owners", "--mode", "relabel")
-	r.NotEqual(2, code)
+	seedRowForOwner(t, dbPath, owners.Principal{Hub: "h", UserID: "one"})
+	seedRowForOwner(t, dbPath, owners.Principal{Hub: "h", UserID: "two"})
+	d := testutil.OpenTestDBAt(t, dbPath)
+	_, err := d.WriteDB().ExecContext(t.Context(), `UPDATE assets SET latitude=48.8566, longitude=2.3522, location_label=''`)
+	r.NoError(err)
+	r.NoError(d.Close())
+	t.Run("header scopes", func(t *testing.T) {
+		r := require.New(t)
+		startCheckoutServer(t, cfgPath, dbPath)
+		code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--owner", "h:one", "--mode", "relabel", "--json")
+		r.Zero(code, stderr)
+		var result httpapi.GPSBackfillResult
+		r.NoError(json.Unmarshal([]byte(stdout), &result))
+		r.Equal(1, result.Updated)
+		code, stdout, stderr = runGPS(t, "backfill", "--config", cfgPath, "--all-owners", "--mode", "relabel", "--json")
+		r.Zero(code, stderr)
+		r.NoError(json.Unmarshal([]byte(stdout), &result))
+		r.Equal(2, result.Processed)
+		r.Equal(1, result.Updated)
+		r.Equal(1, result.Unchanged)
+	})
 }
 
 func TestGPSBackfillOwnerAndAllOwnersMutuallyExclusive(t *testing.T) {
@@ -158,7 +183,12 @@ func TestGPSBackfillRelabelOnlyTouchesRowsWithCoords(t *testing.T) {
 	})
 	r.NoError(d.Close())
 
-	code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--mode", "relabel")
+	var code int
+	var stdout, stderr string
+	t.Run("live backfill", func(t *testing.T) {
+		startCheckoutServer(t, cfgPath, dbPath)
+		code, stdout, stderr = runGPS(t, "backfill", "--config", cfgPath, "--mode", "relabel")
+	})
 	r.Equal(0, code, "stderr=%s", stderr)
 	r.Contains(stdout, "gps backfill:")
 	r.Contains(stdout, "updated=1", "stderr=%s", stderr)
@@ -201,7 +231,7 @@ func TestGPSBackfillSkipsVideos(t *testing.T) {
 	})
 	r.NoError(d.Close())
 
-	code, stdout, _ := runGPS(t, "backfill", "--config", cfgPath, "--mode", "relabel")
+	code, stdout, _ := runLiveGPS(t, cfgPath, dbPath, "backfill", "--config", cfgPath, "--mode", "relabel")
 	r.Equal(0, code)
 	r.Contains(stdout, "updated=0")
 
@@ -230,7 +260,7 @@ func TestGPSBackfillFinalSummaryAlwaysEmitted(t *testing.T) {
 	r.NoError(err)
 	r.NoError(d.Close())
 
-	code, stdout, _ := runGPS(t, "backfill", "--config", cfgPath, "--mode", "relabel")
+	code, stdout, _ := runLiveGPS(t, cfgPath, dbPath, "backfill", "--config", cfgPath, "--mode", "relabel")
 	r.Equal(0, code)
 	r.True(strings.HasPrefix(strings.TrimSpace(stdout), "gps backfill:"),
 		"expected summary line; got %q", stdout)
@@ -272,7 +302,7 @@ func TestGPSBackfillFullClearsCoordsWhenEXIFLacksGPS(t *testing.T) {
 	r.NoError(contentStore.Close())
 	r.NoError(d.Close())
 
-	code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--mode", "full")
+	code, stdout, stderr := runLiveGPS(t, cfgPath, dbPath, "backfill", "--config", cfgPath, "--mode", "full")
 	r.Equal(0, code, "stderr=%s", stderr)
 	r.Contains(stdout, "updated=1", "stderr=%s", stderr)
 
@@ -324,8 +354,8 @@ func TestGPSBackfillRejectsMisboundDocbankVersion(t *testing.T) {
 	r.NoError(store.Close())
 	r.NoError(d.Close())
 
-	code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--mode", "full")
-	r.Equal(0, code, "stderr=%s", stderr)
+	code, stdout, stderr := runLiveGPS(t, cfgPath, dbPath, "backfill", "--config", cfgPath, "--mode", "full")
+	r.Equal(1, code, "stderr=%s", stderr)
 	r.Contains(stdout, "failed=1")
 	r.Contains(stderr, "current projection differs from Docbank")
 
@@ -342,17 +372,13 @@ func TestGPSBackfillRejectsMisboundDocbankVersion(t *testing.T) {
 // test for the cursor-reset infinite loop: in fill-missing mode, rows
 // whose backing files have no EXIF GPS stay in the candidate set after
 // being processed (they remain both-NULL). With a stale "" cursor, the
-// next page would re-fetch the same rows forever. Shrinking
-// backfillBatch lets us prove termination with only a few seeded rows.
+// next page would re-fetch the same rows forever. The fixture spans two pages.
 func TestGPSBackfillFillMissingTerminatesOnUnchangedBatch(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
 	cfgPath := writeGPSConfig(t, tmp)
 	dbPath := filepath.Join(tmp, "fotobank.sqlite")
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
-
-	prev := cli.SetBackfillBatchForTest(2)
-	t.Cleanup(func() { cli.SetBackfillBatchForTest(prev) })
 
 	dbCtx := context.Background()
 	d := testutil.OpenTestDBAt(t, dbPath)
@@ -365,10 +391,10 @@ func TestGPSBackfillFillMissingTerminatesOnUnchangedBatch(t *testing.T) {
 	r.NoError(err)
 	contentStore, err := content.Open(dbCtx, content.Config{Root: filepath.Join(tmp, "docbank")})
 	r.NoError(err)
-	// Seed 5 photo rows with both coords NULL and exact Docbank versions
+	// Seed 501 photo rows with both coords NULL and exact Docbank versions
 	// that have no EXIF segment. fill-missing must visit every row,
 	// mark them unchanged, and terminate.
-	for i := range 5 {
+	for i := range 501 {
 		id := uuid.NewString()
 		assetfixture.InsertContent(t, repo, contentStore,
 			[]byte(fmt.Sprintf("no-exif-%d", i)), media.Media{
@@ -380,10 +406,10 @@ func TestGPSBackfillFillMissingTerminatesOnUnchangedBatch(t *testing.T) {
 	r.NoError(contentStore.Close())
 	r.NoError(d.Close())
 
-	code, stdout, stderr := runGPS(t, "backfill", "--config", cfgPath, "--mode", "fill-missing")
+	code, stdout, stderr := runLiveGPS(t, cfgPath, dbPath, "backfill", "--config", cfgPath, "--mode", "fill-missing")
 	r.Equal(0, code, "stderr=%s", stderr)
-	r.Contains(stdout, "processed=5")
-	r.Contains(stdout, "unchanged=5")
+	r.Contains(stdout, "processed=501")
+	r.Contains(stdout, "unchanged=501")
 }
 
 // TestGPSBackfillMalformedOwnerErrorsBeforeOpeningDB locks in that
@@ -399,4 +425,49 @@ func TestGPSBackfillMalformedOwnerErrorsBeforeOpeningDB(t *testing.T) {
 	code, _, stderr := runGPS(t, "backfill", "--config", cfgPath, "--owner", "no-colon")
 	r.Equal(2, code, "got %s", stderr)
 	r.NoFileExists(dbPath, "DB must not be created on bad --owner")
+}
+
+func runLiveGPS(t *testing.T, cfgPath, dbPath string, args ...string) (int, string, string) {
+	t.Helper()
+	var code int
+	var stdout, stderr string
+	t.Run("live GPS", func(t *testing.T) {
+		startCheckoutServer(t, cfgPath, dbPath)
+		code, stdout, stderr = runGPS(t, args...)
+	})
+	return code, stdout, stderr
+}
+
+func TestGPSBackfillOperatorAuthorization(t *testing.T) {
+	tmp := t.TempDir()
+	cfgPath := writeGPSConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "catalog.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	record := startCheckoutServer(t, cfgPath, dbPath)
+	for _, tc := range []struct {
+		name, base, token, body string
+		status                  int
+	}{
+		{"operator", record.Endpoint().BaseURL(), record.Metadata["token"], `{}`, 200},
+		{"no token", record.Endpoint().BaseURL(), "", `{}`, 401},
+		{"photo listener", record.Metadata["web_url"], record.Metadata["token"], `{}`, 403},
+		{"invalid mode", record.Endpoint().BaseURL(), record.Metadata["token"], `{"mode":"invalid"}`, 422},
+		{"ambiguous scope", record.Endpoint().BaseURL(), record.Metadata["token"], `{"owner":"h:u","all_owners":true}`, 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, tc.base+"/api/v1/operator/gps/backfill", strings.NewReader(tc.body))
+			r.NoError(err)
+			req.Header.Set("Content-Type", "application/json")
+			if tc.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			response, err := http.DefaultClient.Do(req)
+			r.NoError(err)
+			defer response.Body.Close()
+			_, err = io.Copy(io.Discard, response.Body)
+			r.NoError(err)
+			r.Equal(tc.status, response.StatusCode)
+		})
+	}
 }
