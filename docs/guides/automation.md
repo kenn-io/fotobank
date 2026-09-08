@@ -29,6 +29,7 @@ fotobank checkout estimate --year 2025 --json
 fotobank checkout create /work/photos-2025 --year 2025 --json
 fotobank checkout commit <checkout-uuid> --json
 fotobank daemon status --json
+fotobank albums list --json
 ```
 
 Do not parse human progress output when a JSON form exists. Commands return zero
@@ -49,7 +50,7 @@ that open that same vault cannot run alongside it. For the configured deployment
 | --- | --- |
 | Content recovery | Uses the daemon and starts it if needed; checks interrupted imports across all owners. |
 | GPS backfill | Uses the daemon and starts it if needed; header mode requires `--owner` or `--all-owners`. |
-| Import, every checkout command, or manual backup create | Uses the daemon in stub mode and starts it if needed; run under the same OS account and configuration. |
+| Import, album commands, every checkout command, or manual backup create | Uses the daemon in stub mode and starts it if needed; run under the same OS account and configuration. |
 | Browse or use the HTTP API, scan checkout edits, scheduled backups | Keep the server running. |
 | Backup init, list with `--repo`, verify, or restore to a separate target | Do not need the source vault open. |
 
@@ -57,9 +58,9 @@ Use `fotobank daemon stop` and `fotobank daemon start` for background operation.
 For a supervised service, use its supervisor; for a foreground `fotobank serve`,
 interrupt it and wait for shutdown to complete. Do not remove
 lock files or start a second vault owner to work around this limitation. The
-CLI submits imports, interrupted-import recovery, GPS backfill, every checkout command, and
+CLI submits imports, interrupted-import recovery, GPS backfill, album commands, every checkout command, and
 manual backup creation to the server.
-Albums, shares, owners, privacy/admin, thumbnails, and AI commands still use
+Shares, owners, privacy/admin, thumbnails, and AI commands still use
 direct catalog connections. These are remaining migration gaps, not alternate
 ways to access a daemon-owned deployment.
 
@@ -67,6 +68,33 @@ For tracked edits: keep the server running to create the checkout, edit and
 settle files, inspect `checkout status --json`, then explicitly
 commit with the server still running. See
 [checkouts](checkouts.md) for the complete workflow.
+
+## Organize albums
+
+Album commands use the configured stub owner and start the daemon if needed.
+Run them under the same OS account and configuration as the server:
+
+```sh
+fotobank albums create "Autumn walk"
+fotobank albums add <album-uuid> <media-uuid> [<media-uuid>...]
+fotobank albums list --json --limit 100 --offset 0
+fotobank albums show <album-uuid> --sort-by taken --sort-asc
+fotobank albums rename <album-uuid> "Autumn walks"
+fotobank albums remove <album-uuid> <media-uuid>
+fotobank albums delete <album-uuid>
+```
+
+`list --json` returns an object with `items` and, when more albums remain,
+`next_offset`. Pass that offset to the next request. List and member pages
+default to 100 rows and are capped at 1,000. `show` accepts `--limit`, `--offset`,
+and sorting by `added`, `imported`, or `taken`.
+
+Adding existing members is harmless. Removing a member or deleting an album
+does not delete the photos; outstanding shares can block album deletion.
+Hidden photos cannot be added through these commands, and hidden members are
+excluded from the displayed member list. The CLI does not provide an unlock
+session or a header-mode user login. Other owners' albums remain inaccessible.
+After a connection failure during a change, inspect the album before retrying.
 
 ## Keep authority changes explicit
 

@@ -43,13 +43,13 @@ func translateAlbumError(err error) huma.StatusError {
 	}
 }
 
-// coverDTO / albumDTO are the wire shapes for albums.
 type coverDTO struct {
 	MediaID      string `json:"media_id"`
 	ThumbVersion int    `json:"thumb_version"`
 }
 
-type albumDTO struct {
+// AlbumDTO is shared by the HTTP handlers and typed daemon client.
+type AlbumDTO struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	ItemCount   int       `json:"item_count"`
@@ -59,8 +59,8 @@ type albumDTO struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-func toAlbumDTO(it album.AlbumListItem) albumDTO {
-	out := albumDTO{
+func toAlbumDTO(it album.AlbumListItem) AlbumDTO {
+	out := AlbumDTO{
 		ID:          it.ID,
 		Name:        it.Name,
 		ItemCount:   it.ItemCount,
@@ -87,27 +87,31 @@ const (
 	albumsListMaxLimit     = 1000
 )
 
-type listAlbumsInput struct {
+type ListAlbumsInput struct {
 	Limit  int `query:"limit" doc:"max rows to return (default 100, cap 1000)"`
 	Offset int `query:"offset" doc:"pagination offset"`
 }
 
 type listAlbumsOutput struct {
-	Body struct {
-		Items      []albumDTO `json:"items"`
-		NextOffset *int       `json:"next_offset,omitempty"`
-	}
+	Body AlbumListResult
+}
+
+type AlbumListResult struct {
+	Items      []AlbumDTO `json:"items"`
+	NextOffset *int       `json:"next_offset,omitempty"`
+}
+
+type AlbumNameRequest struct {
+	Name string `json:"name"`
 }
 
 type createAlbumInput struct {
-	Body struct {
-		Name string `json:"name"`
-	}
+	Body AlbumNameRequest
 }
 
 type createAlbumOutput struct {
 	Status int
-	Body   albumDTO
+	Body   AlbumDTO
 }
 
 type getAlbumInput struct {
@@ -115,14 +119,12 @@ type getAlbumInput struct {
 }
 
 type getAlbumOutput struct {
-	Body albumDTO
+	Body AlbumDTO
 }
 
 type patchAlbumInput struct {
 	ID   string `path:"id"`
-	Body struct {
-		Name string `json:"name"`
-	}
+	Body AlbumNameRequest
 }
 
 type deleteAlbumInput struct {
@@ -157,7 +159,7 @@ func registerListAlbums(api huma.API, svc *service.AlbumService) {
 		Method:      http.MethodGet,
 		Path:        "/api/v1/albums",
 		Summary:     "List albums belonging to the caller",
-	}, func(ctx context.Context, in *listAlbumsInput) (*listAlbumsOutput, error) {
+	}, func(ctx context.Context, in *ListAlbumsInput) (*listAlbumsOutput, error) {
 		if svc == nil {
 			return nil, huma.Error503ServiceUnavailable("album service not configured")
 		}
@@ -178,7 +180,7 @@ func registerListAlbums(api huma.API, svc *service.AlbumService) {
 			next := offset + limit
 			out.Body.NextOffset = &next
 		}
-		out.Body.Items = make([]albumDTO, 0, len(rows))
+		out.Body.Items = make([]AlbumDTO, 0, len(rows))
 		for _, it := range rows {
 			out.Body.Items = append(out.Body.Items, toAlbumDTO(it))
 		}
@@ -275,7 +277,7 @@ func registerDeleteAlbum(api huma.API, svc *service.AlbumService) {
 	})
 }
 
-type listAlbumMediaInput struct {
+type ListAlbumMediaInput struct {
 	AlbumID string `path:"id"`
 	Limit   int    `query:"limit" doc:"max rows to return (default 100, cap 1000)"`
 	Offset  int    `query:"offset" doc:"pagination offset"`
@@ -284,24 +286,30 @@ type listAlbumMediaInput struct {
 }
 
 type listAlbumMediaOutput struct {
-	Body struct {
-		Items      []mediaDTO `json:"items"`
-		NextOffset *int       `json:"next_offset,omitempty"`
-	}
+	Body AlbumMediaResult
+}
+
+type AlbumMediaResult struct {
+	Items      []mediaDTO `json:"items"`
+	NextOffset *int       `json:"next_offset,omitempty"`
+}
+
+type AddAlbumMediaRequest struct {
+	MediaIDs []string `json:"media_ids"`
 }
 
 type addAlbumMediaInput struct {
 	AlbumID string `path:"id"`
-	Body    struct {
-		MediaIDs []string `json:"media_ids"`
-	}
+	Body    AddAlbumMediaRequest
 }
 
 type addAlbumMediaOutput struct {
-	Body struct {
-		Added          int `json:"added"`
-		AlreadyPresent int `json:"already_present"`
-	}
+	Body AddAlbumMediaResult
+}
+
+type AddAlbumMediaResult struct {
+	Added          int `json:"added"`
+	AlreadyPresent int `json:"already_present"`
 }
 
 type removeAlbumMediaInput struct {
@@ -325,7 +333,7 @@ func registerListAlbumMedia(api huma.API, svc *service.AlbumService) {
 		Method:      http.MethodGet,
 		Path:        "/api/v1/albums/{id}/media",
 		Summary:     "List media in an album",
-	}, func(ctx context.Context, in *listAlbumMediaInput) (*listAlbumMediaOutput, error) {
+	}, func(ctx context.Context, in *ListAlbumMediaInput) (*listAlbumMediaOutput, error) {
 		if svc == nil {
 			return nil, huma.Error503ServiceUnavailable("album service not configured")
 		}

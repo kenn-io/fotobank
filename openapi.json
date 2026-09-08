@@ -21,13 +21,13 @@
         ],
         "type": "object"
       },
-      "AddAlbumMediaInputBody": {
+      "AddAlbumMediaRequest": {
         "additionalProperties": false,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
             "examples": [
-              "https://example.com/api/schemas/AddAlbumMediaInputBody.json"
+              "https://example.com/api/schemas/AddAlbumMediaRequest.json"
             ],
             "format": "uri",
             "readOnly": true,
@@ -48,13 +48,13 @@
         ],
         "type": "object"
       },
-      "AddAlbumMediaOutputBody": {
+      "AddAlbumMediaResult": {
         "additionalProperties": false,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
             "examples": [
-              "https://example.com/api/schemas/AddAlbumMediaOutputBody.json"
+              "https://example.com/api/schemas/AddAlbumMediaResult.json"
             ],
             "format": "uri",
             "readOnly": true,
@@ -373,6 +373,89 @@
           "hidden_count",
           "created_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "AlbumListResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AlbumListResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AlbumDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_offset": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "AlbumMediaResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AlbumMediaResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MediaDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_offset": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "AlbumNameRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AlbumNameRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
         ],
         "type": "object"
       },
@@ -1085,27 +1168,6 @@
         "required": [
           "media_id",
           "thumb_version"
-        ],
-        "type": "object"
-      },
-      "CreateAlbumInputBody": {
-        "additionalProperties": false,
-        "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/api/schemas/CreateAlbumInputBody.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
         ],
         "type": "object"
       },
@@ -2139,68 +2201,6 @@
         ],
         "type": "object"
       },
-      "ListAlbumMediaOutputBody": {
-        "additionalProperties": false,
-        "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/api/schemas/ListAlbumMediaOutputBody.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/MediaDTO"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "next_offset": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
-      "ListAlbumsOutputBody": {
-        "additionalProperties": false,
-        "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/api/schemas/ListAlbumsOutputBody.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/AlbumDTO"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "next_offset": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
       "ListHiddenMediaOutputBody": {
         "additionalProperties": false,
         "properties": {
@@ -2603,27 +2603,6 @@
           "pending",
           "conflicts",
           "orphan_paths"
-        ],
-        "type": "object"
-      },
-      "PatchAlbumInputBody": {
-        "additionalProperties": false,
-        "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/api/schemas/PatchAlbumInputBody.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
         ],
         "type": "object"
       },
@@ -4195,7 +4174,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListAlbumsOutputBody"
+                  "$ref": "#/components/schemas/AlbumListResult"
                 }
               }
             },
@@ -4220,7 +4199,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateAlbumInputBody"
+                "$ref": "#/components/schemas/AlbumNameRequest"
               }
             }
           },
@@ -4333,7 +4312,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PatchAlbumInputBody"
+                "$ref": "#/components/schemas/AlbumNameRequest"
               }
             }
           },
@@ -4424,7 +4403,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListAlbumMediaOutputBody"
+                  "$ref": "#/components/schemas/AlbumMediaResult"
                 }
               }
             },
@@ -4459,7 +4438,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AddAlbumMediaInputBody"
+                "$ref": "#/components/schemas/AddAlbumMediaRequest"
               }
             }
           },
@@ -4470,7 +4449,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AddAlbumMediaOutputBody"
+                  "$ref": "#/components/schemas/AddAlbumMediaResult"
                 }
               }
             },

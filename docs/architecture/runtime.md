@@ -178,6 +178,29 @@ operations use the host credential without a photo principal.
 Start launches the process locally when needed; restart combines stop and
 start. They are process lifecycle operations, not alternate data paths.
 
+Album commands use the existing photo API routes on the authenticated local
+connection, not a second set of operator-only album handlers:
+
+| CLI command | HTTP operation |
+| --- | --- |
+| `albums create` | `POST /api/v1/albums` |
+| `albums rename` | `PATCH /api/v1/albums/{id}` |
+| `albums delete` | `DELETE /api/v1/albums/{id}` |
+| `albums list` | `GET /api/v1/albums` |
+| `albums show` | `GET /api/v1/albums/{id}` and `GET /api/v1/albums/{id}/media` |
+| `albums add` | `POST /api/v1/albums/{id}/media` |
+| `albums remove` | `DELETE /api/v1/albums/{id}/media/{media_id}` |
+
+`internal/client/albums.go` uses request and response types from the Huma
+registrations in `internal/httpapi/albums.go`. The CLI validates argument syntax
+before startup and requires stub mode. The daemon supplies the configured
+principal; callers cannot override it. The same `AlbumService` owner checks,
+hidden-media restrictions, and share-related deletion checks apply to HTTP and
+CLI requests. These commands neither open the catalog nor construct services.
+They start a missing daemon through the shared lifecycle and never retry an
+HTTP mutation automatically. `albums list --json` returns the HTTP page shape
+with `items` and optional `next_offset`.
+
 `POST /api/v1/operator/imports` calls `ImportService` using the daemon's catalog,
 content adapter, and geo resolver. The configured owner is checked at both
 the transport and service boundary. The service takes the existing import
@@ -254,7 +277,7 @@ bytes. Cancellation stops further rows; per-photo failures are collected while
 other rows continue. The final result contains counts, failures and any error;
 the CLI exits nonzero on partial failure and never retries automatically.
 
-The daemon-only command boundary is not yet complete. Albums, shares, owners,
+The daemon-only command boundary is not yet complete. Shares, owners,
 privacy/admin, thumbnails, and AI commands still construct catalog services in
 the CLI. Backup repository inspection and restore also still run in the CLI.
 These existing paths are migration work in kata, not exceptions to extend.

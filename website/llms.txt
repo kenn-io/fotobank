@@ -21,7 +21,7 @@
 - [Import and recover](/docs/guides/import/): Import, finish interrupted imports, and refresh photo locations through the daemon, with structured results for automation.
 - [Checkouts](/docs/guides/checkouts/): Create working copies, scan edits, inspect saved state, and explicitly commit.
 - [Backup and restore](/docs/guides/backup/): Archive both the catalog and content, schedule backups, and restore separately.
-- [Automation](/docs/guides/automation/): Structured output, server-stop requirements, and current API limits.
+- [Automation](/docs/guides/automation/): Structured output, daemon-backed album commands, server-stop requirements, and current API limits.
 
 ## Status
 
