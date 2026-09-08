@@ -104,6 +104,7 @@ func TestHiddenCommandsRevokeOnlyTargetSessions(t *testing.T) {
 			seedCredentialInDB(t, dbPath, "h", "u")
 			id := seedHiddenMedia(t, dbPath, "h", "u")
 			d := testutil.OpenTestDBAt(t, dbPath)
+			t.Cleanup(func() { r.NoError(d.Close()) })
 			_, err := d.WriteDB().Exec(`INSERT INTO owners (hub, user_id, storage_key, created_at) VALUES ('h', 'other', '550e8400-e29b-41d4-a716-446655440001', ?)`, time.Now())
 			r.NoError(err)
 			repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
