@@ -164,7 +164,9 @@ cross-database import has not yet recorded a receipt; a conflict is terminal
 until an explicit resolution workflow is invoked. Re-running an import resumes
 matching pending identities with their recorded IDs and virtual paths.
 
-`fotobank content recover` checks every registered owner. When a pending path
+`fotobank content recover` asks the daemon to check every registered owner,
+using its existing vault and the same lock as imports. The CLI starts a missing
+daemon through the shared lifecycle path. When a pending path
 already contains the reserved identity, it adopts the Docbank node and version
 and finishes the asset. Different authority at the path terminalizes the asset
 as a conflict. A missing path remains pending because only the original import

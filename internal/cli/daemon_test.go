@@ -174,6 +174,12 @@ func TestDaemonLifecycle(t *testing.T) {
 	output, err = run("daemon", "status", "--json")
 	r.NoError(err, "%s", output)
 	r.JSONEq(`{"running":false}`, string(output))
+	// Recovery also starts a missing daemon, without opening a second vault.
+	output, err = run("content", "recover", "--json")
+	r.NoError(err, "%s", output)
+	r.Contains(string(output), `"reports"`)
+	output, err = run("daemon", "stop")
+	r.NoError(err, "%s", output)
 	// Header deployments still support host lifecycle, and advertise the
 	// configured browser URL rather than the internal proxy bind address.
 	configBytes, err := os.ReadFile(configPath)

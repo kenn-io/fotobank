@@ -38,7 +38,8 @@ automatically.
 ## Interrupted imports
 
 Import uses durable operation records across Fotobank SQLite and Docbank. Run
-the recovery command after a crash or interrupted copy, with the server stopped:
+the recovery command after a crash or interrupted copy. It runs through the
+daemon, starting it if needed, with the same local operator access as import:
 
 ```sh
 fotobank content recover
@@ -46,11 +47,18 @@ fotobank content recover
 
 Recovery adopts matching Docbank content and finishes ready assets. It reports
 conflicts and unmatched Docbank paths without deleting or overwriting them.
+It checks every registered owner, not just the configured photo owner. Recovery
+and imports share a lock; use `--wait 30s` to wait for an import to finish.
 Automation can request structured output:
 
 ```sh
 fotobank content recover --json
 ```
+
+JSON contains `reports` (one per owner) and an `error` when work could not
+finish. Errors exit nonzero and preserve any completed work. Cancellation or a
+lost connection is not proof of completion; rerun the command to reconcile it.
+This finishes interrupted imports; it does not restore a backup.
 
 If a pending operation still needs source bytes, run the original import again
 with the same source tree. The importer reuses the reserved identities instead
