@@ -1042,6 +1042,16 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AIAcknowledgeRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AIAcknowledgeRequest.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            kind: "hidden_processing";
+        };
         APIKeyEnvStatusValue: {
             is_set: boolean;
             name: string;
@@ -1087,16 +1097,6 @@ export interface components {
              */
             readonly $schema?: string;
             ok: boolean;
-        };
-        AiAcknowledgeInputBody: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/AiAcknowledgeInputBody.json
-             */
-            readonly $schema?: string;
-            /** @enum {string} */
-            kind: "hidden_processing";
         };
         AiBackfillInputBody: {
             /**
@@ -2633,7 +2633,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AiAcknowledgeInputBody"];
+                "application/json": components["schemas"]["AIAcknowledgeRequest"];
             };
         };
         responses: {

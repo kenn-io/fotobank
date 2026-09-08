@@ -1,6 +1,30 @@
 {
   "components": {
     "schemas": {
+      "AIAcknowledgeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AIAcknowledgeRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "hidden_processing"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
       "APIKeyEnvStatusValue": {
         "additionalProperties": false,
         "properties": {
@@ -115,30 +139,6 @@
         },
         "required": [
           "ok"
-        ],
-        "type": "object"
-      },
-      "AiAcknowledgeInputBody": {
-        "additionalProperties": false,
-        "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/api/schemas/AiAcknowledgeInputBody.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
-          "kind": {
-            "enum": [
-              "hidden_processing"
-            ],
-            "type": "string"
-          }
-        },
-        "required": [
-          "kind"
         ],
         "type": "object"
       },
@@ -4164,7 +4164,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AiAcknowledgeInputBody"
+                "$ref": "#/components/schemas/AIAcknowledgeRequest"
               }
             }
           },

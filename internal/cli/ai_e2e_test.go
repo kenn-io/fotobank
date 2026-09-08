@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/ack"
 	"go.kenn.io/fotobank/internal/ai/embedding"
 	"go.kenn.io/fotobank/internal/ai/failures"
 	"go.kenn.io/fotobank/internal/cli"
@@ -106,16 +107,14 @@ func seedEmbedOwnerAndPhoto(t *testing.T, dbPath string) (owners.Principal, stri
 	return p, mid
 }
 
-// acknowledgeStubOwner runs `fotobank ai acknowledge --hidden-processing`
-// so that subsequent ack-gated subcommands (Backfill, RetryFailed) pass
-// the ack check. This matches how an operator would unblock the AI
-// surface in production: ack once, then run the embed jobs.
-func acknowledgeStubOwner(t *testing.T, cfgPath string) {
+// acknowledgeStubOwner seeds consent for the remaining direct-storage embed
+// command tests. Live acknowledgment is covered in ai_operator_test.go.
+func acknowledgeStubOwner(t *testing.T, dbPath string) {
 	t.Helper()
-	stdout, stderr, code := runAICLI(
-		"ai", "acknowledge", "--hidden-processing", "--config", cfgPath,
-	)
-	require.Equal(t, 0, code, "stdout=%s stderr=%s", stdout, stderr)
+	d, err := db.Open(dbPath)
+	require.NoError(t, err)
+	defer func() { _ = d.Close() }()
+	require.NoError(t, ack.New(d.WriteDB(), d.ReadDB()).Acknowledge(t.Context(), owners.Principal{Hub: "h", UserID: "u"}))
 }
 
 // listGenerationsRow mirrors the JSON shape the list-generations
@@ -144,7 +143,7 @@ func TestCLIAI_BackfillEmbed(t *testing.T) {
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
 	seedEmbedOwnerAndPhoto(t, dbPath)
-	acknowledgeStubOwner(t, cfgPath)
+	acknowledgeStubOwner(t, dbPath)
 
 	stdout, stderr, code := runAICLI("ai", "backfill", "--task=embed", "--config", cfgPath)
 	r.Equal(0, code, "stdout=%s stderr=%s", stdout, stderr)
@@ -174,7 +173,7 @@ func TestCLIAI_RetryFailedEmbed(t *testing.T) {
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
 	_, mid := seedEmbedOwnerAndPhoto(t, dbPath)
-	acknowledgeStubOwner(t, cfgPath)
+	acknowledgeStubOwner(t, dbPath)
 
 	// Seed a current-fingerprint embed failure for the photo so the
 	// retry-failed path has something to delete + re-enqueue.
