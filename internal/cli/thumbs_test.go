@@ -66,12 +66,7 @@ func TestThumbsRegenerateAllBumpsVersion(t *testing.T) {
 	t.Setenv("FOTOBANK_CONFIG", cfgPath)
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
-	// First invocation triggers migrations. owners subcommands honor
-	// FOTOBANK_CONFIG (set above) rather than --config.
 	var out, eout bytes.Buffer
-	r.Equal(0, cli.RunContext(context.Background(),
-		[]string{"owners", "list"}, &out, &eout),
-		"stderr=%s stdout=%s", eout.String(), out.String())
 	m := seedReadyRow(t, dbPath)
 
 	out.Reset()
@@ -114,11 +109,7 @@ func TestThumbsRegenerateByIDTargetsOnlyMatch(t *testing.T) {
 	t.Setenv("FOTOBANK_CONFIG", cfgPath)
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
-	// Trigger migrations before seeding rows. owners subcommands honor
-	// FOTOBANK_CONFIG (set above) rather than --config.
 	var out, eout bytes.Buffer
-	_ = cli.RunContext(context.Background(),
-		[]string{"owners", "list"}, &out, &eout)
 
 	m1 := seedReadyRow(t, dbPath)
 	m2 := seedReadyRow(t, dbPath)
@@ -189,8 +180,6 @@ func TestThumbsRegenerateOwnerScopeOnlyTouchesThatOwner(t *testing.T) {
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
 	var out, eout bytes.Buffer
-	r.Equal(0, cli.RunContext(context.Background(),
-		[]string{"owners", "list"}, &out, &eout))
 	alice := owners.Principal{Hub: "local", UserID: "alice"}
 	bob := owners.Principal{Hub: "local", UserID: "bob"}
 	mAlice := seedRowForOwner(t, dbPath, alice)
@@ -228,8 +217,6 @@ func TestThumbsRegenerateAllOwnersTouchesEveryRow(t *testing.T) {
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
 	var out, eout bytes.Buffer
-	r.Equal(0, cli.RunContext(context.Background(),
-		[]string{"owners", "list"}, &out, &eout))
 	owners3 := []owners.Principal{
 		{Hub: "local", UserID: "alice"},
 		{Hub: "local", UserID: "bob"},
@@ -328,10 +315,7 @@ func TestThumbsRegenerateOwnerScopeBypassesStubModeRequirement(t *testing.T) {
 	t.Setenv("FOTOBANK_CONFIG", cfgPath)
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 
-	// Trigger migrations.
 	var out, eout bytes.Buffer
-	r.Equal(0, cli.RunContext(context.Background(),
-		[]string{"owners", "list"}, &out, &eout))
 
 	out.Reset()
 	eout.Reset()

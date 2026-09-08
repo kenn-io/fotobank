@@ -187,7 +187,17 @@ func TestDaemonLifecycle(t *testing.T) {
 	output, err = run("daemon", "status", "--json")
 	r.NoError(err, "%s", output)
 	r.JSONEq(`{"running":false}`, string(output))
-	// Share inspection starts a missing daemon without opening its own catalog.
+	// Owner inspection starts a missing daemon without opening its own catalog.
+	output, err = run("owners", "list", "--json")
+	r.NoError(err, "%s", output)
+	r.Contains(string(output), `"storage_key"`)
+	output, err = run("daemon", "status", "--json")
+	r.NoError(err, "%s", output)
+	r.NoError(json.Unmarshal(output, &albumDaemon))
+	r.True(albumDaemon.Running)
+	output, err = run("daemon", "stop")
+	r.NoError(err, "%s", output)
+	// Share inspection also starts a missing daemon.
 	output, err = run("shares", "list", "--json")
 	r.NoError(err, "%s", output)
 	r.JSONEq(`{"items":[]}`, string(output))

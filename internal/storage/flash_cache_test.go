@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,8 +21,29 @@ func newThumbCache(t *testing.T) (*storage.ThumbCache, *storage.NASOnly, string,
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 	keys := map[owners.Principal]string{owner: "key1"}
 	nas := storage.NewNASOnly(nasRoot, keys)
-	cache := storage.NewThumbCache(nas, flashRoot, keys)
+	cache := storage.NewThumbCache(nas, flashRoot)
 	return cache, nas, nasRoot, flashRoot, owner
+}
+
+func TestThumbCacheUsesCurrentOwnerKeys(t *testing.T) {
+	r := require.New(t)
+	cache, nas, _, _, _ := newThumbCache(t)
+	owner := owners.Principal{Hub: "h", UserID: "new-owner"}
+	key := ".thumbs/example/v1-grid.jpg"
+	_, err := cache.Write(t.Context(), owner, key, strings.NewReader("bytes"))
+	r.Error(err)
+	nas.SetOwnerKey(owner, "key2")
+	_, err = cache.Write(t.Context(), owner, key, strings.NewReader("bytes"))
+	r.NoError(err)
+	reader, err := nas.ReadRange(t.Context(), owner, key, 0, -1)
+	r.NoError(err)
+	body, err := io.ReadAll(reader)
+	r.NoError(err)
+	r.NoError(reader.Close())
+	r.Equal("bytes", string(body))
+	nas.RemoveOwnerKey(owner)
+	_, err = cache.ReadRange(t.Context(), owner, key, 0, -1)
+	r.Error(err)
 }
 
 func TestThumbCacheWritesArtifactAndCachedThumbnail(t *testing.T) {

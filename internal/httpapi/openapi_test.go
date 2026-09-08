@@ -87,6 +87,9 @@ func TestOperatorOperationsShareAPIContract(t *testing.T) {
 	handler, err := httpapi.New(httpapi.Deps{})
 	require.NoError(t, err)
 	for _, tc := range []struct{ method, path, operation, body string }{
+		{"GET", "/api/v1/operator/owners", "list-owners", ""},
+		{"POST", "/api/v1/operator/owners", "register-owner", `{"hub":"h","user_id":"guest"}`},
+		{"DELETE", "/api/v1/operator/owners", "remove-owner", ""},
 		{"GET", "/api/v1/operator/checkouts", "list-checkouts", ""},
 		{"GET", "/api/v1/operator/checkouts/{checkout_id}", "checkout-status", ""},
 		{"POST", "/api/v1/operator/checkouts/estimate", "estimate-checkout", `{"hub":"h","user_id":"u","selection":{"all":true,"asset_ids":[],"album_ids":[],"years":[]}}`},
@@ -102,9 +105,15 @@ func TestOperatorOperationsShareAPIContract(t *testing.T) {
 			if tc.method == http.MethodPost {
 				op = item.Post
 			}
+			if tc.method == http.MethodDelete {
+				op = item.Delete
+			}
 			r.NotNil(op)
 			r.Equal(tc.operation, op.OperationID)
 			path := strings.ReplaceAll(strings.ReplaceAll(tc.path, "{id}", "checkout-a"), "{checkout_id}", "checkout-a")
+			if tc.method == http.MethodDelete {
+				path += "?hub=h&user_id=guest"
+			}
 			req := httptest.NewRequest(tc.method, path, strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 			req = req.WithContext(httpapi.ContextWithIdentity(req.Context(), identity.Identity{

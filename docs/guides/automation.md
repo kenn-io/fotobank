@@ -31,6 +31,7 @@ fotobank checkout commit <checkout-uuid> --json
 fotobank daemon status --json
 fotobank albums list --json
 fotobank shares list --json
+fotobank owners list --json
 ```
 
 Do not parse human progress output when a JSON form exists. Commands return zero
@@ -51,6 +52,7 @@ that open that same vault cannot run alongside it. For the configured deployment
 | --- | --- |
 | Content recovery | Uses the daemon and starts it if needed; checks interrupted imports across all owners. |
 | GPS backfill | Uses the daemon and starts it if needed; header mode requires `--owner` or `--all-owners`. |
+| Owner registration, listing, or removal | Uses the daemon's local operator API and starts it if needed; supports stub and header mode. |
 | Import, album and sharing commands, every checkout command, or manual backup create | Uses the daemon in stub mode and starts it if needed; run under the same OS account and configuration. |
 | Browse or use the HTTP API, scan checkout edits, scheduled backups | Keep the server running. |
 | Backup init, list with `--repo`, verify, or restore to a separate target | Do not need the source vault open. |
@@ -60,8 +62,8 @@ For a supervised service, use its supervisor; for a foreground `fotobank serve`,
 interrupt it and wait for shutdown to complete. Do not remove
 lock files or start a second vault owner to work around this limitation. The
 CLI submits imports, interrupted-import recovery, GPS backfill, album and sharing
-commands, every checkout command, and manual backup creation to the server.
-Owners, privacy/admin, thumbnails, and AI commands still use
+commands, owner management, every checkout command, and manual backup creation to the server.
+Privacy/admin, thumbnails, and AI commands still use
 direct catalog connections. These are remaining migration gaps, not alternate
 ways to access a daemon-owned deployment.
 
@@ -124,6 +126,36 @@ with `show` or `list`. Retry applies only to failed shares. Retrying another
 state or revoking an already-revoked share returns a conflict and exits nonzero.
 Commands do not retry automatically after a lost response; inspect the share
 before repeating a change. These commands do not provide header-mode login.
+
+## Manage registered owners
+
+An owner identifies whose photos and catalog records Fotobank manages. These
+commands are host administration, not a photo-user login. Run them under the
+daemon's OS account with the same configuration, in either stub or header mode:
+
+```sh
+fotobank owners add --hub example --user-id user-a --handle "User A"
+fotobank owners list --json
+fotobank owners remove --hub example --user-id user-a
+```
+
+All three commands accept `--config`. Adding an owner generates a storage UUID
+unless you supply `--storage-key`. Repeating an add without a key keeps the
+existing key; specifying a different key for an existing owner returns a
+conflict. A non-empty `--handle` updates the display name. Listing returns
+`items` in JSON, with each owner's hub, user ID, storage key, handle, and creation
+time. The configured stub owner is registered automatically when the daemon
+starts; you do not need to add it first.
+To choose its storage UUID, set `identity.stub.storage_key` before the first start.
+
+New registrations are usable without a restart. A storage UUID already assigned
+to another owner returns a conflict.
+
+Removal unregisters an owner; it does not delete photos or working files. Owners
+referenced by assets, saved checkouts, albums, or shares cannot be removed, and
+`--purge` is not implemented. The active configured stub owner cannot be removed:
+change the identity configuration and restart first. After a lost response, list
+owners before repeating a change.
 
 ## Keep authority changes explicit
 

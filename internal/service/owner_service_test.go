@@ -167,7 +167,7 @@ func TestRemoveRefusesWhenMediaExists(t *testing.T) {
 
 	_ = testutil.SeedPhoto(t, d.WriteDB(), p, "x")
 
-	r.ErrorIs(svc.Remove(context.Background(), p, false), errs.ErrInvalidArgument)
+	r.ErrorIs(svc.Remove(context.Background(), p, false), errs.ErrAlreadyExists)
 }
 
 func TestRemoveRefusesWhenAssetExists(t *testing.T) {
@@ -188,7 +188,7 @@ func TestRemoveRefusesWhenAssetExists(t *testing.T) {
 		)`)
 	r.NoError(err)
 
-	r.ErrorIs(svc.Remove(t.Context(), p, false), errs.ErrInvalidArgument)
+	r.ErrorIs(svc.Remove(t.Context(), p, false), errs.ErrAlreadyExists)
 }
 
 func TestRemoveRefusesWhenCheckoutExists(t *testing.T) {
@@ -208,7 +208,7 @@ func TestRemoveRefusesWhenCheckoutExists(t *testing.T) {
 		)`)
 	r.NoError(err)
 
-	r.ErrorIs(svc.Remove(t.Context(), p, false), errs.ErrInvalidArgument)
+	r.ErrorIs(svc.Remove(t.Context(), p, false), errs.ErrAlreadyExists)
 }
 
 func TestRemoveSucceedsWhenEmpty(t *testing.T) {
@@ -218,5 +218,6 @@ func TestRemoveSucceedsWhenEmpty(t *testing.T) {
 	p := owners.Principal{Hub: "h", UserID: "u"}
 	_, err := svc.Ensure(context.Background(), p, "550e8400-e29b-41d4-a716-446655440000")
 	r.NoError(err)
+	r.ErrorIs(svc.Remove(t.Context(), p, true), errs.ErrInvalidArgument)
 	r.NoError(svc.Remove(context.Background(), p, false))
 }

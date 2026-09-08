@@ -297,8 +297,36 @@ bytes. Cancellation stops further rows; per-photo failures are collected while
 other rows continue. The final result contains counts, failures and any error;
 the CLI exits nonzero on partial failure and never retries automatically.
 
-The daemon-only command boundary is not yet complete. Owners,
-privacy/admin, thumbnails, and AI commands still construct catalog services in
+Owner registration, listing, and removal use `internal/client/owners.go` and
+the host-operator routes in `internal/httpapi/operator_owners.go`:
+
+| CLI command | HTTP operation |
+| --- | --- |
+| `owners add` | `POST /api/v1/operator/owners` |
+| `owners list` | `GET /api/v1/operator/owners` |
+| `owners remove` | `DELETE /api/v1/operator/owners?hub=…&user_id=…` |
+
+The daemon supplies `OwnersOperator` only on the authenticated local listener,
+in both stub and header mode. Photo-user identity does not grant these operations.
+The CLI validates required arguments and storage UUIDs before automatic startup;
+it never constructs an owner service or opens a catalog. `OwnerService` retains
+registration idempotency, immutable storage keys, display-handle updates, and
+refusal to remove owners referenced by assets or checkouts. Removal does not
+delete files; bulk purge remains unsupported. `owners list --json` returns the
+shared HTTP result with `items`. The configured stub owner is ensured at daemon
+startup, so a fresh stub deployment already contains that owner.
+
+`OwnerAdminService` serializes registration/removal and updates the NAS store's
+locked owner-key map before returning. The thumbnail cache uses that same map,
+so newly registered owners can use artifacts without restarting. Removal of the
+active configured stub owner is rejected with HTTP 409; change the identity
+configuration and restart before unregistering it. Owners referenced by assets,
+checkouts, albums, or shares also return HTTP 409, as do duplicate storage keys.
+Foreign-key enforcement remains the final reference check. Unsupported requests
+remain invalid arguments rather than owner-in-use conflicts.
+
+The daemon-only command boundary is not yet complete. Privacy/admin,
+thumbnails, and AI commands still construct catalog services in
 the CLI. Backup repository inspection and restore also still run in the CLI.
 These existing paths are migration work in kata, not exceptions to extend.
 The accepted boundary is one daemon-owned implementation per application

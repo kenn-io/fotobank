@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"go.kenn.io/fotobank/internal/owners"
@@ -19,22 +21,40 @@ import (
 // silently overwrite each other's bytes.
 type NASOnly struct {
 	root        string
+	keysMu      sync.RWMutex
 	storageKeys map[owners.Principal]string
 }
 
 // NewNASOnly constructs a NASOnly Store rooted at root. storageKeys maps
 // known principals to their on-disk subdirectory (owners.storage_key).
-// Unknown principals are rejected at request time — callers must
-// re-initialise when a new owner is added.
+// Unknown principals are rejected at request time. Owner administration updates
+// the mapping before returning a successful registration or removal.
 func NewNASOnly(root string, storageKeys map[owners.Principal]string) *NASOnly {
-	return &NASOnly{root: root, storageKeys: storageKeys}
+	return &NASOnly{root: root, storageKeys: maps.Clone(storageKeys)}
+}
+
+func (s *NASOnly) SetOwnerKey(p owners.Principal, key string) {
+	s.keysMu.Lock()
+	defer s.keysMu.Unlock()
+	if s.storageKeys == nil {
+		s.storageKeys = make(map[owners.Principal]string)
+	}
+	s.storageKeys[p] = key
+}
+
+func (s *NASOnly) RemoveOwnerKey(p owners.Principal) {
+	s.keysMu.Lock()
+	defer s.keysMu.Unlock()
+	delete(s.storageKeys, p)
 }
 
 func (s *NASOnly) ownerKey(p owners.Principal, key string) (string, error) {
 	if err := validateKey(key); err != nil {
 		return "", err
 	}
+	s.keysMu.RLock()
 	sk, ok := s.storageKeys[p]
+	s.keysMu.RUnlock()
 	if !ok {
 		return "", fmt.Errorf("storage: unknown owner %s", p)
 	}
