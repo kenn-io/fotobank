@@ -93,6 +93,9 @@ implemented yet; the packages above describe the code that runs today.
 - Gap scans exclude hidden media by default. Import queues AI work while a new
   media row is visible, and queued jobs do not uniformly re-check `hidden_at`
   before sending a preview to the configured provider. Tag and caption workers
-  require the owner's hidden-processing acknowledgement; the embedding worker
-  currently does not. Media hidden after it is queued can therefore still be
-  processed. Hiding is not a queue-cancellation boundary in the active system.
+  and embedding workers require the owner's recorded hidden-processing
+  acknowledgement before resolving previews or calling providers. Unacknowledged
+  jobs are blocked with `acknowledgement_required` and become eligible again
+  after that owner records consent. Starting the daemon does not grant consent.
+  Media hidden after it is queued can still be processed with that consent;
+  hiding is not a queue-cancellation boundary in the active system.

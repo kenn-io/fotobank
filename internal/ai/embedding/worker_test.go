@@ -16,13 +16,22 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/ack"
 	"go.kenn.io/fotobank/internal/ai/embedding"
 	"go.kenn.io/fotobank/internal/ai/failures"
 	"go.kenn.io/fotobank/internal/ai/jobs"
 	"go.kenn.io/fotobank/internal/ai/skipped"
 	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil"
 )
+
+func seedAcknowledgedWorkerOwner(t *testing.T, d *db.DB) owners.Principal {
+	t.Helper()
+	p := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	require.NoError(t, ack.New(d.WriteDB(), d.ReadDB()).Acknowledge(t.Context(), p))
+	return p
+}
 
 // embedFP is the canonical fingerprint used across the worker tests so
 // every test asserts the same triple the generation registry hashes on.
@@ -230,7 +239,7 @@ func TestWorker_ProcessesBatchEndToEnd(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mids := []string{
 		testutil.SeedPhoto(t, d.WriteDB(), owner, "p1"),
 		testutil.SeedPhoto(t, d.WriteDB(), owner, "p2"),
@@ -269,11 +278,33 @@ func TestWorker_ProcessesBatchEndToEnd(t *testing.T) {
 	r.EqualValues(0, emitter.failed.Load())
 }
 
+func TestWorker_BlocksUntilOwnerAcknowledges(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "owner")
+	// Consent from a different owner does not authorize this job.
+	seedAcknowledgedWorkerOwner(t, d)
+	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "queued-photo")
+	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
+	w, q, _, _ := newTestWorker(t, d, &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}, client, nil)
+	r.NoError(q.Enqueue(t.Context(), mid, ai.TaskEmbed, embedFP()))
+	// Visibility can change after enqueue; consent must be checked at execution.
+	_, err := d.WriteDB().Exec(`UPDATE assets SET hidden_at=? WHERE id=?`, time.Now().UTC(), mid)
+	r.NoError(err)
+	r.NoError(w.RunOnce(t.Context()))
+	r.Zero(client.calls.Load())
+	r.Equal("blocked", jobStatus(t, d, mid, ai.TaskEmbed))
+	r.NoError(ack.New(d.WriteDB(), d.ReadDB()).Acknowledge(t.Context(), owner))
+	r.NoError(w.RunOnce(t.Context()))
+	r.Equal(int32(1), client.calls.Load())
+	r.Equal("done", jobStatus(t, d, mid, ai.TaskEmbed))
+}
+
 func TestWorker_ClaimsOnlyCurrentClaimFingerprint(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	oldID := testutil.SeedPhoto(t, d.WriteDB(), owner, "old")
 	newID := testutil.SeedPhoto(t, d.WriteDB(), owner, "new")
 	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
@@ -308,7 +339,7 @@ func TestWorker_RuntimeSnapshotControlsClaimAndResultFingerprint(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	oldID := testutil.SeedPhoto(t, d.WriteDB(), owner, "old")
 	newID := testutil.SeedPhoto(t, d.WriteDB(), owner, "new")
 	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
@@ -358,7 +389,7 @@ func TestWorker_RuntimeSnapshotCanPauseClaims(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "paused")
 	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
 	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
@@ -388,7 +419,7 @@ func TestWorker_ReplacementIsZeroDelta(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
@@ -422,7 +453,7 @@ func TestWorker_NoPreviewSkips(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultStatus: "no_preview"}
 	client := &fakeEmbedClient{vectors: dim768N(1)}
@@ -449,7 +480,7 @@ func TestWorker_PendingThumbBlocks(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultStatus: "pending"}
 	client := &fakeEmbedClient{vectors: dim768N(1)}
@@ -476,7 +507,7 @@ func TestWorker_PartialFailureRerunsSingles(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mids := []string{
 		testutil.SeedPhoto(t, d.WriteDB(), owner, "p1"),
 		testutil.SeedPhoto(t, d.WriteDB(), owner, "p2"),
@@ -515,7 +546,7 @@ func TestWorker_RunDrainsQueueAndExitsOnCancel(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
@@ -566,7 +597,7 @@ func TestWorker_RunDrainsBacklogInOneTick(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 
 	cfg := embedCfg()
 	cfg.BatchSize = 4
@@ -644,7 +675,7 @@ func TestWorker_RunPromotesThumbReadyBlocked(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	// First pass: thumb_status='pending' so the worker parks the job.
 	resolver := &fakeResolver{defaultStatus: "pending"}
@@ -734,7 +765,7 @@ func TestWorker_BatchWithMixedFingerprintsRoutesToCorrectGenerations(t *testing.
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 
 	// Distinct fingerprints in canonical embed-input-profile shape so
 	// EdgeFromInputProfile can derive the per-fp encode edge. ModelID
@@ -879,7 +910,7 @@ func TestWorker_PerFingerprintRequestUsesClaimFingerprint(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 
 	fpA := ai.Fingerprint{ModelID: "siglip2-a", InputProfile: "jpeg-256-q85-metadata-stripped-embed-v1"}
 	fpB := ai.Fingerprint{ModelID: "siglip2-b", InputProfile: "jpeg-512-q85-metadata-stripped-embed-v1"}
@@ -958,7 +989,7 @@ func TestWorker_RepeatedFailuresAccumulateAttemptCount(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 	client := &fakeEmbedClient{err: errors.New("HTTP 500: boom")}
@@ -988,7 +1019,7 @@ func TestWorker_TerminalFailureRecordsAIFailureRow(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 	client := &fakeEmbedClient{err: errors.New("HTTP 500: boom")}
@@ -1020,7 +1051,7 @@ func TestWorker_SuccessfulRetryClearsPriorFailureRow(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 
@@ -1085,7 +1116,7 @@ func TestWorker_TransientErrorMarksAllFailed(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 	client := &fakeEmbedClient{err: errors.New("HTTP 500: boom")}
@@ -1138,6 +1169,10 @@ func (f *flakyQueue) PromoteThumbReadyBlocked(ctx context.Context, task ai.Task)
 	return f.inner.PromoteThumbReadyBlocked(ctx, task)
 }
 
+func (f *flakyQueue) PromoteAckedBlocked(ctx context.Context, task ai.Task, key string) (int, error) {
+	return f.inner.PromoteAckedBlocked(ctx, task, key)
+}
+
 func (f *flakyQueue) MarkFailed(ctx context.Context, jobID string, claimedAt time.Time, kind ai.LastErrorKind, errMsg string) error {
 	return f.inner.MarkFailed(ctx, jobID, claimedAt, kind, errMsg)
 }
@@ -1168,6 +1203,10 @@ func (c *claimLostQueue) PromoteThumbReadyBlocked(ctx context.Context, task ai.T
 	return c.inner.PromoteThumbReadyBlocked(ctx, task)
 }
 
+func (c *claimLostQueue) PromoteAckedBlocked(ctx context.Context, task ai.Task, key string) (int, error) {
+	return c.inner.PromoteAckedBlocked(ctx, task, key)
+}
+
 func (c *claimLostQueue) MarkFailed(_ context.Context, _ string, _ time.Time, _ ai.LastErrorKind, _ string) error {
 	return jobs.ErrClaimLost
 }
@@ -1190,7 +1229,7 @@ func TestWorker_FailureRecordSkippedWhenClaimLost(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 	client := &fakeEmbedClient{err: errors.New("HTTP 500: boom")}
@@ -1233,7 +1272,7 @@ func TestWorker_MalformedFingerprintDoesNotRecordFailureRow(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
@@ -1292,6 +1331,10 @@ func (b *blockingMarkQueue) PromoteThumbReadyBlocked(ctx context.Context, task a
 	return b.inner.PromoteThumbReadyBlocked(ctx, task)
 }
 
+func (b *blockingMarkQueue) PromoteAckedBlocked(ctx context.Context, task ai.Task, key string) (int, error) {
+	return b.inner.PromoteAckedBlocked(ctx, task, key)
+}
+
 func (b *blockingMarkQueue) MarkFailed(ctx context.Context, jobID string, claimedAt time.Time, kind ai.LastErrorKind, errMsg string) error {
 	return b.inner.MarkFailed(ctx, jobID, claimedAt, kind, errMsg)
 }
@@ -1313,7 +1356,7 @@ func TestWorker_RunPropagatesProcessError(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	// Resolver reports 'pending' so classify hits the MarkBlocked path,
 	// which the wrapped queue stub forces to fail.
@@ -1362,7 +1405,7 @@ func TestWorker_RunSurvivesTransientClaimError(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	d := testutil.OpenTestDB(t)
-	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	owner := seedAcknowledgedWorkerOwner(t, d)
 	mid := testutil.SeedPhoto(t, d.WriteDB(), owner, "p1")
 	resolver := &fakeResolver{defaultJPEG: mockJPEG, defaultStatus: "ready"}
 	client := &fakeEmbedClient{vectors: dim768N(1), vectorsToReturn: -1}
