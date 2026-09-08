@@ -30,6 +30,7 @@ fotobank checkout create /work/photos-2025 --year 2025 --json
 fotobank checkout commit <checkout-uuid> --json
 fotobank daemon status --json
 fotobank albums list --json
+fotobank shares list --json
 ```
 
 Do not parse human progress output when a JSON form exists. Commands return zero
@@ -50,7 +51,7 @@ that open that same vault cannot run alongside it. For the configured deployment
 | --- | --- |
 | Content recovery | Uses the daemon and starts it if needed; checks interrupted imports across all owners. |
 | GPS backfill | Uses the daemon and starts it if needed; header mode requires `--owner` or `--all-owners`. |
-| Import, album commands, every checkout command, or manual backup create | Uses the daemon in stub mode and starts it if needed; run under the same OS account and configuration. |
+| Import, album and sharing commands, every checkout command, or manual backup create | Uses the daemon in stub mode and starts it if needed; run under the same OS account and configuration. |
 | Browse or use the HTTP API, scan checkout edits, scheduled backups | Keep the server running. |
 | Backup init, list with `--repo`, verify, or restore to a separate target | Do not need the source vault open. |
 
@@ -58,9 +59,9 @@ Use `fotobank daemon stop` and `fotobank daemon start` for background operation.
 For a supervised service, use its supervisor; for a foreground `fotobank serve`,
 interrupt it and wait for shutdown to complete. Do not remove
 lock files or start a second vault owner to work around this limitation. The
-CLI submits imports, interrupted-import recovery, GPS backfill, album commands, every checkout command, and
-manual backup creation to the server.
-Shares, owners, privacy/admin, thumbnails, and AI commands still use
+CLI submits imports, interrupted-import recovery, GPS backfill, album and sharing
+commands, every checkout command, and manual backup creation to the server.
+Owners, privacy/admin, thumbnails, and AI commands still use
 direct catalog connections. These are remaining migration gaps, not alternate
 ways to access a daemon-owned deployment.
 
@@ -95,6 +96,34 @@ Hidden photos cannot be added through these commands, and hidden members are
 excluded from the displayed member list. The CLI does not provide an unlock
 session or a header-mode user login. Other owners' albums remain inaccessible.
 After a connection failure during a change, inspect the album before retrying.
+
+## Manage sharing
+
+Sharing commands also use the configured stub owner through the daemon:
+
+```sh
+fotobank shares create --album <album-uuid> --grantee hub:user
+fotobank shares create --media <media-uuid>,<media-uuid> --grantee hub:user --allow-download
+fotobank shares list --json --grantee hub:user --limit 100
+fotobank shares show <share-uuid>
+fotobank shares revoke <share-uuid>
+fotobank shares list --status failed --json
+fotobank shares retry <share-uuid>
+```
+
+Choose exactly one of `--album` or `--media`. Creation also accepts `--label`
+and an RFC3339 `--expires` time. Create, show, revoke, and retry return the same
+JSON objects as the HTTP API. `list --json` returns `items` and an optional
+`next_offset`; use `--offset` to continue. Lists default to 100 rows, cap at
+500, and support album, grantee, and broker-status filters. Use
+`--include-settled` to include shares whose remote revocation is complete.
+
+Creation and revocation queue work for the daemon's sharing worker. A successful
+command does not mean that broker work has finished; inspect `broker_status`
+with `show` or `list`. Retry applies only to failed shares. Retrying another
+state or revoking an already-revoked share returns a conflict and exits nonzero.
+Commands do not retry automatically after a lost response; inspect the share
+before repeating a change. These commands do not provide header-mode login.
 
 ## Keep authority changes explicit
 

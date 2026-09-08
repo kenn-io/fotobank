@@ -1171,13 +1171,13 @@
         ],
         "type": "object"
       },
-      "CreateShareInputBody": {
+      "CreateShareRequest": {
         "additionalProperties": false,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
             "examples": [
-              "https://example.com/api/schemas/CreateShareInputBody.json"
+              "https://example.com/api/schemas/CreateShareRequest.json"
             ],
             "format": "uri",
             "readOnly": true,
@@ -2294,37 +2294,6 @@
         ],
         "type": "object"
       },
-      "ListSharesOutputBody": {
-        "additionalProperties": false,
-        "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/api/schemas/ListSharesOutputBody.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ScopeDTO"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "next_offset": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
       "LocationSuggestionDTO": {
         "additionalProperties": false,
         "properties": {
@@ -3130,6 +3099,37 @@
           "asset_ids",
           "album_ids",
           "years"
+        ],
+        "type": "object"
+      },
+      "ShareListResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ShareListResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ScopeDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_offset": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -6690,7 +6690,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListSharesOutputBody"
+                  "$ref": "#/components/schemas/ShareListResult"
                 }
               }
             },
@@ -6714,7 +6714,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateShareInputBody"
+                "$ref": "#/components/schemas/CreateShareRequest"
               }
             }
           },

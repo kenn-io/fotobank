@@ -1411,11 +1411,11 @@ export interface components {
             /** Format: int64 */
             thumb_version: number;
         };
-        CreateShareInputBody: {
+        CreateShareRequest: {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/CreateShareInputBody.json
+             * @example https://example.com/api/schemas/CreateShareRequest.json
              */
             readonly $schema?: string;
             album_id?: string;
@@ -1827,17 +1827,6 @@ export interface components {
             /** Format: int64 */
             total?: number;
         };
-        ListSharesOutputBody: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/ListSharesOutputBody.json
-             */
-            readonly $schema?: string;
-            items: components["schemas"]["ScopeDTO"][] | null;
-            /** Format: int64 */
-            next_offset?: number;
-        };
         LocationSuggestionDTO: {
             /** Format: int64 */
             count: number;
@@ -2087,6 +2076,17 @@ export interface components {
             all: boolean;
             asset_ids: string[] | null;
             years: components["schemas"]["YearRange"][] | null;
+        };
+        ShareListResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ShareListResult.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["ScopeDTO"][] | null;
+            /** Format: int64 */
+            next_offset?: number;
         };
         SharedAlbumCoverDTO: {
             media_id: string;
@@ -4297,7 +4297,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ListSharesOutputBody"];
+                    "application/json": components["schemas"]["ShareListResult"];
                 };
             };
             /** @description Error */
@@ -4320,7 +4320,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateShareInputBody"];
+                "application/json": components["schemas"]["CreateShareRequest"];
             };
         };
         responses: {

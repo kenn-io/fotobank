@@ -201,6 +201,26 @@ They start a missing daemon through the shared lifecycle and never retry an
 HTTP mutation automatically. `albums list --json` returns the HTTP page shape
 with `items` and optional `next_offset`.
 
+Sharing commands follow the same pattern through `internal/client/shares.go`
+and the existing Huma registrations in `internal/httpapi/shares.go`:
+
+| CLI command | HTTP operation |
+| --- | --- |
+| `shares create` | `POST /api/v1/shares` |
+| `shares list` | `GET /api/v1/shares` |
+| `shares show` | `GET /api/v1/shares/{uuid}` |
+| `shares revoke` | `POST /api/v1/shares/{uuid}/revoke` |
+| `shares retry` | `POST /api/v1/shares/{uuid}/retry` |
+
+The CLI requires stub mode, validates argument syntax before automatic startup,
+and uses the daemon's configured principal. It opens no catalog and constructs
+no share service. Shared HTTP types define creation options, list filters,
+detail results and pages; the server applies list limits. Broker work remains
+asynchronous in the daemon. Already-revoked and retry-not-applicable operations
+return HTTP 409 and a nonzero CLI exit, not a CLI-only success. Sharing access
+checks and hidden-content filtering remain in the existing services and byte
+handlers. No new sharing authorization is granted by this transport change.
+
 `POST /api/v1/operator/imports` calls `ImportService` using the daemon's catalog,
 content adapter, and geo resolver. The configured owner is checked at both
 the transport and service boundary. The service takes the existing import
@@ -277,7 +297,7 @@ bytes. Cancellation stops further rows; per-photo failures are collected while
 other rows continue. The final result contains counts, failures and any error;
 the CLI exits nonzero on partial failure and never retries automatically.
 
-The daemon-only command boundary is not yet complete. Shares, owners,
+The daemon-only command boundary is not yet complete. Owners,
 privacy/admin, thumbnails, and AI commands still construct catalog services in
 the CLI. Backup repository inspection and restore also still run in the CLI.
 These existing paths are migration work in kata, not exceptions to extend.
