@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -325,6 +326,51 @@ func TestAdminResetRollsBackOnSessionRevocationFailure(t *testing.T) {
 	r.ErrorIs(err, errs.ErrNotFound)
 	_, err = repo.LookupActiveSession(t.Context(), hash, time.Now())
 	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestAdminResetWaitsForInFlightUnlock(t *testing.T) {
+	r := require.New(t)
+	svc, repo, _, p := newTestServiceWithOwner(t)
+	r.NoError(svc.Setup(t.Context(), p, "passcode"))
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = reader.Close(); _ = writer.Close() })
+	svc.SetRandForTest(reader)
+	type result struct {
+		token string
+		err   error
+	}
+	unlocked := make(chan result, 1)
+	go func() {
+		token, _, err := svc.Unlock(t.Context(), p, "passcode")
+		unlocked <- result{token, err}
+	}()
+	// A partial token write proves Unlock has verified the credential and is
+	// now paused before session insertion, while the reset starts.
+	_, err := writer.Write([]byte{1})
+	r.NoError(err)
+	reset := make(chan error, 1)
+	go func() { reset <- svc.AdminReset(t.Context(), p) }()
+	var resetErr error
+	completed := false
+	select {
+	case resetErr = <-reset:
+		completed = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	// Complete the 32-byte token, then join both operations before asserting.
+	_, err = writer.Write(make([]byte, 31))
+	r.NoError(err)
+	unlockedResult := <-unlocked
+	if !completed {
+		resetErr = <-reset
+	}
+	r.NoError(unlockedResult.err)
+	r.NoError(resetErr)
+	hash, err := hidden.TokenSHA256(unlockedResult.token)
+	r.NoError(err)
+	_, err = repo.LookupActiveSession(t.Context(), hash, time.Now())
+	r.ErrorIs(err, errs.ErrNotFound)
+	r.False(completed, "reset must wait for an already authenticated unlock")
 }
 
 func TestLockIdempotent(t *testing.T) {

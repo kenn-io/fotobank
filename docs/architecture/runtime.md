@@ -345,6 +345,9 @@ It defaults to the stub owner or accepts `--owner hub:user`; header deployments
 require an explicit owner. Reset atomically removes the credential and revokes sessions
 but preserves hidden flags. Disable clears hidden flags as well. Changing a
 passcode revokes existing sessions without changing hidden flags.
+The daemon shares one hidden-auth service between listeners. Its mutation lock
+serializes setup, change, disable, unlock, and reset through their database
+writes, so an in-flight credential check cannot undo a completed reset.
 
 The daemon-only command boundary is not yet complete. AI commands still
 construct catalog services in the CLI. Backup repository inspection and
