@@ -34,7 +34,7 @@ type Deps struct {
 	// Nil keeps these operations documented but denies their execution.
 	Operator       *OperatorDeps
 	GPSOperator    *GPSOperatorDeps
-	OwnersOperator *service.OwnerService
+	OwnersOperator *service.OwnerAdminService
 	Daemon         *DaemonDeps
 	// IdentityProvider resolves the caller's Identity from each request.
 	// Left nil for boot-only endpoints (such as /healthz) that do not

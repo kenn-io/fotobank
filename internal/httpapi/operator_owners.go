@@ -48,7 +48,7 @@ func ownerResult(owner owners.Owner) (OwnerResult, error) {
 
 // The service is supplied only to the authenticated host-operator listener.
 // Photo-user identity, including photo administrators, cannot grant this access.
-func registerOperatorOwners(api huma.API, svc *service.OwnerService) {
+func registerOperatorOwners(api huma.API, svc *service.OwnerAdminService) {
 	huma.Register(api, huma.Operation{
 		OperationID: "register-owner", Method: http.MethodPost, Path: "/api/v1/operator/owners",
 		Summary: "Register an owner or update their display handle", Tags: []string{"operator"},
@@ -63,15 +63,9 @@ func registerOperatorOwners(api huma.API, svc *service.OwnerService) {
 			key = request.StorageKey.String()
 		}
 		principal := owners.Principal{Hub: request.Hub, UserID: request.UserID}
-		owner, err := svc.Ensure(ctx, principal, key)
+		owner, err := svc.Register(ctx, principal, key, request.Handle)
 		if err != nil {
 			return nil, Translate(err)
-		}
-		if request.Handle != "" {
-			if err := svc.UpdateDisplay(ctx, principal, request.Handle); err != nil {
-				return nil, Translate(err)
-			}
-			owner.DisplayHandle = request.Handle
 		}
 		result, err := ownerResult(owner)
 		if err != nil {
@@ -109,7 +103,10 @@ func registerOperatorOwners(api huma.API, svc *service.OwnerService) {
 		if svc == nil {
 			return nil, huma.Error403Forbidden("local operator authentication required")
 		}
-		err := svc.Remove(ctx, owners.Principal{Hub: in.Hub, UserID: in.UserID}, false)
+		err := svc.Remove(ctx, owners.Principal{Hub: in.Hub, UserID: in.UserID})
+		if errors.Is(err, errs.ErrAlreadyExists) {
+			return nil, huma.Error409Conflict(err.Error())
+		}
 		if errors.Is(err, errs.ErrInvalidArgument) {
 			// Host operators need the reason removal was refused.
 			return nil, huma.Error400BadRequest(err.Error())

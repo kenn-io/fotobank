@@ -148,9 +148,14 @@ time. The configured stub owner is registered automatically when the daemon
 starts; you do not need to add it first.
 To choose its storage UUID, set `identity.stub.storage_key` before the first start.
 
+New registrations are usable without a restart. A storage UUID already assigned
+to another owner returns a conflict.
+
 Removal unregisters an owner; it does not delete photos or working files. Owners
-with assets or saved checkouts cannot be removed, and `--purge` is not
-implemented. After a lost response, list owners before repeating a change.
+referenced by assets, saved checkouts, albums, or shares cannot be removed, and
+`--purge` is not implemented. The active configured stub owner cannot be removed:
+change the identity configuration and restart first. After a lost response, list
+owners before repeating a change.
 
 ## Keep authority changes explicit
 

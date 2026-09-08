@@ -316,6 +316,14 @@ delete files; bulk purge remains unsupported. `owners list --json` returns the
 shared HTTP result with `items`. The configured stub owner is ensured at daemon
 startup, so a fresh stub deployment already contains that owner.
 
+`OwnerAdminService` serializes registration/removal and updates the NAS store's
+locked owner-key map before returning. The thumbnail cache uses that same map,
+so newly registered owners can use artifacts without restarting. Removal of the
+active configured stub owner is rejected with HTTP 409; change the identity
+configuration and restart before unregistering it. SQLite foreign-key conflicts
+(including albums and shares) and duplicate storage keys become domain conflicts,
+not HTTP 500 errors. Foreign-key enforcement remains the final reference check.
+
 The daemon-only command boundary is not yet complete. Privacy/admin,
 thumbnails, and AI commands still construct catalog services in
 the CLI. Backup repository inspection and restore also still run in the CLI.

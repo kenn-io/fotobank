@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/mattn/go-sqlite3"
+
 	"go.kenn.io/fotobank/internal/errs"
 )
 
@@ -28,6 +30,9 @@ func (r *Repo) Insert(ctx context.Context, o Owner) error {
 		o.Principal.Hub, o.Principal.UserID, o.StorageKey, nullIfEmpty(o.DisplayHandle), o.CreatedAt,
 	)
 	if err != nil {
+		if sqliteErr, ok := errors.AsType[sqlite3.Error](err); ok && (sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique || sqliteErr.ExtendedCode == sqlite3.ErrConstraintPrimaryKey) {
+			return fmt.Errorf("%w: principal or storage key is already registered", errs.ErrAlreadyExists)
+		}
 		return fmt.Errorf("insert owner: %w", err)
 	}
 	return nil
@@ -85,6 +90,9 @@ func (r *Repo) Delete(ctx context.Context, p Principal) error {
 		`DELETE FROM owners WHERE hub = ? AND user_id = ?`, p.Hub, p.UserID,
 	)
 	if err != nil {
+		if sqliteErr, ok := errors.AsType[sqlite3.Error](err); ok && sqliteErr.ExtendedCode == sqlite3.ErrConstraintForeignKey {
+			return fmt.Errorf("%w: owner is still referenced by catalog records", errs.ErrAlreadyExists)
+		}
 		return fmt.Errorf("delete owner: %w", err)
 	}
 	n, err := res.RowsAffected()

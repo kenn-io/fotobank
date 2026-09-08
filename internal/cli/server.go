@@ -240,7 +240,8 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	if err != nil {
 		return err
 	}
-	storeLayer := buildStorageLayer(cfg, keys)
+	nasStore := storage.NewNASOnly(cfg.NAS.Root, keys)
+	storeLayer := buildStorageLayer(cfg, nasStore)
 
 	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	contentResolver := contentresolver.New(mediaRepo, contentStore)
@@ -644,7 +645,11 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	defer ln.Close()
 	var operatorFatal <-chan error
 	operatorDeps := apiDeps
-	operatorDeps.OwnersOperator = ownerSvc
+	var activeOwner owners.Principal
+	if cfg.Identity.Mode == "stub" {
+		activeOwner = owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
+	}
+	operatorDeps.OwnersOperator = service.NewOwnerAdminService(ownerSvc, nasStore, activeOwner)
 	gpsPlaces, err := geo.NewNaturalEarth()
 	if err != nil {
 		return fmt.Errorf("load GPS gazetteer: %w", err)
@@ -1211,8 +1216,7 @@ func buildIdentityProvider(
 
 // loadStorageKeys reads every registered owner and returns the map that
 // the storage layer uses to resolve per-owner filesystem prefixes. The
-// map is a snapshot: owners added after server start are not visible
-// until the server is restarted.
+// map initializes the store; owner administration maintains it after startup.
 func loadStorageKeys(ctx context.Context, ownerSvc *service.OwnerService) (map[owners.Principal]string, error) {
 	list, err := ownerSvc.List(ctx)
 	if err != nil {
@@ -1227,13 +1231,12 @@ func loadStorageKeys(ctx context.Context, ownerSvc *service.OwnerService) (map[o
 
 // buildStorageLayer constructs the rebuildable artifact store. NAS holds the
 // durable artifact copy; the optional local tier caches thumbnail keys only.
-func buildStorageLayer(cfg *config.Config, keys map[owners.Principal]string) storage.Store {
-	nasStore := storage.NewNASOnly(cfg.NAS.Root, keys)
+func buildStorageLayer(cfg *config.Config, nasStore *storage.NASOnly) storage.Store {
 	if !cfg.Thumbs.CacheEnabled {
 		return nasStore
 	}
 	thumbsCacheRoot := filepath.Join(cfg.Flash.Root, config.FlashThumbsCacheDir)
-	return storage.NewThumbCache(nasStore, thumbsCacheRoot, keys)
+	return storage.NewThumbCache(nasStore, thumbsCacheRoot)
 }
 
 // runHiddenSweeper calls Sweep on the hidden service every interval

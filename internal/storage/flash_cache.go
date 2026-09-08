@@ -16,15 +16,13 @@ import (
 // store remains authoritative for artifacts; Docbank remains authoritative for
 // original content and never passes through this cache.
 type ThumbCache struct {
-	backing     Store
-	thumbsRoot  string
-	storageKeys map[owners.Principal]string
+	backing    *NASOnly
+	thumbsRoot string
 }
 
-// NewThumbCache builds a thumbnail-only cache. storageKeys mirrors the map
-// given to the wrapped Store so the cache can compute owner-local paths.
-func NewThumbCache(backing Store, thumbsRoot string, storageKeys map[owners.Principal]string) *ThumbCache {
-	return &ThumbCache{backing: backing, thumbsRoot: thumbsRoot, storageKeys: storageKeys}
+// NewThumbCache shares the backing store's current owner-key mapping.
+func NewThumbCache(backing *NASOnly, thumbsRoot string) *ThumbCache {
+	return &ThumbCache{backing: backing, thumbsRoot: thumbsRoot}
 }
 
 func (c *ThumbCache) flashPath(p owners.Principal, key string) (string, error) {
@@ -34,14 +32,11 @@ func (c *ThumbCache) flashPath(p owners.Principal, key string) (string, error) {
 	if !strings.HasPrefix(key, ".thumbs/") {
 		return "", fmt.Errorf("%w: flash cache accepts thumbnail keys only: %q", ErrInvalidKey, key)
 	}
-	sk, ok := c.storageKeys[p]
-	if !ok {
-		return "", fmt.Errorf("storage: unknown owner %s", p)
-	}
-	if err := ValidateStorageKey(sk); err != nil {
+	relative, err := c.backing.ownerKey(p, key)
+	if err != nil {
 		return "", err
 	}
-	return filepath.Join(c.thumbsRoot, sk, filepath.FromSlash(key)), nil
+	return filepath.Join(c.thumbsRoot, relative), nil
 }
 
 // Stat returns authoritative metadata from the backing store but reports TierFlash

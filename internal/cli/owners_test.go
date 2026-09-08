@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/thumb"
 )
 
 func TestOwnersAddGeneratedAndExplicitKeys(t *testing.T) {
@@ -56,6 +57,11 @@ func TestOwnersAddGeneratedAndExplicitKeys(t *testing.T) {
 	}, &out, &eout)
 	r.Equal(0, code, eout.String())
 	r.Contains(out.String(), explicitKey)
+	out.Reset()
+	eout.Reset()
+	code = cli.Run([]string{"owners", "add", "--hub", "h", "--user-id", "other", "--storage-key", explicitKey}, &out, &eout)
+	r.Equal(1, code)
+	r.Contains(eout.String(), "409")
 
 	out.Reset()
 	eout.Reset()
@@ -177,7 +183,7 @@ func TestOwnersOperatorAuthorization(t *testing.T) {
 		{http.MethodPost, "", `{"hub":"h","user_id":"guest","handle":"Guest"}`, 200},
 		{http.MethodGet, "", "", 200},
 		{http.MethodDelete, "?hub=h&user_id=guest", "", 204},
-		{http.MethodDelete, "?hub=h&user_id=u", "", 400},
+		{http.MethodDelete, "?hub=h&user_id=u", "", 409},
 	} {
 		for _, access := range []struct {
 			name, base, token string
@@ -242,18 +248,49 @@ func TestOwnersHeaderDeployment(t *testing.T) {
 	r.Empty(result.Items)
 }
 
+func TestNewOwnerThumbnailWithoutRestart(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfg := writeNonStubConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "catalog.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	record := startCheckoutServer(t, cfg, dbPath)
+	key := "550e8400-e29b-41d4-a716-446655440009"
+	var out, stderr bytes.Buffer
+	r.Zero(cli.RunContext(t.Context(), []string{"owners", "add", "--config", cfg, "--hub", "h", "--user-id", "guest", "--storage-key", key}, &out, &stderr), "%s", stderr.String())
+	m := seedRowForOwner(t, dbPath, owners.Principal{Hub: "h", UserID: "guest"})
+	artifact := filepath.Join(tmp, "nas", key, filepath.FromSlash(thumb.ThumbKey(m.ID, m.ThumbVersion, thumb.SizeGrid)))
+	r.NoError(os.MkdirAll(filepath.Dir(artifact), 0o700))
+	r.NoError(os.WriteFile(artifact, []byte("thumbnail bytes"), 0o600))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, record.Metadata["web_url"]+"/api/v1/media/"+m.ID+"/thumb?size=grid&v=2", nil)
+	r.NoError(err)
+	req.Header.Set("X-Auth-Hub", "h")
+	req.Header.Set("X-Auth-User-Id", "guest")
+	response, err := http.DefaultClient.Do(req)
+	r.NoError(err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	r.NoError(err)
+	r.Equal(200, response.StatusCode, "%s", body)
+	r.Equal("thumbnail bytes", string(body))
+}
+
 func TestOwnersRemoveSucceedsWhenEmpty(t *testing.T) {
 	r := require.New(t)
 	_ = newCLITempEnv(t)
 	var out, eout bytes.Buffer
 	r.Equal(0, cli.Run([]string{"owners", "add",
-		"--hub", "h", "--user-id", "u", "--storage-key", "550e8400-e29b-41d4-a716-446655440000",
+		"--hub", "h", "--user-id", "guest", "--storage-key", "660e8400-e29b-41d4-a716-446655440000",
 	}, &out, &eout))
 	out.Reset()
 	eout.Reset()
 	r.Equal(0, cli.Run([]string{"owners", "remove",
-		"--hub", "h", "--user-id", "u",
+		"--hub", "h", "--user-id", "guest",
 	}, &out, &eout))
+	out.Reset()
+	eout.Reset()
+	r.Equal(1, cli.Run([]string{"owners", "remove", "--hub", "h", "--user-id", "u"}, &out, &eout))
+	r.Contains(eout.String(), "409")
 }
 
 // newCLITempEnv sets FOTOBANK_CONFIG + FOTOBANK_DB_PATH to t.TempDir()-backed
