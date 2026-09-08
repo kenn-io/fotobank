@@ -17,16 +17,20 @@ import (
 // --- request / response shapes ---
 
 type hiddenPasscodeInput struct {
-	Body struct {
-		Passcode string `json:"passcode" minLength:"1" maxLength:"1024" doc:"Passcode (1–1024 bytes UTF-8)."`
-	}
+	Body HiddenPasscodeRequest
+}
+
+type HiddenPasscodeRequest struct {
+	Passcode string `json:"passcode" minLength:"1" maxLength:"1024" doc:"Passcode (1–1024 bytes UTF-8)."`
 }
 
 type hiddenChangeInput struct {
-	Body struct {
-		OldPasscode string `json:"old_passcode" minLength:"1" maxLength:"1024"`
-		NewPasscode string `json:"new_passcode" minLength:"1" maxLength:"1024"`
-	}
+	Body HiddenChangeRequest
+}
+
+type HiddenChangeRequest struct {
+	OldPasscode string `json:"old_passcode" minLength:"1" maxLength:"1024"`
+	NewPasscode string `json:"new_passcode" minLength:"1" maxLength:"1024"`
 }
 
 // hidden204Output is used by endpoints that return 204 No Content with no body.

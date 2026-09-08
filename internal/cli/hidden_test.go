@@ -36,12 +36,12 @@ func runHiddenCLIIn(input string, args ...string) (string, string, int) {
 	return stdout.String(), stderr.String(), code
 }
 
-// bootstrapHiddenOwner seeds the stub owner row (hub=h, user_id=u) so
-// hidden commands that load the DB don't fail with a missing owner.
+// bootstrapHiddenOwner seeds the stub owner and starts an isolated test daemon.
 // Callers must have already set FOTOBANK_CONFIG and FOTOBANK_DB_PATH.
 func bootstrapHiddenOwner(t *testing.T) {
 	t.Helper()
 	seedOwnerDirectly(t, os.Getenv("FOTOBANK_DB_PATH"), "h", "u")
+	startCheckoutServer(t, os.Getenv("FOTOBANK_CONFIG"), os.Getenv("FOTOBANK_DB_PATH"))
 }
 
 // seedCredentialInDB inserts a raw argon2id credential directly for the
@@ -330,6 +330,7 @@ func TestAdminResetHiddenPasscodeNonStubWithOwner(t *testing.T) {
 	// Seed owner and credential directly.
 	seedOwnerDirectly(t, dbPath, "h", "u")
 	seedCredentialInDB(t, dbPath, "h", "u")
+	startCheckoutServer(t, cfgPath, dbPath)
 
 	stdout, stderr, code := runHiddenCLI(
 		"admin", "reset-hidden-passcode",

@@ -13,51 +13,20 @@ import (
 	"golang.org/x/term"
 
 	"go.kenn.io/fotobank/internal/auth/hidden"
+	"go.kenn.io/fotobank/internal/client"
 	"go.kenn.io/fotobank/internal/config"
-	"go.kenn.io/fotobank/internal/media"
-	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/httpapi"
 )
 
-// hiddenCtx bundles dependencies for hidden subcommands.
-type hiddenCtx struct {
-	svc    *hidden.Service
-	caller owners.Principal
-	close  func()
-}
-
-// loadHiddenCtx loads config, opens DB, and constructs a hidden.Service.
-// For stub mode, caller is the configured stub principal.
-// For non-stub mode, a nil principal is returned (caller must supply --owner).
-func loadHiddenCtx(cfgPath string) (*hiddenCtx, *config.Config, error) {
-	path := cfgPath
-	if path == "" {
-		path = config.DefaultConfigPath()
-	}
-	cfg, err := config.Load(path)
+// hiddenLifecycle reads configuration without starting the daemon. Prompts and
+// validation must finish before Ensure can create application state.
+func hiddenLifecycle(cfgPath string) (client.Lifecycle, *config.Config, error) {
+	lifecycle, err := daemonLifecycle(cfgPath, "")
 	if err != nil {
-		return nil, nil, err
+		return lifecycle, nil, err
 	}
-	d, err := openDatabase(cfg)
-	if err != nil {
-		return nil, nil, err
-	}
-	mediaRepo := media.NewRepo(d.WriteDB(), d.ReadDB())
-	hiddenRepo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
-	svc := hidden.NewService(hiddenRepo, mediaRepo)
-
-	var caller owners.Principal
-	if cfg.Identity.Mode == "stub" {
-		caller = owners.Principal{
-			Hub:    cfg.Identity.Stub.Hub,
-			UserID: cfg.Identity.Stub.UserID,
-		}
-	}
-
-	return &hiddenCtx{
-		svc:    svc,
-		caller: caller,
-		close:  func() { _ = d.Close() },
-	}, cfg, nil
+	cfg, err := config.LoadUnchecked(lifecycle.ConfigPath)
+	return lifecycle, cfg, err
 }
 
 // stdinReader wraps an io.Reader with a single bufio.Scanner so that
@@ -146,11 +115,10 @@ func newHiddenSetupCmd() *cobra.Command {
 }
 
 func runHiddenSetup(cmd *cobra.Command, cfgPath string) error {
-	hctx, cfg, err := loadHiddenCtx(cfgPath)
+	lifecycle, cfg, err := hiddenLifecycle(cfgPath)
 	if err != nil {
 		return err
 	}
-	defer hctx.close()
 	if cfg.Identity.Mode != "stub" {
 		return fmt.Errorf(
 			"hidden setup requires stub identity mode; got %q — use 'admin reset-hidden-passcode' instead",
@@ -170,7 +138,13 @@ func runHiddenSetup(cmd *cobra.Command, cfgPath string) error {
 		return fmt.Errorf("passcodes do not match")
 	}
 
-	if err := hctx.svc.Setup(cmd.Context(), hctx.caller, passcode); err != nil {
+	if err := hidden.ValidatePasscode(passcode); err != nil {
+		return err
+	}
+	if _, err := lifecycle.Ensure(cmd.Context()); err != nil {
+		return err
+	}
+	if err := client.SetupHidden(cmd.Context(), lifecycle.DBPath, lifecycle.Version, httpapi.HiddenPasscodeRequest{Passcode: passcode}); err != nil {
 		return err
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "passcode set")
@@ -193,11 +167,10 @@ func newHiddenChangeCmd() *cobra.Command {
 }
 
 func runHiddenChange(cmd *cobra.Command, cfgPath string) error {
-	hctx, cfg, err := loadHiddenCtx(cfgPath)
+	lifecycle, cfg, err := hiddenLifecycle(cfgPath)
 	if err != nil {
 		return err
 	}
-	defer hctx.close()
 	if cfg.Identity.Mode != "stub" {
 		return fmt.Errorf(
 			"hidden change requires stub identity mode; got %q — use 'admin reset-hidden-passcode' instead",
@@ -221,7 +194,16 @@ func runHiddenChange(cmd *cobra.Command, cfgPath string) error {
 		return fmt.Errorf("passcodes do not match")
 	}
 
-	if err := hctx.svc.Change(cmd.Context(), hctx.caller, current, newPass); err != nil {
+	if err := hidden.ValidatePasscode(current); err != nil {
+		return err
+	}
+	if err := hidden.ValidatePasscode(newPass); err != nil {
+		return err
+	}
+	if _, err := lifecycle.Ensure(cmd.Context()); err != nil {
+		return err
+	}
+	if err := client.ChangeHidden(cmd.Context(), lifecycle.DBPath, lifecycle.Version, httpapi.HiddenChangeRequest{OldPasscode: current, NewPasscode: newPass}); err != nil {
 		return err
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "passcode changed")
@@ -244,11 +226,10 @@ func newHiddenDisableCmd() *cobra.Command {
 }
 
 func runHiddenDisable(cmd *cobra.Command, cfgPath string) error {
-	hctx, cfg, err := loadHiddenCtx(cfgPath)
+	lifecycle, cfg, err := hiddenLifecycle(cfgPath)
 	if err != nil {
 		return err
 	}
-	defer hctx.close()
 	if cfg.Identity.Mode != "stub" {
 		return fmt.Errorf(
 			"hidden disable requires stub identity mode; got %q — use 'admin reset-hidden-passcode' instead",
@@ -270,7 +251,13 @@ func runHiddenDisable(cmd *cobra.Command, cfgPath string) error {
 		return fmt.Errorf("aborted")
 	}
 
-	if err := hctx.svc.Disable(cmd.Context(), hctx.caller, passcode); err != nil {
+	if err := hidden.ValidatePasscode(passcode); err != nil {
+		return err
+	}
+	if _, err := lifecycle.Ensure(cmd.Context()); err != nil {
+		return err
+	}
+	if err := client.DisableHidden(cmd.Context(), lifecycle.DBPath, lifecycle.Version, httpapi.HiddenPasscodeRequest{Passcode: passcode}); err != nil {
 		return err
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "hidden-privacy disabled")
@@ -322,29 +309,27 @@ func runAdminResetHiddenPasscode(cmd *cobra.Command, cfgPath, ownerRaw string, c
 		return newUsageError("--confirm=true is required to perform a destructive reset")
 	}
 
-	hctx, cfg, err := loadHiddenCtx(cfgPath)
+	lifecycle, cfg, err := hiddenLifecycle(cfgPath)
 	if err != nil {
 		return err
 	}
-	defer hctx.close()
-
-	var principal owners.Principal
 	if ownerRaw != "" {
-		p, err := parseHubUser(ownerRaw)
+		_, err := parseHubUser(ownerRaw)
 		if err != nil {
 			return newUsageError("%s", err.Error())
 		}
-		principal = p
-	} else if cfg.Identity.Mode == "stub" {
-		principal = hctx.caller
-	} else {
+	} else if cfg.Identity.Mode != "stub" {
 		return fmt.Errorf("non-stub identity mode requires --owner hub:user")
 	}
 
-	if err := hctx.svc.AdminReset(cmd.Context(), principal); err != nil {
+	if _, err := lifecycle.Ensure(cmd.Context()); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "reset hidden passcode for %s\n", principal)
+	result, err := client.ResetHidden(cmd.Context(), lifecycle.DBPath, lifecycle.Version, httpapi.ResetHiddenRequest{Owner: ownerRaw, Confirm: confirm})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "reset hidden passcode for %s\n", result.Owner)
 	return nil
 }
 

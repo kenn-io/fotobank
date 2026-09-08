@@ -335,9 +335,20 @@ restricted to ready, visible assets. Results contain per-owner queued counts and
 an optional error for an incomplete run; earlier owner updates are not rolled
 back. Repeating the request increments thumbnail versions again.
 
-The daemon-only command boundary is not yet complete. Privacy/admin
-and AI commands still construct catalog services in
-the CLI. Backup repository inspection and restore also still run in the CLI.
+Privacy commands call the existing `/api/v1/auth/hidden/setup`, `/change`, and
+`/disable` operations through the typed client. They remain scoped to the
+configured stub owner. Passcode prompts, confirmation, and input validation
+finish before automatic startup; the CLI never opens the catalog.
+`admin reset-hidden-passcode` calls the host-operator-only
+`POST /api/v1/operator/hidden/reset` operation with explicit confirmation.
+It defaults to the stub owner or accepts `--owner hub:user`; header deployments
+require an explicit owner. Reset removes the credential and revokes sessions
+but preserves hidden flags. Disable clears hidden flags as well. Changing a
+passcode revokes existing sessions without changing hidden flags.
+
+The daemon-only command boundary is not yet complete. AI commands still
+construct catalog services in the CLI. Backup repository inspection and
+restore also still run in the CLI.
 These existing paths are migration work in kata, not exceptions to extend.
 The accepted boundary is one daemon-owned implementation per application
 operation, shared by HTTP, the CLI, and a future MCP client. Bootstrap and
