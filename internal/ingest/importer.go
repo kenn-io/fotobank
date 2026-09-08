@@ -124,10 +124,7 @@ func (imp *Importer) ImportDirectory(ctx context.Context, root string, opts Opti
 		return Result{}, err
 	}
 	var candidates []Candidate
-	if err := Discover(sourceRoot, func(candidate Candidate) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	if err := Discover(ctx, sourceRoot, func(candidate Candidate) error {
 		candidates = append(candidates, candidate)
 		return nil
 	}); err != nil {
@@ -575,7 +572,7 @@ func settleCandidate(ctx context.Context, path string, interval time.Duration) (
 	if first.Size() != second.Size() || !first.ModTime().Equal(second.ModTime()) {
 		return fileObservation{}, fmt.Errorf("%w: source file is still changing: %s", errs.ErrContentConflict, path)
 	}
-	digest, err := SHA256(path)
+	digest, err := SHA256(ctx, path)
 	if err != nil {
 		return fileObservation{}, fmt.Errorf("hash source %s: %w", path, err)
 	}

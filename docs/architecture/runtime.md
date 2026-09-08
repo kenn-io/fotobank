@@ -188,8 +188,10 @@ settling, grouping, deduplication, and exact-content receipts use the existing
 The Huma contract describes newline-delimited JSON `ImportEvent` records:
 progress followed by one final result with partial counts and failures. The
 typed client rejects EOF without a result and never resubmits a request.
-Disconnect cancels the request, stops new file dispatch, and joins workers;
-completed imports and durable reservations remain available for a rerun.
+Disconnect cancels the request, stops new file dispatch, and joins workers.
+Discovery checks cancellation for every entry, including skipped files and
+directories; source hashing checks between reads and closes its file on
+cancellation. Completed imports and durable reservations remain available for a rerun.
 Shutdown closes and joins the operator handlers before storage cleanup. There
 is no detached import job or CLI storage fallback. Human progress remains on
 stdout normally, or stderr with `import --json`; JSON stdout is the final result.
