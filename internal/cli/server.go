@@ -644,6 +644,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	defer ln.Close()
 	var operatorFatal <-chan error
 	operatorDeps := apiDeps
+	operatorDeps.OwnersOperator = ownerSvc
 	gpsPlaces, err := geo.NewNaturalEarth()
 	if err != nil {
 		return fmt.Errorf("load GPS gazetteer: %w", err)

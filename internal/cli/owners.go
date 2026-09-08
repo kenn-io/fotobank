@@ -1,27 +1,24 @@
 package cli
 
 import (
-	"encoding/json"
+	"context"
+	json "encoding/json/v2"
 	"fmt"
+	"uuid"
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/fotobank/internal/config"
-	"go.kenn.io/fotobank/internal/owners"
-	"go.kenn.io/fotobank/internal/service"
+	"go.kenn.io/fotobank/internal/client"
+	"go.kenn.io/fotobank/internal/httpapi"
 )
 
-func loadOwnerService() (*service.OwnerService, func(), error) {
-	cfg, err := config.Load(config.DefaultConfigPath())
+func ensureOwnerDaemon(ctx context.Context, cfgPath string) (client.Lifecycle, error) {
+	lifecycle, err := daemonLifecycle(cfgPath, "")
 	if err != nil {
-		return nil, nil, fmt.Errorf("load config: %w", err)
+		return lifecycle, err
 	}
-	database, err := openDatabase(cfg)
-	if err != nil {
-		return nil, nil, err
-	}
-	svc := service.NewOwnerService(owners.NewRepo(database.WriteDB(), database.ReadDB()))
-	return svc, func() { _ = database.Close() }, nil
+	_, err = lifecycle.Ensure(ctx)
+	return lifecycle, err
 }
 
 func newOwnersCmd() *cobra.Command {
@@ -29,6 +26,7 @@ func newOwnersCmd() *cobra.Command {
 		Use:   "owners",
 		Short: "Manage registered owners (principals that own media)",
 	}
+	cmd.PersistentFlags().String("config", "", "config file path")
 	cmd.AddCommand(newOwnersAddCmd())
 	cmd.AddCommand(newOwnersListCmd())
 	cmd.AddCommand(newOwnersRemoveCmd())
@@ -50,23 +48,24 @@ func newOwnersAddCmd() *cobra.Command {
 			if hub == "" || userID == "" {
 				return newUsageError("--hub and --user-id are required")
 			}
-			svc, cleanup, err := loadOwnerService()
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-			p := owners.Principal{Hub: hub, UserID: userID}
-			ctx := cmd.Context()
-			owner, err := svc.Ensure(ctx, p, storageKey)
-			if err != nil {
-				return err
-			}
-			if handle != "" {
-				if err := svc.UpdateDisplay(ctx, p, handle); err != nil {
-					return err
+			request := httpapi.RegisterOwnerRequest{Hub: hub, UserID: userID, Handle: handle}
+			if storageKey != "" {
+				key, err := uuid.Parse(storageKey)
+				if err != nil {
+					return newUsageError("--storage-key must be a UUID")
 				}
+				request.StorageKey = &key
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "added", p, owner.StorageKey)
+			cfgPath, _ := cmd.Flags().GetString("config")
+			lifecycle, err := ensureOwnerDaemon(cmd.Context(), cfgPath)
+			if err != nil {
+				return err
+			}
+			owner, err := client.RegisterOwner(cmd.Context(), lifecycle.DBPath, lifecycle.Version, request)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "added", owner.Hub+":"+owner.UserID, owner.StorageKey)
 			return nil
 		},
 	}
@@ -84,31 +83,21 @@ func newOwnersListCmd() *cobra.Command {
 		Short: "List registered owners",
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			svc, cleanup, err := loadOwnerService()
+			cfgPath, _ := cmd.Flags().GetString("config")
+			lifecycle, err := ensureOwnerDaemon(cmd.Context(), cfgPath)
 			if err != nil {
 				return err
 			}
-			defer cleanup()
-			rows, err := svc.List(cmd.Context())
+			result, err := client.ListOwners(cmd.Context(), lifecycle.DBPath, lifecycle.Version)
 			if err != nil {
 				return err
 			}
 			stdout := cmd.OutOrStdout()
 			if jsonOut {
-				out := make([]map[string]any, 0, len(rows))
-				for _, o := range rows {
-					out = append(out, map[string]any{
-						"hub":         o.Principal.Hub,
-						"user_id":     o.Principal.UserID,
-						"storage_key": o.StorageKey,
-						"handle":      o.DisplayHandle,
-						"created_at":  o.CreatedAt,
-					})
-				}
-				return json.NewEncoder(stdout).Encode(out)
+				return json.MarshalWrite(stdout, result)
 			}
-			for _, o := range rows {
-				fmt.Fprintf(stdout, "%s\t%s\t%s\n", o.Principal, o.StorageKey, o.DisplayHandle)
+			for _, o := range result.Items {
+				fmt.Fprintf(stdout, "%s:%s\t%s\t%s\n", o.Hub, o.UserID, o.StorageKey, o.Handle)
 			}
 			return nil
 		},
@@ -125,18 +114,21 @@ func newOwnersRemoveCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "remove",
-		Short: "Unregister an owner (refuses if media still references them)",
+		Short: "Unregister an owner (refuses if assets or checkouts reference them)",
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if hub == "" || userID == "" {
 				return newUsageError("--hub and --user-id are required")
 			}
-			svc, cleanup, err := loadOwnerService()
+			if purge {
+				return newUsageError("--purge is not implemented")
+			}
+			cfgPath, _ := cmd.Flags().GetString("config")
+			lifecycle, err := ensureOwnerDaemon(cmd.Context(), cfgPath)
 			if err != nil {
 				return err
 			}
-			defer cleanup()
-			if err := svc.Remove(cmd.Context(), owners.Principal{Hub: hub, UserID: userID}, purge); err != nil {
+			if err := client.RemoveOwner(cmd.Context(), lifecycle.DBPath, lifecycle.Version, httpapi.RemoveOwnerRequest{Hub: hub, UserID: userID}); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "removed")

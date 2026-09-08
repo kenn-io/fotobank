@@ -2533,6 +2533,33 @@
         ],
         "type": "object"
       },
+      "OwnerListResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/OwnerListResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OwnerResult"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "OwnerRecoveryReport": {
         "additionalProperties": false,
         "properties": {
@@ -2572,6 +2599,44 @@
           "pending",
           "conflicts",
           "orphan_paths"
+        ],
+        "type": "object"
+      },
+      "OwnerResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/OwnerResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "hub": {
+            "type": "string"
+          },
+          "storage_key": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id",
+          "storage_key",
+          "handle",
+          "created_at"
         ],
         "type": "object"
       },
@@ -2736,6 +2801,39 @@
             "type": "string"
           },
           "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id"
+        ],
+        "type": "object"
+      },
+      "RegisterOwnerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/RegisterOwnerRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "hub": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "storage_key": {
+            "type": "string"
+          },
+          "user_id": {
+            "minLength": 1,
             "type": "string"
           }
         },
@@ -5870,6 +5968,135 @@
           }
         ],
         "summary": "Import host files and stream progress",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/owners": {
+      "delete": {
+        "operationId": "remove-owner",
+        "parameters": [
+          {
+            "explode": false,
+            "in": "query",
+            "name": "hub",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Unregister an owner without deleting their content",
+        "tags": [
+          "operator"
+        ]
+      },
+      "get": {
+        "operationId": "list-owners",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerListResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "List registered owners",
+        "tags": [
+          "operator"
+        ]
+      },
+      "post": {
+        "operationId": "register-owner",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterOwnerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Register an owner or update their display handle",
         "tags": [
           "operator"
         ]

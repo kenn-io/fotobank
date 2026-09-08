@@ -716,6 +716,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/owners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List registered owners */
+        get: operations["list-owners"];
+        put?: never;
+        /** Register an owner or update their display handle */
+        post: operations["register-owner"];
+        /** Unregister an owner without deleting their content */
+        delete: operations["remove-owner"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/search": {
         parameters: {
             query?: never;
@@ -1912,6 +1931,15 @@ export interface components {
             updated_by: components["schemas"]["PrincipalRef"];
             value: unknown;
         };
+        OwnerListResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/OwnerListResult.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["OwnerResult"][] | null;
+        };
         OwnerRecoveryReport: {
             /** Format: int64 */
             adopted: number;
@@ -1923,6 +1951,20 @@ export interface components {
             owner: components["schemas"]["Principal"];
             /** Format: int64 */
             pending: number;
+        };
+        OwnerResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/OwnerResult.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            created_at: string;
+            handle: string;
+            hub: string;
+            storage_key: string;
+            user_id: string;
         };
         PreviewAlbumDTO: {
             id: string;
@@ -1969,6 +2011,18 @@ export interface components {
         PrincipalStruct: {
             handle?: string;
             hub: string;
+            user_id: string;
+        };
+        RegisterOwnerRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/RegisterOwnerRequest.json
+             */
+            readonly $schema?: string;
+            handle?: string;
+            hub: string;
+            storage_key?: string;
             user_id: string;
         };
         Result: {
@@ -3816,6 +3870,98 @@ export interface operations {
                 content: {
                     "application/x-ndjson": components["schemas"]["ImportEvent"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "list-owners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerListResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "register-owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterOwnerRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "remove-owner": {
+        parameters: {
+            query: {
+                hub: string;
+                user_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

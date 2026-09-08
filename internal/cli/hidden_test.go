@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,11 +41,7 @@ func runHiddenCLIIn(input string, args ...string) (string, string, int) {
 // Callers must have already set FOTOBANK_CONFIG and FOTOBANK_DB_PATH.
 func bootstrapHiddenOwner(t *testing.T) {
 	t.Helper()
-	_, stderr, code := runHiddenCLI(
-		"owners", "add",
-		"--hub", "h", "--user-id", "u", "--storage-key", "550e8400-e29b-41d4-a716-446655440000",
-	)
-	require.Equal(t, 0, code, "bootstrap owner must succeed: %s", stderr)
+	seedOwnerDirectly(t, os.Getenv("FOTOBANK_DB_PATH"), "h", "u")
 }
 
 // seedCredentialInDB inserts a raw argon2id credential directly for the
