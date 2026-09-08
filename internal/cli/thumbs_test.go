@@ -32,6 +32,8 @@ mode = "stub"
 [identity.stub]
 hub = "h"
 user_id = "u"
+[observability]
+admin_listen = "127.0.0.1:0"
 `, filepath.Join(tmp, "nas"), filepath.Join(tmp, "flash")), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "nas"), 0o700))
 	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "flash"), 0o700))
@@ -68,6 +70,7 @@ func TestThumbsRegenerateAllBumpsVersion(t *testing.T) {
 
 	var out, eout bytes.Buffer
 	m := seedReadyRow(t, dbPath)
+	startCheckoutServer(t, cfgPath, dbPath)
 
 	out.Reset()
 	eout.Reset()
@@ -84,7 +87,6 @@ func TestThumbsRegenerateAllBumpsVersion(t *testing.T) {
 	got, err := repo.GetByID(context.Background(), m.ID)
 	r.NoError(err)
 	r.Equal(3, got.ThumbVersion)
-	r.Equal("pending", got.ThumbStatus)
 }
 
 func TestThumbsRegenerateWithNoSelectorErrors(t *testing.T) {
@@ -113,6 +115,7 @@ func TestThumbsRegenerateByIDTargetsOnlyMatch(t *testing.T) {
 
 	m1 := seedReadyRow(t, dbPath)
 	m2 := seedReadyRow(t, dbPath)
+	startCheckoutServer(t, cfgPath, dbPath)
 
 	out.Reset()
 	eout.Reset()
@@ -127,7 +130,7 @@ func TestThumbsRegenerateByIDTargetsOnlyMatch(t *testing.T) {
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	got1, err := repo.GetByID(context.Background(), m1.ID)
 	r.NoError(err)
-	r.Equal("pending", got1.ThumbStatus)
+	r.Equal(3, got1.ThumbVersion)
 
 	got2, err := repo.GetByID(context.Background(), m2.ID)
 	r.NoError(err)
@@ -144,6 +147,8 @@ root = %q
 root = %q
 [identity]
 mode = "header"
+[observability]
+admin_listen = "127.0.0.1:0"
 `, filepath.Join(tmp, "nas"), filepath.Join(tmp, "flash")), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "nas"), 0o700))
 	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "flash"), 0o700))
@@ -184,6 +189,7 @@ func TestThumbsRegenerateOwnerScopeOnlyTouchesThatOwner(t *testing.T) {
 	bob := owners.Principal{Hub: "local", UserID: "bob"}
 	mAlice := seedRowForOwner(t, dbPath, alice)
 	mBob := seedRowForOwner(t, dbPath, bob)
+	startCheckoutServer(t, cfgPath, dbPath)
 
 	out.Reset()
 	eout.Reset()
@@ -200,7 +206,6 @@ func TestThumbsRegenerateOwnerScopeOnlyTouchesThatOwner(t *testing.T) {
 	repo := media.NewRepo(d.WriteDB(), d.ReadDB())
 	gotA, err := repo.GetByID(context.Background(), mAlice.ID)
 	r.NoError(err)
-	r.Equal("pending", gotA.ThumbStatus)
 	r.Equal(3, gotA.ThumbVersion)
 	gotB, err := repo.GetByID(context.Background(), mBob.ID)
 	r.NoError(err)
@@ -227,6 +232,7 @@ func TestThumbsRegenerateAllOwnersTouchesEveryRow(t *testing.T) {
 		rows = append(rows, seedRowForOwner(t, dbPath, p))
 		rows = append(rows, seedRowForOwner(t, dbPath, p))
 	}
+	startCheckoutServer(t, cfgPath, dbPath)
 
 	out.Reset()
 	eout.Reset()
@@ -245,7 +251,6 @@ func TestThumbsRegenerateAllOwnersTouchesEveryRow(t *testing.T) {
 	for _, m := range rows {
 		got, err := repo.GetByID(context.Background(), m.ID)
 		r.NoError(err)
-		r.Equal("pending", got.ThumbStatus, "row %s", m.ID)
 		r.Equal(3, got.ThumbVersion, "row %s", m.ID)
 	}
 }
@@ -324,6 +329,7 @@ func TestThumbsRegenerateOwnerScopeBypassesStubModeRequirement(t *testing.T) {
 		&out, &eout)
 	r.Equal(2, code, "default scope without stub must error")
 	r.Contains(eout.String(), "stub")
+	startCheckoutServer(t, cfgPath, dbPath)
 
 	out.Reset()
 	eout.Reset()

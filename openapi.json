@@ -2810,6 +2810,92 @@
         ],
         "type": "object"
       },
+      "RegenerateThumbsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/RegenerateThumbsRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "all": {
+            "type": "boolean"
+          },
+          "all_owners": {
+            "type": "boolean"
+          },
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "owner": {
+            "description": "Target hub:user; mutually exclusive with all_owners.",
+            "type": "string"
+          },
+          "since": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "working",
+              "ready",
+              "failed",
+              "no_preview"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "photo",
+              "video"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "RegenerateThumbsResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/RegenerateThumbsResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "error": {
+            "description": "If present, earlier items succeeded but the operation did not finish. Do not blindly retry: regeneration increments thumbnail versions.",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ThumbOwnerResult"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "RegisterOwnerRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3648,6 +3734,27 @@
           "skipped",
           "done",
           "throughput_per_min"
+        ],
+        "type": "object"
+      },
+      "ThumbOwnerResult": {
+        "additionalProperties": false,
+        "properties": {
+          "enqueued": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "hub": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id",
+          "enqueued"
         ],
         "type": "object"
       },
@@ -6097,6 +6204,53 @@
           }
         ],
         "summary": "Register an owner or update their display handle",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/thumbs/regenerate": {
+      "post": {
+        "description": "Requires at least one selector. Selectors combine as filters, including when all is true. Only ready, visible assets are eligible. Defaults to the configured stub owner; host operators can select an owner or all owners. Reports queued work, not completed thumbnails.",
+        "operationId": "regenerate-thumbnails",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegenerateThumbsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegenerateThumbsResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Queue thumbnail regeneration",
         "tags": [
           "operator"
         ]

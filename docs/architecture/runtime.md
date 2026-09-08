@@ -325,8 +325,18 @@ checkouts, albums, or shares also return HTTP 409, as do duplicate storage keys.
 Foreign-key enforcement remains the final reference check. Unsupported requests
 remain invalid arguments rather than owner-in-use conflicts.
 
-The daemon-only command boundary is not yet complete. Privacy/admin,
-thumbnails, and AI commands still construct catalog services in
+Thumbnail regeneration uses `POST /api/v1/operator/thumbs/regenerate` and the
+typed client in `internal/client/thumbs.go`. `ThumbAdminService` resolves the
+requested owner scope and enqueues through the server-owned thumbnail queue.
+The CLI validates selectors before automatic startup and never opens the catalog.
+Default scope is the configured stub owner; explicit single/all-owner scopes also
+work in header mode, behind the host-operator credential. Queue eligibility stays
+restricted to ready, visible assets. Results contain per-owner queued counts and
+an optional error for an incomplete run; earlier owner updates are not rolled
+back. Repeating the request increments thumbnail versions again.
+
+The daemon-only command boundary is not yet complete. Privacy/admin
+and AI commands still construct catalog services in
 the CLI. Backup repository inspection and restore also still run in the CLI.
 These existing paths are migration work in kata, not exceptions to extend.
 The accepted boundary is one daemon-owned implementation per application

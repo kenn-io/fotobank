@@ -52,6 +52,7 @@ that open that same vault cannot run alongside it. For the configured deployment
 | --- | --- |
 | Content recovery | Uses the daemon and starts it if needed; checks interrupted imports across all owners. |
 | GPS backfill | Uses the daemon and starts it if needed; header mode requires `--owner` or `--all-owners`. |
+| Thumbnail regeneration | Uses the daemon and starts it if needed; header mode requires `--owner` or `--all-owners`. |
 | Owner registration, listing, or removal | Uses the daemon's local operator API and starts it if needed; supports stub and header mode. |
 | Import, album and sharing commands, every checkout command, or manual backup create | Uses the daemon in stub mode and starts it if needed; run under the same OS account and configuration. |
 | Browse or use the HTTP API, scan checkout edits, scheduled backups | Keep the server running. |
@@ -62,8 +63,8 @@ For a supervised service, use its supervisor; for a foreground `fotobank serve`,
 interrupt it and wait for shutdown to complete. Do not remove
 lock files or start a second vault owner to work around this limitation. The
 CLI submits imports, interrupted-import recovery, GPS backfill, album and sharing
-commands, owner management, every checkout command, and manual backup creation to the server.
-Privacy/admin, thumbnails, and AI commands still use
+commands, owner management, thumbnail regeneration, every checkout command, and manual backup creation to the server.
+Privacy/admin and AI commands still use
 direct catalog connections. These are remaining migration gaps, not alternate
 ways to access a daemon-owned deployment.
 
@@ -71,6 +72,24 @@ For tracked edits: keep the server running to create the checkout, edit and
 settle files, inspect `checkout status --json`, then explicitly
 commit with the server still running. See
 [checkouts](checkouts.md) for the complete workflow.
+
+## Regenerate thumbnails
+
+Use `fotobank thumbs regenerate --all --json` to queue new thumbnails for the
+configured stub owner. The daemon stays responsible for the catalog and workers;
+the command reports queued work, not finished images. Originals remain unchanged.
+
+Select assets with repeatable `--id`, `--type photo|video`, `--status`, or
+`--since 2026-01-01T00:00:00Z`. Filters combine, including alongside `--all`.
+Only ready, non-hidden assets are eligible. Host operators may use `--owner hub:user`
+or `--all-owners`; header-mode deployments require one of these explicit scopes.
+These permissions belong to the local operator, not ordinary photo users.
+
+The shared HTTP operation is `POST /api/v1/operator/thumbs/regenerate`.
+JSON returns `items` with `hub`, `user_id`, and `enqueued` for each processed owner.
+An `error` means the run stopped after any reported successes, and the CLI exits
+nonzero. Regeneration increments thumbnail versions: inspect media thumbnail
+status before retrying an interrupted request instead of blindly repeating it.
 
 ## Organize albums
 

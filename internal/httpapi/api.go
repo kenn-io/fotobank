@@ -35,6 +35,7 @@ type Deps struct {
 	Operator       *OperatorDeps
 	GPSOperator    *GPSOperatorDeps
 	OwnersOperator *service.OwnerAdminService
+	ThumbsOperator *ThumbsOperatorDeps
 	Daemon         *DaemonDeps
 	// IdentityProvider resolves the caller's Identity from each request.
 	// Left nil for boot-only endpoints (such as /healthz) that do not
@@ -186,6 +187,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerOperator(api, deps.Operator)
 	registerOperatorGPS(api, deps.GPSOperator)
 	registerOperatorOwners(api, deps.OwnersOperator)
+	registerOperatorThumbs(api, deps.ThumbsOperator)
 	registerDaemon(api, deps.Daemon)
 	registerMe(api, deps.SharingEnabled, deps.AdminPrincipals)
 	registerMediaGeo(api, deps.MediaService, deps.HiddenAuth)

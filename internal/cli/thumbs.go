@@ -2,18 +2,20 @@ package cli
 
 import (
 	"context"
+	json "encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/fotobank/internal/client"
 	"go.kenn.io/fotobank/internal/config"
-	"go.kenn.io/fotobank/internal/db"
-	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/owners"
-	"go.kenn.io/fotobank/internal/thumb"
 )
 
 // newThumbsCmd wires the `fotobank thumbs` command group. It has no
@@ -43,6 +45,8 @@ type regenerateOpts struct {
 	sinceTime *time.Time // parsed during validateSelectors; nil when --since is empty
 	owner     string     // "<hub>:<user>"; empty = use stub principal
 	allOwners bool       // iterate every principal in owners table
+	asJSON    bool
+	parsedIDs []uuid.UUID
 }
 
 // newThumbsRegenerateCmd wires the `fotobank thumbs regenerate` subcommand.
@@ -75,39 +79,31 @@ func newThumbsRegenerateCmd() *cobra.Command {
 		"admin: regenerate for a single principal in <hub>:<user> form")
 	cmd.Flags().BoolVar(&opts.allOwners, "all-owners", false,
 		"admin: regenerate for every registered principal")
+	cmd.Flags().BoolVar(&opts.asJSON, "json", false, "emit per-owner queued counts as JSON")
 	return cmd
-}
-
-// loadThumbsConfig loads and validates the config for the thumbs command.
-// requireStub enforces identity.mode = "stub"; admin scope flags
-// (--owner / --all-owners) bypass that check.
-func loadThumbsConfig(cfgPath string, requireStub bool) (*config.Config, error) {
-	path := cfgPath
-	if path == "" {
-		path = config.DefaultConfigPath()
-	}
-	cfg, err := config.Load(path)
-	if err != nil {
-		return nil, err
-	}
-	if requireStub && cfg.Identity.Mode != "stub" {
-		return nil, newUsageError(
-			"fotobank thumbs regenerate requires identity.mode = stub (got %q)",
-			cfg.Identity.Mode)
-	}
-	return cfg, nil
-}
-
-// openDB opens the SQLite database for the thumbs command, preferring
-// FOTOBANK_DB_PATH over the path derived from cfg.Flash.Root.
-func openDB(cfg *config.Config) (*databaseHandle, error) {
-	return openDatabase(cfg)
 }
 
 // validateSelectors returns a usage error when no selector flag is set.
 // It also parses --since up front so a malformed timestamp errors before
 // any DB file is created.
 func validateSelectors(opts *regenerateOpts) error {
+	switch opts.kind {
+	case "", "photo", "video":
+	default:
+		return newUsageError("--type must be photo or video")
+	}
+	switch opts.status {
+	case "", "pending", "working", "ready", "failed", "no_preview":
+	default:
+		return newUsageError("invalid --status")
+	}
+	for _, raw := range opts.ids {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return newUsageError("--id must be a UUID: %v", err)
+		}
+		opts.parsedIDs = append(opts.parsedIDs, id)
+	}
 	if !opts.all && len(opts.ids) == 0 && opts.kind == "" && opts.status == "" && opts.since == "" {
 		return newUsageError(
 			"at least one of --all, --id, --type, --status, --since is required")
@@ -148,60 +144,7 @@ func parseOwner(s string) (owners.Principal, error) {
 	return owners.Principal{Hub: hub, UserID: user}, nil
 }
 
-// buildFilter constructs a thumb.EnqueueFilter from a Principal and opts.
-// --since parsing happened in validateSelectors, so this function is
-// infallible.
-func buildFilter(p owners.Principal, opts regenerateOpts) thumb.EnqueueFilter {
-	filter := thumb.EnqueueFilter{
-		Owner: p,
-		All:   opts.all,
-		IDs:   opts.ids,
-	}
-	if opts.kind != "" {
-		filter.MediaType = media.Type(opts.kind)
-	}
-	if opts.status != "" {
-		filter.Status = opts.status
-	}
-	if opts.sinceTime != nil {
-		filter.Since = opts.sinceTime
-	}
-	return filter
-}
-
-// resolveOwners returns the principals to iterate over: every owner in
-// the DB for --all-owners, the parsed --owner principal, or the stub
-// principal from the config.
-func resolveOwners(ctx context.Context, d *db.DB, cfg *config.Config, opts regenerateOpts) ([]owners.Principal, error) {
-	if opts.allOwners {
-		repo := owners.NewRepo(d.WriteDB(), d.ReadDB())
-		list, err := repo.List(ctx)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]owners.Principal, 0, len(list))
-		for _, o := range list {
-			out = append(out, o.Principal)
-		}
-		return out, nil
-	}
-	if opts.owner != "" {
-		p, err := parseOwner(opts.owner)
-		if err != nil {
-			return nil, err
-		}
-		return []owners.Principal{p}, nil
-	}
-	return []owners.Principal{
-		{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID},
-	}, nil
-}
-
-// runThumbsRegenerate validates selectors and scope, opens the DB,
-// resolves the principals to enqueue for, and drives thumb.Queue.Enqueue
-// once per principal. All selector validation — including RFC3339
-// parsing of --since — runs before opening the database so a misuse
-// fails fast without touching the filesystem.
+// runThumbsRegenerate validates before automatic startup and queues through HTTP.
 func runThumbsRegenerate(ctx context.Context, opts regenerateOpts, stdout, _ io.Writer) error {
 	if err := validateSelectors(&opts); err != nil {
 		return err
@@ -209,34 +152,38 @@ func runThumbsRegenerate(ctx context.Context, opts regenerateOpts, stdout, _ io.
 	if err := validateScope(opts); err != nil {
 		return err
 	}
-	requireStub := opts.owner == "" && !opts.allOwners
-	cfg, err := loadThumbsConfig(opts.cfgPath, requireStub)
+	lifecycle, err := daemonLifecycle(opts.cfgPath, "")
 	if err != nil {
 		return err
 	}
-	d, err := openDB(cfg)
+	cfg, err := config.LoadUnchecked(lifecycle.ConfigPath)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = d.Close() }()
-
-	scope, err := resolveOwners(ctx, d.DB, cfg, opts)
+	if opts.owner == "" && !opts.allOwners && cfg.Identity.Mode != "stub" {
+		return newUsageError("fotobank thumbs regenerate requires identity.mode = stub without --owner or --all-owners")
+	}
+	if _, err := lifecycle.Ensure(ctx); err != nil {
+		return err
+	}
+	result, err := client.RegenerateThumbs(ctx, lifecycle.DBPath, lifecycle.Version, httpapi.RegenerateThumbsRequest{
+		All: opts.all, IDs: opts.parsedIDs, Type: opts.kind, Status: opts.status, Since: opts.sinceTime,
+		Owner: opts.owner, AllOwners: opts.allOwners,
+	})
 	if err != nil {
 		return err
 	}
-	if len(scope) == 0 {
+	if result.Error != "" {
+		err = errors.New(result.Error)
+	}
+	if opts.asJSON {
+		return errors.Join(err, json.MarshalWrite(stdout, result))
+	}
+	if len(result.Items) == 0 && err == nil {
 		fmt.Fprintln(stdout, "no owners found")
-		return nil
 	}
-
-	q := thumb.NewQueue(d.WriteDB(), d.ReadDB())
-	for _, p := range scope {
-		filter := buildFilter(p, opts)
-		n, err := q.Enqueue(ctx, filter)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(stdout, "%d rows enqueued for %s:%s.\n", n, p.Hub, p.UserID)
+	for _, item := range result.Items {
+		fmt.Fprintf(stdout, "%d rows enqueued for %s:%s.\n", item.Enqueued, item.Hub, item.UserID)
 	}
-	return nil
+	return err
 }
