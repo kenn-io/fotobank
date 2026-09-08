@@ -342,7 +342,7 @@ finish before automatic startup; the CLI never opens the catalog.
 `admin reset-hidden-passcode` calls the host-operator-only
 `POST /api/v1/operator/hidden/reset` operation with explicit confirmation.
 It defaults to the stub owner or accepts `--owner hub:user`; header deployments
-require an explicit owner. Reset removes the credential and revokes sessions
+require an explicit owner. Reset atomically removes the credential and revokes sessions
 but preserves hidden flags. Disable clears hidden flags as well. Changing a
 passcode revokes existing sessions without changing hidden flags.
 

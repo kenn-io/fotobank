@@ -215,11 +215,8 @@ func (s *Service) Lock(ctx context.Context, rawToken string) error {
 // Hidden flags on media are NOT touched; the operator re-runs setup to
 // attach a new passcode.
 func (s *Service) AdminReset(ctx context.Context, principal owners.Principal) error {
-	if err := s.repo.DeleteCredential(ctx, principal); err != nil {
-		return fmt.Errorf("admin reset hidden: delete credential: %w", err)
-	}
-	if err := s.repo.RevokeAllSessionsForPrincipal(ctx, principal, s.now()); err != nil {
-		return fmt.Errorf("admin reset hidden: revoke sessions: %w", err)
+	if err := s.repo.ResetCredential(ctx, principal, s.now()); err != nil {
+		return fmt.Errorf("admin reset hidden: %w", err)
 	}
 	slog.InfoContext(ctx, "auth.hidden.admin_reset", "principal", principal.String(), "outcome", "ok")
 	return nil

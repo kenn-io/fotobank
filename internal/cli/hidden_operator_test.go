@@ -57,6 +57,7 @@ func TestHiddenResetOperatorBoundary(t *testing.T) {
 	}{
 		{"no credential", record.Endpoint().BaseURL(), "", `{"owner":"h:u","confirm":true}`, 401},
 		{"photo listener", record.Metadata["web_url"], record.Metadata["token"], `{"owner":"h:u","confirm":true}`, 403},
+		{"oversized photo request", record.Metadata["web_url"], "", `{"owner":"` + strings.Repeat("x", 1<<20) + `","confirm":true}`, 413},
 		{"no confirmation", record.Endpoint().BaseURL(), record.Metadata["token"], `{"owner":"h:u"}`, 422},
 		{"false confirmation", record.Endpoint().BaseURL(), record.Metadata["token"], `{"owner":"h:u","confirm":false}`, 400},
 		{"no owner", record.Endpoint().BaseURL(), record.Metadata["token"], `{"confirm":true}`, 400},
