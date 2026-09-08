@@ -735,6 +735,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/thumbs/regenerate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Queue thumbnail regeneration
+         * @description Requires at least one selector. Selectors combine as filters, including when all is true. Only ready, visible assets are eligible. Defaults to the configured stub owner; host operators can select an owner or all owners. Reports queued work, not completed thumbnails.
+         */
+        post: operations["regenerate-thumbnails"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/search": {
         parameters: {
             query?: never;
@@ -2013,6 +2033,36 @@ export interface components {
             hub: string;
             user_id: string;
         };
+        RegenerateThumbsRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/RegenerateThumbsRequest.json
+             */
+            readonly $schema?: string;
+            all?: boolean;
+            all_owners?: boolean;
+            ids?: string[] | null;
+            /** @description Target hub:user; mutually exclusive with all_owners. */
+            owner?: string;
+            /** Format: date-time */
+            since?: string;
+            /** @enum {string} */
+            status?: "pending" | "working" | "ready" | "failed" | "no_preview";
+            /** @enum {string} */
+            type?: "photo" | "video";
+        };
+        RegenerateThumbsResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/RegenerateThumbsResult.json
+             */
+            readonly $schema?: string;
+            /** @description If present, earlier items succeeded but the operation did not finish. Do not blindly retry: regeneration increments thumbnail versions. */
+            error?: string;
+            items: components["schemas"]["ThumbOwnerResult"][] | null;
+        };
         RegisterOwnerRequest: {
             /**
              * Format: uri
@@ -2284,6 +2334,12 @@ export interface components {
             throughput_per_min: number;
             /** Format: int64 */
             working: number;
+        };
+        ThumbOwnerResult: {
+            /** Format: int64 */
+            enqueued: number;
+            hub: string;
+            user_id: string;
         };
         UserSettingPutInputBody: {
             /**
@@ -3962,6 +4018,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "regenerate-thumbnails": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegenerateThumbsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegenerateThumbsResult"];
+                };
             };
             /** @description Error */
             default: {

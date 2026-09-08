@@ -75,7 +75,7 @@ func TestDaemonLifecycle(t *testing.T) {
 	r.NoError(listener.Close())
 	file, err := os.OpenFile(configPath, os.O_APPEND|os.O_WRONLY, 0)
 	r.NoError(err)
-	_, err = file.WriteString("\n[http]\nlisten_address = '127.0.0.1:0'\n[observability]\nadmin_listen = '127.0.0.1:0'\n[daemon]\nlisten_address = '" + controlAddress + "'\n")
+	_, err = file.WriteString("\n[http]\nlisten_address = '127.0.0.1:0'\n[daemon]\nlisten_address = '" + controlAddress + "'\n")
 	r.NoError(err)
 	r.NoError(file.Close())
 	binary := filepath.Join(tmp, "fotobank")

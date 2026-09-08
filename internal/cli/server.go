@@ -650,6 +650,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		activeOwner = owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
 	}
 	operatorDeps.OwnersOperator = service.NewOwnerAdminService(ownerSvc, nasStore, activeOwner)
+	operatorDeps.ThumbsOperator = &httpapi.ThumbsOperatorDeps{Service: service.NewThumbAdminService(thumbQueue, ownerSvc)}
 	gpsPlaces, err := geo.NewNaturalEarth()
 	if err != nil {
 		return fmt.Errorf("load GPS gazetteer: %w", err)
@@ -664,6 +665,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 			contentStore, dbPath+".checkout.lock", places)
 		operatorOwner := owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
 		operatorDeps.GPSOperator.DefaultOwner = &operatorOwner
+		operatorDeps.ThumbsOperator.DefaultOwner = &operatorOwner
 		importLockPath := cfg.Imports.FileLockPath
 		if importLockPath == "" {
 			importLockPath = filepath.Join(cfg.Flash.Root, ".fotobank", "import.lock")
