@@ -988,20 +988,20 @@ export interface components {
             name: string;
             required: boolean;
         };
-        AddAlbumMediaInputBody: {
+        AddAlbumMediaRequest: {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/AddAlbumMediaInputBody.json
+             * @example https://example.com/api/schemas/AddAlbumMediaRequest.json
              */
             readonly $schema?: string;
             media_ids: string[] | null;
         };
-        AddAlbumMediaOutputBody: {
+        AddAlbumMediaResult: {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/AddAlbumMediaOutputBody.json
+             * @example https://example.com/api/schemas/AddAlbumMediaResult.json
              */
             readonly $schema?: string;
             /** Format: int64 */
@@ -1130,6 +1130,37 @@ export interface components {
             name: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        AlbumListResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AlbumListResult.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["AlbumDTO"][] | null;
+            /** Format: int64 */
+            next_offset?: number;
+        };
+        AlbumMediaResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AlbumMediaResult.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["MediaDTO"][] | null;
+            /** Format: int64 */
+            next_offset?: number;
+        };
+        AlbumNameRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AlbumNameRequest.json
+             */
+            readonly $schema?: string;
+            name: string;
         };
         ApplyResponse: {
             /**
@@ -1379,15 +1410,6 @@ export interface components {
             media_id: string;
             /** Format: int64 */
             thumb_version: number;
-        };
-        CreateAlbumInputBody: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/CreateAlbumInputBody.json
-             */
-            readonly $schema?: string;
-            name: string;
         };
         CreateShareInputBody: {
             /**
@@ -1772,28 +1794,6 @@ export interface components {
             /** Format: int64 */
             imported: number;
         };
-        ListAlbumMediaOutputBody: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/ListAlbumMediaOutputBody.json
-             */
-            readonly $schema?: string;
-            items: components["schemas"]["MediaDTO"][] | null;
-            /** Format: int64 */
-            next_offset?: number;
-        };
-        ListAlbumsOutputBody: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/ListAlbumsOutputBody.json
-             */
-            readonly $schema?: string;
-            items: components["schemas"]["AlbumDTO"][] | null;
-            /** Format: int64 */
-            next_offset?: number;
-        };
         ListHiddenMediaOutputBody: {
             /**
              * Format: uri
@@ -1934,15 +1934,6 @@ export interface components {
             owner: components["schemas"]["Principal"];
             /** Format: int64 */
             pending: number;
-        };
-        PatchAlbumInputBody: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/PatchAlbumInputBody.json
-             */
-            readonly $schema?: string;
-            name: string;
         };
         PreviewAlbumDTO: {
             id: string;
@@ -2697,7 +2688,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ListAlbumsOutputBody"];
+                    "application/json": components["schemas"]["AlbumListResult"];
                 };
             };
             /** @description Error */
@@ -2720,7 +2711,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateAlbumInputBody"];
+                "application/json": components["schemas"]["AlbumNameRequest"];
             };
         };
         responses: {
@@ -2815,7 +2806,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PatchAlbumInputBody"];
+                "application/json": components["schemas"]["AlbumNameRequest"];
             };
         };
         responses: {
@@ -2865,7 +2856,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ListAlbumMediaOutputBody"];
+                    "application/json": components["schemas"]["AlbumMediaResult"];
                 };
             };
             /** @description Error */
@@ -2890,7 +2881,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AddAlbumMediaInputBody"];
+                "application/json": components["schemas"]["AddAlbumMediaRequest"];
             };
         };
         responses: {
@@ -2900,7 +2891,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AddAlbumMediaOutputBody"];
+                    "application/json": components["schemas"]["AddAlbumMediaResult"];
                 };
             };
             /** @description Error */

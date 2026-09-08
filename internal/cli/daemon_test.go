@@ -106,6 +106,19 @@ func TestDaemonLifecycle(t *testing.T) {
 	r.JSONEq(`{"running":false}`, string(output))
 	_, err = os.Stat(dbPath)
 	r.ErrorIs(err, os.ErrNotExist)
+	// Album commands start the daemon instead of opening the catalog themselves.
+	output, err = run("albums", "create", "Trip")
+	r.NoError(err, "%s", output)
+	r.Contains(string(output), "Trip")
+	output, err = run("daemon", "status", "--json")
+	r.NoError(err, "%s", output)
+	var albumDaemon struct {
+		Running bool `json:"running"`
+	}
+	r.NoError(json.Unmarshal(output, &albumDaemon))
+	r.True(albumDaemon.Running)
+	output, err = run("daemon", "stop")
+	r.NoError(err, "%s", output)
 	// A real import starts the daemon and uses its vault, not a second owner.
 	source := seedImportSource(t, "photo-no-exif.jpg")
 	output, err = run("import", source, "--json")
