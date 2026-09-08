@@ -4,6 +4,7 @@
 package ingest
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,7 +46,7 @@ const (
 // well-known macOS/Windows system directories (.Trashes, .fseventsd,
 // .Spotlight-V100, .DocumentRevisions-V100, .TemporaryItems,
 // $RECYCLE.BIN) so an SD-card import doesn't recurse into them.
-func Discover(root string, visit func(Candidate) error) error {
+func Discover(ctx context.Context, root string, visit func(Candidate) error) error {
 	if root == "" {
 		return fmt.Errorf("discover: root is empty")
 	}
@@ -54,6 +55,9 @@ func Discover(root string, visit func(Candidate) error) error {
 		return fmt.Errorf("resolve root: %w", err)
 	}
 	return filepath.WalkDir(absRoot, func(p string, d os.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			return err
 		}

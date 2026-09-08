@@ -106,7 +106,11 @@ func TestDaemonLifecycle(t *testing.T) {
 	r.JSONEq(`{"running":false}`, string(output))
 	_, err = os.Stat(dbPath)
 	r.ErrorIs(err, os.ErrNotExist)
-	// A real data command starts the daemon, then gets its result over HTTP.
+	// A real import starts the daemon and uses its vault, not a second owner.
+	source := seedImportSource(t, "photo-no-exif.jpg")
+	output, err = run("import", source, "--json")
+	r.NoError(err, "%s", output)
+	r.Contains(string(output), `"imported":1`)
 	output, err = run("checkout", "list", "--json")
 	r.NoError(err, "%s", output)
 	r.JSONEq("[]", string(output))

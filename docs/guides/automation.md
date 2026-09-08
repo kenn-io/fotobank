@@ -17,6 +17,7 @@ precedence over the environment variable.
 Use `--json` where the command provides it, including:
 
 ```sh
+fotobank import /media/card-or-export --json
 fotobank content recover --json
 fotobank backup create --repo /backups/photos --json
 fotobank backup list --repo /backups/photos --json
@@ -33,7 +34,9 @@ fotobank daemon status --json
 Do not parse human progress output when a JSON form exists. Commands return zero
 on success, one for runtime failures, and two for invalid command usage.
 
-`config diagnose` and `import` currently produce human-readable output only.
+`config diagnose` currently produces human-readable output only. Import writes
+its final JSON result to stdout and live progress to stderr; interrupted
+connections and partial failures exit nonzero.
 Checkout list and status ask the daemon for saved catalog observations, not a
 fresh filesystem scan. They do not open or initialize a database in the CLI.
 
@@ -44,8 +47,8 @@ that open that same vault cannot run alongside it. For the configured deployment
 
 | Operation | Server state |
 | --- | --- |
-| Import or content recovery | Stop the server first; restart after the command finishes. |
-| Every checkout command, or manual backup create | Uses the daemon in stub mode and starts it if needed; run under the same OS account and configuration. |
+| Content recovery or GPS backfill | Stop the server first; restart after the command finishes. |
+| Import, every checkout command, or manual backup create | Uses the daemon in stub mode and starts it if needed; run under the same OS account and configuration. |
 | Browse or use the HTTP API, scan checkout edits, scheduled backups | Keep the server running. |
 | Backup init, list with `--repo`, verify, or restore to a separate target | Do not need the source vault open. |
 
@@ -53,8 +56,8 @@ Use `fotobank daemon stop` and `fotobank daemon start` for background operation.
 For a supervised service, use its supervisor; for a foreground `fotobank serve`,
 interrupt it and wait for shutdown to complete. Do not remove
 lock files or start a second vault owner to work around this limitation. The
-CLI submits every checkout command and manual backup creation to the server.
-Import, content recovery, and GPS backfill still open Docbank separately;
+CLI submits imports, every checkout command, and manual backup creation to the server.
+Content recovery and GPS backfill still open Docbank separately;
 albums, shares, owners, privacy/admin, thumbnails, and AI commands still use
 direct catalog connections. These are remaining migration gaps, not alternate
 ways to access a daemon-owned deployment.
@@ -67,7 +70,8 @@ commit with the server still running. See
 ## Keep authority changes explicit
 
 - Validate configuration before imports or checkout writeback.
-- Confirm the resolved paths printed at the start of an import.
+- Confirm the source path printed at import startup and use `config diagnose`
+  to inspect storage locations.
 - Run only one import or content-recovery operation at a time; the application
   lock rejects concurrent mutation.
 - Estimate a checkout before creating it and set `--max-bytes` for `--all`.

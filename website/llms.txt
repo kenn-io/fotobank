@@ -18,7 +18,7 @@
 ## User and agent workflows
 
 - [Setup](/docs/guides/setup/): Configure storage, diagnose availability, and start the server.
-- [Import and recover](/docs/guides/import/): Copy sources and resume interrupted imports with the server stopped.
+- [Import and recover](/docs/guides/import/): Import through the daemon with progress and JSON results; standalone content recovery still requires stopping it.
 - [Checkouts](/docs/guides/checkouts/): Create working copies, scan edits, inspect saved state, and explicitly commit.
 - [Backup and restore](/docs/guides/backup/): Archive both the catalog and content, schedule backups, and restore separately.
 - [Automation](/docs/guides/automation/): Structured output, server-stop requirements, and current API limits.

@@ -1,6 +1,7 @@
 package ingest_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,7 +23,7 @@ func TestDiscoverClassifies(t *testing.T) {
 	}
 
 	var got []ingest.Candidate
-	r.NoError(ingest.Discover(root, func(c ingest.Candidate) error {
+	r.NoError(ingest.Discover(t.Context(), root, func(c ingest.Candidate) error {
 		got = append(got, c)
 		return nil
 	}))
@@ -41,8 +42,35 @@ func TestDiscoverClassifies(t *testing.T) {
 	r.Equal(1, videos)
 }
 
+func TestDiscoverCancellationBeforeUnsupportedEntries(t *testing.T) {
+	for _, directory := range []bool{false, true} {
+		name := "unsupported file"
+		if directory {
+			name = "directory"
+		}
+		t.Run(name, func(t *testing.T) {
+			r := require.New(t)
+			root := t.TempDir()
+			r.NoError(os.WriteFile(filepath.Join(root, "a.jpg"), []byte("photo"), 0o600))
+			remaining := filepath.Join(root, "z.txt")
+			if directory {
+				r.NoError(os.Mkdir(remaining, 0o700))
+			} else {
+				r.NoError(os.WriteFile(remaining, []byte("not media"), 0o600))
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			err := ingest.Discover(ctx, root, func(ingest.Candidate) error {
+				cancel()
+				return nil
+			})
+			r.ErrorIs(err, context.Canceled)
+		})
+	}
+}
+
 func TestDiscoverRejectsEmptyRoot(t *testing.T) {
-	err := ingest.Discover("", func(ingest.Candidate) error { return nil })
+	err := ingest.Discover(t.Context(), "", func(ingest.Candidate) error { return nil })
 	require.Error(t, err)
 }
 
@@ -56,7 +84,7 @@ func TestDiscoverRejectsSupportedFileSymlink(t *testing.T) {
 		t.Skipf("symlink creation unavailable: %v", err)
 	}
 	visited := false
-	err := ingest.Discover(root, func(ingest.Candidate) error {
+	err := ingest.Discover(t.Context(), root, func(ingest.Candidate) error {
 		visited = true
 		return nil
 	})
@@ -86,7 +114,7 @@ func TestDiscoverSkipsAppleDoubleAndSystemFiles(t *testing.T) {
 	}
 
 	var got []string
-	r.NoError(ingest.Discover(root, func(c ingest.Candidate) error {
+	r.NoError(ingest.Discover(t.Context(), root, func(c ingest.Candidate) error {
 		rel, err := filepath.Rel(root, c.Path)
 		require.NoError(t, err)
 		got = append(got, rel)
@@ -116,7 +144,7 @@ func TestDiscoverSkipsSystemDirectories(t *testing.T) {
 	}
 
 	var got []string
-	r.NoError(ingest.Discover(root, func(c ingest.Candidate) error {
+	r.NoError(ingest.Discover(t.Context(), root, func(c ingest.Candidate) error {
 		rel, err := filepath.Rel(root, c.Path)
 		require.NoError(t, err)
 		got = append(got, rel)
@@ -141,7 +169,7 @@ func TestDiscoverScansSkippableRootDirectly(t *testing.T) {
 	r.NoError(os.WriteFile(filepath.Join(root, "rescued.jpg"), []byte("x"), 0o600))
 
 	var got []string
-	r.NoError(ingest.Discover(root, func(c ingest.Candidate) error {
+	r.NoError(ingest.Discover(t.Context(), root, func(c ingest.Candidate) error {
 		rel, err := filepath.Rel(root, c.Path)
 		require.NoError(t, err)
 		got = append(got, rel)
@@ -170,7 +198,7 @@ func TestDiscoverSkipsRecycleBinCaseInsensitively(t *testing.T) {
 	}
 
 	var got []string
-	r.NoError(ingest.Discover(root, func(c ingest.Candidate) error {
+	r.NoError(ingest.Discover(t.Context(), root, func(c ingest.Candidate) error {
 		rel, err := filepath.Rel(root, c.Path)
 		require.NoError(t, err)
 		got = append(got, rel)
@@ -194,7 +222,7 @@ func TestDiscoverReturnsAbsoluteCandidatePaths(t *testing.T) {
 	r.NoError(os.Chdir(base))
 
 	var got []ingest.Candidate
-	r.NoError(ingest.Discover(".", func(c ingest.Candidate) error {
+	r.NoError(ingest.Discover(t.Context(), ".", func(c ingest.Candidate) error {
 		got = append(got, c)
 		return nil
 	}))

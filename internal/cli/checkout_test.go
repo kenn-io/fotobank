@@ -481,6 +481,7 @@ func TestOperatorCommandsRejectAmbiguousWindowsPaths(t *testing.T) {
 	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "new.sqlite"))
 	for _, root := range []string{`\photos`, `/photos`, `D:photos`} {
 		for _, args := range [][]string{
+			{"import", root},
 			{"checkout", "create", root, "--all", "--max-bytes", "100"},
 			{"backup", "create", "--repo", root},
 		} {

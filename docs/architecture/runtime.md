@@ -104,8 +104,8 @@ stops incoming requests and workers before closing storage and database
 resources. The content adapter translates errors that happen during streaming,
 not only errors returned while opening a reader.
 
-Docbank holds an exclusive vault lock for that lifetime. Standalone import,
-content recovery, and GPS backfill also open the vault, so the server must be stopped before
+Docbank holds an exclusive vault lock for that lifetime. Content recovery
+and GPS backfill also open the vault, so the server must be stopped before
 those commands run.
 The CLI does not forward those operations to the server. Checkout creation,
 commits, manual and scheduled archives, and checkout scanning reuse the server's
@@ -116,7 +116,7 @@ state there; the CLI opens neither the catalog nor the vault.
 ### Local operator commands
 
 The server also owns a separate configurable loopback control listener
-from `internal/operator`. Every checkout command and manual backup creation
+from `internal/operator`. Import, every checkout command, and manual backup creation
 use the typed `internal/client` HTTP client to discover it beside the canonical SQLite path, in
 `<database>.operator/`. Kit publishes a runtime record atomically
 inside a current-user-only directory. A fresh random credential lives in that
@@ -165,6 +165,7 @@ operations use the host credential without a photo principal.
 
 | CLI command | HTTP operation |
 | --- | --- |
+| `import <source>` | `POST /imports` (streamed progress and result) |
 | `checkout list` | `GET /checkouts` |
 | `checkout status <id>` | `GET /checkouts/{checkout_id}` |
 | `checkout estimate` | `POST /checkouts/estimate` |
@@ -176,6 +177,24 @@ operations use the host credential without a photo principal.
 
 Start launches the process locally when needed; restart combines stop and
 start. They are process lifecycle operations, not alternate data paths.
+
+`POST /api/v1/operator/imports` calls `ImportService` using the daemon's catalog,
+content adapter, and geo resolver. The configured owner is checked at both
+the transport and service boundary. The service takes the existing import
+lock and captures the current AI settings when that import begins. Workers,
+settling, grouping, deduplication, and exact-content receipts use the existing
+`ingest.Importer`; the CLI constructs neither storage handles nor an importer.
+
+The Huma contract describes newline-delimited JSON `ImportEvent` records:
+progress followed by one final result with partial counts and failures. The
+typed client rejects EOF without a result and never resubmits a request.
+Disconnect cancels the request, stops new file dispatch, and joins workers.
+Discovery checks cancellation for every entry, including skipped files and
+directories; source hashing checks between reads and closes its file on
+cancellation. Completed imports and durable reservations remain available for a rerun.
+Shutdown closes and joins the operator handlers before storage cleanup. There
+is no detached import job or CLI storage fallback. Human progress remains on
+stdout normally, or stderr with `import --json`; JSON stdout is the final result.
 
 `POST /api/v1/operator/checkouts/{id}/commit` accepts the configured hub
 and user ID, checks them against the server's stub owner, and calls the existing

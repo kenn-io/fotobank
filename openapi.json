@@ -1824,6 +1824,155 @@
         ],
         "type": "object"
       },
+      "ImportEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ImportEvent.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/ImportProgress"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ImportResult"
+          },
+          "type": {
+            "enum": [
+              "progress",
+              "result"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "ImportProgress": {
+        "additionalProperties": false,
+        "properties": {
+          "conflicts": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "done": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "duplicates": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "failures": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "imported": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "done",
+          "total",
+          "imported",
+          "duplicates",
+          "conflicts",
+          "failures"
+        ],
+        "type": "object"
+      },
+      "ImportRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ImportRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "hub": {
+            "type": "string"
+          },
+          "source": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "wait": {
+            "default": "0s",
+            "description": "Maximum wait for the import lock, e.g. 30s. Zero fails immediately if busy.",
+            "type": "string"
+          },
+          "workers": {
+            "default": 0,
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id",
+          "source"
+        ],
+        "type": "object"
+      },
+      "ImportResult": {
+        "additionalProperties": false,
+        "properties": {
+          "conflicts": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "duplicates": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "failures": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "imported": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "imported",
+          "duplicates",
+          "conflicts",
+          "failures"
+        ],
+        "type": "object"
+      },
       "ListAlbumMediaOutputBody": {
         "additionalProperties": false,
         "properties": {
@@ -5377,6 +5526,53 @@
           }
         ],
         "summary": "Request graceful daemon shutdown",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/imports": {
+      "post": {
+        "description": "Returns newline-delimited JSON progress followed by one result, including partial counts and errors. HTTP 200 only means the stream started. Disconnect cancels unfinished work; completed files remain imported.",
+        "operationId": "import-media",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportEvent"
+                }
+              }
+            },
+            "description": "Progress followed by a terminal import result"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Import host files and stream progress",
         "tags": [
           "operator"
         ]

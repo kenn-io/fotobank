@@ -11,6 +11,12 @@ Docbank.
 
 ## Import semantics
 
+`ImportService` runs the existing pipeline on the daemon-owned catalog and
+vault. The CLI sends a local source path through the authenticated operator
+API and renders streamed progress; it opens no application storage. The same
+import lock excludes overlapping imports and content recovery. Each import
+uses the daemon's effective AI settings at the time it acquires that lock.
+
 Import is copy semantics. The importer leaves source paths and bytes untouched.
 It observes size and modification time twice across `imports.settle_interval`,
 then revalidates them immediately before creating content.

@@ -120,7 +120,7 @@ admin_listen = "127.0.0.1:0"
 	// matching the pattern in e2e_shares_test.go:64-70.
 	src := seedImportSource(t, "photo-with-timestamp.jpg")
 	var impOut, impErr bytes.Buffer
-	code := cli.RunContext(context.Background(),
+	code := runLiveImport(t, t.Context(), cfgPath, filepath.Join(flashRoot, "fotobank.sqlite"),
 		[]string{"import", "--config", cfgPath, src},
 		&impOut, &impErr)
 	r.Equal(0, code, "import failed: stdout=%s stderr=%s",
