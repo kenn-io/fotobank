@@ -63,3 +63,29 @@ This finishes interrupted imports; it does not restore a backup.
 If a pending operation still needs source bytes, run the original import again
 with the same source tree. The importer reuses the reserved identities instead
 of creating a second asset.
+
+## Refresh photo locations
+
+GPS backfill uses the running daemon's Docbank metadata and local place-name
+lookup. It starts a missing daemon; run it under the same OS account and config.
+It does not change the original files or process videos.
+
+```sh
+fotobank gps backfill --mode fill-missing --since 168h --json
+fotobank gps backfill --mode relabel
+fotobank gps backfill --mode full --all-owners
+```
+
+`full` refreshes GPS from the source metadata and clears stored coordinates
+when the source has none. `fill-missing` only checks photos without coordinates.
+`relabel` updates place names from existing coordinates without reading originals.
+`--since` limits the run by import time, not capture time.
+
+By default, the command uses the configured stub owner. Host administrators can
+select `--owner hub:user` or `--all-owners`; header mode requires one of those
+explicit scopes. This operation is not available through the photo-user API.
+
+The final result reports processed, updated, unchanged and failed counts.
+`--json` includes per-photo failures and an error when the run did not fully
+succeed. Errors exit nonzero, but successful updates remain saved. A canceled
+or disconnected run can be rerun; the client does not retry it automatically.

@@ -1649,6 +1649,112 @@
         ],
         "type": "object"
       },
+      "GPSBackfillRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/GPSBackfillRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "all_owners": {
+            "type": "boolean"
+          },
+          "mode": {
+            "default": "full",
+            "enum": [
+              "full",
+              "fill-missing",
+              "relabel"
+            ],
+            "type": "string"
+          },
+          "owner": {
+            "description": "Host-admin target in hub:user form; mutually exclusive with all_owners.",
+            "type": "string"
+          },
+          "since": {
+            "description": "Only photos imported at or after this timestamp.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "GPSBackfillResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/GPSBackfillResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "failed": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "failures": {
+            "items": {
+              "$ref": "#/components/schemas/GPSFailure"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "processed": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "unchanged": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "processed",
+          "updated",
+          "unchanged",
+          "failed",
+          "failures"
+        ],
+        "type": "object"
+      },
+      "GPSFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/Principal"
+          }
+        },
+        "required": [
+          "owner",
+          "id",
+          "error"
+        ],
+        "type": "object"
+      },
       "Health": {
         "additionalProperties": false,
         "properties": {
@@ -5691,6 +5797,53 @@
           }
         ],
         "summary": "Request graceful daemon shutdown",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/gps/backfill": {
+      "post": {
+        "description": "Host operators may target one owner or all owners. Without an explicit scope, uses the configured stub owner. Returns partial counts and per-photo failures; an error means the run did not fully succeed.",
+        "operationId": "backfill-gps",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GPSBackfillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GPSBackfillResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Refresh photo coordinates or place names",
         "tags": [
           "operator"
         ]

@@ -104,9 +104,8 @@ stops incoming requests and workers before closing storage and database
 resources. The content adapter translates errors that happen during streaming,
 not only errors returned while opening a reader.
 
-Docbank holds an exclusive vault lock for that lifetime. GPS backfill still
-opens the vault separately, so the server must be stopped before that command
-runs. Import, interrupted-import recovery, checkout creation,
+Docbank holds an exclusive vault lock for that lifetime. GPS backfill,
+import, interrupted-import recovery, checkout creation,
 commits, manual and scheduled archives, and checkout scanning reuse the server's
 adapter.
 Every checkout command uses the daemon. List and status inspect saved catalog
@@ -166,6 +165,7 @@ operations use the host credential without a photo principal.
 | --- | --- |
 | `import <source>` | `POST /imports` (streamed progress and result) |
 | `content recover` | `POST /content/recover` |
+| `gps backfill` | `POST /gps/backfill` |
 | `checkout list` | `GET /checkouts` |
 | `checkout status <id>` | `GET /checkouts/{checkout_id}` |
 | `checkout estimate` | `POST /checkouts/estimate` |
@@ -242,8 +242,19 @@ partly completed owner if an error occurs, without deleting unmatched files.
 Requests are canceled and joined during shutdown. The CLI validates `--wait`
 before automatic startup and formats the shared result, including errors.
 
-The daemon-only command boundary is not yet complete. GPS backfill still opens
-Docbank directly. Albums, shares, owners,
+`gps backfill` uses `GPSService` with the daemon's content resolver, vault and
+gazetteer. `GPSOperatorDeps` is provided only to the authenticated local
+listener, in both stub and header modes. The host operator may select any
+registered owner or all owners; without a scope, only stub mode supplies a
+default owner. These are host-administration rights, not photo-user rights.
+The service preserves keyset paging, skips videos, validates exact Docbank
+content before extracting GPS, and writes only while the expected content
+version remains current. Relabeling reads catalog coordinates, not source
+bytes. Cancellation stops further rows; per-photo failures are collected while
+other rows continue. The final result contains counts, failures and any error;
+the CLI exits nonzero on partial failure and never retries automatically.
+
+The daemon-only command boundary is not yet complete. Albums, shares, owners,
 privacy/admin, thumbnails, and AI commands still construct catalog services in
 the CLI. Backup repository inspection and restore also still run in the CLI.
 These existing paths are migration work in kata, not exceptions to extend.

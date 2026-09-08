@@ -48,7 +48,7 @@ that open that same vault cannot run alongside it. For the configured deployment
 | Operation | Server state |
 | --- | --- |
 | Content recovery | Uses the daemon and starts it if needed; checks interrupted imports across all owners. |
-| GPS backfill | Stop the server first; restart after the command finishes. |
+| GPS backfill | Uses the daemon and starts it if needed; header mode requires `--owner` or `--all-owners`. |
 | Import, every checkout command, or manual backup create | Uses the daemon in stub mode and starts it if needed; run under the same OS account and configuration. |
 | Browse or use the HTTP API, scan checkout edits, scheduled backups | Keep the server running. |
 | Backup init, list with `--repo`, verify, or restore to a separate target | Do not need the source vault open. |
@@ -57,10 +57,9 @@ Use `fotobank daemon stop` and `fotobank daemon start` for background operation.
 For a supervised service, use its supervisor; for a foreground `fotobank serve`,
 interrupt it and wait for shutdown to complete. Do not remove
 lock files or start a second vault owner to work around this limitation. The
-CLI submits imports, interrupted-import recovery, every checkout command, and
+CLI submits imports, interrupted-import recovery, GPS backfill, every checkout command, and
 manual backup creation to the server.
-GPS backfill still opens Docbank separately;
-albums, shares, owners, privacy/admin, thumbnails, and AI commands still use
+Albums, shares, owners, privacy/admin, thumbnails, and AI commands still use
 direct catalog connections. These are remaining migration gaps, not alternate
 ways to access a daemon-owned deployment.
 

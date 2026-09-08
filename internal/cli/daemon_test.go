@@ -192,6 +192,12 @@ func TestDaemonLifecycle(t *testing.T) {
 	r.Contains(string(output), "https://photos.example.test")
 	output, err = run("daemon", "stop")
 	r.NoError(err, "%s", output)
+	// Explicit GPS scope works with automatic startup in a header deployment.
+	output, err = run("gps", "backfill", "--all-owners", "--mode", "relabel", "--json")
+	r.NoError(err, "%s", output)
+	r.Contains(string(output), `"processed"`)
+	output, err = run("daemon", "stop")
+	r.NoError(err, "%s", output)
 	// Report the child's configuration error, not just an opaque timeout.
 	configured = strings.Replace(configured, `mode = "header"`, `mode = "invalid"`, 1)
 	configured = strings.Replace(configured, "[daemon]", "[daemon]\nstart_timeout = '30s'", 1)

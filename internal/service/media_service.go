@@ -85,9 +85,9 @@ func (s *MediaService) List(ctx context.Context, f media.ListFilter, caller owne
 // UpdateGPS persists the four GPS columns on a row owned by caller while its
 // primary file remains at expectedVersionID.
 // The owner check goes through Get, which returns errs.ErrNotFound on
-// caller mismatch — preserving the anti-probing convention. The CLI
+// caller mismatch — preserving the anti-probing convention. GPSService
 // orchestrates exact-version metadata projection and location resolution;
-// the service layer stays simple and auth-scoped. Returns
+// this method enforces ownership and the version fence. Returns
 // errs.ErrInvalidArgument (from the repo) if exactly one of lat/lon is set,
 // or errs.ErrContentConflict when the primary version changed.
 //
