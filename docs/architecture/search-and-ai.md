@@ -84,6 +84,12 @@ implemented yet; the packages above describe the code that runs today.
 ## Failure and privacy rules
 
 - Gateway probes are bounded and never make health endpoints enqueue work.
+- Provider checks run on AI status requests, not daemon startup or consent
+  recording. With AI and embeddings enabled, `embed.provider` reports the
+  current embedding endpoint's image/text probe result. The probe uses synthetic
+  inputs; it never reads photos. Outages and provider-side errors do not prevent
+  the daemon from serving diagnostics or recording consent. Local configuration
+  validation still rejects invalid URLs, missing models, and invalid dimensions.
 - Logs include opaque media/job identifiers and failure categories, not image
   bytes, prompts containing private content, or local source paths.
 - Disabled or unreachable AI does not prevent ordinary import, browsing,

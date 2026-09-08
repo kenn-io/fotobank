@@ -92,3 +92,54 @@ func TestAICommandValidationBeforeStartup(t *testing.T) {
 		})
 	}
 }
+
+func TestAIStatusAndConsentWithUnavailableEmbeddings(t *testing.T) {
+	r := require.New(t)
+	var probes atomic.Int64
+	var available atomic.Bool
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		probes.Add(1)
+		if !available.Load() {
+			http.Error(w, "provider unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[1,0,0,0,0,0,0,0]}]}`))
+	}))
+	t.Cleanup(gateway.Close)
+	tmp := t.TempDir()
+	cfg := writeBasicConfig(t, tmp)
+	data, err := os.ReadFile(cfg)
+	r.NoError(err)
+	data = fmt.Appendf(data, "\n[ai]\nenabled = true\n[ai.embed]\nenabled = true\nmodel = %q\nendpoint = %q\ndimension = 8\ninput_edge = 384\ntimeout = %q\n", "test-model", gateway.URL+"/v1", "1s")
+	r.NoError(os.WriteFile(cfg, data, 0o600))
+	dbPath := filepath.Join(tmp, "catalog.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	startCheckoutServer(t, cfg, dbPath)
+	r.Zero(probes.Load(), "startup must not depend on provider availability")
+	out, stderr, code := runAICLI("ai", "status", "--config", cfg)
+	r.Zero(code, stderr)
+	var health aiservice.Health
+	r.NoError(json.Unmarshal([]byte(out), &health))
+	r.Equal("acknowledgement_required", health.PausedReason)
+	r.NotNil(health.Embed.Provider)
+	r.False(health.Embed.Provider.Reachable)
+	r.Contains(health.Embed.Provider.LastError, "503")
+	before := probes.Load()
+	_, stderr, code = runAICLI("ai", "acknowledge", "--hidden-processing", "--config", cfg)
+	r.Zero(code, stderr)
+	r.Equal(before, probes.Load(), "consent must not contact the provider")
+	out, stderr, code = runAICLI("ai", "status", "--config", cfg)
+	r.Zero(code, stderr)
+	r.NoError(json.Unmarshal([]byte(out), &health))
+	r.Empty(health.PausedReason)
+	r.False(health.Embed.Provider.Reachable)
+	available.Store(true)
+	out, stderr, code = runAICLI("ai", "status", "--config", cfg)
+	r.Zero(code, stderr)
+	health = aiservice.Health{}
+	r.NoError(json.Unmarshal([]byte(out), &health))
+	r.NotNil(health.Embed.Provider)
+	r.True(health.Embed.Provider.Reachable)
+	r.Empty(health.Embed.Provider.LastError)
+}

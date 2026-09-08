@@ -65,7 +65,8 @@ type TaskPart struct {
 // rather than freezing the whole task pipeline.
 type EmbedTaskPart struct {
 	TaskPart
-	PausedReason string `json:"paused_reason"`
+	PausedReason string      `json:"paused_reason"`
+	Provider     *VisionPart `json:"provider,omitempty"`
 }
 
 // EmbeddingGenerationSummary is the per-generation row surfaced on the
@@ -152,6 +153,15 @@ func (s *Service) Health(ctx context.Context, caller owners.Principal, in Health
 	h.Tag = s.taskHealth(ctx, caller, ai.TaskTag, tagFP.result)
 	h.Caption = s.taskHealth(ctx, caller, ai.TaskCaption, captionFP.result)
 	h.Embed = s.embedHealth(ctx, caller, !acked)
+	if s.deps.Runtime != nil && s.deps.Runtime.Effective().Config.Embed.Enabled && s.deps.EmbeddingProbe != nil {
+		provider := &VisionPart{LastCheckAt: time.Now().UTC()}
+		if err := s.deps.EmbeddingProbe.Probe(ctx); err != nil {
+			provider.LastError = err.Error()
+		} else {
+			provider.Reachable = true
+		}
+		h.Embed.Provider = provider
+	}
 	h.EmbeddingGenerations = s.embeddingGenerations(ctx)
 	return h
 }

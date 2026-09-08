@@ -336,7 +336,8 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 			Tag:     tagFingerprint,
 			Caption: captionFingerprint,
 		},
-		Runtime: aiProvider,
+		Runtime:        aiProvider,
+		EmbeddingProbe: realEmbedProbe{p: aiProvider},
 	})
 
 	// metricsObj owns the private VictoriaMetrics set. Pull-source
@@ -438,7 +439,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	// here (before httpapi.New) so deps.Search reaches the route layer.
 	// The bgWG-tracked goroutines (worker, activator, compactor,
 	// gap-scan tick) are spawned later, alongside the other workers,
-	// so a probe-fail short-circuit doesn't strand half-built workers.
+	// after all collaborators and listeners are ready.
 	//
 	// Single-principal v1: cfg.Identity.Stub provides the owner that
 	// the activator scopes its eligible/embedded counts to and that
@@ -610,32 +611,6 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	brokerClient, err := newBrokerClient(cfg.Broker, logger.With("component", "broker"))
 	if err != nil {
 		return fmt.Errorf("broker init: %w", err)
-	}
-
-	// Boot-time embed probe. When [ai.embed].enabled is true we send one
-	// image and one short text input to the configured embeddings
-	// endpoint and assert both come back at the configured dimension.
-	// Probe failure aborts startup with an actionable message — better
-	// than discovering a misconfigured endpoint hours later when the
-	// first real embed job claim fails. MaxRetries=0 inside Probe keeps
-	// the boot delay bounded by cfg.AI.Embed.Timeout. The probe is
-	// independent of [ai].enabled (vision) — embed is its own pipeline.
-	//
-	// Runs BEFORE any listener binds (and therefore before any
-	// bgWG-tracked goroutine spawns) so a probe failure short-circuits
-	// with a bare return — no listeners to close, no workers to join,
-	// and the deferred d.Close cannot race a mid-flight DB caller.
-	if cfg.AI.Embed.Enabled {
-		if err := embedding.Probe(sigCtx, embedding.Config{
-			Endpoint:   cfg.AI.Embed.Endpoint,
-			APIKey:     cfg.AI.Embed.APIKey(),
-			Model:      cfg.AI.Embed.Model,
-			Dimension:  cfg.AI.Embed.Dimension,
-			Timeout:    cfg.AI.Embed.Timeout,
-			MaxRetries: 0,
-		}); err != nil {
-			return fmt.Errorf("[ai.embed] probe failed: %w", err)
-		}
 	}
 
 	ln, err := bindListener(cfg.HTTP.ListenAddress)
@@ -885,10 +860,9 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		runAIBackground(sigCtx, aiQueue, aiGap, aiProvider, opts.stderr)
 	})
 
-	// Embed pipeline workers. The probe at line ~426 already validated
-	// the endpoint, so a short-lived endpoint outage at boot has been
-	// surfaced. Each goroutine is bgWG-tracked so a crash during
-	// shutdown can't race the deferred d.Close.
+	// Provider outages do not prevent startup. AI health probes the current
+	// endpoint; workers use the queue's ordinary retry/failure handling.
+	// Track every goroutine so shutdown joins it before closing storage.
 	bgWG.Go(func() {
 		if err := embedWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
 			fmt.Fprintln(opts.stderr, "embed worker exited:", err)
@@ -1295,6 +1269,22 @@ func (a mediaCheckAdapter) Check(ctx context.Context, mediaID string, caller own
 
 type aiRuntimeProvider interface {
 	Effective() airuntime.Snapshot
+}
+
+// realEmbedProbe checks synthetic inputs only, never catalog photos. Health
+// requests use the current configuration so outages and recovery are visible
+// without a restart. Consent recording does not invoke this probe.
+type realEmbedProbe struct{ p aiRuntimeProvider }
+
+func (p realEmbedProbe) Probe(ctx context.Context) error {
+	cfg := p.p.Effective().Config.Embed
+	return embedding.Probe(ctx, embedding.Config{
+		Endpoint:  cfg.Endpoint,
+		APIKey:    cfg.APIKey(),
+		Model:     cfg.Model,
+		Dimension: cfg.Dimension,
+		Timeout:   cfg.Timeout,
+	})
 }
 
 func runtimeVisionWorkerConfig(p aiRuntimeProvider, task ai.Task) func(context.Context) aiworker.RuntimeConfig {

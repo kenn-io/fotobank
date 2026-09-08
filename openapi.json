@@ -1394,6 +1394,9 @@
             "format": "int64",
             "type": "integer"
           },
+          "provider": {
+            "$ref": "#/components/schemas/VisionPart"
+          },
           "skipped": {
             "format": "int64",
             "type": "integer"

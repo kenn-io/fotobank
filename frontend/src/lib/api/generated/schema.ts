@@ -1558,6 +1558,7 @@ export interface components {
             paused_reason: string;
             /** Format: int64 */
             pending: number;
+            provider?: components["schemas"]["VisionPart"];
             /** Format: int64 */
             skipped: number;
             /** Format: double */
