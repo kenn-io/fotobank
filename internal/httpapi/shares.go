@@ -47,8 +47,8 @@ const (
 	sharesListMaxLimit     = 500
 )
 
-// principalDTO / scopeDTO are the wire shapes.
-type principalDTO struct {
+// PrincipalDTO / ScopeDTO are the wire shapes.
+type PrincipalDTO struct {
 	Hub    string `json:"hub"`
 	UserID string `json:"user_id"`
 }
@@ -58,10 +58,10 @@ type targetSummaryDTO struct {
 	ItemCount *int   `json:"item_count,omitempty"`
 }
 
-type scopeDTO struct {
+type ScopeDTO struct {
 	UUID                string            `json:"uuid"`
-	Owner               principalDTO      `json:"owner"`
-	Grantee             principalDTO      `json:"grantee"`
+	Owner               PrincipalDTO      `json:"owner"`
+	Grantee             PrincipalDTO      `json:"grantee"`
 	GranteeHandle       string            `json:"grantee_handle,omitempty"`
 	TargetType          string            `json:"target_type"`
 	TargetAlbumID       string            `json:"target_album_id,omitempty"`
@@ -86,11 +86,11 @@ func toTargetSummaryDTO(s share.TargetSummary) *targetSummaryDTO {
 	return &targetSummaryDTO{Label: s.Label, ItemCount: s.ItemCount}
 }
 
-func toScopeDTO(s share.Scope) scopeDTO {
-	out := scopeDTO{
+func toScopeDTO(s share.Scope) ScopeDTO {
+	out := ScopeDTO{
 		UUID:                s.UUID,
-		Owner:               principalDTO{Hub: s.Owner.Hub, UserID: s.Owner.UserID},
-		Grantee:             principalDTO{Hub: s.Grantee.Hub, UserID: s.Grantee.UserID},
+		Owner:               PrincipalDTO{Hub: s.Owner.Hub, UserID: s.Owner.UserID},
+		Grantee:             PrincipalDTO{Hub: s.Grantee.Hub, UserID: s.Grantee.UserID},
 		TargetType:          string(s.TargetType),
 		AllowDownload:       s.AllowDownload,
 		Label:               s.Label,
@@ -114,7 +114,7 @@ func toScopeDTO(s share.Scope) scopeDTO {
 	return out
 }
 
-func toScopeDetailDTO(d share.ScopeDetail) scopeDTO {
+func toScopeDetailDTO(d share.ScopeDetail) ScopeDTO {
 	s := toScopeDTO(d.Scope)
 	s.MediaIDs = d.MediaIDs
 	return s
@@ -145,28 +145,30 @@ func registerShares(api huma.API, svc *service.ShareService, displayRepo *share.
 // --- inputs/outputs ---
 
 type createShareInput struct {
-	Body struct {
-		Label         string       `json:"label,omitempty"`
-		Grantee       principalDTO `json:"grantee"`
-		AllowDownload bool         `json:"allow_download,omitempty"`
-		ExpiresAt     *time.Time   `json:"expires_at,omitempty"`
-		TargetType    string       `json:"target_type"`
-		AlbumID       string       `json:"album_id,omitempty"`
-		MediaIDs      []string     `json:"media_ids,omitempty"`
-	}
+	Body CreateShareRequest
+}
+
+type CreateShareRequest struct {
+	Label         string       `json:"label,omitempty"`
+	Grantee       PrincipalDTO `json:"grantee"`
+	AllowDownload bool         `json:"allow_download,omitempty"`
+	ExpiresAt     *time.Time   `json:"expires_at,omitempty"`
+	TargetType    string       `json:"target_type"`
+	AlbumID       string       `json:"album_id,omitempty"`
+	MediaIDs      []string     `json:"media_ids,omitempty"`
 }
 
 type scopeOutput struct {
 	Status int
-	Body   scopeDTO
+	Body   ScopeDTO
 }
 
 type scopeDetailOutput struct {
 	Status int
-	Body   scopeDTO
+	Body   ScopeDTO
 }
 
-type listSharesInput struct {
+type ListSharesInput struct {
 	AlbumID        string `query:"album_id"`
 	GranteeHub     string `query:"grantee_hub"`
 	GranteeUserID  string `query:"grantee_user_id"`
@@ -177,10 +179,12 @@ type listSharesInput struct {
 }
 
 type listSharesOutput struct {
-	Body struct {
-		Items      []scopeDTO `json:"items"`
-		NextOffset *int       `json:"next_offset,omitempty"`
-	}
+	Body ShareListResult
+}
+
+type ShareListResult struct {
+	Items      []ScopeDTO `json:"items"`
+	NextOffset *int       `json:"next_offset,omitempty"`
 }
 
 // --- handlers ---
@@ -222,7 +226,7 @@ func registerSharesList(api huma.API, svc *service.ShareService, displayRepo *sh
 		OperationID: "shares-list",
 		Method:      http.MethodGet,
 		Path:        "/api/v1/shares",
-	}, func(ctx context.Context, in *listSharesInput) (*listSharesOutput, error) {
+	}, func(ctx context.Context, in *ListSharesInput) (*listSharesOutput, error) {
 		if svc == nil {
 			return nil, huma.Error503ServiceUnavailable("share service unavailable")
 		}
@@ -266,7 +270,7 @@ func registerSharesList(api huma.API, svc *service.ShareService, displayRepo *sh
 		if err != nil {
 			return nil, translateShareError(err)
 		}
-		out.Body.Items = make([]scopeDTO, 0, len(rows))
+		out.Body.Items = make([]ScopeDTO, 0, len(rows))
 		for _, s := range rows {
 			dto := toScopeDTO(s)
 			dto.GranteeHandle = handles[s.Grantee]
@@ -380,7 +384,7 @@ type previewShareOutput struct {
 }
 
 type previewShareDTO struct {
-	Scope    scopeDTO          `json:"scope"`
+	Scope    ScopeDTO          `json:"scope"`
 	Media    []previewMediaDTO `json:"media"`
 	Album    *previewAlbumDTO  `json:"album,omitempty"`
 	Warnings []string          `json:"warnings,omitempty"`
@@ -424,10 +428,10 @@ func registerSharesPreview(api huma.API, svc *service.ShareService) {
 }
 
 func toPreviewShareDTO(p service.ScopePreview) previewShareDTO {
-	scopeDTO := toScopeDTO(p.Scope)
-	scopeDTO.MediaIDs = p.MediaIDs
+	dto := toScopeDTO(p.Scope)
+	dto.MediaIDs = p.MediaIDs
 	out := previewShareDTO{
-		Scope:    scopeDTO,
+		Scope:    dto,
 		Warnings: p.Warnings,
 	}
 	out.Media = make([]previewMediaDTO, 0, len(p.Media))

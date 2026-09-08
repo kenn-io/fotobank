@@ -2,20 +2,16 @@ package cli_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/fotobank/internal/cli"
 )
 
 // TestE2ESharesRoundTrip drives the full share outbox round-trip
@@ -59,8 +55,6 @@ admin_listen = "127.0.0.1:0"
 	t.Setenv("FOTOBANK_CONFIG", cfg)
 	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
 	t.Setenv("FOTOBANK_TEST_SHARE_WORKER_TICK", "50ms")
-	addrSink := filepath.Join(tmp, "addr")
-	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrSink)
 
 	// Seed one fixture so the import produces exactly one media row.
 	src := seedImportSource(t, "photo-with-timestamp.jpg")
@@ -71,28 +65,11 @@ admin_listen = "127.0.0.1:0"
 		&impOut, &impErr)
 	r.Equal(0, code, "import failed: stdout=%s stderr=%s", impOut.String(), impErr.String())
 
-	// Boot the server.
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-
-	done := make(chan int, 1)
-	go func() {
-		var so, se bytes.Buffer
-		done <- cli.RunContext(ctx, []string{"server"}, &so, &se)
-	}()
-
-	var addr string
-	for range 100 {
-		if b, err := os.ReadFile(addrSink); err == nil && len(b) > 0 {
-			addr = strings.TrimSpace(string(b))
-			break
-		}
-		time.Sleep(30 * time.Millisecond)
-	}
-	r.NotEmpty(addr, "server did not publish bind address")
-
+	// Use the shared fixture to wait for discovery and join shutdown on failure too.
+	record := startCheckoutServer(t, cfg, filepath.Join(tmp, "fotobank.sqlite"))
+	ctx := t.Context()
 	client := &http.Client{Timeout: 5 * time.Second}
-	base := "http://" + addr
+	base := record.Metadata["web_url"]
 
 	// Discover the imported media_id via GET /api/v1/media.
 	resp, err := client.Get(base + "/api/v1/media")
@@ -216,11 +193,4 @@ admin_listen = "127.0.0.1:0"
 
 	// Shutdown.
 	client.CloseIdleConnections()
-	cancel()
-	select {
-	case code := <-done:
-		r.Equal(0, code)
-	case <-time.After(5 * time.Second):
-		r.Fail("server did not shut down")
-	}
 }

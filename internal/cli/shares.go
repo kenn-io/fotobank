@@ -3,63 +3,36 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"text/tabwriter"
 	"time"
+	"uuid"
 
 	"github.com/spf13/cobra"
 
-	"go.kenn.io/fotobank/internal/album"
+	"go.kenn.io/fotobank/internal/client"
 	"go.kenn.io/fotobank/internal/config"
-	"go.kenn.io/fotobank/internal/media"
+	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/owners"
-	"go.kenn.io/fotobank/internal/service"
 	"go.kenn.io/fotobank/internal/share"
 )
 
-// sharesListDefaultLimit and sharesListMaxLimit mirror the HTTP surface's
-// bounds (see internal/httpapi/shares.go::clampLimit) so the CLI clamps
-// pathological values (0, negative, huge) before they reach the repo,
-// where ListByOwner would otherwise omit LIMIT entirely.
-const (
-	sharesListDefaultLimit = 100
-	sharesListMaxLimit     = 500
-)
-
-type shareCtx struct {
-	svc    *service.ShareService
-	caller owners.Principal
-	close  func()
-}
-
-func loadShareCtx(cfgPath string) (*shareCtx, error) {
-	path := cfgPath
-	if path == "" {
-		path = config.DefaultConfigPath()
-	}
-	cfg, err := config.Load(path)
+func ensureShareDaemon(ctx context.Context, cfgPath string) (client.Lifecycle, error) {
+	lifecycle, err := daemonLifecycle(cfgPath, "")
 	if err != nil {
-		return nil, err
+		return lifecycle, err
+	}
+	cfg, err := config.LoadUnchecked(lifecycle.ConfigPath)
+	if err != nil {
+		return lifecycle, err
 	}
 	if cfg.Identity.Mode != "stub" {
-		return nil, fmt.Errorf("fotobank shares requires identity.mode = stub (got %q)", cfg.Identity.Mode)
+		return lifecycle, fmt.Errorf("fotobank shares requires identity.mode = stub (got %q)", cfg.Identity.Mode)
 	}
-	d, err := openDatabase(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &shareCtx{
-		svc: service.NewShareService(
-			share.NewRepo(d.WriteDB(), d.ReadDB()),
-			album.NewRepo(d.WriteDB(), d.ReadDB()),
-			media.NewRepo(d.WriteDB(), d.ReadDB()),
-		),
-		caller: owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID},
-		close:  func() { _ = d.Close() },
-	}, nil
+	_, err = lifecycle.Ensure(ctx)
+	return lifecycle, err
 }
 
 func newSharesCmd() *cobra.Command {
@@ -145,26 +118,43 @@ func runSharesCreate(ctx context.Context, o sharesCreateOpts) error {
 		}
 		expiresAt = &t
 	}
-	sctx, err := loadShareCtx(o.cfgPath)
-	if err != nil {
-		return err
-	}
-	defer sctx.close()
-
-	req := service.CreateShareRequest{
+	req := httpapi.CreateShareRequest{
 		Label:         o.label,
-		Grantee:       grantee,
+		Grantee:       httpapi.PrincipalDTO{Hub: grantee.Hub, UserID: grantee.UserID},
 		AllowDownload: o.allowDownload,
 		ExpiresAt:     expiresAt,
 	}
 	if o.albumID != "" {
-		req.TargetType = share.TargetAlbumLive
+		req.TargetType = string(share.TargetAlbumLive)
 		req.AlbumID = o.albumID
 	} else {
-		req.TargetType = share.TargetMediaSet
+		req.TargetType = string(share.TargetMediaSet)
 		req.MediaIDs = splitCSV(o.mediaCSV)
 	}
-	s, err := sctx.svc.Create(ctx, req, sctx.caller)
+	if len(req.Label) > share.LabelMaxLen {
+		return newUsageError("label exceeds 200 characters")
+	}
+	if o.albumID != "" {
+		if _, err := uuid.Parse(o.albumID); err != nil {
+			return newUsageError("invalid album UUID %q", o.albumID)
+		}
+	} else {
+		unique := make(map[string]struct{}, len(req.MediaIDs))
+		for _, id := range req.MediaIDs {
+			if _, err := uuid.Parse(id); err != nil {
+				return newUsageError("invalid media UUID %q", id)
+			}
+			unique[id] = struct{}{}
+		}
+		if len(unique) == 0 || len(unique) > share.MediaSetMaxLen {
+			return newUsageError("--media requires 1..1000 distinct media UUIDs")
+		}
+	}
+	sctx, err := ensureShareDaemon(ctx, o.cfgPath)
+	if err != nil {
+		return err
+	}
+	s, err := client.CreateShare(ctx, sctx.DBPath, sctx.Version, req)
 	if err != nil {
 		return err
 	}
@@ -219,20 +209,15 @@ type sharesListOpts struct {
 }
 
 func runSharesList(ctx context.Context, o sharesListOpts) error {
-	sctx, err := loadShareCtx(o.cfgPath)
-	if err != nil {
-		return err
-	}
-	defer sctx.close()
-	statuses, err := share.ParseStatusFilter(o.statusRaw)
+	_, err := share.ParseStatusFilter(o.statusRaw)
 	if err != nil {
 		return newUsageError("%s", err.Error())
 	}
-	filter := share.ScopeFilter{
+	filter := httpapi.ListSharesInput{
 		AlbumID:        o.albumID,
-		Status:         statuses,
+		Status:         o.statusRaw,
 		IncludeSettled: o.includeSettled,
-		Limit:          clampSharesListLimit(o.limit),
+		Limit:          o.limit,
 		Offset:         o.offset,
 	}
 	if o.granteeRaw != "" {
@@ -240,26 +225,35 @@ func runSharesList(ctx context.Context, o sharesListOpts) error {
 		if gerr != nil {
 			return newUsageError("%s", gerr.Error())
 		}
-		filter.Grantee = g
+		filter.GranteeHub, filter.GranteeUserID = g.Hub, g.UserID
 	}
-	rows, err := sctx.svc.List(ctx, filter, sctx.caller)
+	if o.albumID != "" {
+		if _, err := uuid.Parse(o.albumID); err != nil {
+			return newUsageError("invalid album UUID %q", o.albumID)
+		}
+	}
+	sctx, err := ensureShareDaemon(ctx, o.cfgPath)
+	if err != nil {
+		return err
+	}
+	page, err := client.ListShares(ctx, sctx.DBPath, sctx.Version, filter)
 	if err != nil {
 		return err
 	}
 	if o.asJSON {
 		enc := json.NewEncoder(o.w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(rows)
+		return enc.Encode(page)
 	}
 	tw := tabwriter.NewWriter(o.w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "UUID\tSTATUS\tTARGET\tGRANTEE\tCREATED\tLAST ERROR")
-	for _, s := range rows {
-		target := string(s.TargetType)
-		if s.TargetAlbumID != nil {
-			target = "album " + shortUUID(*s.TargetAlbumID)
+	for _, s := range page.Items {
+		target := s.TargetType
+		if s.TargetAlbumID != "" {
+			target = "album " + shortUUID(s.TargetAlbumID)
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			s.UUID, s.BrokerStatus, target, s.Grantee.String(),
+			s.UUID, s.BrokerStatus, target, s.Grantee.Hub+":"+s.Grantee.UserID,
 			s.CreatedAt.Format(time.RFC3339), s.BrokerLastError)
 	}
 	return tw.Flush()
@@ -272,12 +266,14 @@ func newSharesShowCmd() *cobra.Command {
 		Short: "Show a single scope (including media set membership)",
 		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sctx, err := loadShareCtx(cfgPath)
+			if _, err := uuid.Parse(args[0]); err != nil {
+				return newUsageError("invalid share UUID %q", args[0])
+			}
+			sctx, err := ensureShareDaemon(cmd.Context(), cfgPath)
 			if err != nil {
 				return err
 			}
-			defer sctx.close()
-			det, err := sctx.svc.Get(cmd.Context(), args[0], sctx.caller)
+			det, err := client.GetShare(cmd.Context(), sctx.DBPath, sctx.Version, args[0])
 			if err != nil {
 				return err
 			}
@@ -297,16 +293,14 @@ func newSharesRevokeCmd() *cobra.Command {
 		Short: "Revoke a scope",
 		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sctx, err := loadShareCtx(cfgPath)
+			if _, err := uuid.Parse(args[0]); err != nil {
+				return newUsageError("invalid share UUID %q", args[0])
+			}
+			sctx, err := ensureShareDaemon(cmd.Context(), cfgPath)
 			if err != nil {
 				return err
 			}
-			defer sctx.close()
-			s, err := sctx.svc.Revoke(cmd.Context(), args[0], sctx.caller)
-			if errors.Is(err, share.ErrScopeAlreadyRevoked) {
-				fmt.Fprintln(cmd.OutOrStdout(), "already revoked")
-				return nil
-			}
+			s, err := client.RevokeShare(cmd.Context(), sctx.DBPath, sctx.Version, args[0])
 			if err != nil {
 				return err
 			}
@@ -326,16 +320,14 @@ func newSharesRetryCmd() *cobra.Command {
 		Short: "Retry a failed scope",
 		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sctx, err := loadShareCtx(cfgPath)
+			if _, err := uuid.Parse(args[0]); err != nil {
+				return newUsageError("invalid share UUID %q", args[0])
+			}
+			sctx, err := ensureShareDaemon(cmd.Context(), cfgPath)
 			if err != nil {
 				return err
 			}
-			defer sctx.close()
-			s, err := sctx.svc.Retry(cmd.Context(), args[0], sctx.caller)
-			if errors.Is(err, share.ErrRetryNotApplicable) {
-				fmt.Fprintln(cmd.OutOrStdout(), "retry not applicable")
-				return nil
-			}
+			s, err := client.RetryShare(cmd.Context(), sctx.DBPath, sctx.Version, args[0])
 			if err != nil {
 				return err
 			}
@@ -354,6 +346,9 @@ func parseHubUser(raw string) (owners.Principal, error) {
 	i := strings.IndexByte(raw, ':')
 	if i <= 0 || i == len(raw)-1 {
 		return owners.Principal{}, fmt.Errorf("invalid hub:user %q", raw)
+	}
+	if i > share.PrincipalFieldMaxLen || len(raw)-i-1 > share.PrincipalFieldMaxLen {
+		return owners.Principal{}, fmt.Errorf("hub and user must each be at most %d bytes", share.PrincipalFieldMaxLen)
 	}
 	return owners.Principal{Hub: raw[:i], UserID: raw[i+1:]}, nil
 }
@@ -380,20 +375,6 @@ func shortUUID(s string) string {
 	return s[:4] + ".." + s[len(s)-4:]
 }
 
-// clampSharesListLimit bounds the CLI --limit flag to the same range the
-// HTTP surface uses so bogus values (0, negative, huge) don't degrade to
-// unbounded repo queries (share.Repo.ListByOwner omits LIMIT when Limit
-// is ≤0).
-func clampSharesListLimit(in int) int {
-	if in <= 0 {
-		return sharesListDefaultLimit
-	}
-	if in > sharesListMaxLimit {
-		return sharesListMaxLimit
-	}
-	return in
-}
-
 // ParseHubUserForTest, SplitCSVForTest, and ShortUUIDForTest are
 // test-only exports so the cli_test package can exercise these pure
 // helpers without promoting them into the public API. Mirrors the
@@ -405,8 +386,3 @@ func SplitCSVForTest(raw string) []string { return splitCSV(raw) }
 
 // ShortUUIDForTest exposes shortUUID for package cli_test.
 func ShortUUIDForTest(s string) string { return shortUUID(s) }
-
-// ClampSharesListLimitForTest exposes clampSharesListLimit for package
-// cli_test so the bounds lock in a unit test without leaking the helper
-// into the public API.
-func ClampSharesListLimitForTest(in int) int { return clampSharesListLimit(in) }
