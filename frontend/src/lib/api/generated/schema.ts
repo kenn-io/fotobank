@@ -622,6 +622,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/content/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finish interrupted imports across all owners
+         * @description Adopts matching stored files and reports unmatched content without deleting it. Results include partial per-owner counts and an error if recovery could not finish.
+         */
+        post: operations["recover-content"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operator/daemon": {
         parameters: {
             query?: never;
@@ -1310,6 +1330,31 @@ export interface components {
             /** Format: int64 */
             start: number;
         };
+        ContentRecoveryRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ContentRecoveryRequest.json
+             */
+            readonly $schema?: string;
+            hub: string;
+            user_id: string;
+            /**
+             * @description Maximum wait for the shared import lock, e.g. 30s.
+             * @default 0s
+             */
+            wait: string;
+        };
+        ContentRecoveryResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ContentRecoveryResult.json
+             */
+            readonly $schema?: string;
+            error?: string;
+            reports: components["schemas"]["OwnerRecoveryReport"][] | null;
+        };
         CoverDTO: {
             media_id: string;
             /** Format: int64 */
@@ -1814,6 +1859,18 @@ export interface components {
             updated_by: components["schemas"]["PrincipalRef"];
             value: unknown;
         };
+        OwnerRecoveryReport: {
+            /** Format: int64 */
+            adopted: number;
+            /** Format: int64 */
+            conflicts: number;
+            /** Format: int64 */
+            finalized: number;
+            orphan_paths: string[] | null;
+            owner: components["schemas"]["Principal"];
+            /** Format: int64 */
+            pending: number;
+        };
         PatchAlbumInputBody: {
             /**
              * Format: uri
@@ -1852,6 +1909,10 @@ export interface components {
             media: components["schemas"]["PreviewMediaDTO"][] | null;
             scope: components["schemas"]["ScopeDTO"];
             warnings?: string[] | null;
+        };
+        Principal: {
+            Hub: string;
+            UserID: string;
         };
         PrincipalDTO: {
             hub: string;
@@ -3544,6 +3605,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CheckoutCommitResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "recover-content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContentRecoveryRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentRecoveryResult"];
                 };
             };
             /** @description Error */

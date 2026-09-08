@@ -40,6 +40,7 @@ func registerOperator(api huma.API, deps *OperatorDeps) {
 	registerOperatorInspection(api, deps)
 	registerOperatorBackups(api, deps)
 	registerOperatorImports(api, deps)
+	registerOperatorRecovery(api, deps)
 	huma.Register(api, huma.Operation{
 		OperationID: "commit-checkout", Method: http.MethodPost,
 		Path: "/api/v1/operator/checkouts/{id}/commit", Summary: "Commit settled tracked edits",

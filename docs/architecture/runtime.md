@@ -104,10 +104,9 @@ stops incoming requests and workers before closing storage and database
 resources. The content adapter translates errors that happen during streaming,
 not only errors returned while opening a reader.
 
-Docbank holds an exclusive vault lock for that lifetime. Content recovery
-and GPS backfill also open the vault, so the server must be stopped before
-those commands run.
-The CLI does not forward those operations to the server. Checkout creation,
+Docbank holds an exclusive vault lock for that lifetime. GPS backfill still
+opens the vault separately, so the server must be stopped before that command
+runs. Import, interrupted-import recovery, checkout creation,
 commits, manual and scheduled archives, and checkout scanning reuse the server's
 adapter.
 Every checkout command uses the daemon. List and status inspect saved catalog
@@ -166,6 +165,7 @@ operations use the host credential without a photo principal.
 | CLI command | HTTP operation |
 | --- | --- |
 | `import <source>` | `POST /imports` (streamed progress and result) |
+| `content recover` | `POST /content/recover` |
 | `checkout list` | `GET /checkouts` |
 | `checkout status <id>` | `GET /checkouts/{checkout_id}` |
 | `checkout estimate` | `POST /checkouts/estimate` |
@@ -233,8 +233,17 @@ not automatically retried. Shutdown cancels operator requests,
 stops accepting work, and joins handlers before storage closes. Discovery is
 removed only after all storage and lifetime-lock cleanup has completed.
 
-The daemon-only command boundary is not yet complete. Import, content recovery,
-and GPS backfill still open Docbank directly. Albums, shares, owners,
+`content recover` calls `ImportService.Recover` through the operator API. The
+configured host operator can reconcile every registered owner's interrupted
+imports; this is not a photo-user permission. Recovery holds the same import
+lock, captures current AI settings after acquiring it, and uses the daemon's
+catalog, vault, and geo resolver. It returns per-owner reports, including the
+partly completed owner if an error occurs, without deleting unmatched files.
+Requests are canceled and joined during shutdown. The CLI validates `--wait`
+before automatic startup and formats the shared result, including errors.
+
+The daemon-only command boundary is not yet complete. GPS backfill still opens
+Docbank directly. Albums, shares, owners,
 privacy/admin, thumbnails, and AI commands still construct catalog services in
 the CLI. Backup repository inspection and restore also still run in the CLI.
 These existing paths are migration work in kata, not exceptions to extend.

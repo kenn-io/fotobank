@@ -1011,6 +1011,66 @@
         ],
         "type": "object"
       },
+      "ContentRecoveryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ContentRecoveryRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "hub": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "wait": {
+            "default": "0s",
+            "description": "Maximum wait for the shared import lock, e.g. 30s.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id"
+        ],
+        "type": "object"
+      },
+      "ContentRecoveryResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ContentRecoveryResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/OwnerRecoveryReport"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "reports"
+        ],
+        "type": "object"
+      },
       "CoverDTO": {
         "additionalProperties": false,
         "properties": {
@@ -2398,6 +2458,48 @@
         ],
         "type": "object"
       },
+      "OwnerRecoveryReport": {
+        "additionalProperties": false,
+        "properties": {
+          "adopted": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "conflicts": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "finalized": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "orphan_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "owner": {
+            "$ref": "#/components/schemas/Principal"
+          },
+          "pending": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "owner",
+          "adopted",
+          "finalized",
+          "pending",
+          "conflicts",
+          "orphan_paths"
+        ],
+        "type": "object"
+      },
       "PatchAlbumInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -2519,6 +2621,22 @@
         "required": [
           "scope",
           "media"
+        ],
+        "type": "object"
+      },
+      "Principal": {
+        "additionalProperties": false,
+        "properties": {
+          "Hub": {
+            "type": "string"
+          },
+          "UserID": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Hub",
+          "UserID"
         ],
         "type": "object"
       },
@@ -5461,6 +5579,53 @@
           }
         ],
         "summary": "Commit settled tracked edits",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/content/recover": {
+      "post": {
+        "description": "Adopts matching stored files and reports unmatched content without deleting it. Results include partial per-owner counts and an error if recovery could not finish.",
+        "operationId": "recover-content",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentRecoveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentRecoveryResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Finish interrupted imports across all owners",
         "tags": [
           "operator"
         ]
