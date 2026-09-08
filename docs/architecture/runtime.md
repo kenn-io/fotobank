@@ -320,9 +320,10 @@ startup, so a fresh stub deployment already contains that owner.
 locked owner-key map before returning. The thumbnail cache uses that same map,
 so newly registered owners can use artifacts without restarting. Removal of the
 active configured stub owner is rejected with HTTP 409; change the identity
-configuration and restart before unregistering it. SQLite foreign-key conflicts
-(including albums and shares) and duplicate storage keys become domain conflicts,
-not HTTP 500 errors. Foreign-key enforcement remains the final reference check.
+configuration and restart before unregistering it. Owners referenced by assets,
+checkouts, albums, or shares also return HTTP 409, as do duplicate storage keys.
+Foreign-key enforcement remains the final reference check. Unsupported requests
+remain invalid arguments rather than owner-in-use conflicts.
 
 The daemon-only command boundary is not yet complete. Privacy/admin,
 thumbnails, and AI commands still construct catalog services in

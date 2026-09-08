@@ -275,6 +275,36 @@ func TestNewOwnerThumbnailWithoutRestart(t *testing.T) {
 	r.Equal("thumbnail bytes", string(body))
 }
 
+func TestOwnersRemoveReferencedOwnerConflict(t *testing.T) {
+	for _, reference := range []string{"asset", "checkout"} {
+		t.Run(reference, func(t *testing.T) {
+			r := require.New(t)
+			tmp := newCLITempEnv(t)
+			var out, stderr bytes.Buffer
+			r.Zero(cli.RunContext(t.Context(), []string{"owners", "add", "--hub", "h", "--user-id", "guest"}, &out, &stderr), "%s", stderr.String())
+			database, err := db.Open(filepath.Join(tmp, "fotobank.sqlite"))
+			r.NoError(err)
+			defer database.Close()
+			if reference == "asset" {
+				_, err = database.WriteDB().ExecContext(t.Context(), `INSERT INTO assets
+					(id, owner_hub, owner_user_id, state, media_type, imported_at, thumb_status, thumb_version)
+					VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'h', 'guest', 'pending', 'photo', datetime('now'), 'pending', 0)`)
+			} else {
+				_, err = database.WriteDB().ExecContext(t.Context(), `INSERT INTO checkouts
+					(id, owner_hub, owner_user_id, root, layout, state, created_at, updated_at)
+					VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'h', 'guest', ?, 'capture_date', 'error', datetime('now'), datetime('now'))`, filepath.Join(tmp, "checkout"))
+			}
+			r.NoError(err)
+			out.Reset()
+			stderr.Reset()
+			r.Equal(1, cli.RunContext(t.Context(), []string{"owners", "remove", "--hub", "h", "--user-id", "guest"}, &out, &stderr))
+			r.Contains(stderr.String(), "409")
+			_, err = owners.NewRepo(database.WriteDB(), database.ReadDB()).GetByPrincipal(t.Context(), owners.Principal{Hub: "h", UserID: "guest"})
+			r.NoError(err)
+		})
+	}
+}
+
 func TestOwnersRemoveSucceedsWhenEmpty(t *testing.T) {
 	r := require.New(t)
 	_ = newCLITempEnv(t)

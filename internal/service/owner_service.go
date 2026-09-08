@@ -134,8 +134,8 @@ func (s *OwnerService) Remove(ctx context.Context, p owners.Principal, purge boo
 		return fmt.Errorf("count content for owner: %w", err)
 	}
 	if assetCount > 0 {
-		return fmt.Errorf("%w: owner %s has %d assets (use --purge)",
-			errs.ErrInvalidArgument, p, assetCount)
+		return fmt.Errorf("%w: owner %s has %d assets",
+			errs.ErrAlreadyExists, p, assetCount)
 	}
 	var checkoutCount int
 	row = s.repo.DB().QueryRowContext(ctx,
@@ -146,7 +146,7 @@ func (s *OwnerService) Remove(ctx context.Context, p owners.Principal, purge boo
 	}
 	if checkoutCount > 0 {
 		return fmt.Errorf("%w: owner %s has %d checkouts",
-			errs.ErrInvalidArgument, p, checkoutCount)
+			errs.ErrAlreadyExists, p, checkoutCount)
 	}
 	return s.repo.Delete(ctx, p)
 }
