@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -23,11 +22,11 @@ import (
 
 // TestE2EMediaPipeline exercises the full import -> list -> stream path
 // against a real server: the `import` subcommand populates the DB and
-// NAS, then the `server` subcommand serves the three rows over the HTTP
+// Docbank, then the daemon serves the three rows over the HTTP
 // API. The test asserts that /api/v1/media returns all three, the
 // detail endpoint returns each row, and /original streams the exact
-// fixture bytes (verified by MD5). Finally it cancels ctx and asserts a
-// clean zero-code shutdown.
+// fixture bytes (verified by SHA-256). The shared daemon fixture checks
+// clean shutdown, including when a pipeline assertion fails.
 func TestE2EMediaPipeline(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
@@ -61,8 +60,6 @@ admin_listen = "127.0.0.1:0"
 
 	t.Setenv("FOTOBANK_CONFIG", cfg)
 	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
-	addrSink := filepath.Join(tmp, "addr")
-	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrSink)
 
 	src := seedImportSource(t,
 		"photo-with-timestamp.jpg",
@@ -79,28 +76,12 @@ admin_listen = "127.0.0.1:0"
 	r.Equal(0, code, "import failed: stdout=%s stderr=%s", impOut.String(), impErr.String())
 	r.Contains(impOut.String(), "imported=3")
 
-	// 2. Boot the server in a goroutine.
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-
-	done := make(chan int, 1)
-	go func() {
-		var so, se bytes.Buffer
-		done <- cli.RunContext(ctx, []string{"server"}, &so, &se)
-	}()
-
-	var addr string
-	for range 100 {
-		if b, err := os.ReadFile(addrSink); err == nil && len(b) > 0 {
-			addr = strings.TrimSpace(string(b))
-			break
-		}
-		time.Sleep(30 * time.Millisecond)
-	}
-	r.NotEmpty(addr, "server did not publish bind address")
-
+	// 2. Wait for daemon discovery and join shutdown on every exit path.
+	record := startCheckoutServer(t, cfg, filepath.Join(tmp, "fotobank.sqlite"))
+	ctx := t.Context()
 	client := &http.Client{Timeout: 5 * time.Second}
-	base := "http://" + addr
+	t.Cleanup(client.CloseIdleConnections)
+	base := record.Metadata["web_url"]
 
 	// 3. List media: expect three items.
 	type mediaItem struct {
@@ -158,7 +139,7 @@ admin_listen = "127.0.0.1:0"
 		r.Equal(it.Size, detail.Size)
 	}
 
-	// 5. Stream the original bytes for each item and verify the MD5
+	// 5. Stream the original bytes for each item and verify the SHA-256
 	// matches the on-disk fixture. Also spot-check headers on each
 	// response (ETag is the quoted checksum; Content-Length matches
 	// the fixture size on-disk).
@@ -422,15 +403,6 @@ admin_listen = "127.0.0.1:0"
 		r.NotEqual(created.ID, it.ID, "album should be absent after delete")
 	}
 
-	// 6. Cancel and assert the server exits cleanly.
-	client.CloseIdleConnections()
-	cancel()
-	select {
-	case code := <-done:
-		r.Equal(0, code)
-	case <-time.After(5 * time.Second):
-		r.Fail("server did not shut down")
-	}
 }
 
 // sha256OfFile returns the hex SHA-256 of the given file's contents. Used to
