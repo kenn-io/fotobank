@@ -1889,13 +1889,13 @@
         ],
         "type": "object"
       },
-      "HiddenChangeInputBody": {
+      "HiddenChangeRequest": {
         "additionalProperties": false,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
             "examples": [
-              "https://example.com/api/schemas/HiddenChangeInputBody.json"
+              "https://example.com/api/schemas/HiddenChangeRequest.json"
             ],
             "format": "uri",
             "readOnly": true,
@@ -1999,13 +1999,13 @@
         ],
         "type": "object"
       },
-      "HiddenPasscodeInputBody": {
+      "HiddenPasscodeRequest": {
         "additionalProperties": false,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
             "examples": [
-              "https://example.com/api/schemas/HiddenPasscodeInputBody.json"
+              "https://example.com/api/schemas/HiddenPasscodeRequest.json"
             ],
             "format": "uri",
             "readOnly": true,
@@ -2926,6 +2926,53 @@
         "required": [
           "hub",
           "user_id"
+        ],
+        "type": "object"
+      },
+      "ResetHiddenRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ResetHiddenRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "confirm": {
+            "description": "Must be true to remove the credential and revoke sessions. Hidden flags are preserved.",
+            "type": "boolean"
+          },
+          "owner": {
+            "description": "Target hub:user; defaults to the configured stub owner.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirm"
+        ],
+        "type": "object"
+      },
+      "ResetHiddenResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ResetHiddenResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner"
         ],
         "type": "object"
       },
@@ -4720,7 +4767,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/HiddenChangeInputBody"
+                "$ref": "#/components/schemas/HiddenChangeRequest"
               }
             }
           },
@@ -4751,7 +4798,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/HiddenPasscodeInputBody"
+                "$ref": "#/components/schemas/HiddenPasscodeRequest"
               }
             }
           },
@@ -4810,7 +4857,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/HiddenPasscodeInputBody"
+                "$ref": "#/components/schemas/HiddenPasscodeRequest"
               }
             }
           },
@@ -4869,7 +4916,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/HiddenPasscodeInputBody"
+                "$ref": "#/components/schemas/HiddenPasscodeRequest"
               }
             }
           },
@@ -6028,6 +6075,53 @@
           }
         ],
         "summary": "Refresh photo coordinates or place names",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/hidden/reset": {
+      "post": {
+        "description": "Host-operator recovery: removes the credential and revokes unlock sessions without revealing hidden media. Requires explicit confirmation and an owner in header mode.",
+        "operationId": "reset-hidden-passcode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetHiddenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResetHiddenResult"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Reset a hidden-media passcode",
         "tags": [
           "operator"
         ]

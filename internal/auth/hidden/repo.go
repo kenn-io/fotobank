@@ -120,6 +120,29 @@ func (r *Repo) DeleteCredential(ctx context.Context, p owners.Principal) error {
 	return nil
 }
 
+// ResetCredential removes the credential and revokes sessions in one commit.
+func (r *Repo) ResetCredential(ctx context.Context, p owners.Principal, now time.Time) error {
+	tx, err := r.rw.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin credential reset: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM auth_hidden_credential WHERE principal_hub = ? AND principal_user_id = ?`,
+		p.Hub, p.UserID); err != nil {
+		return fmt.Errorf("reset credential: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE auth_hidden_session SET revoked_at = ? WHERE principal_hub = ? AND principal_user_id = ? AND revoked_at IS NULL`,
+		now, p.Hub, p.UserID); err != nil {
+		return fmt.Errorf("reset sessions: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit credential reset: %w", err)
+	}
+	return nil
+}
+
 // InsertSession stores a new session row.
 func (r *Repo) InsertSession(ctx context.Context, s Session) error {
 	_, err := r.rw.ExecContext(ctx,

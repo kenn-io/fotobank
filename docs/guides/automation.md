@@ -54,6 +54,8 @@ that open that same vault cannot run alongside it. For the configured deployment
 | GPS backfill | Uses the daemon and starts it if needed; header mode requires `--owner` or `--all-owners`. |
 | Thumbnail regeneration | Uses the daemon and starts it if needed; header mode requires `--owner` or `--all-owners`. |
 | Owner registration, listing, or removal | Uses the daemon's local operator API and starts it if needed; supports stub and header mode. |
+| Hidden passcode setup, change, or disable | Uses the daemon in stub mode; reads and validates passcodes and confirmation before starting it. |
+| Admin hidden-passcode reset | Uses the daemon's local operator API; requires `--confirm` and an explicit `--owner` in header mode. |
 | Import, album and sharing commands, every checkout command, or manual backup create | Uses the daemon in stub mode and starts it if needed; run under the same OS account and configuration. |
 | Browse or use the HTTP API, scan checkout edits, scheduled backups | Keep the server running. |
 | Backup init, list with `--repo`, verify, or restore to a separate target | Do not need the source vault open. |
@@ -63,9 +65,8 @@ For a supervised service, use its supervisor; for a foreground `fotobank serve`,
 interrupt it and wait for shutdown to complete. Do not remove
 lock files or start a second vault owner to work around this limitation. The
 CLI submits imports, interrupted-import recovery, GPS backfill, album and sharing
-commands, owner management, thumbnail regeneration, every checkout command, and manual backup creation to the server.
-Privacy/admin and AI commands still use
-direct catalog connections. These are remaining migration gaps, not alternate
+commands, owner management, privacy commands, thumbnail regeneration, every checkout command, and manual backup creation to the server.
+AI commands still use direct catalog connections. These are remaining migration gaps, not alternate
 ways to access a daemon-owned deployment.
 
 For tracked edits: keep the server running to create the checkout, edit and

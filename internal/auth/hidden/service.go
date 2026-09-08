@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 
 	"go.kenn.io/fotobank/internal/errs"
@@ -23,6 +24,9 @@ type MediaPrivacy interface {
 // Service orchestrates hidden-auth operations: credential setup/change/
 // disable, token issuance, lockout enforcement, and background sweeps.
 type Service struct {
+	// The daemon owns one service. Serialize credential checks through their
+	// resulting writes so reset cannot be undone by an in-flight operation.
+	mutation         sync.Mutex
 	repo             *Repo
 	media            MediaPrivacy
 	now              func() time.Time
@@ -70,6 +74,8 @@ func (s *Service) SetRandForTest(r io.Reader) { s.rand = r }
 // races past the fast-path is caught by InsertCredential's unique-conflict
 // mapping, which is the authoritative guard.
 func (s *Service) Setup(ctx context.Context, principal owners.Principal, passcode string) error {
+	s.mutation.Lock()
+	defer s.mutation.Unlock()
 	if err := ValidatePasscode(passcode); err != nil {
 		return fmt.Errorf("setup hidden: %w", err)
 	}
@@ -106,6 +112,8 @@ func (s *Service) Change(
 	principal owners.Principal,
 	oldPasscode, newPasscode string,
 ) error {
+	s.mutation.Lock()
+	defer s.mutation.Unlock()
 	if err := ValidatePasscode(oldPasscode); err != nil {
 		return fmt.Errorf("change hidden passcode: %w", err)
 	}
@@ -139,6 +147,8 @@ func (s *Service) Change(
 // All three operations span repos so they cannot share a SQL transaction;
 // ClearAllHidden and RevokeAllSessions are idempotent and safe to re-run.
 func (s *Service) Disable(ctx context.Context, principal owners.Principal, passcode string) error {
+	s.mutation.Lock()
+	defer s.mutation.Unlock()
 	if err := ValidatePasscode(passcode); err != nil {
 		return fmt.Errorf("disable hidden: %w", err)
 	}
@@ -167,6 +177,8 @@ func (s *Service) Unlock(
 	principal owners.Principal,
 	passcode string,
 ) (rawToken string, expiresAt time.Time, err error) {
+	s.mutation.Lock()
+	defer s.mutation.Unlock()
 	if vErr := ValidatePasscode(passcode); vErr != nil {
 		return "", time.Time{}, fmt.Errorf("unlock hidden: %w", vErr)
 	}
@@ -215,11 +227,10 @@ func (s *Service) Lock(ctx context.Context, rawToken string) error {
 // Hidden flags on media are NOT touched; the operator re-runs setup to
 // attach a new passcode.
 func (s *Service) AdminReset(ctx context.Context, principal owners.Principal) error {
-	if err := s.repo.DeleteCredential(ctx, principal); err != nil {
-		return fmt.Errorf("admin reset hidden: delete credential: %w", err)
-	}
-	if err := s.repo.RevokeAllSessionsForPrincipal(ctx, principal, s.now()); err != nil {
-		return fmt.Errorf("admin reset hidden: revoke sessions: %w", err)
+	s.mutation.Lock()
+	defer s.mutation.Unlock()
+	if err := s.repo.ResetCredential(ctx, principal, s.now()); err != nil {
+		return fmt.Errorf("admin reset hidden: %w", err)
 	}
 	slog.InfoContext(ctx, "auth.hidden.admin_reset", "principal", principal.String(), "outcome", "ok")
 	return nil

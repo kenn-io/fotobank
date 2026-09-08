@@ -696,6 +696,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/hidden/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset a hidden-media passcode
+         * @description Host-operator recovery: removes the credential and revokes unlock sessions without revealing hidden media. Requires explicit confirmation and an owner in header mode.
+         */
+        post: operations["reset-hidden-passcode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operator/imports": {
         parameters: {
             query?: never;
@@ -1719,11 +1739,11 @@ export interface components {
             readonly $schema?: string;
             status: string;
         };
-        HiddenChangeInputBody: {
+        HiddenChangeRequest: {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/HiddenChangeInputBody.json
+             * @example https://example.com/api/schemas/HiddenChangeRequest.json
              */
             readonly $schema?: string;
             new_passcode: string;
@@ -1753,11 +1773,11 @@ export interface components {
             failed: components["schemas"]["HiddenMediaBulkFailureDTO"][] | null;
             succeeded: string[] | null;
         };
-        HiddenPasscodeInputBody: {
+        HiddenPasscodeRequest: {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/HiddenPasscodeInputBody.json
+             * @example https://example.com/api/schemas/HiddenPasscodeRequest.json
              */
             readonly $schema?: string;
             /** @description Passcode (1–1024 bytes UTF-8). */
@@ -2074,6 +2094,27 @@ export interface components {
             hub: string;
             storage_key?: string;
             user_id: string;
+        };
+        ResetHiddenRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ResetHiddenRequest.json
+             */
+            readonly $schema?: string;
+            /** @description Must be true to remove the credential and revoke sessions. Hidden flags are preserved. */
+            confirm: boolean;
+            /** @description Target hub:user; defaults to the configured stub owner. */
+            owner?: string;
+        };
+        ResetHiddenResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ResetHiddenResult.json
+             */
+            readonly $schema?: string;
+            owner: string;
         };
         Result: {
             /**
@@ -3054,7 +3095,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["HiddenChangeInputBody"];
+                "application/json": components["schemas"]["HiddenChangeRequest"];
             };
         };
         responses: {
@@ -3085,7 +3126,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["HiddenPasscodeInputBody"];
+                "application/json": components["schemas"]["HiddenPasscodeRequest"];
             };
         };
         responses: {
@@ -3144,7 +3185,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["HiddenPasscodeInputBody"];
+                "application/json": components["schemas"]["HiddenPasscodeRequest"];
             };
         };
         responses: {
@@ -3204,7 +3245,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["HiddenPasscodeInputBody"];
+                "application/json": components["schemas"]["HiddenPasscodeRequest"];
             };
         };
         responses: {
@@ -3892,6 +3933,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GPSBackfillResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "reset-hidden-passcode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetHiddenRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResetHiddenResult"];
                 };
             };
             /** @description Error */

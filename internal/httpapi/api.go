@@ -32,11 +32,12 @@ import (
 type Deps struct {
 	// Operator is set only behind the daemon's local credential check.
 	// Nil keeps these operations documented but denies their execution.
-	Operator       *OperatorDeps
-	GPSOperator    *GPSOperatorDeps
-	OwnersOperator *service.OwnerAdminService
-	ThumbsOperator *ThumbsOperatorDeps
-	Daemon         *DaemonDeps
+	Operator            *OperatorDeps
+	GPSOperator         *GPSOperatorDeps
+	OwnersOperator      *service.OwnerAdminService
+	ThumbsOperator      *ThumbsOperatorDeps
+	HiddenResetOperator *HiddenResetOperatorDeps
+	Daemon              *DaemonDeps
 	// IdentityProvider resolves the caller's Identity from each request.
 	// Left nil for boot-only endpoints (such as /healthz) that do not
 	// require authentication.
@@ -188,6 +189,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerOperatorGPS(api, deps.GPSOperator)
 	registerOperatorOwners(api, deps.OwnersOperator)
 	registerOperatorThumbs(api, deps.ThumbsOperator)
+	registerOperatorHidden(api, deps.HiddenResetOperator)
 	registerDaemon(api, deps.Daemon)
 	registerMe(api, deps.SharingEnabled, deps.AdminPrincipals)
 	registerMediaGeo(api, deps.MediaService, deps.HiddenAuth)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -296,6 +297,81 @@ func TestAdminResetDeletesCredentialAndRevokesSessionsButNotHiddenFlags(t *testi
 }
 
 // --- Lock (idempotent) ---
+
+func TestAdminResetRollsBackOnSessionRevocationFailure(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	p := owners.Principal{Hub: "h", UserID: "u"}
+	seedOwner(t, d.WriteDB(), p, "550e8400-e29b-41d4-a716-446655440000")
+	repo := hidden.NewRepo(d.WriteDB(), d.ReadDB())
+	svc := hidden.NewService(repo, &fakeMediaPrivacy{})
+	r.NoError(svc.Setup(t.Context(), p, "passcode"))
+	raw, _, err := svc.Unlock(t.Context(), p, "passcode")
+	r.NoError(err)
+	hash, err := hidden.TokenSHA256(raw)
+	r.NoError(err)
+	// A failed second database write must not leave half of a reset committed.
+	_, err = d.WriteDB().Exec(`CREATE TRIGGER fail_revoke BEFORE UPDATE ON auth_hidden_session BEGIN SELECT RAISE(ABORT, 'revocation failed'); END`)
+	r.NoError(err)
+	r.Error(svc.AdminReset(t.Context(), p))
+	_, err = repo.GetCredential(t.Context(), p)
+	r.NoError(err)
+	_, err = repo.LookupActiveSession(t.Context(), hash, time.Now())
+	r.NoError(err)
+	_, err = d.WriteDB().Exec(`DROP TRIGGER fail_revoke`)
+	r.NoError(err)
+	r.NoError(svc.AdminReset(t.Context(), p))
+	r.NoError(svc.AdminReset(t.Context(), p), "reset retry is idempotent")
+	_, err = repo.GetCredential(t.Context(), p)
+	r.ErrorIs(err, errs.ErrNotFound)
+	_, err = repo.LookupActiveSession(t.Context(), hash, time.Now())
+	r.ErrorIs(err, errs.ErrNotFound)
+}
+
+func TestAdminResetWaitsForInFlightUnlock(t *testing.T) {
+	r := require.New(t)
+	svc, repo, _, p := newTestServiceWithOwner(t)
+	r.NoError(svc.Setup(t.Context(), p, "passcode"))
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = reader.Close(); _ = writer.Close() })
+	svc.SetRandForTest(reader)
+	type result struct {
+		token string
+		err   error
+	}
+	unlocked := make(chan result, 1)
+	go func() {
+		token, _, err := svc.Unlock(t.Context(), p, "passcode")
+		unlocked <- result{token, err}
+	}()
+	// A partial token write proves Unlock has verified the credential and is
+	// now paused before session insertion, while the reset starts.
+	_, err := writer.Write([]byte{1})
+	r.NoError(err)
+	reset := make(chan error, 1)
+	go func() { reset <- svc.AdminReset(t.Context(), p) }()
+	var resetErr error
+	completed := false
+	select {
+	case resetErr = <-reset:
+		completed = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	// Complete the 32-byte token, then join both operations before asserting.
+	_, err = writer.Write(make([]byte, 31))
+	r.NoError(err)
+	unlockedResult := <-unlocked
+	if !completed {
+		resetErr = <-reset
+	}
+	r.NoError(unlockedResult.err)
+	r.NoError(resetErr)
+	hash, err := hidden.TokenSHA256(unlockedResult.token)
+	r.NoError(err)
+	_, err = repo.LookupActiveSession(t.Context(), hash, time.Now())
+	r.ErrorIs(err, errs.ErrNotFound)
+	r.False(completed, "reset must wait for an already authenticated unlock")
+}
 
 func TestLockIdempotent(t *testing.T) {
 	r := require.New(t)
