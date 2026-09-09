@@ -107,6 +107,10 @@ func TestAICommandValidationBeforeStartup(t *testing.T) {
 		{"false consent", false, []string{"ai", "acknowledge", "--hidden-processing=false"}},
 		{"header status", true, []string{"ai", "status"}},
 		{"header consent", true, []string{"ai", "acknowledge", "--hidden-processing"}},
+		{"missing backfill task", false, []string{"ai", "backfill"}},
+		{"invalid retry task", false, []string{"ai", "retry-failed", "--task=bogus"}},
+		{"header backfill", true, []string{"ai", "backfill", "--task=tag"}},
+		{"header retry", true, []string{"ai", "retry-failed", "--task=caption"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tmp := t.TempDir()
@@ -124,6 +128,75 @@ func TestAICommandValidationBeforeStartup(t *testing.T) {
 			require.NoDirExists(t, dbPath+".operator")
 		})
 	}
+}
+
+func TestAIEmbeddingQueueRejectsHeaderMode(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfg := writeAIEmbedConfig(t, tmp)
+	data, err := os.ReadFile(cfg)
+	r.NoError(err)
+	r.NoError(os.WriteFile(cfg, []byte(strings.Replace(string(data), `mode = "stub"`, `mode = "header"`, 1)), 0o600))
+	dbPath := filepath.Join(tmp, "catalog.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	seedEmbedOwnerAndPhoto(t, dbPath)
+	acknowledgeStubOwner(t, dbPath)
+	record := startCheckoutServer(t, cfg, dbPath)
+	for _, operation := range []string{"backfill", "retry-failed"} {
+		for _, task := range []string{"embed", "tag", "caption"} {
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+				record.Metadata["web_url"]+"/api/v1/ai/"+operation, strings.NewReader(fmt.Sprintf(`{"task":%q}`, task)))
+			r.NoError(err)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("X-Auth-Hub", "h")
+			request.Header.Set("X-Auth-User-Id", "u")
+			response, err := http.DefaultClient.Do(request)
+			r.NoError(err)
+			body, err := io.ReadAll(response.Body)
+			r.NoError(response.Body.Close())
+			r.NoError(err)
+			if task == "embed" {
+				r.Equal(http.StatusBadRequest, response.StatusCode, "%s: %s", operation, body)
+			} else {
+				r.Equal(http.StatusOK, response.StatusCode, "%s %s: %s", operation, task, body)
+			}
+		}
+	}
+}
+
+func TestAIEmbeddingQueueConsentThroughDaemon(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfg := writeAIEmbedConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "catalog.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	seedEmbedOwnerAndPhoto(t, dbPath)
+	record := startCheckoutServer(t, cfg, dbPath)
+	ep := record.Endpoint()
+	for _, operation := range []string{"backfill", "retry-failed"} {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+			ep.BaseURL()+"/api/v1/ai/"+operation, strings.NewReader(`{"task":"embed"}`))
+		r.NoError(err)
+		request.Header.Set("Authorization", "Bearer "+record.Metadata["token"])
+		request.Header.Set("Content-Type", "application/json")
+		response, err := ep.HTTPClient(daemon.HTTPClientOptions{DisableKeepAlives: true}).Do(request)
+		r.NoError(err)
+		body, err := io.ReadAll(response.Body)
+		r.NoError(response.Body.Close())
+		r.NoError(err)
+		r.Equal(http.StatusConflict, response.StatusCode, "%s: %s", operation, body)
+		_, stderr, code := runAICLI("ai", operation, "--task=embed", "--config", cfg)
+		r.NotZero(code)
+		r.Contains(stderr, "acknowledgement")
+	}
+	_, stderr, code := runAICLI("ai", "acknowledge", "--hidden-processing", "--config", cfg)
+	r.Zero(code, stderr)
+	out, stderr, code := runAICLI("ai", "backfill", "--task=tag,caption,embed", "--config", cfg)
+	r.Zero(code, stderr)
+	r.Contains(out, "tag: enqueued 1")
+	r.Contains(out, "caption: enqueued 1")
+	r.Contains(out, "embed: enqueued 1")
+	r.Contains(out, "total: 3")
 }
 
 func TestAIStatusAndConsentWithUnavailableEmbeddings(t *testing.T) {

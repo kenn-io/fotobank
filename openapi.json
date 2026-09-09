@@ -25,6 +25,92 @@
         ],
         "type": "object"
       },
+      "AIBackfillRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AIBackfillRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "force": {
+            "description": "include media that already have an active result",
+            "type": "boolean"
+          },
+          "scope": {
+            "description": "reserved for future scoping",
+            "enum": [
+              "all"
+            ],
+            "type": "string"
+          },
+          "task": {
+            "description": "AI task to enqueue",
+            "enum": [
+              "tag",
+              "caption",
+              "embed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "type": "object"
+      },
+      "AIEnqueuedResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AIEnqueuedResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "enqueued": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enqueued"
+        ],
+        "type": "object"
+      },
+      "AIRetryFailedRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/AIRetryFailedRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "task": {
+            "enum": [
+              "tag",
+              "caption",
+              "embed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "type": "object"
+      },
       "APIKeyEnvStatusValue": {
         "additionalProperties": false,
         "properties": {
@@ -142,65 +228,6 @@
         ],
         "type": "object"
       },
-      "AiBackfillInputBody": {
-        "additionalProperties": false,
-        "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/api/schemas/AiBackfillInputBody.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
-          "force": {
-            "description": "include media that already have an active result",
-            "type": "boolean"
-          },
-          "scope": {
-            "description": "reserved for future scoping",
-            "enum": [
-              "all"
-            ],
-            "type": "string"
-          },
-          "task": {
-            "description": "AI task to enqueue",
-            "enum": [
-              "tag",
-              "caption"
-            ],
-            "type": "string"
-          }
-        },
-        "required": [
-          "task"
-        ],
-        "type": "object"
-      },
-      "AiEnqueuedBody": {
-        "additionalProperties": false,
-        "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/api/schemas/AiEnqueuedBody.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
-          "enqueued": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "enqueued"
-        ],
-        "type": "object"
-      },
       "AiFailureDTO": {
         "additionalProperties": false,
         "properties": {
@@ -271,31 +298,6 @@
         },
         "required": [
           "rows"
-        ],
-        "type": "object"
-      },
-      "AiRetryFailedInputBody": {
-        "additionalProperties": false,
-        "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/api/schemas/AiRetryFailedInputBody.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
-          "task": {
-            "enum": [
-              "tag",
-              "caption"
-            ],
-            "type": "string"
-          }
-        },
-        "required": [
-          "task"
         ],
         "type": "object"
       },
@@ -4205,7 +4207,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AiBackfillInputBody"
+                "$ref": "#/components/schemas/AIBackfillRequest"
               }
             }
           },
@@ -4216,7 +4218,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AiEnqueuedBody"
+                  "$ref": "#/components/schemas/AIEnqueuedResult"
                 }
               }
             },
@@ -4328,7 +4330,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AiRetryFailedInputBody"
+                "$ref": "#/components/schemas/AIRetryFailedRequest"
               }
             }
           },
@@ -4339,7 +4341,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AiEnqueuedBody"
+                  "$ref": "#/components/schemas/AIEnqueuedResult"
                 }
               }
             },

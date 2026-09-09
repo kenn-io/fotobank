@@ -355,8 +355,13 @@ daemon's provider probe and owner-scoped queue counts. `ai acknowledge` calls
 `--hidden-processing` flag before automatic startup. Both reuse the web API's
 contract and open no catalog connection in the CLI.
 
-The daemon-only command boundary is not yet complete. AI backfill, retry, and
-embedding-generation commands still construct catalog services in the CLI. Backup repository inspection and
+AI backfill and retry-failed use `POST /api/v1/ai/backfill` and
+`POST /api/v1/ai/retry-failed` for tag, caption, and embed tasks. The daemon
+selects embedding generations and queues work using its current configuration.
+The CLI validates task names before startup and formats per-task counts.
+
+The daemon-only command boundary is not yet complete. Embedding-generation
+commands still open the catalog in the CLI. Backup repository inspection and
 restore also still run in the CLI.
 These existing paths are migration work in kata, not exceptions to extend.
 The accepted boundary is one daemon-owned implementation per application

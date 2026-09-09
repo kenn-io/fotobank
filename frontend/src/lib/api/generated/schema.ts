@@ -1052,6 +1052,46 @@ export interface components {
             /** @enum {string} */
             kind: "hidden_processing";
         };
+        AIBackfillRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AIBackfillRequest.json
+             */
+            readonly $schema?: string;
+            /** @description include media that already have an active result */
+            force?: boolean;
+            /**
+             * @description reserved for future scoping
+             * @enum {string}
+             */
+            scope?: "all";
+            /**
+             * @description AI task to enqueue
+             * @enum {string}
+             */
+            task: "tag" | "caption" | "embed";
+        };
+        AIEnqueuedResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AIEnqueuedResult.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            enqueued: number;
+        };
+        AIRetryFailedRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/AIRetryFailedRequest.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            task: "tag" | "caption" | "embed";
+        };
         APIKeyEnvStatusValue: {
             is_set: boolean;
             name: string;
@@ -1098,36 +1138,6 @@ export interface components {
             readonly $schema?: string;
             ok: boolean;
         };
-        AiBackfillInputBody: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/AiBackfillInputBody.json
-             */
-            readonly $schema?: string;
-            /** @description include media that already have an active result */
-            force?: boolean;
-            /**
-             * @description reserved for future scoping
-             * @enum {string}
-             */
-            scope?: "all";
-            /**
-             * @description AI task to enqueue
-             * @enum {string}
-             */
-            task: "tag" | "caption";
-        };
-        AiEnqueuedBody: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/AiEnqueuedBody.json
-             */
-            readonly $schema?: string;
-            /** Format: int64 */
-            enqueued: number;
-        };
         AiFailureDTO: {
             /** Format: int64 */
             attempt_count: number;
@@ -1149,16 +1159,6 @@ export interface components {
              */
             readonly $schema?: string;
             rows: components["schemas"]["AiFailureDTO"][] | null;
-        };
-        AiRetryFailedInputBody: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/AiRetryFailedInputBody.json
-             */
-            readonly $schema?: string;
-            /** @enum {string} */
-            task: "tag" | "caption";
         };
         AiRetryPhotoInputBody: {
             /**
@@ -2667,7 +2667,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AiBackfillInputBody"];
+                "application/json": components["schemas"]["AIBackfillRequest"];
             };
         };
         responses: {
@@ -2677,7 +2677,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AiEnqueuedBody"];
+                    "application/json": components["schemas"]["AIEnqueuedResult"];
                 };
             };
             /** @description Error */
@@ -2763,7 +2763,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AiRetryFailedInputBody"];
+                "application/json": components["schemas"]["AIRetryFailedRequest"];
             };
         };
         responses: {
@@ -2773,7 +2773,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AiEnqueuedBody"];
+                    "application/json": components["schemas"]["AIEnqueuedResult"];
                 };
             };
             /** @description Error */

@@ -38,6 +38,8 @@ func writeAIEmbedConfig(t *testing.T, tmp string) string {
 root = %q
 [flash]
 root = %q
+[observability]
+admin_listen = "127.0.0.1:0"
 [identity]
 mode = "stub"
 [identity.stub]
@@ -107,8 +109,8 @@ func seedEmbedOwnerAndPhoto(t *testing.T, dbPath string) (owners.Principal, stri
 	return p, mid
 }
 
-// acknowledgeStubOwner seeds consent for the remaining direct-storage embed
-// command tests. Live acknowledgment is covered in ai_operator_test.go.
+// acknowledgeStubOwner seeds consent for embedding queue fixtures.
+// Live acknowledgment is covered in ai_operator_test.go.
 func acknowledgeStubOwner(t *testing.T, dbPath string) {
 	t.Helper()
 	d, err := db.Open(dbPath)
@@ -144,6 +146,7 @@ func TestCLIAI_BackfillEmbed(t *testing.T) {
 
 	seedEmbedOwnerAndPhoto(t, dbPath)
 	acknowledgeStubOwner(t, dbPath)
+	startCheckoutServer(t, cfgPath, dbPath)
 
 	stdout, stderr, code := runAICLI("ai", "backfill", "--task=embed", "--config", cfgPath)
 	r.Equal(0, code, "stdout=%s stderr=%s", stdout, stderr)
@@ -186,6 +189,7 @@ func TestCLIAI_RetryFailedEmbed(t *testing.T) {
 	))
 	_ = d.Close()
 
+	startCheckoutServer(t, cfgPath, dbPath)
 	stdout, stderr, code := runAICLI("ai", "retry-failed", "--task=embed", "--config", cfgPath)
 	r.Equal(0, code, "stdout=%s stderr=%s", stdout, stderr)
 	r.Contains(stdout, "embed: re-enqueued 1")
