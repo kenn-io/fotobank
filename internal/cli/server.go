@@ -489,7 +489,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	// generations for N days" preference; the per-tick interval
 	// (how often we sweep) is independent and defaults to daily.
 	retainRetired := time.Duration(cfg.Search.RetainRetiredDays) * 24 * time.Hour
-	embedCompactr = embedding.NewCompactor(d.WriteDB(), retainRetired)
+	embedCompactr = embedding.NewCompactor(d.WriteDB(), d.ReadDB(), retainRetired)
 
 	if cfg.AI.Embed.Enabled {
 		embedClient := embedding.NewClient(embedding.Config{
@@ -624,6 +624,10 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 			checkout.NewRepo(d.WriteDB(), d.ReadDB()), contentResolver,
 			contentStore, dbPath+".checkout.lock", places)
 		operatorOwner := owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
+		operatorDeps.GenerationsOperator = &httpapi.GenerationOperatorDeps{
+			Owner:   operatorOwner,
+			Service: aiservice.NewGenerationAdmin(operatorOwner, embedGens, embedActivat, embedCompactr, cfg.Search.RetainRetiredDays),
+		}
 		operatorDeps.GPSOperator.DefaultOwner = &operatorOwner
 		operatorDeps.ThumbsOperator.DefaultOwner = &operatorOwner
 		operatorDeps.HiddenResetOperator.DefaultOwner = &operatorOwner

@@ -14,6 +14,19 @@ import (
 	"go.kenn.io/fotobank/internal/testutil"
 )
 
+func TestCompactorCandidatesDoesNotWaitForWriteConnection(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	c := embedding.NewCompactor(d.WriteDB(), d.ReadDB(), time.Hour)
+	conn, err := d.WriteDB().Conn(t.Context())
+	r.NoError(err)
+	defer func() { r.NoError(conn.Close()) }()
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	_, err = c.Candidates(ctx)
+	r.NoError(err)
+}
+
 // mustCreateRetiredGenAt drives the E1 Generations repo to insert a
 // fresh generation row, promote it (so it carries activated_at), then
 // retires it and back-dates retired_at to the supplied timestamp via
@@ -78,7 +91,7 @@ func TestCompactor_DropsRetiredOlderThanWindow(t *testing.T) {
 	retiredAt := time.Now().Add(-31 * 24 * time.Hour) // outside the window
 	row := mustCreateRetiredGenAt(t, d, 768, retiredAt)
 
-	c := embedding.NewCompactor(d.WriteDB(), retainWindow)
+	c := embedding.NewCompactor(d.WriteDB(), d.ReadDB(), retainWindow)
 	dropped, err := c.SweepOnce(ctx)
 	r.NoError(err)
 	r.Equal(1, dropped, "the retired generation should be compacted")
@@ -125,7 +138,7 @@ func TestCompactor_SkipsRowRePromotedBetweenSelectAndDelete(t *testing.T) {
 	)
 	r.NoError(err)
 
-	c := embedding.NewCompactor(d.WriteDB(), retainWindow)
+	c := embedding.NewCompactor(d.WriteDB(), d.ReadDB(), retainWindow)
 	dropped, err := c.SweepOnce(ctx)
 	r.NoError(err)
 	r.Equal(0, dropped, "re-promoted row must NOT count as compacted")
@@ -158,7 +171,7 @@ func TestCompactor_LeavesRecentRetiredAlone(t *testing.T) {
 	retiredAt := time.Now().Add(-5 * 24 * time.Hour) // well inside the window
 	row := mustCreateRetiredGenAt(t, d, 768, retiredAt)
 
-	c := embedding.NewCompactor(d.WriteDB(), retainWindow)
+	c := embedding.NewCompactor(d.WriteDB(), d.ReadDB(), retainWindow)
 	dropped, err := c.SweepOnce(ctx)
 	r.NoError(err)
 	r.Equal(0, dropped, "a recently-retired generation must not be compacted")

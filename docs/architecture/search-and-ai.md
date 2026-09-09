@@ -70,6 +70,20 @@ service boundary. Generation activation and embedding events use the configured
 stub owner; header-mode requests are rejected before generation or queue writes.
 Tag and caption requests remain owner-scoped in either identity mode.
 
+Generation administration uses the daemon's local operator API in stub mode.
+Listing uses the activator's visible-media eligibility counter. Promotion first
+provides generation details and the server's retention window for the CLI's
+warning and confirmation; the write transaction then requires the target to
+still be retired. Declining the prompt sends no promotion request. The daemon
+may start for this read-only inspection before the prompt appears.
+
+Compaction dry-run and the scheduled/manual sweep share the same candidate
+query on the read-only pool. Each deletion rechecks retirement and age in its
+write transaction. A failed dry-run prints no success summary. A partial
+failure returns the number already dropped and an error; the CLI reports both
+and exits nonzero. Generation administration does not require AI provider
+availability or processing consent and does not itself enqueue provider work.
+
 Embeddings use generations so a model or input change does not mix incompatible
 vectors in one search space.
 

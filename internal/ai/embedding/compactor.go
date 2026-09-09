@@ -14,7 +14,8 @@ import (
 // table and registry row so the database does not grow unbounded
 // across model rolls.
 //
-// The compactor uses the rw pool directly. SweepOnce runs entirely
+// Candidate reads use the read-only pool; deletions use the write pool.
+// SweepOnce runs entirely
 // outside the gens repo to avoid coupling housekeeping behaviour to
 // the registry abstraction; the per-target work (DROP TABLE + DELETE
 // row) sequences inside its own transaction so a partial sweep never
@@ -26,6 +27,7 @@ import (
 // tx — no separate DELETE for the mapping table is required.
 type Compactor struct {
 	rw     *sql.DB
+	ro     *sql.DB
 	window time.Duration
 }
 
@@ -34,8 +36,8 @@ type Compactor struct {
 // [search] retain_retired_days config (B1) — converted to a duration by
 // the caller — so an operator's "keep retired generations for N days"
 // preference flows through unchanged.
-func NewCompactor(rw *sql.DB, retainRetired time.Duration) *Compactor {
-	return &Compactor{rw: rw, window: retainRetired}
+func NewCompactor(rw, ro *sql.DB, retainRetired time.Duration) *Compactor {
+	return &Compactor{rw: rw, ro: ro, window: retainRetired}
 }
 
 // SweepOnce drops every retired generation whose retired_at is older
@@ -56,59 +58,57 @@ func NewCompactor(rw *sql.DB, retainRetired time.Duration) *Compactor {
 // and acceptable.
 func (c *Compactor) SweepOnce(ctx context.Context) (int, error) {
 	cutoff := time.Now().UTC().Add(-c.window)
-
-	// Phase 1: read the candidate set into memory. Holding the iterator
-	// open across the per-target writes would block the rw connection
-	// (MaxOpenConns=1) so subsequent BeginTx calls would deadlock.
-	// Closing the rows before any write resolves the contention.
-	rows, err := c.rw.QueryContext(ctx,
-		`SELECT id, vec_table_name FROM embedding_generations
-		  WHERE state = 'retired' AND retired_at < ?
-		  ORDER BY id ASC`,
-		cutoff,
-	)
+	targets, err := c.candidates(ctx, cutoff)
 	if err != nil {
-		return 0, fmt.Errorf("select retired generations: %w", err)
+		return 0, err
 	}
-	type target struct {
-		id           int64
-		vecTableName string
-	}
-	var targets []target
-	for rows.Next() {
-		var t target
-		if err := rows.Scan(&t.id, &t.vecTableName); err != nil {
-			_ = rows.Close()
-			return 0, fmt.Errorf("scan retired generation: %w", err)
-		}
-		targets = append(targets, t)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return 0, fmt.Errorf("iter retired generations: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("close retired generations: %w", err)
-	}
-
-	// Phase 2: drop each target inside its own tx. Per-target failure
-	// halts the sweep but does NOT roll back already-compacted earlier
-	// targets — those are committed and gone. The next tick re-evaluates
-	// the residue. dropOne returns dropped=false when the row was
-	// re-promoted between phase 1 and phase 2 (the state-aware DELETE
-	// matches zero rows); the sweep skips the DROP TABLE in that case
-	// and moves on without counting the target as compacted.
 	dropped := 0
-	for _, t := range targets {
-		ok, err := c.dropOne(ctx, t.id, t.vecTableName, cutoff)
+	for _, target := range targets {
+		ok, err := c.dropOne(ctx, target.ID, target.VecTableName, cutoff)
 		if err != nil {
-			return dropped, fmt.Errorf("drop generation %d: %w", t.id, err)
+			return dropped, fmt.Errorf("drop generation %d: %w", target.ID, err)
 		}
 		if ok {
 			dropped++
 		}
 	}
 	return dropped, nil
+}
+
+type CompactCandidate struct {
+	ID           int64     `json:"id"`
+	VecTableName string    `json:"vec_table_name"`
+	RetiredAt    time.Time `json:"retired_at"`
+}
+
+// Candidates uses the sweep's predicate without changing any data.
+func (c *Compactor) Candidates(ctx context.Context) ([]CompactCandidate, error) {
+	return c.candidates(ctx, time.Now().UTC().Add(-c.window))
+}
+
+func (c *Compactor) candidates(ctx context.Context, cutoff time.Time) ([]CompactCandidate, error) {
+	rows, err := c.ro.QueryContext(ctx,
+		`SELECT id, vec_table_name, retired_at FROM embedding_generations
+		 WHERE state='retired' AND retired_at < ? ORDER BY id ASC`, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("select retired generations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	targets := []CompactCandidate{}
+	for rows.Next() {
+		var target CompactCandidate
+		if err := rows.Scan(&target.ID, &target.VecTableName, &target.RetiredAt); err != nil {
+			return nil, fmt.Errorf("scan retired generation: %w", err)
+		}
+		targets = append(targets, target)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate retired generations: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close retired generations: %w", err)
+	}
+	return targets, nil
 }
 
 // dropOne removes one retired generation: DELETE the registry row
