@@ -39,6 +39,7 @@ func TestEmbeddingQueueUsesCurrentSettingsAndOwner(t *testing.T) {
 				Queue: q, Results: res, Failures: fail, Skipped: skipped,
 				Ack: ack.New(rw, ro), Gap: gapscanner.New(ro, q, res, skipped),
 				Runtime: runtime, Generations: gens,
+				EmbeddingQueueEnabled: true,
 			})
 			alice := testutil.SeedOwner(t, rw, "local", "alice")
 			bob := testutil.SeedOwner(t, rw, "local", "bob")

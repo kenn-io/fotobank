@@ -326,14 +326,15 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	aiGap := gapscanner.New(d.ReadDB(), aiQueue, aiResults, aiSkipped)
 	embedGens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
 	aiSvc := aiservice.New(aiservice.Deps{
-		Queue:       aiQueue,
-		Results:     aiResults,
-		Failures:    aiFailures,
-		Skipped:     aiSkipped,
-		Ack:         aiAck,
-		Gap:         aiGap,
-		Generations: embedGens,
-		Media:       mediaCheckAdapter{mediaSvc: mediaSvc},
+		Queue:                 aiQueue,
+		Results:               aiResults,
+		Failures:              aiFailures,
+		Skipped:               aiSkipped,
+		Ack:                   aiAck,
+		Gap:                   aiGap,
+		Generations:           embedGens,
+		EmbeddingQueueEnabled: cfg.Identity.Mode == "stub",
+		Media:                 mediaCheckAdapter{mediaSvc: mediaSvc},
 		ConfigFingerprints: aiservice.ConfigFingerprints{
 			Tag:     tagFingerprint,
 			Caption: captionFingerprint,

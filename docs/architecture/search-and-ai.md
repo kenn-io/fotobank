@@ -65,6 +65,11 @@ vectors. Retry captures a failure cutoff before its batch loop so fresh worker
 failures are not repeatedly retried by the same request. Queueing remains
 available while AI processing is globally paused.
 
+Embedding backfill and retry are restricted to stub identity mode at the
+service boundary. Generation activation and embedding events use the configured
+stub owner; header-mode requests are rejected before generation or queue writes.
+Tag and caption requests remain owner-scoped in either identity mode.
+
 Embeddings use generations so a model or input change does not mix incompatible
 vectors in one search space.
 

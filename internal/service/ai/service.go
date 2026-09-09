@@ -87,6 +87,9 @@ type Deps struct {
 	EmbeddingActivator   EmbeddingActivatorIface
 	EmbeddingGenerations EmbeddingGenerationsLister
 	Generations          *embedding.Generations
+	// EmbeddingQueueEnabled is set only for stub deployments: activation
+	// and embedding events currently belong to a single configured owner.
+	EmbeddingQueueEnabled bool
 	// EmbeddingProbe returns a shared observation with its actual check time.
 	EmbeddingProbe func(context.Context) VisionPart
 	Runtime        RuntimeProvider
@@ -264,6 +267,9 @@ func (s *Service) RetryFailed(ctx context.Context, caller owners.Principal, task
 // embeddingScan is called only after owner consent has been checked. Resolve
 // settings and fingerprints from one runtime snapshot for the whole operation.
 func (s *Service) embeddingScan(ctx context.Context, caller owners.Principal) (gapscanner.EmbedScanRequest, error) {
+	if !s.deps.EmbeddingQueueEnabled {
+		return gapscanner.EmbedScanRequest{}, fmt.Errorf("%w: embedding backfill and retry require stub identity mode", errs.ErrInvalidArgument)
+	}
 	if s.deps.Runtime == nil || s.deps.Generations == nil {
 		return gapscanner.EmbedScanRequest{}, fmt.Errorf("%w: embedding service unavailable", errs.ErrInvalidArgument)
 	}
