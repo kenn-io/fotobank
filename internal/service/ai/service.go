@@ -85,8 +85,9 @@ type Deps struct {
 	ConfigFingerprints   ConfigFingerprints
 	EmbeddingActivator   EmbeddingActivatorIface
 	EmbeddingGenerations EmbeddingGenerationsLister
-	EmbeddingProbe       Probe
-	Runtime              RuntimeProvider
+	// EmbeddingProbe returns a shared observation with its actual check time.
+	EmbeddingProbe func(context.Context) VisionPart
+	Runtime        RuntimeProvider
 }
 
 // Service is the auth-scoped AI service.

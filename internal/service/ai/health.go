@@ -154,13 +154,8 @@ func (s *Service) Health(ctx context.Context, caller owners.Principal, in Health
 	h.Caption = s.taskHealth(ctx, caller, ai.TaskCaption, captionFP.result)
 	h.Embed = s.embedHealth(ctx, caller, !acked)
 	if s.deps.Runtime != nil && s.deps.Runtime.Effective().Config.Embed.Enabled && s.deps.EmbeddingProbe != nil {
-		provider := &VisionPart{LastCheckAt: time.Now().UTC()}
-		if err := s.deps.EmbeddingProbe.Probe(ctx); err != nil {
-			provider.LastError = err.Error()
-		} else {
-			provider.Reachable = true
-		}
-		h.Embed.Provider = provider
+		provider := s.deps.EmbeddingProbe(ctx)
+		h.Embed.Provider = &provider
 	}
 	h.EmbeddingGenerations = s.embeddingGenerations(ctx)
 	return h

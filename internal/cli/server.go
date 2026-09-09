@@ -337,7 +337,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 			Caption: captionFingerprint,
 		},
 		Runtime:        aiProvider,
-		EmbeddingProbe: realEmbedProbe{p: aiProvider},
+		EmbeddingProbe: (&realEmbedProbe{p: aiProvider}).Health,
 	})
 
 	// metricsObj owns the private VictoriaMetrics set. Pull-source
@@ -1249,22 +1249,6 @@ func (a mediaCheckAdapter) Check(ctx context.Context, mediaID string, caller own
 
 type aiRuntimeProvider interface {
 	Effective() airuntime.Snapshot
-}
-
-// realEmbedProbe checks synthetic inputs only, never catalog photos. Health
-// requests use the current configuration so outages and recovery are visible
-// without a restart. Consent recording does not invoke this probe.
-type realEmbedProbe struct{ p aiRuntimeProvider }
-
-func (p realEmbedProbe) Probe(ctx context.Context) error {
-	cfg := p.p.Effective().Config.Embed
-	return embedding.Probe(ctx, embedding.Config{
-		Endpoint:  cfg.Endpoint,
-		APIKey:    cfg.APIKey(),
-		Model:     cfg.Model,
-		Dimension: cfg.Dimension,
-		Timeout:   cfg.Timeout,
-	})
 }
 
 func runtimeVisionWorkerConfig(p aiRuntimeProvider, task ai.Task) func(context.Context) aiworker.RuntimeConfig {

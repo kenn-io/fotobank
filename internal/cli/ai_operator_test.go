@@ -157,6 +157,7 @@ func TestAIStatusAndConsentWithUnavailableEmbeddings(t *testing.T) {
 	r.NotNil(health.Embed.Provider)
 	r.False(health.Embed.Provider.Reachable)
 	r.Contains(health.Embed.Provider.LastError, "503")
+	checkedAt := health.Embed.Provider.LastCheckAt
 	before := probes.Load()
 	_, stderr, code = runAICLI("ai", "acknowledge", "--hidden-processing", "--config", cfg)
 	r.Zero(code, stderr)
@@ -166,12 +167,14 @@ func TestAIStatusAndConsentWithUnavailableEmbeddings(t *testing.T) {
 	r.NoError(json.Unmarshal([]byte(out), &health))
 	r.Empty(health.PausedReason)
 	r.False(health.Embed.Provider.Reachable)
+	r.Equal(before, probes.Load(), "repeated status must reuse the provider probe")
 	available.Store(true)
 	out, stderr, code = runAICLI("ai", "status", "--config", cfg)
 	r.Zero(code, stderr)
 	health = aiservice.Health{}
 	r.NoError(json.Unmarshal([]byte(out), &health))
 	r.NotNil(health.Embed.Provider)
-	r.True(health.Embed.Provider.Reachable)
-	r.Empty(health.Embed.Provider.LastError)
+	r.False(health.Embed.Provider.Reachable, "recovery is observed after the shared cache expires")
+	r.Equal(checkedAt, health.Embed.Provider.LastCheckAt)
+	r.Equal(before, probes.Load())
 }
