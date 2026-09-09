@@ -9,7 +9,6 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/errs"
 )
@@ -61,14 +60,6 @@ type databaseHandle struct {
 	lifetime  *databaseLifetime
 	closeOnce sync.Once
 	closeErr  error
-}
-
-func openDatabase(cfg *config.Config) (*databaseHandle, error) {
-	path, err := resolveDBPath(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return openDatabasePath(path)
 }
 
 func openDatabasePath(path string) (*databaseHandle, error) {

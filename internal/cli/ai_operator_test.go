@@ -111,6 +111,12 @@ func TestAICommandValidationBeforeStartup(t *testing.T) {
 		{"invalid retry task", false, []string{"ai", "retry-failed", "--task=bogus"}},
 		{"header backfill", true, []string{"ai", "backfill", "--task=tag"}},
 		{"header retry", true, []string{"ai", "retry-failed", "--task=caption"}},
+		{"invalid generation state", false, []string{"ai", "list-generations", "--state=bogus"}},
+		{"invalid generation ID", false, []string{"ai", "promote-generation", "no", "--yes"}},
+		{"nonpositive generation ID", false, []string{"ai", "promote-generation", "0", "--yes"}},
+		{"header generations", true, []string{"ai", "list-generations"}},
+		{"header promotion", true, []string{"ai", "promote-generation", "1", "--yes"}},
+		{"header compaction", true, []string{"ai", "compact-retired-generations", "--dry-run"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tmp := t.TempDir()
@@ -161,6 +167,63 @@ func TestAIEmbeddingQueueRejectsHeaderMode(t *testing.T) {
 				r.Equal(http.StatusOK, response.StatusCode, "%s %s: %s", operation, task, body)
 			}
 		}
+	}
+}
+
+func TestAIGenerationOperatorBoundary(t *testing.T) {
+	for _, mode := range []string{"stub", "header"} {
+		t.Run(mode, func(t *testing.T) {
+			r := require.New(t)
+			tmp := t.TempDir()
+			cfg := writeAIEmbedConfig(t, tmp)
+			data, err := os.ReadFile(cfg)
+			r.NoError(err)
+			r.NoError(os.WriteFile(cfg, []byte(strings.Replace(string(data), `mode = "stub"`, `mode = "`+mode+`"`, 1)), 0o600))
+			dbPath := filepath.Join(tmp, "catalog.sqlite")
+			t.Setenv("FOTOBANK_DB_PATH", dbPath)
+			record := startCheckoutServer(t, cfg, dbPath)
+			for _, tc := range []struct {
+				path, method, body string
+			}{
+				{"", http.MethodGet, ""},
+				{"/1", http.MethodGet, ""},
+				{"/1/promote", http.MethodPost, `{"confirm":true}`},
+				{"/compact", http.MethodPost, `{"dry_run":true}`},
+			} {
+				for _, listener := range []string{"operator", "photo", "unauthenticated"} {
+					base := record.Endpoint().BaseURL()
+					client := record.Endpoint().HTTPClient(daemon.HTTPClientOptions{DisableKeepAlives: true})
+					if listener == "photo" {
+						base = record.Metadata["web_url"]
+						client = http.DefaultClient
+					}
+					req, err := http.NewRequestWithContext(t.Context(), tc.method, base+"/api/v1/operator/ai/generations"+tc.path, strings.NewReader(tc.body))
+					r.NoError(err)
+					req.Header.Set("Content-Type", "application/json")
+					req.Header.Set("X-Auth-Hub", "h")
+					req.Header.Set("X-Auth-User-Id", "u")
+					if listener != "unauthenticated" {
+						req.Header.Set("Authorization", "Bearer "+record.Metadata["token"])
+					}
+					resp, err := client.Do(req)
+					r.NoError(err)
+					body, err := io.ReadAll(resp.Body)
+					r.NoError(resp.Body.Close())
+					r.NoError(err)
+					want := http.StatusOK
+					if tc.path == "/1" || tc.path == "/1/promote" {
+						want = http.StatusNotFound
+					}
+					if mode == "header" || listener == "photo" {
+						want = http.StatusForbidden
+					}
+					if listener == "unauthenticated" {
+						want = http.StatusUnauthorized
+					}
+					r.Equal(want, resp.StatusCode, "%s %s: %s", listener, tc.path, body)
+				}
+			}
+		})
 	}
 }
 

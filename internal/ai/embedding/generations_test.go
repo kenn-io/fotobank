@@ -45,6 +45,25 @@ func TestGenerations_FindOrCreateBuilding_CreatesOnce(t *testing.T) {
 	r.Equal(row1.ID, row2.ID, "second call must return the same row")
 }
 
+func TestGenerations_PromoteRetiredChecksStateInTransaction(t *testing.T) {
+	r := require.New(t)
+	ctx := t.Context()
+	d := testutil.OpenTestDB(t)
+	g := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	active, err := g.FindOrCreateBuilding(ctx, fpEmbed1(), 8)
+	r.NoError(err)
+	r.NoError(g.Promote(ctx, active.ID))
+	building, err := g.FindOrCreateBuilding(ctx, ai.Fingerprint{ModelID: "next", InputProfile: "ip"}, 8)
+	r.NoError(err)
+	r.ErrorIs(g.PromoteRetired(ctx, building.ID), errs.ErrNotFound)
+	current, err := g.GetByID(ctx, active.ID)
+	r.NoError(err)
+	r.Equal("active", current.State, "rejected promotion must roll back retirement of the current generation")
+	r.NoError(g.Retire(ctx, building.ID))
+	r.NoError(g.PromoteRetired(ctx, building.ID))
+	r.ErrorIs(g.PromoteRetired(ctx, building.ID), errs.ErrNotFound, "a second promotion must not accept an already-active target")
+}
+
 func TestGenerations_FindOrCreateBuildingTx_DimensionDefinesGeneration(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()

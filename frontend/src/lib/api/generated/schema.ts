@@ -536,6 +536,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/ai/generations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List embedding generations
+         * @description Available only to local host operators in stub identity mode.
+         */
+        get: operations["list-embedding-generations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/ai/generations/compact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove retired embedding generations past the retention window
+         * @description Stub-mode host operators only. dry_run lists candidates without deleting them. On partial failure, dropped reports completed deletions and error explains the failure; inspect before retrying.
+         */
+        post: operations["compact-embedding-generations"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/ai/generations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect an embedding generation before promotion */
+        get: operations["get-embedding-generation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/ai/generations/{id}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make a retired embedding generation active
+         * @description Stub-mode host operators only. Requires confirmation. The target must still be retired when the write occurs.
+         */
+        post: operations["promote-embedding-generation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operator/backups": {
         parameters: {
             query?: never;
@@ -1440,6 +1517,34 @@ export interface components {
             /** Format: int64 */
             start: number;
         };
+        CompactCandidate: {
+            /** Format: int64 */
+            id: number;
+            /** Format: date-time */
+            retired_at: string;
+            vec_table_name: string;
+        };
+        CompactGenerationsRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CompactGenerationsRequest.json
+             */
+            readonly $schema?: string;
+            dry_run?: boolean;
+        };
+        CompactGenerationsResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CompactGenerationsResult.json
+             */
+            readonly $schema?: string;
+            candidates: components["schemas"]["CompactCandidate"][] | null;
+            /** Format: int64 */
+            dropped: number;
+            error?: string;
+        };
         ContentRecoveryRequest: {
             /**
              * Format: uri
@@ -1715,6 +1820,46 @@ export interface components {
             error: string;
             id: string;
             owner: components["schemas"]["Principal"];
+        };
+        GenerationDetails: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/GenerationDetails.json
+             */
+            readonly $schema?: string;
+            generation: components["schemas"]["GenerationInfo"];
+            /** Format: int64 */
+            retain_retired_days: number;
+        };
+        GenerationInfo: {
+            /** Format: date-time */
+            activated_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int64 */
+            dimension: number;
+            /** Format: int64 */
+            eligible_count: number;
+            /** Format: int64 */
+            embedded_count: number;
+            fingerprint: string;
+            /** Format: int64 */
+            id: number;
+            input_profile: string;
+            model_id: string;
+            /** Format: date-time */
+            retired_at?: string;
+            state: string;
+        };
+        GenerationListResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/GenerationListResult.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["GenerationInfo"][] | null;
         };
         Health: {
             /**
@@ -2053,6 +2198,26 @@ export interface components {
             handle?: string;
             hub: string;
             user_id: string;
+        };
+        PromoteGenerationRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/PromoteGenerationRequest.json
+             */
+            readonly $schema?: string;
+            confirm: boolean;
+        };
+        PromoteGenerationResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/PromoteGenerationResult.json
+             */
+            readonly $schema?: string;
+            fingerprint: string;
+            /** Format: int64 */
+            id: number;
         };
         RegenerateThumbsRequest: {
             /**
@@ -3612,6 +3777,136 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MediaView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "list-embedding-generations": {
+        parameters: {
+            query?: {
+                state?: "building" | "active" | "retired";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerationListResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "compact-embedding-generations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompactGenerationsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompactGenerationsResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-embedding-generation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerationDetails"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "promote-embedding-generation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromoteGenerationRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromoteGenerationResult"];
                 };
             };
             /** @description Error */

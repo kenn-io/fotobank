@@ -360,9 +360,14 @@ AI backfill and retry-failed use `POST /api/v1/ai/backfill` and
 selects embedding generations and queues work using its current configuration.
 The CLI validates task names before startup and formats per-task counts.
 
-The daemon-only command boundary is not yet complete. Embedding-generation
-commands still open the catalog in the CLI. Backup repository inspection and
-restore also still run in the CLI.
+Embedding-generation listing, promotion, and compaction use the local operator
+API under `/api/v1/operator/ai/generations`. Only stub deployments supply this
+service; photo listeners and header-mode deployments reject these operations.
+The daemon reuses its generation registry, activation counter, and compactor.
+The CLI performs no catalog reads, including promotion inspection and dry-run.
+
+The daemon-only command boundary is not yet complete. Backup repository
+inspection and restore still run in the CLI.
 These existing paths are migration work in kata, not exceptions to extend.
 The accepted boundary is one daemon-owned implementation per application
 operation, shared by HTTP, the CLI, and a future MCP client. Bootstrap and

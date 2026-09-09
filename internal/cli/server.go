@@ -624,6 +624,10 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 			checkout.NewRepo(d.WriteDB(), d.ReadDB()), contentResolver,
 			contentStore, dbPath+".checkout.lock", places)
 		operatorOwner := owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
+		operatorDeps.GenerationsOperator = &httpapi.GenerationOperatorDeps{
+			Owner:   operatorOwner,
+			Service: aiservice.NewGenerationAdmin(operatorOwner, embedGens, embedActivat, embedCompactr, cfg.Search.RetainRetiredDays),
+		}
 		operatorDeps.GPSOperator.DefaultOwner = &operatorOwner
 		operatorDeps.ThumbsOperator.DefaultOwner = &operatorOwner
 		operatorDeps.HiddenResetOperator.DefaultOwner = &operatorOwner

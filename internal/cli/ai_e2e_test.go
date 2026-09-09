@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -231,6 +232,7 @@ func TestCLIAI_ListGenerations(t *testing.T) {
 	row, err := gens.FindOrCreateBuilding(context.Background(), embedTestFingerprint(), 8)
 	r.NoError(err)
 	_ = d.Close()
+	startCheckoutServer(t, cfgPath, dbPath)
 
 	stdout, stderr, code := runAICLI("ai", "list-generations", "--config", cfgPath)
 	r.Equal(0, code, "stdout=%s stderr=%s", stdout, stderr)
@@ -285,6 +287,11 @@ func TestCLIAI_PromoteGeneration_AdminOverride(t *testing.T) {
 	r.NoError(err)
 	r.NoError(gens.Retire(context.Background(), row.ID))
 	_ = d.Close()
+	startCheckoutServer(t, cfgPath, dbPath)
+	var declinedOut, declinedErr bytes.Buffer
+	code := cli.RunWithInput(t.Context(), []string{"ai", "promote-generation", strconv.FormatInt(row.ID, 10), "--config", cfgPath}, strings.NewReader("n\n"), &declinedOut, &declinedErr)
+	r.NotZero(code)
+	r.Contains(declinedErr.String(), "aborted")
 
 	stdout, stderr, code := runAICLI(
 		"ai", "promote-generation", strconv.FormatInt(row.ID, 10), "--yes", "--config", cfgPath,
@@ -323,6 +330,7 @@ func TestCLIAI_PromoteGeneration_RejectsBuildingState(t *testing.T) {
 	row, err := gens.FindOrCreateBuilding(context.Background(), embedTestFingerprint(), 8)
 	r.NoError(err)
 	_ = d.Close()
+	startCheckoutServer(t, cfgPath, dbPath)
 
 	stdout, stderr, code := runAICLI(
 		"ai", "promote-generation", strconv.FormatInt(row.ID, 10), "--yes", "--config", cfgPath,
@@ -364,6 +372,7 @@ func TestCLIAI_PromoteGeneration_RejectsActiveState(t *testing.T) {
 	r.NoError(err)
 	r.NoError(gens.Promote(context.Background(), row.ID))
 	_ = d.Close()
+	startCheckoutServer(t, cfgPath, dbPath)
 
 	stdout, stderr, code := runAICLI(
 		"ai", "promote-generation", strconv.FormatInt(row.ID, 10), "--yes", "--config", cfgPath,
@@ -407,6 +416,7 @@ func TestCLIAI_CompactRetiredGenerationsDryRun(t *testing.T) {
 		old, row.ID)
 	r.NoError(err)
 	_ = d.Close()
+	startCheckoutServer(t, cfgPath, dbPath)
 
 	stdout, stderr, code := runAICLI(
 		"ai", "compact-retired-generations", "--dry-run", "--config", cfgPath,
@@ -426,4 +436,9 @@ func TestCLIAI_CompactRetiredGenerationsDryRun(t *testing.T) {
 		`SELECT COUNT(*) FROM embedding_generations WHERE id=?`, row.ID,
 	).Scan(&n))
 	r.Equal(1, n, "dry-run must NOT drop the retired generation")
+	stdout, stderr, code = runAICLI("ai", "compact-retired-generations", "--config", cfgPath)
+	r.Zero(code, stderr)
+	r.Contains(stdout, "1 retired generations dropped")
+	r.NoError(d.ReadDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_generations WHERE id=?`, row.ID).Scan(&n))
+	r.Zero(n)
 }

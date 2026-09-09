@@ -35,6 +35,7 @@ type Deps struct {
 	Operator            *OperatorDeps
 	GPSOperator         *GPSOperatorDeps
 	OwnersOperator      *service.OwnerAdminService
+	GenerationsOperator *GenerationOperatorDeps
 	ThumbsOperator      *ThumbsOperatorDeps
 	HiddenResetOperator *HiddenResetOperatorDeps
 	Daemon              *DaemonDeps
@@ -188,6 +189,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerOperator(api, deps.Operator)
 	registerOperatorGPS(api, deps.GPSOperator)
 	registerOperatorOwners(api, deps.OwnersOperator)
+	registerOperatorGenerations(api, deps.GenerationsOperator)
 	registerOperatorThumbs(api, deps.ThumbsOperator)
 	registerOperatorHidden(api, deps.HiddenResetOperator)
 	registerDaemon(api, deps.Daemon)

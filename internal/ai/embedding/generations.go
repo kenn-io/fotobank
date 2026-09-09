@@ -346,11 +346,30 @@ func retirePriorActiveTx(ctx context.Context, tx *sql.Tx, now time.Time, promoti
 // a listener observing the event sees a row that has already been
 // retired in the DB.
 func (g *Generations) Promote(ctx context.Context, id int64) error {
+	return g.promote(ctx, id, "")
+}
+
+// PromoteRetired rechecks the administrative precondition in the write
+// transaction, including after a confirmation prompt or concurrent activation.
+func (g *Generations) PromoteRetired(ctx context.Context, id int64) error {
+	return g.promote(ctx, id, "retired")
+}
+
+func (g *Generations) promote(ctx context.Context, id int64, requiredState string) error {
 	tx, err := g.rw.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if requiredState != "" {
+		var matches bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_generations WHERE id=? AND state=?)`, id, requiredState).Scan(&matches); err != nil {
+			return fmt.Errorf("check promotion state: %w", err)
+		}
+		if !matches {
+			return fmt.Errorf("promote id %d: %w", id, errs.ErrNotFound)
+		}
+	}
 
 	now := time.Now().UTC()
 	priorID, priorFP, retired, err := retirePriorActiveTx(ctx, tx, now, id)
@@ -363,8 +382,8 @@ func (g *Generations) Promote(ctx context.Context, id int64) error {
 	res, err := tx.ExecContext(ctx,
 		`UPDATE embedding_generations
 		    SET state='active', activated_at=?, retired_at=NULL
-		  WHERE id=?`,
-		now, id,
+		  WHERE id=? AND (?='' OR state=?)`,
+		now, id, requiredState, requiredState,
 	)
 	if err != nil {
 		return fmt.Errorf("promote: %w", err)
