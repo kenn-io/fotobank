@@ -57,6 +57,14 @@ set or one media item without bypassing ownership rules.
 
 ## Embedding generations
 
+Manual backfill and retry-failed requests use the same daemon service through
+HTTP and the CLI. Both require owner consent and scope queued work to that
+owner. Embedding tasks resolve the building generation from one live settings
+snapshot and use generation-specific gaps; `--force` does not discard existing
+vectors. Retry captures a failure cutoff before its batch loop so fresh worker
+failures are not repeatedly retried by the same request. Queueing remains
+available while AI processing is globally paused.
+
 Embeddings use generations so a model or input change does not mix incompatible
 vectors in one search space.
 

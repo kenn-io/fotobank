@@ -101,7 +101,7 @@ func registerAIBackfill(api huma.API, svc *aiservice.Service) {
 		if err != nil {
 			return nil, Translate(err)
 		}
-		return &aiEnqueuedOutput{Body: aiEnqueuedBody{Enqueued: n}}, nil
+		return &aiEnqueuedOutput{Body: AIEnqueuedResult{Enqueued: n}}, nil
 	})
 }
 
@@ -123,7 +123,7 @@ func registerAIRetryFailed(api huma.API, svc *aiservice.Service) {
 		if err != nil {
 			return nil, Translate(err)
 		}
-		return &aiEnqueuedOutput{Body: aiEnqueuedBody{Enqueued: n}}, nil
+		return &aiEnqueuedOutput{Body: AIEnqueuedResult{Enqueued: n}}, nil
 	})
 }
 
@@ -265,17 +265,21 @@ func toAIFailureDTOs(rows []failures.Row) []aiFailureDTO {
 }
 
 type aiBackfillInput struct {
-	Body struct {
-		Task  string `json:"task" enum:"tag,caption" doc:"AI task to enqueue"`
-		Force bool   `json:"force,omitempty" doc:"include media that already have an active result"`
-		Scope string `json:"scope,omitempty" enum:"all" doc:"reserved for future scoping"`
-	}
+	Body AIBackfillRequest
+}
+
+type AIBackfillRequest struct {
+	Task  string `json:"task" enum:"tag,caption,embed" doc:"AI task to enqueue"`
+	Force bool   `json:"force,omitempty" doc:"include media that already have an active result"`
+	Scope string `json:"scope,omitempty" enum:"all" doc:"reserved for future scoping"`
 }
 
 type aiRetryFailedInput struct {
-	Body struct {
-		Task string `json:"task" enum:"tag,caption"`
-	}
+	Body AIRetryFailedRequest
+}
+
+type AIRetryFailedRequest struct {
+	Task string `json:"task" enum:"tag,caption,embed"`
 }
 
 type aiRetryPhotoInput struct {
@@ -294,10 +298,10 @@ type AIAcknowledgeRequest struct {
 }
 
 type aiEnqueuedOutput struct {
-	Body aiEnqueuedBody
+	Body AIEnqueuedResult
 }
 
-type aiEnqueuedBody struct {
+type AIEnqueuedResult struct {
 	Enqueued int `json:"enqueued"`
 }
 

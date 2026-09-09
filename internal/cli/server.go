@@ -324,14 +324,16 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	aiSkipped := skipped.NewRepo(d.WriteDB(), d.ReadDB())
 	aiAck := ack.New(d.WriteDB(), d.ReadDB())
 	aiGap := gapscanner.New(d.ReadDB(), aiQueue, aiResults, aiSkipped)
+	embedGens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
 	aiSvc := aiservice.New(aiservice.Deps{
-		Queue:    aiQueue,
-		Results:  aiResults,
-		Failures: aiFailures,
-		Skipped:  aiSkipped,
-		Ack:      aiAck,
-		Gap:      aiGap,
-		Media:    mediaCheckAdapter{mediaSvc: mediaSvc},
+		Queue:       aiQueue,
+		Results:     aiResults,
+		Failures:    aiFailures,
+		Skipped:     aiSkipped,
+		Ack:         aiAck,
+		Gap:         aiGap,
+		Generations: embedGens,
+		Media:       mediaCheckAdapter{mediaSvc: mediaSvc},
 		ConfigFingerprints: aiservice.ConfigFingerprints{
 			Tag:     tagFingerprint,
 			Caption: captionFingerprint,
@@ -430,7 +432,6 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	// supported by the embed pipeline in v1 (see the embed activator's
 	// Principal field comment).
 	var (
-		embedGens     *embedding.Generations
 		embedMapping  *embedding.Mapping
 		embedEvents   *httpapi.AIEmbedEvents
 		embedWorker   *embedding.Worker
@@ -439,7 +440,6 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		embedPrincp   owners.Principal
 		searchService *searchsvc.Service
 	)
-	embedGens = embedding.NewGenerations(d.WriteDB(), d.ReadDB())
 	embedPrincp = owners.Principal{
 		Hub:    cfg.Identity.Stub.Hub,
 		UserID: cfg.Identity.Stub.UserID,

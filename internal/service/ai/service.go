@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/fotobank/internal/ai"
 	"go.kenn.io/fotobank/internal/ai/ack"
+	"go.kenn.io/fotobank/internal/ai/embedding"
 	"go.kenn.io/fotobank/internal/ai/failures"
 	"go.kenn.io/fotobank/internal/ai/gapscanner"
 	"go.kenn.io/fotobank/internal/ai/jobs"
@@ -85,6 +86,7 @@ type Deps struct {
 	ConfigFingerprints   ConfigFingerprints
 	EmbeddingActivator   EmbeddingActivatorIface
 	EmbeddingGenerations EmbeddingGenerationsLister
+	Generations          *embedding.Generations
 	// EmbeddingProbe returns a shared observation with its actual check time.
 	EmbeddingProbe func(context.Context) VisionPart
 	Runtime        RuntimeProvider
@@ -171,6 +173,14 @@ func (s *Service) Backfill(ctx context.Context, caller owners.Principal, task ai
 	if !ok {
 		return 0, errs.ErrAcknowledgementRequired
 	}
+	if task == ai.TaskEmbed {
+		request, err := s.embeddingScan(ctx, caller)
+		if err != nil {
+			return 0, err
+		}
+		// Embed gaps are per generation; force does not discard existing vectors.
+		return s.deps.Gap.ScanEmbed(ctx, request)
+	}
 	fp, _ := s.taskFingerprints(task)
 	return s.deps.Gap.Scan(ctx, gapscanner.ScanRequest{
 		Task:              task,
@@ -204,6 +214,15 @@ func (s *Service) RetryFailed(ctx context.Context, caller owners.Principal, task
 		return 0, errs.ErrAcknowledgementRequired
 	}
 	fp, _ := s.taskFingerprints(task)
+	var embedRequest gapscanner.EmbedScanRequest
+	if task == ai.TaskEmbed {
+		var err error
+		embedRequest, err = s.embeddingScan(ctx, caller)
+		if err != nil {
+			return 0, err
+		}
+		fp = taskFingerprints{claim: embedRequest.ClaimFingerprint, result: embedRequest.ResultFingerprint}
+	}
 	cutoff := time.Now().UTC()
 	total := 0
 	for {
@@ -222,14 +241,16 @@ func (s *Service) RetryFailed(ctx context.Context, caller owners.Principal, task
 		if _, err := s.deps.Failures.DeleteByMediaIDs(ctx, task, fp.result, mediaIDs); err != nil {
 			return total, fmt.Errorf("delete failures: %w", err)
 		}
-		n, err := s.deps.Gap.Scan(ctx, gapscanner.ScanRequest{
-			Task:              task,
-			ClaimFingerprint:  fp.claim,
-			ResultFingerprint: fp.result,
-			Owner:             caller,
-			Force:             true,
-			MediaIDs:          mediaIDs,
-		})
+		var n int
+		if task == ai.TaskEmbed {
+			embedRequest.MediaIDs = mediaIDs
+			n, err = s.deps.Gap.ScanEmbed(ctx, embedRequest)
+		} else {
+			n, err = s.deps.Gap.Scan(ctx, gapscanner.ScanRequest{
+				Task: task, ClaimFingerprint: fp.claim, ResultFingerprint: fp.result,
+				Owner: caller, Force: true, MediaIDs: mediaIDs,
+			})
+		}
 		total += n
 		if err != nil {
 			return total, fmt.Errorf("scan: %w", err)
@@ -238,6 +259,27 @@ func (s *Service) RetryFailed(ctx context.Context, caller owners.Principal, task
 			return total, nil
 		}
 	}
+}
+
+// embeddingScan is called only after owner consent has been checked. Resolve
+// settings and fingerprints from one runtime snapshot for the whole operation.
+func (s *Service) embeddingScan(ctx context.Context, caller owners.Principal) (gapscanner.EmbedScanRequest, error) {
+	if s.deps.Runtime == nil || s.deps.Generations == nil {
+		return gapscanner.EmbedScanRequest{}, fmt.Errorf("%w: embedding service unavailable", errs.ErrInvalidArgument)
+	}
+	snap := s.deps.Runtime.Effective()
+	if !snap.Config.Embed.Enabled {
+		return gapscanner.EmbedScanRequest{}, fmt.Errorf("%w: ai.embed.enabled is false", errs.ErrInvalidArgument)
+	}
+	gen, err := s.deps.Generations.FindOrCreateBuilding(ctx, snap.Result.Embed, snap.Config.Embed.Dimension)
+	if err != nil {
+		return gapscanner.EmbedScanRequest{}, fmt.Errorf("resolve building generation: %w", err)
+	}
+	return gapscanner.EmbedScanRequest{
+		Owner: caller, Generation: gen, ClaimFingerprint: snap.Claim.Embed,
+		ResultFingerprint: snap.Result.Embed, AckAllowsHidden: true,
+		RetryBudget: snap.Config.Embed.MaxRetries,
+	}, nil
 }
 
 // RetryPhoto enqueues a single (media, task) job and clears its

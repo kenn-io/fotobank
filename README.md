@@ -52,6 +52,10 @@ Docbank provides a system of record for documents and files. Fotobank builds
 the photographic part of that world: the meaning of related files, the
 collections you curate, what stays private, and what you choose to share.
 
+[msgvault](https://msgvault.io) ([source](https://github.com/kenn-io/msgvault))
+is a sibling personal OS project. Together, these projects build toward systems
+you control, with useful interfaces for both people and their agents.
+
 The goal is to support work such as finding photographs by what they show,
 proposing tags and descriptions, preparing an album for review, or handing
 selected files to an editing tool. These are directions for agent workflows,

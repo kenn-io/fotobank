@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -15,50 +14,29 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/fotobank/internal/ai"
-	"go.kenn.io/fotobank/internal/ai/ack"
 	"go.kenn.io/fotobank/internal/ai/embedding"
-	"go.kenn.io/fotobank/internal/ai/failures"
-	"go.kenn.io/fotobank/internal/ai/gapscanner"
-	"go.kenn.io/fotobank/internal/ai/jobs"
-	"go.kenn.io/fotobank/internal/ai/results"
 	airuntime "go.kenn.io/fotobank/internal/ai/runtime"
-	"go.kenn.io/fotobank/internal/ai/skipped"
 	appsettingsstore "go.kenn.io/fotobank/internal/appsettings"
 	"go.kenn.io/fotobank/internal/client"
 	"go.kenn.io/fotobank/internal/config"
-	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/owners"
-	aiservice "go.kenn.io/fotobank/internal/service/ai"
 )
 
-// aiCtx serves the AI commands still awaiting migration to the daemon:
-// backfill, retry, and embedding-generation administration.
-//
-// The embed-task surface needs direct handles to the gap scanner,
-// failures repo, ack store, generations registry, and the rw/ro pools
-// (for the activator-eligible-count query and the dry-run candidate
-// SELECT). They live here rather than inside Service because Service
-// is the auth boundary for tag/caption — embed has its own gap
-// predicate and its own admin-only generation lifecycle.
+// aiCtx remains only for embedding-generation administration, which is
+// tracked separately from the daemon-backed AI queue commands.
 type aiCtx struct {
-	svc      *aiservice.Service
-	caller   owners.Principal
-	cfg      *config.Config
-	close    func()
-	rw       *sql.DB
-	ro       *sql.DB
-	gap      *gapscanner.Scanner
-	failures *failures.Repo
-	ack      *ack.Store
-	gens     *embedding.Generations
-	provider *airuntime.Provider
+	caller owners.Principal
+	cfg    *config.Config
+	close  func()
+	rw     *sql.DB
+	ro     *sql.DB
+	gens   *embedding.Generations
 }
 
 // loadAICtx loads the CLI's configuration, opens the DB (respecting
-// FOTOBANK_DB_PATH), and constructs the AI Service plus the caller
-// Principal. Enforces stub-mode identity like `albums` because we need
-// a single well-defined caller for operator tooling.
+// FOTOBANK_DB_PATH), and opens the generation registry for the remaining
+// generation-administration commands. Enforces stub-mode identity.
 func loadAICtx(cfgPath string) (*aiCtx, error) {
 	path := cfgPath
 	if path == "" {
@@ -89,38 +67,10 @@ func loadAICtx(cfgPath string) (*aiCtx, error) {
 	snap := provider.Effective()
 	cfg.AI = snap.Config
 	rw, ro := d.WriteDB(), d.ReadDB()
-	q := jobs.NewQueue(rw, ro)
-	resR := results.NewRepo(rw, ro)
-	failR := failures.NewRepo(rw, ro)
-	skipR := skipped.NewRepo(rw, ro)
-	ackS := ack.New(rw, ro)
-	gs := gapscanner.New(ro, q, resR, skipR)
-	gens := embedding.NewGenerations(rw, ro)
 	return &aiCtx{
-		svc: aiservice.New(aiservice.Deps{
-			Queue:    q,
-			Results:  resR,
-			Failures: failR,
-			Skipped:  skipR,
-			Ack:      ackS,
-			Gap:      gs,
-			ConfigFingerprints: aiservice.ConfigFingerprints{
-				Tag:     snap.Result.Tag,
-				Caption: snap.Result.Caption,
-				Embed:   snap.Result.Embed,
-			},
-			Runtime: provider,
-		}),
-		caller:   owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID},
-		cfg:      cfg,
-		close:    func() { _ = d.Close() },
-		rw:       rw,
-		ro:       ro,
-		gap:      gs,
-		failures: failR,
-		ack:      ackS,
-		gens:     gens,
-		provider: provider,
+		caller: owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID},
+		cfg:    cfg, close: func() { _ = d.Close() }, rw: rw, ro: ro,
+		gens: embedding.NewGenerations(rw, ro),
 	}, nil
 }
 
@@ -206,24 +156,15 @@ func newAIBackfillCmd() *cobra.Command {
 			if len(tasks) == 0 {
 				return newUsageError("--task is required (tag,caption,embed)")
 			}
-			c, err := loadAICtx(cfgPath)
+			c, err := ensureAIDaemon(cmd.Context(), cfgPath)
 			if err != nil {
 				return err
 			}
-			defer c.close()
 			total := 0
 			for _, t := range tasks {
-				var n int
-				switch t {
-				case ai.TaskEmbed:
-					n, err = backfillEmbed(cmd.Context(), c, force)
-				default:
-					n, err = c.svc.Backfill(cmd.Context(), c.caller, t, force)
-				}
+				result, err := client.BackfillAI(cmd.Context(), c.DBPath, c.Version, httpapi.AIBackfillRequest{Task: string(t), Force: force})
+				n := result.Enqueued
 				if err != nil {
-					if errors.Is(err, errs.ErrAcknowledgementRequired) {
-						return fmt.Errorf("acknowledgement required — run `fotobank ai acknowledge --hidden-processing` first")
-					}
 					return fmt.Errorf("backfill %s: %w", t, err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: enqueued %d\n", t, n)
@@ -237,53 +178,6 @@ func newAIBackfillCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&taskList, "task", nil, "tag,caption,embed")
 	cmd.Flags().BoolVar(&force, "force", false, "include media that already have an active result")
 	return cmd
-}
-
-// backfillEmbed routes the embed task through gapscanner.ScanEmbed
-// rather than Service.Backfill — embed has its own gap-fill predicate
-// (joins on media_embedding_ids by generation_id, see G1) that
-// Service.Backfill's tag/caption-shaped Scan path doesn't speak. The
-// CLI is responsible for resolving the building generation up front
-// so a fresh deployment auto-creates one on first backfill, matching
-// the worker's own behaviour.
-//
-// Acknowledgement is enforced at the CLI layer because the embed
-// surface uses neither Service.Backfill (which checks ack via the
-// ack.Store) nor the activator's ack-paused path. Without this gate,
-// `backfill --task=embed` would silently bypass the hidden-photo
-// processing acknowledgement that other AI surfaces require.
-//
-// Force is intentionally ignored on the embed path: the embed
-// predicate is per-generation, not per-fingerprint, so "include media
-// that already have an active result" doesn't translate. A future
-// `--force` semantics for embed (e.g. clear ai_skipped to retry
-// videos) is a Section R/S concern.
-func backfillEmbed(ctx context.Context, c *aiCtx, _ bool) (int, error) {
-	if !c.cfg.AI.Embed.Enabled {
-		return 0, fmt.Errorf("ai.embed.enabled is false; configure [ai.embed] before running embed backfill")
-	}
-	acked, err := c.ack.IsAcknowledged(ctx, c.caller)
-	if err != nil {
-		return 0, fmt.Errorf("ack lookup: %w", err)
-	}
-	if !acked {
-		return 0, errs.ErrAcknowledgementRequired
-	}
-	snap := c.provider.Effective()
-	fp := snap.Result.Embed
-	gen, err := c.gens.FindOrCreateBuilding(ctx, fp, c.cfg.AI.Embed.Dimension)
-	if err != nil {
-		return 0, fmt.Errorf("resolve building generation: %w", err)
-	}
-	return c.gap.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
-		Owner:             c.caller,
-		Generation:        gen,
-		ClaimFingerprint:  snap.Claim.Embed,
-		ResultFingerprint: fp,
-		AckAllowsHidden:   acked,
-		RetryBudget:       c.cfg.AI.Embed.MaxRetries,
-		Limit:             0,
-	})
 }
 
 func newAIRetryFailedCmd() *cobra.Command {
@@ -303,19 +197,13 @@ func newAIRetryFailedCmd() *cobra.Command {
 			if len(tasks) == 0 {
 				return newUsageError("--task is required (tag,caption,embed)")
 			}
-			c, err := loadAICtx(cfgPath)
+			c, err := ensureAIDaemon(cmd.Context(), cfgPath)
 			if err != nil {
 				return err
 			}
-			defer c.close()
 			for _, t := range tasks {
-				var n int
-				switch t {
-				case ai.TaskEmbed:
-					n, err = retryFailedEmbed(cmd.Context(), c)
-				default:
-					n, err = c.svc.RetryFailed(cmd.Context(), c.caller, t)
-				}
+				result, err := client.RetryFailedAI(cmd.Context(), c.DBPath, c.Version, httpapi.AIRetryFailedRequest{Task: string(t)})
+				n := result.Enqueued
 				if err != nil {
 					return fmt.Errorf("retry %s: %w", t, err)
 				}
@@ -327,71 +215,6 @@ func newAIRetryFailedCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
 	cmd.Flags().StringSliceVar(&taskList, "task", nil, "tag,caption,embed")
 	return cmd
-}
-
-// retryFailedEmbed clears the embed-task failures for caller-owned
-// media and re-enqueues them through gapscanner.ScanEmbed.
-//
-// Mirrors Service.RetryFailed's batched cutoff loop: capture a
-// snapshot timestamp at entry so newly-recorded failures (e.g. a
-// concurrent worker re-failing a freshly enqueued retry) don't
-// spiral the loop indefinitely. ScanEmbed is invoked per chunk with
-// the targeted media IDs so the embed predicate's failure-budget
-// gate is bypassed only for the explicitly-retried set.
-func retryFailedEmbed(ctx context.Context, c *aiCtx) (int, error) {
-	if !c.cfg.AI.Embed.Enabled {
-		return 0, fmt.Errorf("ai.embed.enabled is false; configure [ai.embed] before running embed retry-failed")
-	}
-	acked, err := c.ack.IsAcknowledged(ctx, c.caller)
-	if err != nil {
-		return 0, fmt.Errorf("ack lookup: %w", err)
-	}
-	if !acked {
-		return 0, errs.ErrAcknowledgementRequired
-	}
-	snap := c.provider.Effective()
-	fp := snap.Result.Embed
-	gen, err := c.gens.FindOrCreateBuilding(ctx, fp, c.cfg.AI.Embed.Dimension)
-	if err != nil {
-		return 0, fmt.Errorf("resolve building generation: %w", err)
-	}
-	const batchSize = 500
-	cutoff := time.Now().UTC()
-	total := 0
-	for {
-		rows, err := c.failures.ListForFingerprintByOwner(
-			ctx, ai.TaskEmbed, fp, c.caller.Hub, c.caller.UserID, cutoff, batchSize,
-		)
-		if err != nil {
-			return total, fmt.Errorf("list failures: %w", err)
-		}
-		if len(rows) == 0 {
-			return total, nil
-		}
-		mediaIDs := make([]string, 0, len(rows))
-		for _, r := range rows {
-			mediaIDs = append(mediaIDs, r.MediaID)
-		}
-		if _, err := c.failures.DeleteByMediaIDs(ctx, ai.TaskEmbed, fp, mediaIDs); err != nil {
-			return total, fmt.Errorf("delete failures: %w", err)
-		}
-		n, err := c.gap.ScanEmbed(ctx, gapscanner.EmbedScanRequest{
-			Owner:             c.caller,
-			Generation:        gen,
-			ClaimFingerprint:  snap.Claim.Embed,
-			ResultFingerprint: fp,
-			AckAllowsHidden:   acked,
-			RetryBudget:       c.cfg.AI.Embed.MaxRetries,
-			MediaIDs:          mediaIDs,
-		})
-		total += n
-		if err != nil {
-			return total, fmt.Errorf("scan embed: %w", err)
-		}
-		if len(rows) < batchSize {
-			return total, nil
-		}
-	}
 }
 
 func newAIAcknowledgeCmd() *cobra.Command {
