@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/ack"
 	"go.kenn.io/fotobank/internal/ai/failures"
 	"go.kenn.io/fotobank/internal/ai/imginput/encode"
 	"go.kenn.io/fotobank/internal/ai/jobs"
@@ -55,6 +56,7 @@ type QueueIface interface {
 	ClaimBatch(ctx context.Context, task ai.Task, n int) ([]jobs.Claim, error)
 	ClaimBatchForFingerprint(ctx context.Context, task ai.Task, fp string, n int) ([]jobs.Claim, error)
 	PromoteThumbReadyBlocked(ctx context.Context, task ai.Task) (int, error)
+	PromoteAckedBlocked(ctx context.Context, task ai.Task, settingKey string) (int, error)
 	MarkFailed(ctx context.Context, jobID string, claimedAt time.Time, kind ai.LastErrorKind, errMsg string) error
 	MarkDone(ctx context.Context, jobID string, claimedAt time.Time) error
 	MarkBlocked(ctx context.Context, jobID string, claimedAt time.Time, reason string) error
@@ -237,6 +239,9 @@ func (w *Worker) runtimeConfig(ctx context.Context) RuntimeConfig {
 }
 
 func (w *Worker) claimBatch(ctx context.Context, rt RuntimeConfig) ([]jobs.Claim, error) {
+	if _, err := w.d.Q.PromoteAckedBlocked(ctx, ai.TaskEmbed, ack.SettingKey); err != nil {
+		return nil, fmt.Errorf("promote acknowledged jobs: %w", err)
+	}
 	if rt.ClaimFingerprint != "" {
 		return w.d.Q.ClaimBatchForFingerprint(ctx, ai.TaskEmbed, rt.ClaimFingerprint, rt.Cfg.BatchSize)
 	}
@@ -355,6 +360,27 @@ type encoded struct {
 // outcomes (skipped, blocked, failed) are surfaced via ai_jobs / ai_skipped
 // rows, not return values.
 func (w *Worker) process(ctx context.Context, batch []jobs.Claim, rt RuntimeConfig) error {
+	// Enqueue-time visibility is not consent. Check the current owner setting
+	// before reading any preview, including for jobs queued before startup.
+	allowed := make([]jobs.Claim, 0, len(batch))
+	for _, c := range batch {
+		var acknowledged bool
+		err := w.d.DB.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM assets m JOIN user_settings s
+			ON s.principal_hub=m.owner_hub AND s.principal_user_id=m.owner_user_id
+			WHERE m.id=? AND s.key=?)`, c.MediaID, ack.SettingKey).Scan(&acknowledged)
+		if err != nil {
+			return fmt.Errorf("embedding consent lookup: %w", err)
+		}
+		if !acknowledged {
+			if err := w.d.Q.MarkBlocked(ctx, c.JobID, c.ClaimedAt, jobs.AckBlockedReason); err != nil {
+				return fmt.Errorf("block unacknowledged embedding: %w", err)
+			}
+			continue
+		}
+		allowed = append(allowed, c)
+	}
+	batch = allowed
 	out := w.resolveAll(ctx, batch)
 
 	// Step 2: classify each prepared entry. Successful ready claims are

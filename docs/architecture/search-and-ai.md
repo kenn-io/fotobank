@@ -84,6 +84,22 @@ implemented yet; the packages above describe the code that runs today.
 ## Failure and privacy rules
 
 - Gateway probes are bounded and never make health endpoints enqueue work.
+- Provider checks run on AI status requests, not daemon startup or consent
+  recording. Vision and embedding probes use the current runtime settings,
+  including endpoint and credentials, after admin settings changes. With AI
+  and embeddings enabled, `embed.provider` reports the embedding endpoint's
+  image/text probe result. The daemon shares successful and failed embedding
+  results for 30 seconds and allows only one check at a time, with a five-second
+  total timeout, independent of the initiating caller's cancellation. Endpoint,
+  credential, model, dimension, or timeout changes invalidate that result.
+  `last_check_at` records the actual check, not the
+  cache read; owner consent and queue counts are still read fresh. The probe uses
+  synthetic inputs; it never reads photos. Outages and provider-side errors do not prevent
+  the daemon from serving diagnostics or recording consent. Local configuration
+  validation still rejects invalid URLs, missing models, and invalid dimensions.
+- Embedding health errors expose fixed categories, not provider response bodies
+  or arbitrary error text. The same response serves photo users and operators;
+  detailed provider errors are not copied into diagnostic logs by the probe.
 - Logs include opaque media/job identifiers and failure categories, not image
   bytes, prompts containing private content, or local source paths.
 - Disabled or unreachable AI does not prevent ordinary import, browsing,
@@ -93,6 +109,9 @@ implemented yet; the packages above describe the code that runs today.
 - Gap scans exclude hidden media by default. Import queues AI work while a new
   media row is visible, and queued jobs do not uniformly re-check `hidden_at`
   before sending a preview to the configured provider. Tag and caption workers
-  require the owner's hidden-processing acknowledgement; the embedding worker
-  currently does not. Media hidden after it is queued can therefore still be
-  processed. Hiding is not a queue-cancellation boundary in the active system.
+  and embedding workers require the owner's recorded hidden-processing
+  acknowledgement before resolving previews or calling providers. Unacknowledged
+  jobs are blocked with `acknowledgement_required` and become eligible again
+  after that owner records consent. Starting the daemon does not grant consent.
+  Media hidden after it is queued can still be processed with that consent;
+  hiding is not a queue-cancellation boundary in the active system.

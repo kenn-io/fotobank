@@ -336,7 +336,8 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 			Tag:     tagFingerprint,
 			Caption: captionFingerprint,
 		},
-		Runtime: aiProvider,
+		Runtime:        aiProvider,
+		EmbeddingProbe: (&realEmbedProbe{p: aiProvider}).Health,
 	})
 
 	// metricsObj owns the private VictoriaMetrics set. Pull-source
@@ -409,36 +410,19 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	usersettingsSvc := usersettings.NewService(usersettings.NewRepo(d.WriteDB(), d.ReadDB()))
 	eventBus := httpapi.NewEventBus()
 
-	// AI vision gateway + probe. When [ai].enabled is false we still
-	// have to provide a Probe (httpapi/health expects a non-nil one)
-	// but the disabled stub never actually fires because Health
-	// short-circuits with paused_reason=config_disabled before reaching
-	// the probe.
-	//
-	// Embed-only deployments (cfg.AI.Enabled=true with both
-	// cfg.AI.Tag.Enabled and cfg.AI.Caption.Enabled false) leave the
-	// vision endpoint unset by config validation. Building a real
-	// probe in that case would target an empty endpoint and report
-	// spurious failures; gate the real probe on at least one
-	// vision-using task being enabled.
+	// Workers and health requests use live settings. The initial gateway is
+	// only the worker's fallback when no runtime configuration is supplied.
 	var aiGateway gateway.VisionGateway
-	var aiProbe aiservice.Probe = disabledAIProbe{}
+	aiProbe := realAIProbe{p: aiProvider}
 	if cfg.AI.Enabled && (cfg.AI.Tag.Enabled || cfg.AI.Caption.Enabled) {
-		client := gateway.NewOpenAICompatible(gateway.OpenAIConfig{
-			Endpoint:   cfg.AI.Vision.Endpoint,
-			APIKey:     cfg.AI.Vision.APIKey(),
-			Timeout:    cfg.AI.Vision.Timeout,
-			MaxRetries: cfg.AI.Vision.MaxRetries,
-		})
-		aiGateway = client
-		aiProbe = realAIProbe{c: client}
+		aiGateway = runtimeVisionGateway(cfg.AI.Vision)
 	}
 
 	// Embed pipeline + search service: collaborators are constructed
 	// here (before httpapi.New) so deps.Search reaches the route layer.
 	// The bgWG-tracked goroutines (worker, activator, compactor,
 	// gap-scan tick) are spawned later, alongside the other workers,
-	// so a probe-fail short-circuit doesn't strand half-built workers.
+	// after all collaborators and listeners are ready.
 	//
 	// Single-principal v1: cfg.Identity.Stub provides the owner that
 	// the activator scopes its eligible/embedded counts to and that
@@ -610,32 +594,6 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	brokerClient, err := newBrokerClient(cfg.Broker, logger.With("component", "broker"))
 	if err != nil {
 		return fmt.Errorf("broker init: %w", err)
-	}
-
-	// Boot-time embed probe. When [ai.embed].enabled is true we send one
-	// image and one short text input to the configured embeddings
-	// endpoint and assert both come back at the configured dimension.
-	// Probe failure aborts startup with an actionable message — better
-	// than discovering a misconfigured endpoint hours later when the
-	// first real embed job claim fails. MaxRetries=0 inside Probe keeps
-	// the boot delay bounded by cfg.AI.Embed.Timeout. The probe is
-	// independent of [ai].enabled (vision) — embed is its own pipeline.
-	//
-	// Runs BEFORE any listener binds (and therefore before any
-	// bgWG-tracked goroutine spawns) so a probe failure short-circuits
-	// with a bare return — no listeners to close, no workers to join,
-	// and the deferred d.Close cannot race a mid-flight DB caller.
-	if cfg.AI.Embed.Enabled {
-		if err := embedding.Probe(sigCtx, embedding.Config{
-			Endpoint:   cfg.AI.Embed.Endpoint,
-			APIKey:     cfg.AI.Embed.APIKey(),
-			Model:      cfg.AI.Embed.Model,
-			Dimension:  cfg.AI.Embed.Dimension,
-			Timeout:    cfg.AI.Embed.Timeout,
-			MaxRetries: 0,
-		}); err != nil {
-			return fmt.Errorf("[ai.embed] probe failed: %w", err)
-		}
 	}
 
 	ln, err := bindListener(cfg.HTTP.ListenAddress)
@@ -885,10 +843,9 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 		runAIBackground(sigCtx, aiQueue, aiGap, aiProvider, opts.stderr)
 	})
 
-	// Embed pipeline workers. The probe at line ~426 already validated
-	// the endpoint, so a short-lived endpoint outage at boot has been
-	// surfaced. Each goroutine is bgWG-tracked so a crash during
-	// shutdown can't race the deferred d.Close.
+	// Provider outages do not prevent startup. AI health probes the current
+	// endpoint; workers use the queue's ordinary retry/failure handling.
+	// Track every goroutine so shutdown joins it before closing storage.
 	bgWG.Go(func() {
 		if err := embedWorker.Run(sigCtx); err != nil && !errors.Is(err, context.Canceled) {
 			fmt.Fprintln(opts.stderr, "embed worker exited:", err)
@@ -1267,20 +1224,17 @@ func runHiddenSweeper(
 	}
 }
 
-// disabledAIProbe is the Probe used when [ai].enabled is false. The
-// /api/v1/ai/health endpoint reports paused_reason=config_disabled
-// before consulting the probe in that case, so this never actually
-// fires — but Health expects a non-nil Probe.
-type disabledAIProbe struct{}
+// realAIProbe uses the current endpoint, credentials, and task settings for
+// each health request, including tasks enabled after startup.
+type realAIProbe struct{ p aiRuntimeProvider }
 
-func (disabledAIProbe) Probe(_ context.Context) error {
-	return errors.New("ai disabled")
+func (p realAIProbe) Probe(ctx context.Context) error {
+	cfg := p.p.Effective().Config
+	if !cfg.Enabled || (!cfg.Tag.Enabled && !cfg.Caption.Enabled) {
+		return errors.New("ai disabled")
+	}
+	return runtimeVisionGateway(cfg.Vision).HealthCheck(ctx)
 }
-
-// realAIProbe wraps a VisionGateway for the Health endpoint.
-type realAIProbe struct{ c gateway.VisionGateway }
-
-func (p realAIProbe) Probe(ctx context.Context) error { return p.c.HealthCheck(ctx) }
 
 // mediaCheckAdapter satisfies aiservice.MediaCheck on top of MediaService.
 // MediaService.Get already enforces ownership and the hidden-visibility

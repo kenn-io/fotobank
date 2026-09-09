@@ -24,16 +24,16 @@ import (
 	airuntime "go.kenn.io/fotobank/internal/ai/runtime"
 	"go.kenn.io/fotobank/internal/ai/skipped"
 	appsettingsstore "go.kenn.io/fotobank/internal/appsettings"
+	"go.kenn.io/fotobank/internal/client"
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/errs"
+	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/owners"
 	aiservice "go.kenn.io/fotobank/internal/service/ai"
 )
 
-// aiCtx bundles the dependencies every `fotobank ai` subcommand needs:
-// the auth-scoped service, the stub caller principal, the loaded
-// config (so `status` can honor [ai].enabled rather than hardcoding
-// true), and a teardown callback that closes the underlying DB.
+// aiCtx serves the AI commands still awaiting migration to the daemon:
+// backfill, retry, and embedding-generation administration.
 //
 // The embed-task surface needs direct handles to the gap scanner,
 // failures repo, ack store, generations registry, and the rw/ro pools
@@ -146,15 +146,20 @@ func newAICmd() *cobra.Command {
 	return cmd
 }
 
-// unavailableProbe reports the gateway as unreachable with a short
-// rationale. The CLI does not own a long-lived gateway client, so
-// `fotobank ai status` cannot run a real reachability check —
-// reporting "unavailable" is the honest answer rather than claiming
-// reachable=true.
-type unavailableProbe struct{}
-
-func (unavailableProbe) Probe(_ context.Context) error {
-	return errors.New("not probed by CLI; check the running server's /api/v1/ai/health")
+func ensureAIDaemon(ctx context.Context, cfgPath string) (client.Lifecycle, error) {
+	lifecycle, err := daemonLifecycle(cfgPath, "")
+	if err != nil {
+		return lifecycle, err
+	}
+	cfg, err := config.LoadUnchecked(lifecycle.ConfigPath)
+	if err != nil {
+		return lifecycle, err
+	}
+	if cfg.Identity.Mode != "stub" {
+		return lifecycle, fmt.Errorf("fotobank ai requires identity.mode = stub (got %q)", cfg.Identity.Mode)
+	}
+	_, err = lifecycle.Ensure(ctx)
+	return lifecycle, err
 }
 
 func newAIStatusCmd() *cobra.Command {
@@ -172,15 +177,14 @@ func newAIStatusCmd() *cobra.Command {
 }
 
 func runAIStatus(ctx context.Context, cfgPath string, stdout io.Writer) error {
-	c, err := loadAICtx(cfgPath)
+	c, err := ensureAIDaemon(ctx, cfgPath)
 	if err != nil {
 		return err
 	}
-	defer c.close()
-	h := c.svc.Health(ctx, c.caller, aiservice.HealthInput{
-		Enabled: c.cfg.AI.Enabled,
-		Probe:   unavailableProbe{},
-	})
+	h, err := client.AIHealth(ctx, c.DBPath, c.Version)
+	if err != nil {
+		return err
+	}
 	return json.NewEncoder(stdout).Encode(h)
 }
 
@@ -403,12 +407,11 @@ func newAIAcknowledgeCmd() *cobra.Command {
 			if !hidden {
 				return newUsageError("--hidden-processing flag required")
 			}
-			c, err := loadAICtx(cfgPath)
+			c, err := ensureAIDaemon(cmd.Context(), cfgPath)
 			if err != nil {
 				return err
 			}
-			defer c.close()
-			if err := c.svc.Acknowledge(cmd.Context(), c.caller); err != nil {
+			if err := client.AcknowledgeAI(cmd.Context(), c.DBPath, c.Version, httpapi.AIAcknowledgeRequest{Kind: "hidden_processing"}); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "ok")

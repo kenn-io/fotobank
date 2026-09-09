@@ -822,8 +822,7 @@ func newTestEmbedEndpoint(t *testing.T, dim int) (*httptest.Server, string) {
 // TestServer_StartsEmbedSubsystemWhenEnabled boots a server with
 // [ai.embed].enabled=true and asserts three things:
 //
-//  1. The server boots and binds successfully (probe passes against
-//     the test embedding endpoint).
+//  1. The server boots and binds successfully.
 //  2. /api/v1/search returns 200 — i.e. deps.Search was wired into the
 //     httpapi handler.
 //  3. The embed worker's Run loop has claimed at least one
@@ -841,7 +840,7 @@ func TestServer_StartsEmbedSubsystemWhenEnabled(t *testing.T) {
 	nasRoot := filepath.Join(tmp, "nas")
 	r.NoError(os.MkdirAll(filepath.Join(nasRoot, "h", "u"), 0o700))
 
-	// Stand up a fake embed endpoint so the boot probe passes.
+	// Stand up a fake embed endpoint for the worker.
 	const dim = 8
 	_, base := newTestEmbedEndpoint(t, dim)
 

@@ -349,8 +349,14 @@ The daemon shares one hidden-auth service between listeners. Its mutation lock
 serializes setup, change, disable, unlock, and reset through their database
 writes, so an in-flight credential check cannot undo a completed reset.
 
-The daemon-only command boundary is not yet complete. AI commands still
-construct catalog services in the CLI. Backup repository inspection and
+`ai status` reads `/api/v1/ai/health` through the typed client, including the
+daemon's provider probe and owner-scoped queue counts. `ai acknowledge` calls
+`/api/v1/ai/acknowledge` for the configured stub owner; it requires the explicit
+`--hidden-processing` flag before automatic startup. Both reuse the web API's
+contract and open no catalog connection in the CLI.
+
+The daemon-only command boundary is not yet complete. AI backfill, retry, and
+embedding-generation commands still construct catalog services in the CLI. Backup repository inspection and
 restore also still run in the CLI.
 These existing paths are migration work in kata, not exceptions to extend.
 The accepted boundary is one daemon-owned implementation per application

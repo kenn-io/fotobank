@@ -286,9 +286,11 @@ type aiRetryPhotoInput struct {
 }
 
 type aiAcknowledgeInput struct {
-	Body struct {
-		Kind string `json:"kind" enum:"hidden_processing"`
-	}
+	Body AIAcknowledgeRequest
+}
+
+type AIAcknowledgeRequest struct {
+	Kind string `json:"kind" enum:"hidden_processing"`
 }
 
 type aiEnqueuedOutput struct {

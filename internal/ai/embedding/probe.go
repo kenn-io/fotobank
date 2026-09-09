@@ -36,8 +36,8 @@ func mustBuildTinyJPEG() []byte {
 // back with a vector at cfg.Dimension. Alignment between the two
 // modalities is a model contract — Probe cannot verify it.
 //
-// The probe runs synchronously at server boot. Its job is to fail
-// fast on three concrete misconfigurations the operator can fix:
+// AI health invokes the probe on demand to report problems without making
+// daemon startup depend on provider availability. It checks:
 //
 //   - The endpoint or model is wrong (4xx, 5xx, network).
 //   - The endpoint accepts text but rejects image data URLs (one-modality
@@ -47,7 +47,7 @@ func mustBuildTinyJPEG() []byte {
 //
 // The returned error message contains either the word "image" or "text"
 // so the operator knows which modality failed without re-reading logs.
-// MaxRetries is forced to 0: a boot probe should not delay startup.
+// MaxRetries is forced to 0 to keep diagnostic requests bounded.
 func Probe(ctx context.Context, cfg Config) error {
 	cfg.MaxRetries = 0
 	c := NewClient(cfg)

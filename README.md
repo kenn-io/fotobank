@@ -1,135 +1,111 @@
-# fotobank
+# Fotobank
 
-Fotobank is a self-hosted photo archive and browsing app built around Docbank's
-content-addressed storage. Fotobank owns the photo-library model—metadata,
-albums, sharing, privacy, thumbnails, and search—while Docbank is the authority
-for imported photos, videos, RAW files, sidecars, and their versions.
+Fotobank is a photo system of record for you and your agents, built on
+[Docbank](https://github.com/kenn-io/docbank).
 
-Import copies source files and leaves them untouched. Writable, partial
-checkouts provide ordinary files for photo editors, file managers, and
-shell tools without making a working directory the archive authority.
+Your photos are among the most important things you own. They hold family
+history, creative work, and moments you cannot recreate. Fotobank exists to
+keep that record under your control—and make it useful as your collection,
+tools, and ways of working change.
 
-Fotobank is not trying to be every photo product for every household. It is a
-small, inspectable archive manager optimized for my own storage topology,
-workflow, and preferences.
+It combines an exact, versioned archive with a photo catalog and a web app.
+The ambition goes further: a place where agents can help organize, describe,
+find, and work with your photographs without becoming the owners of the record.
 
-## Status
+Fotobank is pre-alpha. Core workflows are implemented, but interfaces and
+schemas still change. Keep independent copies of irreplaceable files and test
+recovery before relying on it.
 
-Pre-alpha. This repository is public-looking code, but the project is not yet
-ready for broad public use.
+## Why another photo application?
 
-Albums, hidden, sessions, AI tag/caption, search, and sharing CLI/API are in.
-The owner sharing UI is hidden by default behind `[ui].sharing_enabled` in
-`config.toml`; the CLI works regardless of the flag.
+Fotobank is not an attempt to match [Immich](https://github.com/immich-app/immich)
+feature for feature. It starts with a particular question: what should hold
+your photographic record when both people and agents work with it?
 
-Expect schema changes, incomplete operator documentation, rough upgrade paths,
-and implementation details that still assume a developer/operator who is
-comfortable reading the code. The README is written to explain where the
-project is headed, not to promise a stable install experience today.
+A photograph is often more than one file. There may be a camera RAW, a JPEG,
+an XMP sidecar, and several edits. An album records a choice you made. A caption
+may be your own description or a model's interpretation. A search index is
+useful, but it is not the photograph.
 
-## Why This Exists
+Those distinctions shape Fotobank:
 
-Fotobank is built around a few opinions:
+- Exact files and their versions belong in durable storage, independent of
+  the editor, model, or interface using them.
+- Related files, albums, privacy, and sharing belong in a photo catalog,
+  rather than being repeatedly guessed from directory names.
+- External tools need ordinary working files. Their edits should return as
+  explicit new versions, not silently replace the archive.
+- Agents need documented operations and inspectable results, not permission
+  to rearrange storage internals.
+- Generated descriptions, previews, and indexes should help you use the
+  record—not define what survives when a tool or provider changes.
 
-- **Working files matter.** Selected media should be available as ordinary
-  writable files for external photo tools, file managers, and shell tools.
-  Those files are explicit checkouts, not hidden storage internals.
-- **Docbank is content authority.** Imported media and immutable versions live
-  in Docbank. NAS can host Docbank and durable backups; local flash and
-  Fotobank thumbnails remain disposable performance layers.
-- **SQLite is enough for the metadata core.** The app is meant to be simple to
-  run, snapshot, inspect, and restore.
-- **The CLI and web app should share one write path.** Humans use the web UI;
-  scripts and agents use the CLI. Both go through the same service layer.
-- **Sharing is metadata, not file movement.** Shares are scopes over albums or
-  media sets. Creating or revoking a share does not copy or rearrange original
-  files.
-- **AI is optional and provenance-aware.** AI workers are disabled by default,
-  send downscaled metadata-stripped images to the configured endpoint, and keep
-  model/input provenance for generated tags, captions, and embeddings.
+The web app matters. So do editing workflows, automation, and recovery. They
+are different ways of working with the same photo record.
 
-## What Works Today
+## Part of a personal OS for the agentic era
 
-The codebase currently includes:
+A personal OS brings the important parts of your life into systems you
+control, with interfaces that let your chosen tools and agents work together.
 
-- CLI import with owner-scoped deduplication and Docbank-backed EXIF/GPS metadata,
-  date-based storage, reconcile support, and thumbnail generation.
-- A Svelte web app with library browsing, sessions, media detail pages,
-  lightbox viewing, albums, shares, hidden media, AI settings, and search.
-- Album CRUD and album membership through both HTTP and CLI surfaces.
-- Scope-based sharing with owner-side management, grantee-side read endpoints,
-  download permissions, and a stub or exec-backed broker adapter.
-- Hidden media as app-level privacy: passcode-gated owner access, default
-  exclusion from library/search/share surfaces, and sidecar-aware hide/unhide.
-  This is not encryption.
-- Optional AI tagging, captioning, and hybrid search using OpenAI-compatible
-  endpoints, SQLite FTS5, and sqlite-vec embeddings.
-- Complete archives of the catalog and original media, optional scheduled
-  backups with retention, and restore into separate storage.
-- Operational basics: structured logging,
-  readiness checks, Prometheus metrics, OpenAPI generation, and frontend tests.
+Docbank provides a system of record for documents and files. Fotobank builds
+the photographic part of that world: the meaning of related files, the
+collections you curate, what stays private, and what you choose to share.
 
-This list describes the development state, not a support guarantee.
+The goal is to support work such as finding photographs by what they show,
+proposing tags and descriptions, preparing an album for review, or handing
+selected files to an editing tool. These are directions for agent workflows,
+not claims that Fotobank already has an autonomous assistant.
 
-## Fotobank And Immich
+The architectural commitment is one daemon-owned HTTP API for the web app,
+CLI, and eventually MCP. Much of the CLI already follows it; the remaining
+migrations are identified in the [automation guide](docs/guides/automation.md).
+There is no separate agent-owned catalog to keep in sync.
 
-[Immich](https://github.com/immich-app/immich) is a much larger and much more
-mature self-hosted photo and video management project. Its official feature
-list includes mobile backup apps, multi-user support, albums, sharing, RAW
-support, metadata and map views, search, facial recognition, CLIP search,
-external libraries, storage templates, and many other features. If you want a
-polished self-hosted Google Photos-style experience today, Immich is the first
-project I would look at.
+## Docbank stores the record. Fotobank understands the photo library.
 
-Fotobank is different because it is narrower and more personal. I wanted a
-system where:
+Fotobank embeds Docbank as a Go library; it does not require a second daemon.
+Docbank holds exact content, immutable versions, and the storage machinery
+behind them. It already supplies source metadata and canonical image previews
+that Fotobank uses for photo details and thumbnails.
 
-- writable filesystem checkouts remain explicit and rebuildable;
-- Docbank is the authoritative media archive and local flash remains
-  disposable;
-- external tools can work with ordinary files without becoming the archive
-  authority;
-- one Go binary owns both the CLI and server write paths;
-- SQLite is the primary metadata store;
-- sharing can be mediated by an external identity/grant broker; and
-- AI/search features expose their provenance and respect hidden-photo
-  boundaries.
+Fotobank owns photographs and their file relationships, albums, privacy,
+sharing, browsing, and writable checkouts. Each cataloged file points to an
+exact Docbank version. Complete recovery archives capture both the catalog and
+Docbank content: your album choices and file relationships cannot be recovered
+from the original bytes alone.
 
-So this is not "Immich, but smaller." It is a personal archive manager with a
-web viewer, built for a particular workflow. Immich is a serious, established
-project; Fotobank exists because I wanted to explore a different set of
-trade-offs for my own library.
+Reusable intelligence belongs in Docbank. Tagging, enrichment, renditions,
+embeddings, and semantic retrieval should be capabilities applications can
+share, not pipelines each application has to reinvent. Fotobank's job is to
+turn those capabilities into useful photographic workflows.
 
-Useful Immich references for comparison:
+That integration is still in progress. Optional tagging, captioning,
+embedding, and hybrid-search code currently runs in Fotobank; it has not all
+moved to Docbank. Broader enrichment and agent workflows remain aspirations.
+AI is disabled by default. Enabling it requires configuring providers and
+acknowledging processing of hidden media. Hidden-media controls are application
+privacy, not encryption; understand that boundary before enabling processing.
 
-- [Immich README](https://github.com/immich-app/immich)
-- [Mobile Backup](https://docs.immich.app/features/mobile-backup/)
-- [External Libraries](https://docs.immich.app/features/libraries)
-- [Storage Templates](https://docs.immich.app/administration/storage-template)
+## What you can do today
 
-## Architecture
+- Import photos, videos, RAW files, and sidecars without modifying the source.
+  Keep related files together and detect duplicate content within an owner.
+- Browse the library, inspect photo details, organize albums, and manage
+  privacy and sharing. Owner-side sharing UI is optional; its CLI and API
+  remain available.
+- Create partial, writable checkouts for editors and shell tools. Inspect
+  changes and explicitly commit settled edits as new versions, with conflicts
+  reported when the stored base has changed.
+- Try optional AI tagging, captioning, and hybrid text/vector search with
+  configured providers. Generated results retain model and input provenance.
+- Create complete recovery archives, schedule backups with retention, and
+  verify a restore into separate storage.
 
-Fotobank is a Go application with a Svelte frontend embedded into the server
-binary.
-
-- `cmd/fotobank` is the CLI entry point.
-- `internal/cli` contains commands such as `server`, `import`, `reconcile`,
-  `thumbs`, `albums`, `shares`, `hidden`, `ai`, and `backup`.
-- `internal/httpapi` exposes the REST API and byte-streaming routes.
-- `internal/service` is the auth-scoped service layer used by both CLI and
-  HTTP transports.
-- `internal/media`, `internal/album`, `internal/share`, `internal/thumb`,
-  `internal/search`, and `internal/ai` hold the domain packages.
-- `frontend/` is the Svelte app built into `internal/web/dist`.
-
-The active import path writes exact file versions to embedded Docbank and
-records the photo-specific asset graph in Fotobank. Writable checkouts expose
-selected versions as ordinary files and can commit settled edits back as new
-immutable Docbank versions. The current boundaries are documented in
-[`docs/architecture/`](docs/architecture/README.md).
-
-Identity supports local stub mode for development and header mode for
-deployment behind a trusted identity-aware reverse proxy.
+These are development capabilities, not a promise of a finished consumer
+product. Start with the [workflow guide](website/guide.md),
+[operating documentation](docs/index.md), and
+[current architecture](docs/architecture/README.md).
 
 ## Getting Started
 
@@ -184,11 +160,13 @@ Validate and run:
 
 ```sh
 bin/fotobank config validate
+bin/fotobank daemon start
 bin/fotobank import /path/to/source
-bin/fotobank serve
 ```
 
-By default the server listens on `127.0.0.1:8090`.
+Start prints the web UI URL. By default the server listens on
+`127.0.0.1:8090`; ports and lifecycle settings are configurable. Use
+`bin/fotobank serve` instead for foreground operation.
 
 Scheduled backups are disabled by default. Initialize an archive repository
 with `bin/fotobank backup init --repo /backups/photos`, then set
