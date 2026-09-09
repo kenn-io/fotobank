@@ -394,6 +394,25 @@ func TestCLIAI_PromoteGeneration_RejectsActiveState(t *testing.T) {
 	r.Equal("active", state)
 }
 
+func TestCLIAI_FailedCompactionDryRunHasNoSuccessOutput(t *testing.T) {
+	r := require.New(t)
+	tmp := t.TempDir()
+	cfg := writeAIEmbedConfig(t, tmp)
+	dbPath := filepath.Join(tmp, "catalog.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	startCheckoutServer(t, cfg, dbPath)
+	d, err := db.Open(dbPath)
+	r.NoError(err)
+	defer func() { r.NoError(d.Close()) }()
+	// Make the candidate query fail while the daemon remains available.
+	_, err = d.WriteDB().ExecContext(t.Context(), `ALTER TABLE embedding_generations RENAME TO unavailable_generations`)
+	r.NoError(err)
+	out, stderr, code := runAICLI("ai", "compact-retired-generations", "--dry-run", "--config", cfg)
+	r.NotZero(code)
+	r.Contains(stderr, "retired generations")
+	r.Empty(out)
+}
+
 func TestCLIAI_CompactRetiredGenerationsDryRun(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()

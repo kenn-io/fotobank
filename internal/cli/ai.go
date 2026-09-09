@@ -349,6 +349,9 @@ func runAICompactRetiredGenerations(ctx context.Context, cfgPath string, dryRun 
 		return err
 	}
 	if dryRun {
+		if result.Error != "" {
+			return fmt.Errorf("compact: %s", result.Error)
+		}
 		for _, candidate := range result.Candidates {
 			fmt.Fprintf(stdout, "candidate generation_id=%d vec_table=%s retired_for=%s\n", candidate.ID, candidate.VecTableName, time.Since(candidate.RetiredAt).Round(time.Hour))
 		}

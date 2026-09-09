@@ -362,12 +362,16 @@ func (g *Generations) promote(ctx context.Context, id int64, requiredState strin
 	}
 	defer func() { _ = tx.Rollback() }()
 	if requiredState != "" {
-		var matches bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM embedding_generations WHERE id=? AND state=?)`, id, requiredState).Scan(&matches); err != nil {
+		var state string
+		err := tx.QueryRowContext(ctx, `SELECT state FROM embedding_generations WHERE id=?`, id).Scan(&state)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("promote id %d: %w", id, errs.ErrNotFound)
+		}
+		if err != nil {
 			return fmt.Errorf("check promotion state: %w", err)
 		}
-		if !matches {
-			return fmt.Errorf("promote id %d: %w", id, errs.ErrNotFound)
+		if state != requiredState {
+			return fmt.Errorf("%w: promotion requires a %s generation; generation %d is %s", errs.ErrInvalidArgument, requiredState, id, state)
 		}
 	}
 

@@ -94,18 +94,29 @@ func (s *GenerationAdmin) Get(ctx context.Context, caller owners.Principal, id i
 	return GenerationDetails{generationInfo(*row, eligible), s.retainDays}, nil
 }
 
-func (s *GenerationAdmin) Promote(ctx context.Context, caller owners.Principal, id int64) (GenerationInfo, error) {
-	details, err := s.Get(ctx, caller, id)
-	if err != nil {
-		return GenerationInfo{}, err
+type GenerationPromotion struct {
+	ID          int64
+	Fingerprint string
+}
+
+func (s *GenerationAdmin) Promote(ctx context.Context, caller owners.Principal, id int64) (GenerationPromotion, error) {
+	if caller.IsZero() || caller != s.owner {
+		return GenerationPromotion{}, errs.ErrNotFound
 	}
-	if details.Generation.State != "retired" {
-		return GenerationInfo{}, fmt.Errorf("%w: promotion requires a retired generation; generation %d is %s", errs.ErrInvalidArgument, id, details.Generation.State)
+	if id <= 0 {
+		return GenerationPromotion{}, errs.ErrInvalidArgument
+	}
+	row, err := s.gens.GetByID(ctx, id)
+	if err != nil {
+		return GenerationPromotion{}, err
+	}
+	if row.State != "retired" {
+		return GenerationPromotion{}, fmt.Errorf("%w: promotion requires a retired generation; generation %d is %s", errs.ErrInvalidArgument, id, row.State)
 	}
 	if err := s.gens.PromoteRetired(ctx, id); err != nil {
-		return GenerationInfo{}, err
+		return GenerationPromotion{}, err
 	}
-	return details.Generation, nil
+	return GenerationPromotion{ID: row.ID, Fingerprint: row.Fingerprint}, nil
 }
 
 func (s *GenerationAdmin) Compact(ctx context.Context, caller owners.Principal, dryRun bool) ([]embedding.CompactCandidate, int, error) {

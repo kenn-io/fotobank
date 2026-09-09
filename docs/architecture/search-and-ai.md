@@ -78,7 +78,8 @@ still be retired. Declining the prompt sends no promotion request. The daemon
 may start for this read-only inspection before the prompt appears.
 
 Compaction dry-run and the scheduled/manual sweep share the same candidate
-query. Each deletion rechecks retirement and age in its transaction. A partial
+query on the read-only pool. Each deletion rechecks retirement and age in its
+write transaction. A failed dry-run prints no success summary. A partial
 failure returns the number already dropped and an error; the CLI reports both
 and exits nonzero. Generation administration does not require AI provider
 availability or processing consent and does not itself enqueue provider work.

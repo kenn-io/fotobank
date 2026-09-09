@@ -489,7 +489,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	// generations for N days" preference; the per-tick interval
 	// (how often we sweep) is independent and defaults to daily.
 	retainRetired := time.Duration(cfg.Search.RetainRetiredDays) * 24 * time.Hour
-	embedCompactr = embedding.NewCompactor(d.WriteDB(), retainRetired)
+	embedCompactr = embedding.NewCompactor(d.WriteDB(), d.ReadDB(), retainRetired)
 
 	if cfg.AI.Embed.Enabled {
 		embedClient := embedding.NewClient(embedding.Config{

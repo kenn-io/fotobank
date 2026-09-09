@@ -14,7 +14,8 @@ import (
 // table and registry row so the database does not grow unbounded
 // across model rolls.
 //
-// The compactor uses the rw pool directly. SweepOnce runs entirely
+// Candidate reads use the read-only pool; deletions use the write pool.
+// SweepOnce runs entirely
 // outside the gens repo to avoid coupling housekeeping behaviour to
 // the registry abstraction; the per-target work (DROP TABLE + DELETE
 // row) sequences inside its own transaction so a partial sweep never
@@ -26,6 +27,7 @@ import (
 // tx — no separate DELETE for the mapping table is required.
 type Compactor struct {
 	rw     *sql.DB
+	ro     *sql.DB
 	window time.Duration
 }
 
@@ -34,8 +36,8 @@ type Compactor struct {
 // [search] retain_retired_days config (B1) — converted to a duration by
 // the caller — so an operator's "keep retired generations for N days"
 // preference flows through unchanged.
-func NewCompactor(rw *sql.DB, retainRetired time.Duration) *Compactor {
-	return &Compactor{rw: rw, window: retainRetired}
+func NewCompactor(rw, ro *sql.DB, retainRetired time.Duration) *Compactor {
+	return &Compactor{rw: rw, ro: ro, window: retainRetired}
 }
 
 // SweepOnce drops every retired generation whose retired_at is older
@@ -85,7 +87,7 @@ func (c *Compactor) Candidates(ctx context.Context) ([]CompactCandidate, error) 
 }
 
 func (c *Compactor) candidates(ctx context.Context, cutoff time.Time) ([]CompactCandidate, error) {
-	rows, err := c.rw.QueryContext(ctx,
+	rows, err := c.ro.QueryContext(ctx,
 		`SELECT id, vec_table_name, retired_at FROM embedding_generations
 		 WHERE state='retired' AND retired_at < ? ORDER BY id ASC`, cutoff)
 	if err != nil {
@@ -96,15 +98,17 @@ func (c *Compactor) candidates(ctx context.Context, cutoff time.Time) ([]Compact
 	for rows.Next() {
 		var target CompactCandidate
 		if err := rows.Scan(&target.ID, &target.VecTableName, &target.RetiredAt); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan retired generation: %w", err)
 		}
 		targets = append(targets, target)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("iterate retired generations: %w", err)
 	}
-	// Close before SweepOnce starts its per-target transactions on the same pool.
-	return targets, rows.Close()
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close retired generations: %w", err)
+	}
+	return targets, nil
 }
 
 // dropOne removes one retired generation: DELETE the registry row
