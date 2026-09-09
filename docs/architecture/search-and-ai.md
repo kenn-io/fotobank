@@ -85,7 +85,9 @@ implemented yet; the packages above describe the code that runs today.
 
 - Gateway probes are bounded and never make health endpoints enqueue work.
 - Provider checks run on AI status requests, not daemon startup or consent
-  recording. With AI and embeddings enabled, `embed.provider` reports the
+  recording. Vision and embedding probes use the current runtime settings,
+  including endpoint and credentials, after admin settings changes. With AI
+  and embeddings enabled, `embed.provider` reports the
   current embedding endpoint's image/text probe result. The probe uses synthetic
   inputs; it never reads photos. Outages and provider-side errors do not prevent
   the daemon from serving diagnostics or recording consent. Local configuration

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"go.kenn.io/fotobank/internal/owners"
 	aiservice "go.kenn.io/fotobank/internal/service/ai"
 	"go.kenn.io/fotobank/internal/testutil"
+	"go.kenn.io/kit/daemon"
 )
 
 func TestAIStatusAndConsentThroughDaemon(t *testing.T) {
@@ -33,11 +35,11 @@ func TestAIStatusAndConsentThroughDaemon(t *testing.T) {
 	cfg := writeBasicConfig(t, tmp)
 	data, err := os.ReadFile(cfg)
 	r.NoError(err)
-	data = fmt.Appendf(data, "\n[ai]\nenabled = true\n[ai.vision]\nendpoint = %q\n[ai.tag]\nenabled = true\nmodel = %q\n", gateway.URL+"/v1", "test-model")
+	data = fmt.Appendf(data, "\n[admin]\nprincipals = [{hub = %q, user_id = %q}]\n[ai]\nenabled = true\n[ai.vision]\nendpoint = %q\n[ai.tag]\nenabled = true\nmodel = %q\n", "h", "u", gateway.URL+"/v1", "test-model")
 	r.NoError(os.WriteFile(cfg, data, 0o600))
 	dbPath := filepath.Join(tmp, "catalog.sqlite")
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
-	startCheckoutServer(t, cfg, dbPath)
+	record := startCheckoutServer(t, cfg, dbPath)
 	before := probes.Load()
 	out, stderr, code := runAICLI("ai", "status", "--config", cfg)
 	r.Zero(code, stderr)
@@ -62,6 +64,36 @@ func TestAIStatusAndConsentThroughDaemon(t *testing.T) {
 	acked, err = store.IsAcknowledged(t.Context(), owners.Principal{Hub: "h", UserID: "other"})
 	r.NoError(err)
 	r.False(acked)
+
+	// Change endpoint and credentials through the running daemon's settings API.
+	var updatedProbes atomic.Int64
+	t.Setenv("FOTOBANK_TEST_VISION_KEY", "synthetic-vision-key")
+	updated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/v1/models" || req.Header.Get("Authorization") != "Bearer synthetic-vision-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		updatedProbes.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(updated.Close)
+	ep := record.Endpoint()
+	body := fmt.Sprintf(`{"values":{"ai.vision.endpoint":%q,"ai.vision.api_key_env":"FOTOBANK_TEST_VISION_KEY"}}`, updated.URL+"/v1")
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPut, ep.BaseURL()+"/api/v1/admin/settings/sections/vision", strings.NewReader(body))
+	r.NoError(err)
+	req.Header.Set("Authorization", "Bearer "+record.Metadata["token"])
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := ep.HTTPClient(daemon.HTTPClientOptions{DisableKeepAlives: true}).Do(req)
+	r.NoError(err)
+	r.NoError(resp.Body.Close())
+	r.Equal(http.StatusOK, resp.StatusCode)
+	before = probes.Load()
+	out, stderr, code = runAICLI("ai", "status", "--config", cfg)
+	r.Zero(code, stderr)
+	r.NoError(json.Unmarshal([]byte(out), &health))
+	r.True(health.Vision.Reachable)
+	r.Equal(before, probes.Load(), "status must stop probing the old endpoint")
+	r.Positive(updatedProbes.Load(), "status must use the new endpoint and credentials")
 }
 
 func TestAICommandValidationBeforeStartup(t *testing.T) {

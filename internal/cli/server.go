@@ -410,29 +410,12 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	usersettingsSvc := usersettings.NewService(usersettings.NewRepo(d.WriteDB(), d.ReadDB()))
 	eventBus := httpapi.NewEventBus()
 
-	// AI vision gateway + probe. When [ai].enabled is false we still
-	// have to provide a Probe (httpapi/health expects a non-nil one)
-	// but the disabled stub never actually fires because Health
-	// short-circuits with paused_reason=config_disabled before reaching
-	// the probe.
-	//
-	// Embed-only deployments (cfg.AI.Enabled=true with both
-	// cfg.AI.Tag.Enabled and cfg.AI.Caption.Enabled false) leave the
-	// vision endpoint unset by config validation. Building a real
-	// probe in that case would target an empty endpoint and report
-	// spurious failures; gate the real probe on at least one
-	// vision-using task being enabled.
+	// Workers and health requests use live settings. The initial gateway is
+	// only the worker's fallback when no runtime configuration is supplied.
 	var aiGateway gateway.VisionGateway
-	var aiProbe aiservice.Probe = disabledAIProbe{}
+	aiProbe := realAIProbe{p: aiProvider}
 	if cfg.AI.Enabled && (cfg.AI.Tag.Enabled || cfg.AI.Caption.Enabled) {
-		client := gateway.NewOpenAICompatible(gateway.OpenAIConfig{
-			Endpoint:   cfg.AI.Vision.Endpoint,
-			APIKey:     cfg.AI.Vision.APIKey(),
-			Timeout:    cfg.AI.Vision.Timeout,
-			MaxRetries: cfg.AI.Vision.MaxRetries,
-		})
-		aiGateway = client
-		aiProbe = realAIProbe{c: client}
+		aiGateway = runtimeVisionGateway(cfg.AI.Vision)
 	}
 
 	// Embed pipeline + search service: collaborators are constructed
@@ -1241,20 +1224,17 @@ func runHiddenSweeper(
 	}
 }
 
-// disabledAIProbe is the Probe used when [ai].enabled is false. The
-// /api/v1/ai/health endpoint reports paused_reason=config_disabled
-// before consulting the probe in that case, so this never actually
-// fires — but Health expects a non-nil Probe.
-type disabledAIProbe struct{}
+// realAIProbe uses the current endpoint, credentials, and task settings for
+// each health request, including tasks enabled after startup.
+type realAIProbe struct{ p aiRuntimeProvider }
 
-func (disabledAIProbe) Probe(_ context.Context) error {
-	return errors.New("ai disabled")
+func (p realAIProbe) Probe(ctx context.Context) error {
+	cfg := p.p.Effective().Config
+	if !cfg.Enabled || (!cfg.Tag.Enabled && !cfg.Caption.Enabled) {
+		return errors.New("ai disabled")
+	}
+	return runtimeVisionGateway(cfg.Vision).HealthCheck(ctx)
 }
-
-// realAIProbe wraps a VisionGateway for the Health endpoint.
-type realAIProbe struct{ c gateway.VisionGateway }
-
-func (p realAIProbe) Probe(ctx context.Context) error { return p.c.HealthCheck(ctx) }
 
 // mediaCheckAdapter satisfies aiservice.MediaCheck on top of MediaService.
 // MediaService.Get already enforces ownership and the hidden-visibility
