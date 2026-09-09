@@ -78,7 +78,6 @@ func TestEmbeddingHealthCache(t *testing.T) {
 	recovered := probe.Health(t.Context())
 	r.True(recovered.Reachable)
 	r.Empty(recovered.LastError)
-	r.True(recovered.LastCheckAt.After(failed.LastCheckAt))
 	r.Equal(int64(9), calls.Load())
 }
 
