@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/embedding"
 	airuntime "go.kenn.io/fotobank/internal/ai/runtime"
 	aiservice "go.kenn.io/fotobank/internal/service/ai"
 )
@@ -65,7 +68,7 @@ func TestEmbeddingHealthCache(t *testing.T) {
 	probe.expires = time.Now().Add(-time.Second)
 	failed := probe.Health(t.Context())
 	r.False(failed.Reachable)
-	r.Contains(failed.LastError, "503")
+	r.Equal("embedding provider unavailable", failed.LastError)
 	r.Equal(int64(7), calls.Load())
 	r.Equal(failed, probe.Health(t.Context()))
 	r.Equal(int64(7), calls.Load(), "failed probes are cached too")
@@ -77,6 +80,25 @@ func TestEmbeddingHealthCache(t *testing.T) {
 	r.Empty(recovered.LastError)
 	r.True(recovered.LastCheckAt.After(failed.LastCheckAt))
 	r.Equal(int64(9), calls.Load())
+}
+
+func TestEmbeddingHealthErrorClassification(t *testing.T) {
+	for _, tc := range []struct {
+		cause error
+		want  string
+	}{
+		{context.DeadlineExceeded, "embedding probe timed out"},
+		{context.Canceled, "embedding probe canceled"},
+		{embedding.ErrProvider4xx, "embedding provider rejected the request"},
+		{embedding.ErrMalformed, "embedding provider returned an invalid response"},
+		{embedding.ErrTransient, "embedding provider unavailable"},
+		{errors.New("unknown provider error"), "embedding probe failed"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			err := fmt.Errorf("synthetic-private-diagnostic: %w", tc.cause)
+			require.Equal(t, tc.want, embeddingHealthError(err))
+		})
+	}
 }
 
 func TestEmbeddingHealthCallerCancellationDoesNotPoisonCache(t *testing.T) {

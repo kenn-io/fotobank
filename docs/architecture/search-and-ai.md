@@ -97,6 +97,9 @@ implemented yet; the packages above describe the code that runs today.
   synthetic inputs; it never reads photos. Outages and provider-side errors do not prevent
   the daemon from serving diagnostics or recording consent. Local configuration
   validation still rejects invalid URLs, missing models, and invalid dimensions.
+- Embedding health errors expose fixed categories, not provider response bodies
+  or arbitrary error text. The same response serves photo users and operators;
+  detailed provider errors are not copied into diagnostic logs by the probe.
 - Logs include opaque media/job identifiers and failure categories, not image
   bytes, prompts containing private content, or local source paths.
 - Disabled or unreachable AI does not prevent ordinary import, browsing,

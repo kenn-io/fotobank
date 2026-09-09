@@ -3,6 +3,7 @@ package cli_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -132,7 +133,7 @@ func TestAIStatusAndConsentWithUnavailableEmbeddings(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		probes.Add(1)
 		if !available.Load() {
-			http.Error(w, "provider unavailable", http.StatusServiceUnavailable)
+			http.Error(w, "provider unavailable: synthetic-private-diagnostic", http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -147,8 +148,23 @@ func TestAIStatusAndConsentWithUnavailableEmbeddings(t *testing.T) {
 	r.NoError(os.WriteFile(cfg, data, 0o600))
 	dbPath := filepath.Join(tmp, "catalog.sqlite")
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	sink := filepath.Join(tmp, "listen-address")
+	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", sink)
 	startCheckoutServer(t, cfg, dbPath)
 	r.Zero(probes.Load(), "startup must not depend on provider availability")
+	// The photo listener permits health to the stub photo user without any
+	// admin role or operator token. Provider response bodies must not cross it.
+	address, err := os.ReadFile(sink)
+	r.NoError(err)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+string(address)+"/api/v1/ai/health", nil)
+	r.NoError(err)
+	response, err := http.DefaultClient.Do(request)
+	r.NoError(err)
+	responseBody, err := io.ReadAll(response.Body)
+	r.NoError(response.Body.Close())
+	r.NoError(err)
+	r.Equal(http.StatusOK, response.StatusCode)
+	r.NotContains(string(responseBody), "synthetic-private-diagnostic")
 	out, stderr, code := runAICLI("ai", "status", "--config", cfg)
 	r.Zero(code, stderr)
 	var health aiservice.Health
@@ -156,7 +172,7 @@ func TestAIStatusAndConsentWithUnavailableEmbeddings(t *testing.T) {
 	r.Equal("acknowledgement_required", health.PausedReason)
 	r.NotNil(health.Embed.Provider)
 	r.False(health.Embed.Provider.Reachable)
-	r.Contains(health.Embed.Provider.LastError, "503")
+	r.Equal("embedding provider unavailable", health.Embed.Provider.LastError)
 	checkedAt := health.Embed.Provider.LastCheckAt
 	before := probes.Load()
 	_, stderr, code = runAICLI("ai", "acknowledge", "--hidden-processing", "--config", cfg)
