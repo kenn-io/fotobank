@@ -307,6 +307,48 @@ admin_listen = "127.0.0.1:0"
 	r.NoError(reopened.Close())
 }
 
+// startWorkerTestServer owns the server through cleanup, including when a worker
+// assertion fails. These are functional smoke tests, not startup/shutdown latency
+// tests; allow the daemon's 30s drain budget plus time to release storage.
+func startWorkerTestServer(t *testing.T, cfgPath, addrFile string) string {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	var diagnostics lockedBuffer
+	var code int
+	go func() {
+		defer close(done)
+		code = cli.RunContext(ctx, []string{"server", "--config", cfgPath}, io.Discard, &diagnostics)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+			assert.Zero(t, code, "server stderr: %s", diagnostics.String())
+		case <-time.After(40 * time.Second):
+			var stacks bytes.Buffer
+			_ = pprof.Lookup("goroutine").WriteTo(&stacks, 2)
+			assert.Fail(t, "server cleanup timed out", "stderr: %s\ngoroutines:\n%s", diagnostics.String(), stacks.String())
+		}
+	})
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(20 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
+			return strings.TrimSpace(string(b))
+		}
+		select {
+		case <-done:
+			require.FailNow(t, "server exited before publishing its address", "exit code %d; stderr: %s", code, diagnostics.String())
+		case <-deadline.C:
+			require.FailNow(t, "server startup timed out", "stderr: %s", diagnostics.String())
+		case <-poll.C:
+		}
+	}
+}
+
 func TestServerDrainsPendingThumbRow(t *testing.T) {
 	// Smoke test: seed a ready JPEG row pre-import, boot the server,
 	// poll until thumb_status becomes 'ready' (worker has drained it).
@@ -366,48 +408,21 @@ admin_listen = "127.0.0.1:0"
 	addrFile := filepath.Join(tmp, "addr")
 	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	errCh := make(chan int, 1)
-	go func() {
-		var out, eout bytes.Buffer
-		errCh <- cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &out, &eout)
-	}()
-
-	// Wait for boot.
-	for range 100 {
-		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	startWorkerTestServer(t, cfgPath, addrFile)
 
 	// Poll DB until the worker drains the row.
 	deadline := time.Now().Add(10 * time.Second)
 	d2, err := db.Open(dbPath)
 	r.NoError(err)
+	defer func() { r.NoError(d2.Close()) }()
 	repo2 := media.NewRepo(d2.WriteDB(), d2.ReadDB())
 	for time.Now().Before(deadline) {
 		got, err := repo2.GetByID(context.Background(), mediaID)
 		r.NoError(err)
 		if got.ThumbStatus == "ready" {
-			_ = d2.Close()
-			cancel()
-			select {
-			case <-errCh:
-			case <-time.After(5 * time.Second):
-				r.Fail("server did not shut down within 5s")
-			}
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
-	}
-	_ = d2.Close()
-	cancel()
-	select {
-	case <-errCh:
-	case <-time.After(5 * time.Second):
-		r.Fail("server did not shut down within 5s")
 	}
 	r.Fail("worker did not drain pending row within 10s")
 }
@@ -918,31 +933,12 @@ admin_listen = "127.0.0.1:0"
 	addrFile := filepath.Join(tmp, "addr")
 	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	errCh := make(chan int, 1)
-	// stderrSink is a sync-safe sink for the server's stderr — the
-	// test reads it during startup-failure diagnostics, so a plain
-	// bytes.Buffer would race with the server goroutine still writing.
-	stderrSink := &lockedBuffer{}
-	go func() {
-		var out bytes.Buffer
-		errCh <- cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &out, stderrSink)
-	}()
-
-	// Wait for boot.
-	var resolved string
-	for range 200 {
-		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
-			resolved = strings.TrimSpace(string(b))
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	r.NotEmpty(resolved, "server never published its bind address: stderr=%q", stderrSink.String())
+	resolved := startWorkerTestServer(t, cfgPath, addrFile)
+	client := &http.Client{Transport: &http.Transport{}, Timeout: 10 * time.Second}
+	t.Cleanup(client.CloseIdleConnections)
 
 	// 1. /api/v1/search must answer (search service was wired into deps.Search).
-	resp, err := http.Get("http://" + resolved + "/api/v1/search?q=")
+	resp, err := client.Get("http://" + resolved + "/api/v1/search?q=")
 	r.NoError(err)
 	_ = resp.Body.Close()
 	r.Equal(http.StatusOK, resp.StatusCode,
@@ -967,13 +963,6 @@ admin_listen = "127.0.0.1:0"
 	}
 	r.NotEqual("pending", status,
 		"embed worker did not claim the pending job; got status=%q", status)
-
-	cancel()
-	select {
-	case <-errCh:
-	case <-time.After(5 * time.Second):
-		r.Fail("server did not shut down within 5s")
-	}
 }
 
 // TestServer_LeavesEmbedSubsystemDormantWhenDisabled boots a server

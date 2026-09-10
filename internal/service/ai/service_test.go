@@ -235,13 +235,8 @@ func TestListFailuresScopedToCaller(t *testing.T) {
 	r.Equal(aMid, rows[0].MediaID)
 }
 
-// TestRetryFailedSnapshotIgnoresFailuresAddedAfterStart verifies that
-// RetryFailed only re-enqueues failures that existed at the moment of
-// the call. A failure recorded after the cutoff (simulating a worker
-// re-failing a freshly retried job) must NOT appear in a subsequent
-// batch — otherwise one retry-failed call could chase newly created
-// failures indefinitely.
-func TestRetryFailedSnapshotIgnoresFailuresAddedAfterStart(t *testing.T) {
+// RetryFailed must leave failures newer than its cutoff for the next call.
+func TestRetryFailedSnapshotIgnoresFailuresNewerThanCutoff(t *testing.T) {
 	r := require.New(t)
 	ctx := context.Background()
 	svc, rw := makeServiceWithDB(t)
@@ -253,15 +248,16 @@ func TestRetryFailedSnapshotIgnoresFailuresAddedAfterStart(t *testing.T) {
 	tagFP := ai.Fingerprint{ModelID: "m", PromptVersion: "tags-v1", InputProfile: "ip"}
 	r.NoError(failR.Record(ctx, mid, ai.TaskTag, tagFP, ai.ErrKindMalformed, "x", 1))
 
-	// Record a failure AFTER a small wait so its failed_at > cutoff
-	// captured by RetryFailed at entry. SQLite stores failed_at at
-	// nanosecond precision, but the cutoff is also captured to ns, so
-	// a 5 ms gap is more than enough.
+	// Place the recorded timestamps on either side of the service's cutoff.
+	// Complete both writes before retrying; sleeping cannot establish ordering
+	// between a background insert and the service or the final assertion.
 	mid2 := testutil.SeedPhoto(t, rw, alice, "p2")
-	go func() {
-		time.Sleep(5 * time.Millisecond)
-		_ = failR.Record(ctx, mid2, ai.TaskTag, tagFP, ai.ErrKindMalformed, "y", 1)
-	}()
+	r.NoError(failR.Record(ctx, mid2, ai.TaskTag, tagFP, ai.ErrKindMalformed, "y", 1))
+	now := time.Now().UTC()
+	_, err := rw.ExecContext(ctx, `UPDATE ai_failures SET failed_at = ? WHERE media_id = ?`, now.Add(-time.Hour), mid)
+	r.NoError(err)
+	_, err = rw.ExecContext(ctx, `UPDATE ai_failures SET failed_at = ? WHERE media_id = ?`, now.Add(time.Hour), mid2)
+	r.NoError(err)
 
 	n, err := svc.RetryFailed(ctx, alice, ai.TaskTag)
 	r.NoError(err)
@@ -269,9 +265,7 @@ func TestRetryFailedSnapshotIgnoresFailuresAddedAfterStart(t *testing.T) {
 	// post-cutoff failure must remain in the table for a future call.
 	r.Equal(1, n, "snapshot retry must touch only the original failure")
 
-	// Wait for the goroutine to land its row, then assert mid2 is still
-	// recorded as failed.
-	time.Sleep(20 * time.Millisecond)
+	// The newer failure remains recorded for a later retry.
 	rows, err := failR.ListForFingerprintByOwner(ctx, ai.TaskTag, tagFP, alice.Hub, alice.UserID, time.Time{}, 0)
 	r.NoError(err)
 	r.Len(rows, 1, "the post-cutoff failure must remain pending for the next retry")
