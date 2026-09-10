@@ -129,6 +129,12 @@ func TestDaemonLifecycle(t *testing.T) {
 	output, err = run("daemon", "status", "--json")
 	r.NoError(err, "%s", output)
 	r.Contains(string(output), `"recovery":true`)
+	// Recovery is independent of the missing source catalog selection.
+	recoveryCommand := exec.CommandContext(t.Context(), binary, "backup", "init", "--repo", filepath.Join(tmp, "archives"), "--config", configPath)
+	recoveryCommand.Env = append(os.Environ(), "FOTOBANK_DB_PATH="+filepath.Join(tmp, "lost", "catalog.sqlite"))
+	output, err = recoveryCommand.CombinedOutput()
+	r.NoError(err, "%s", output)
+	r.NoDirExists(filepath.Join(tmp, "lost"))
 	output, err = run("albums", "list")
 	r.Error(err)
 	r.Contains(string(output), "recovery")
@@ -141,6 +147,21 @@ func TestDaemonLifecycle(t *testing.T) {
 	output, err = run("albums", "create", "Trip")
 	r.NoError(err, "%s", output)
 	r.Contains(string(output), "Trip")
+	// A different shell's catalog override must not reuse this daemon.
+	for _, override := range []string{"", filepath.Join(tmp, "other.sqlite")} {
+		for _, args := range [][]string{{"albums", "create", "Wrong catalog"}, {"backup", "list", "--repo", filepath.Join(tmp, "archives")}} {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			command := exec.CommandContext(ctx, binary, append(args, "--config", configPath)...)
+			command.Env = append(os.Environ(), "FOTOBANK_DB_PATH="+override)
+			output, err = command.CombinedOutput()
+			cancel()
+			r.Error(err, "%s", output)
+			r.Contains(string(output), "different FOTOBANK_DB_PATH")
+		}
+	}
+	output, err = run("albums", "list")
+	r.NoError(err, "%s", output)
+	r.NotContains(string(output), "Wrong catalog")
 	output, err = run("daemon", "status", "--json")
 	r.NoError(err, "%s", output)
 	var albumDaemon struct {
@@ -148,7 +169,9 @@ func TestDaemonLifecycle(t *testing.T) {
 	}
 	r.NoError(json.Unmarshal(output, &albumDaemon))
 	r.True(albumDaemon.Running)
-	output, err = run("daemon", "stop")
+	stopCommand := exec.CommandContext(t.Context(), binary, "daemon", "stop", "--config", configPath)
+	stopCommand.Env = append(os.Environ(), "FOTOBANK_DB_PATH="+filepath.Join(tmp, "other.sqlite"))
+	output, err = stopCommand.CombinedOutput()
 	r.NoError(err, "%s", output)
 	// A real import starts the daemon and uses its vault, not a second owner.
 	source := seedImportSource(t, "photo-no-exif.jpg")

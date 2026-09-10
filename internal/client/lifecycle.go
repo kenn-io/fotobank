@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/kit/daemon"
 )
@@ -22,7 +23,26 @@ type Lifecycle struct {
 	Recovery                    bool
 }
 
+var errDatabaseOverride = errors.New("running daemon uses a different FOTOBANK_DB_PATH; run daemon stop before changing the database override")
+
 func findDaemon(ctx context.Context, configPath string) (daemon.RuntimeRecord, daemon.PingInfo, bool, error) {
+	rec, info, found, err := discoverDaemon(ctx, configPath)
+	if err != nil || !found || rec.Metadata["mode"] == "recovery" {
+		return rec, info, found, err
+	}
+	override, err := config.DatabaseOverride()
+	if err != nil {
+		return rec, info, false, err
+	}
+	if override != rec.Metadata["database_override"] {
+		return rec, info, false, errDatabaseOverride
+	}
+	return rec, info, true, nil
+}
+
+// Lifecycle inspection and stop remain config-scoped so an operator can stop a
+// daemon even after changing the catalog override in their shell.
+func discoverDaemon(ctx context.Context, configPath string) (daemon.RuntimeRecord, daemon.PingInfo, bool, error) {
 	store := daemon.RuntimeStore{Dir: configPath + ".operator"}
 	if _, err := os.Stat(store.Dir); errors.Is(err, os.ErrNotExist) {
 		return daemon.RuntimeRecord{}, daemon.PingInfo{}, false, nil
@@ -54,7 +74,7 @@ func findDaemon(ctx context.Context, configPath string) (daemon.RuntimeRecord, d
 }
 
 func (l Lifecycle) Status(ctx context.Context) (httpapi.DaemonStatus, error) {
-	rec, _, found, err := findDaemon(ctx, l.ConfigPath)
+	rec, _, found, err := discoverDaemon(ctx, l.ConfigPath)
 	if err != nil || !found {
 		return httpapi.DaemonStatus{}, err
 	}
@@ -80,6 +100,10 @@ func (l Lifecycle) Ensure(ctx context.Context) (httpapi.DaemonStatus, error) {
 	manager := daemon.Manager{Store: store}
 	manager.FindFunc = func(ctx context.Context) (daemon.RuntimeRecord, daemon.PingInfo, bool, error) {
 		rec, info, found, err := findDaemon(ctx, l.ConfigPath)
+		if errors.Is(err, errDatabaseOverride) {
+			cancel(err)
+			return rec, info, false, err
+		}
 		if err == nil && childPID != 0 && !daemon.ProcessAlive(childPID) {
 			err = fmt.Errorf("daemon exited before becoming ready")
 			// Kit retries discovery errors; a child that has exited is terminal.
@@ -162,7 +186,7 @@ func (l Lifecycle) Stop(ctx context.Context) error {
 		return err
 	}
 	defer unlock()
-	rec, _, found, err := findDaemon(ctx, l.ConfigPath)
+	rec, _, found, err := discoverDaemon(ctx, l.ConfigPath)
 	if err != nil || !found {
 		return err
 	}
