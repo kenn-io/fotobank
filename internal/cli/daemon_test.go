@@ -67,7 +67,7 @@ func TestDaemonLifecycle(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
 	configPath := writeBasicConfig(t, tmp)
-	dbPath := filepath.Join(tmp, "catalog.sqlite")
+	dbPath := filepath.Join(tmp, "flash", "catalog.sqlite")
 	// Reserve an available control port, then require the daemon to use it.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	r.NoError(err)
@@ -106,6 +106,21 @@ func TestDaemonLifecycle(t *testing.T) {
 	r.JSONEq(`{"running":false}`, string(output))
 	_, err = os.Stat(dbPath)
 	r.ErrorIs(err, os.ErrNotExist)
+	// Repository inspection must not recreate photo storage when no daemon
+	// is running. Exercise the built binary so automatic launch is possible.
+	r.NoError(os.Remove(filepath.Join(tmp, "nas")))
+	r.NoError(os.Remove(filepath.Join(tmp, "flash")))
+	for _, action := range []string{"list", "verify", "init"} {
+		output, err = run("backup", action, "--repo", filepath.Join(tmp, "archives"))
+		r.Error(err, "%s", output)
+		r.NoDirExists(filepath.Join(tmp, "flash"), "%s", output)
+		r.NoDirExists(filepath.Join(tmp, "nas"))
+		r.NoDirExists(configPath + ".operator")
+		r.Contains(string(output), "no daemon running")
+		r.Contains(string(output), "daemon start --recovery")
+	}
+	r.NoError(os.Mkdir(filepath.Join(tmp, "nas"), 0o700))
+	r.NoError(os.Mkdir(filepath.Join(tmp, "flash"), 0o700))
 	// Recovery uses the same process slot, but does not initialize the catalog.
 	output, err = run("daemon", "start", "--recovery")
 	r.NoError(err, "%s", output)

@@ -61,7 +61,7 @@ that open that same vault cannot run alongside it. For the configured deployment
 | Admin hidden-passcode reset | Uses the daemon's local operator API; requires `--confirm` and an explicit `--owner` in header mode. |
 | Import, album and sharing commands, every checkout command, or manual backup create | Uses the daemon in stub mode and starts it if needed; run under the same OS account and configuration. |
 | Browse or use the HTTP API, scan checkout edits, scheduled backups | Keep the server running. |
-| Backup init, list with `--repo`, or verify | Uses the daemon in normal or explicit recovery mode; requires configuration but no source storage in recovery mode. |
+| Backup init, list with `--repo`, or verify | Requires an already-running daemon in normal or recovery mode; never auto-starts. Requires configuration but no source storage in recovery mode. |
 | Restore an archive to a separate target | Still runs locally; requires the saved configuration but no source vault. |
 
 Use `fotobank daemon stop` and `fotobank daemon start` for background operation.

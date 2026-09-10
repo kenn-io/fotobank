@@ -155,9 +155,10 @@ operations. `daemon restart` returns to normal operation.
 
 `backup init`, `list`, and `verify` use `BackupRepositoryService` through the
 documented `/api/v1/operator/backup-repository/` operations in either mode.
-They accept `--config`, normalize repository paths before startup, and do not
-open repositories in the CLI. With no running daemon they start normal mode;
-after storage loss the operator explicitly starts recovery mode first.
+They accept `--config`, normalize repository paths before discovery, and do not
+open repositories in the CLI. They require an already-running daemon and never
+start or replace one. When none is running, the error explains how to start
+normal mode or recovery mode explicitly, without recreating lost photo storage.
 
 The local and photo listeners use the same `httpapi.New` registrations and
 OpenAPI document at `/api/openapi.json`, with documentation at `/api/docs`.

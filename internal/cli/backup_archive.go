@@ -176,11 +176,14 @@ func backupRepositoryClient(cmd *cobra.Command, path string) (client.Lifecycle, 
 	if err != nil {
 		return lifecycle, "", err
 	}
-	// Repository administration is available in both modes. Startup stays
-	// normal unless the operator explicitly started recovery mode first.
-	lifecycle.AnyMode = true
-	_, err = lifecycle.Ensure(cmd.Context())
-	return lifecycle, path, err
+	status, err := lifecycle.Status(cmd.Context())
+	if err != nil {
+		return lifecycle, path, err
+	}
+	if !status.Running {
+		return lifecycle, path, errors.New("no daemon running; run daemon start, or daemon start --recovery when photo storage is offline")
+	}
+	return lifecycle, path, nil
 }
 
 func restoreArchive(cmd *cobra.Command, repositoryPath, snapshotID, target string, asJSON bool) error {

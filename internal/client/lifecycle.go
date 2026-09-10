@@ -19,7 +19,7 @@ import (
 type Lifecycle struct {
 	ConfigPath, Version, Listen string
 	StartTimeout, StopTimeout   time.Duration
-	Recovery, AnyMode           bool
+	Recovery                    bool
 }
 
 func findDaemon(ctx context.Context, configPath string) (daemon.RuntimeRecord, daemon.PingInfo, bool, error) {
@@ -86,7 +86,7 @@ func (l Lifecycle) Ensure(ctx context.Context) (httpapi.DaemonStatus, error) {
 			cancel(err)
 			return rec, info, false, err
 		}
-		if err == nil && found && !l.AnyMode && (rec.Metadata["mode"] == "recovery") != l.Recovery {
+		if err == nil && found && (rec.Metadata["mode"] == "recovery") != l.Recovery {
 			err = fmt.Errorf("daemon mode differs; use daemon restart with --recovery for recovery mode, or without it for normal photo operations")
 			cancel(err)
 			return rec, info, false, err
@@ -115,7 +115,7 @@ func (l Lifecycle) Ensure(ctx context.Context) (httpapi.DaemonStatus, error) {
 			return err
 		}
 		args := []string{"daemon", "run", "--config", l.ConfigPath}
-		if l.Recovery || (l.AnyMode && found && rec.Metadata["mode"] == "recovery") {
+		if l.Recovery {
 			args = append(args, "--recovery")
 		}
 		if l.Listen != "" {
