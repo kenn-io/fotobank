@@ -17,10 +17,15 @@ import (
 type ArchiveRestoreService struct {
 	configPath   string
 	databasePath string
+	storageRoots [4]string
 }
 
-func NewArchiveRestoreService(configPath, databasePath string) *ArchiveRestoreService {
-	return &ArchiveRestoreService{configPath: configPath, databasePath: databasePath}
+func NewArchiveRestoreService(configPath, databasePath string, cfg *config.Config) *ArchiveRestoreService {
+	return &ArchiveRestoreService{configPath: configPath, databasePath: databasePath, storageRoots: archiveStorageRoots(cfg)}
+}
+
+func archiveStorageRoots(cfg *config.Config) [4]string {
+	return [4]string{cfg.Docbank.Root, cfg.ConfiguredNASRoot(), cfg.ConfiguredFlashRoot(), cfg.Backup.Repository}
 }
 
 func (s *ArchiveRestoreService) Restore(ctx context.Context, repositoryPath, snapshotID, target string) (backup.ArchiveRestoreReport, error) {
@@ -33,6 +38,9 @@ func (s *ArchiveRestoreService) Restore(ctx context.Context, repositoryPath, sna
 	cfg, err := config.LoadUnchecked(s.configPath)
 	if err != nil {
 		return backup.ArchiveRestoreReport{}, err
+	}
+	if archiveStorageRoots(cfg) != s.storageRoots {
+		return backup.ArchiveRestoreReport{}, fmt.Errorf("%w: storage configuration changed; check the source paths and run fotobank daemon restart --recovery", errs.ErrBadConfiguration)
 	}
 	configuredVault := cfg.Docbank.Root
 	if err := cfg.ValidateWithOptions(config.ValidationOptions{AllowUnavailableStorage: true}); err != nil {

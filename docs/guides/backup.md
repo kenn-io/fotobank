@@ -120,6 +120,9 @@ be writable for daemon runtime state. If the original installation used
 even if the path no longer exists. The daemon owns the source-path selection;
 changing the client's environment does not change it. Restore never starts a
 daemon or switches its mode automatically.
+If you edit the vault, NAS, flash, or backup repository roots while recovery is
+running, restore asks you to check the source paths and restart with `--recovery`
+before continuing. It will not silently drop the original path protections.
 
 The latest recovery point is selected by default. Pass a snapshot ID after
 `restore` to select an older point. Both `--repo` and `--target` are required.

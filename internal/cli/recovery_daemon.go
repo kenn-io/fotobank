@@ -56,7 +56,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	defer stop()
 	op, err := operator.Start(ctx, opts.cfgPath, version.Short, cfg.Daemon.ListenAddress, "", "", stop,
 		httpapi.Deps{BackupRepository: &service.BackupRepositoryService{},
-			ArchiveRestore: service.NewArchiveRestoreService(opts.cfgPath, databasePath)})
+			ArchiveRestore: service.NewArchiveRestoreService(opts.cfgPath, databasePath, cfg)})
 	if err != nil {
 		return err
 	}

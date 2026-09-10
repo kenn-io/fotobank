@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -117,6 +118,20 @@ func TestBackupArchiveCLI(t *testing.T) {
 	// Recovery must not bootstrap or open the lost source installation.
 	r.NoError(os.RemoveAll(filepath.Join(tmp, "offline-flash")))
 	r.NoError(os.RemoveAll(filepath.Join(tmp, "nas")))
+	t.Run("changed recovery storage configuration", func(t *testing.T) {
+		r := require.New(t)
+		original, err := os.ReadFile(cfgPath)
+		r.NoError(err)
+		t.Cleanup(func() { require.NoError(t, os.WriteFile(cfgPath, original, 0o600)) })
+		changed := strings.ReplaceAll(string(original), strconv.Quote(filepath.Join(tmp, "nas")), strconv.Quote(filepath.Join(tmp, "replacement-nas")))
+		r.NotEqual(string(original), changed)
+		r.NoError(os.WriteFile(cfgPath, []byte(changed), 0o600))
+		target := filepath.Join(tmp, "nas", "restored")
+		_, err = client.RestoreArchive(t.Context(), cfgPath, recovery.Version,
+			httpapi.ArchiveRestoreRequest{Repository: repository, Target: target})
+		r.ErrorContains(err, "storage configuration changed")
+		r.NoDirExists(target)
+	})
 	direct, err := client.RestoreArchive(t.Context(), cfgPath, recovery.Version,
 		httpapi.ArchiveRestoreRequest{Repository: repository, Target: filepath.Join(tmp, "direct-recovery")})
 	r.NoError(err)
