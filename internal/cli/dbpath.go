@@ -1,11 +1,6 @@
 package cli
 
-import (
-	"os"
-	"path/filepath"
-
-	"go.kenn.io/fotobank/internal/config"
-)
+import "go.kenn.io/fotobank/internal/config"
 
 // resolveDBPath returns the canonical SQLite path the server and CLI
 // agree on. FOTOBANK_DB_PATH wins; otherwise default to
@@ -16,13 +11,6 @@ import (
 // are appended beneath it.
 func resolveDBPath(cfg *config.Config) (string, error) {
 	return config.CatalogSelection(cfg)
-}
-
-func configuredDBPath(cfg *config.Config) string {
-	if v := os.Getenv("FOTOBANK_DB_PATH"); v != "" {
-		return v
-	}
-	return filepath.Join(cfg.Flash.Root, "fotobank.sqlite")
 }
 
 // lockPathFor returns the canonical lock-file path for a given dbPath.

@@ -23,7 +23,7 @@ type Lifecycle struct {
 	Recovery                    bool
 }
 
-var errCatalogSelection = errors.New("running daemon uses a different catalog; run daemon restart after changing FOTOBANK_DB_PATH or the configured flash root")
+var errCatalogSelection = errors.New("running daemon uses a different catalog; check FOTOBANK_DB_PATH and the configured flash root, then run daemon restart if the change is intended")
 
 func findDaemon(ctx context.Context, configPath string) (daemon.RuntimeRecord, daemon.PingInfo, bool, error) {
 	rec, info, found, err := discoverDaemon(ctx, configPath)

@@ -105,12 +105,21 @@ Choose a new or empty directory outside the configured storage and backup
 repository. Restore needs the saved deployment configuration to identify paths
 it must not replace, but the original catalog, vault, NAS, and flash storage
 can be gone. The source database path may also be a dangling symlink into lost
-storage; recovery does not recreate that location:
+storage; recovery does not recreate that location. Start the recovery daemon
+explicitly (use `restart --recovery` if a normal daemon is running):
 
 ```sh
+fotobank daemon start --recovery --config /saved/fotobank.toml
 fotobank backup restore --repo /backups/photos \
   --target /recovery/photos --config /saved/fotobank.toml --json
 ```
+
+Run both commands as the same OS account. The saved configuration directory must
+be writable for daemon runtime state. If the original installation used
+`FOTOBANK_DB_PATH`, set that original path when **starting the recovery daemon**,
+even if the path no longer exists. The daemon owns the source-path selection;
+changing the client's environment does not change it. Restore never starts a
+daemon or switches its mode automatically.
 
 The latest recovery point is selected by default. Pass a snapshot ID after
 `restore` to select an older point. Both `--repo` and `--target` are required.

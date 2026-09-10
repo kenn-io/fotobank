@@ -123,8 +123,8 @@ credential and accepts only loopback endpoints with a matching service and
 reported application version. `internal/client/lifecycle.go` uses Kit's Manager
 and start lock to coordinate automatic or explicit startup, and StartDetached
 to launch the current executable with the same configuration, working directory,
-and environment. Neither discovery nor launch resolves or opens the database
-or vault in the client. A different running build version is stopped through
+and environment. Normal discovery resolves the catalog path for comparison but
+does not open the database or vault. Recovery discovery does neither. A different running build version is stopped through
 the authenticated shutdown operation before replacement. Development builds
 with the same version string require explicit restart after rebuilding. There
 is one API contract, with no protocol negotiation or compatibility layer.
@@ -144,6 +144,10 @@ after workers, storage, and lifetime locks have closed. Restart then starts
 the replacement. Stop uses `daemon.stop_timeout`; startup/replacement uses
 `daemon.start_timeout`. Timeouts report an error rather than force-killing
 unfinished writes. Background logs live at `<config>.operator/daemon.log`.
+The configuration directory must be writable by the daemon's OS account and
+available independently of photo storage. The setup guide uses a service-owned
+local directory rather than `/etc`, since discovery and locks live beside the
+configuration in both normal and recovery mode.
 
 Normal daemons record their startup catalog selection in discovery metadata:
 `FOTOBANK_DB_PATH`, or `[flash].root/fotobank.sqlite` when no override is set.
@@ -172,6 +176,15 @@ open repositories in the CLI. They require an already-running daemon and never
 start or replace one. When none is running, the error explains how to start
 normal mode or recovery mode explicitly, without recreating lost photo storage.
 
+`backup restore` uses `ArchiveRestoreService` only in recovery mode. The daemon
+captures the original database selection at startup without opening source
+storage, then uses saved configuration to protect source paths during restore.
+The CLI normalizes target and repository paths and submits one request; it never
+opens either database or retries a partially completed restore. Photo and normal
+operator listeners reject this operation. Recovery also serves both OpenAPI
+3.1 and 3.0 JSON/YAML variants. `--listen` is invalid with `--recovery`, which
+binds only the configured control listener.
+
 The local and photo listeners use the same `httpapi.New` registrations and
 OpenAPI document at `/api/openapi.json`, with documentation at `/api/docs`.
 `internal/httpapi` owns the wire types shared with `internal/client`, following
@@ -199,6 +212,7 @@ operations use the host credential without a photo principal.
 | `checkout create <root>` | `POST /checkouts` |
 | `checkout commit <id>` | `POST /checkouts/{id}/commit` |
 | `backup create` | `POST /backups` |
+| `backup restore` | `POST /backup-repository/restore` (recovery only) |
 | `daemon status` | `GET /daemon` |
 | `daemon stop` | `POST /daemon/stop`, then wait for cleanup |
 
@@ -393,12 +407,12 @@ service; photo listeners and header-mode deployments reject these operations.
 The daemon reuses its generation registry, activation counter, and compactor.
 The CLI performs no catalog reads, including promotion inspection and dry-run.
 
-The daemon-only command boundary is not yet complete. Archive restore still
-runs in the CLI.
-These existing paths are migration work in kata, not exceptions to extend.
 The accepted boundary is one daemon-owned implementation per application
 operation, shared by HTTP, the CLI, and a future MCP client. Bootstrap and
 lost-source recovery must retain that ownership boundary.
+Local configuration setup and validation remain bootstrap tools. Read-only
+`config diagnose` inspects storage paths and file headers without opening a live
+catalog connection or performing migrations or repairs.
 
 Long-running operations honor `context.Context`. Background loops use bounded
 polling, concurrency, and shutdown waits; they do not start untracked

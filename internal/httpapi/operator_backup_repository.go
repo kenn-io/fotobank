@@ -71,7 +71,10 @@ func registerBackupRepository(api huma.API, svc *service.BackupRepositoryService
 // This listener is host-operator-only. Keep actionable repository diagnostics
 // that the CLI previously returned, rather than the photo API's generic errors.
 func backupRepositoryError(err error) huma.StatusError {
-	if errors.Is(err, errs.ErrBackupRepositoryLocked) {
+	if errors.Is(err, errs.ErrBackupRepositoryLocked) ||
+		errors.Is(err, errs.ErrBackupRestoreTargetNotEmpty) ||
+		errors.Is(err, errs.ErrBackupRestoreTargetActive) ||
+		errors.Is(err, errs.ErrBackupRestoreTargetChanged) {
 		return huma.Error409Conflict(err.Error())
 	}
 	return huma.NewError(Translate(err).GetStatus(), err.Error())

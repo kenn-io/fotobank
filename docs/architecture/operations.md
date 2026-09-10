@@ -117,7 +117,12 @@ test restores both databases and resolves a catalog file through
 `contentresolver`, checking node, version, digest, size, and original bytes.
 
 `backup restore [snapshot-id] --repo ... --target ...` uses
+the recovery-only `ArchiveRestoreService`, which calls
 `internal/backup.RestoreArchive` and the repository-only content restore API.
+The CLI requires an already-running recovery daemon and sends the repository,
+snapshot ID, and target through the documented Huma operation. The source database
+selection is captured from the daemon's configuration and environment at startup,
+not from the requesting client's environment.
 It never opens or creates the original vault or catalog. Configuration loading
 permits absent source storage but retains the configured aliases and validated
 roots, plus the database directory (including `FOTOBANK_DB_PATH`) and configured

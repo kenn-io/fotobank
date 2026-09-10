@@ -28,8 +28,16 @@ creates missing parent directories and never replaces an existing file. Use an
 explicit location when a service manager or automation owns configuration:
 
 ```sh
-fotobank config init --config /etc/fotobank/config.toml
+# After creating the fotobank service account:
+sudo install -d -o fotobank -g fotobank -m 0700 /var/lib/fotobank-control
+sudo -u fotobank fotobank config init --config /var/lib/fotobank-control/config.toml
 ```
+
+The daemon writes its runtime record, logs, and locks beside the configuration.
+That directory must be writable by its OS account. Keep it on local storage,
+separate from the photo storage roots below, so recovery can start when those
+roots are unavailable. Run lifecycle and application commands under the same
+account and with the same configuration.
 
 Edit at least these values:
 

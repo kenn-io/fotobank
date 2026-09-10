@@ -487,6 +487,73 @@
         ],
         "type": "object"
       },
+      "ArchiveRestoreReport": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ArchiveRestoreReport.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "catalog_path": {
+            "type": "string"
+          },
+          "references_verified": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "snapshot_id": {
+            "type": "string"
+          },
+          "vault_root": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "vault_root",
+          "catalog_path",
+          "references_verified"
+        ],
+        "type": "object"
+      },
+      "ArchiveRestoreRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/ArchiveRestoreRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "repository": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "snapshot_id": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "target": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "repository",
+          "target"
+        ],
+        "type": "object"
+      },
       "AutocompleteLocationsBody": {
         "additionalProperties": false,
         "properties": {
@@ -6236,6 +6303,53 @@
           }
         ],
         "summary": "Initialize a backup repository",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/backup-repository/restore": {
+      "post": {
+        "description": "Requires the local operator credential and a recovery-mode daemon. The target must be empty and separate from source storage and the backup repository. Does not activate the restored deployment.",
+        "operationId": "restore-backup-archive",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveRestoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchiveRestoreReport"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Restore and verify an archive into a separate target",
         "tags": [
           "operator"
         ]

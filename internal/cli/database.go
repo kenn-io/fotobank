@@ -14,9 +14,8 @@ import (
 	"go.kenn.io/fotobank/internal/errs"
 )
 
-// databaseLifetime is the shared process-lifetime fence used by every CLI
-// command that opens the metadata database. Keep this lifetime separate from
-// short mutation locks used by individual commands.
+// databaseLifetime is the daemon's shared process-lifetime fence for the
+// metadata database, separate from short application mutation locks.
 type databaseLifetime struct {
 	path      string
 	lock      *flock.Flock

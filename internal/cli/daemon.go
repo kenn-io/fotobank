@@ -80,6 +80,7 @@ func newDaemonCmd() *cobra.Command {
 		if action == "start" || action == "restart" {
 			child.Flags().BoolVar(&recovery, "recovery", false, "start without opening photo storage")
 			child.Flags().StringVar(&listen, "listen", "", "override [http].listen_address")
+			child.MarkFlagsMutuallyExclusive("recovery", "listen")
 		}
 		cmd.AddCommand(child)
 	}
@@ -89,6 +90,7 @@ func newDaemonCmd() *cobra.Command {
 		}}
 	run.Flags().StringVar(&listen, "listen", "", "override [http].listen_address")
 	run.Flags().BoolVar(&recovery, "recovery", false, "run without opening photo storage")
+	run.MarkFlagsMutuallyExclusive("recovery", "listen")
 	cmd.AddCommand(run)
 	return cmd
 }

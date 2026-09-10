@@ -31,6 +31,7 @@ import (
 // httpapi independent of how those collaborators are built.
 type Deps struct {
 	BackupRepository *service.BackupRepositoryService
+	ArchiveRestore   *service.ArchiveRestoreService
 	// Operator is set only behind the daemon's local credential check.
 	// Nil keeps these operations documented but denies their execution.
 	Operator            *OperatorDeps
@@ -195,6 +196,7 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerOperatorHidden(api, deps.HiddenResetOperator)
 	registerDaemon(api, deps.Daemon)
 	registerBackupRepository(api, deps.BackupRepository)
+	registerArchiveRestore(api, deps.ArchiveRestore)
 	registerMe(api, deps.SharingEnabled, deps.AdminPrincipals)
 	registerMediaGeo(api, deps.MediaService, deps.HiddenAuth)
 	registerMedia(api, deps.MediaService)

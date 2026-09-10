@@ -48,10 +48,15 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	if err := cfg.Daemon.Validate(); err != nil {
 		return err
 	}
+	databasePath, err := config.ConfiguredDatabasePath(cfg)
+	if err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	op, err := operator.Start(ctx, opts.cfgPath, version.Short, cfg.Daemon.ListenAddress, "", "", stop,
-		httpapi.Deps{BackupRepository: &service.BackupRepositoryService{}})
+		httpapi.Deps{BackupRepository: &service.BackupRepositoryService{},
+			ArchiveRestore: service.NewArchiveRestoreService(opts.cfgPath, databasePath)})
 	if err != nil {
 		return err
 	}

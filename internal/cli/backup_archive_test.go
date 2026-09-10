@@ -8,13 +8,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 
 	"go.kenn.io/fotobank/internal/backup"
 	"go.kenn.io/fotobank/internal/cli"
+	"go.kenn.io/fotobank/internal/client"
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/httpapi"
 )
 
 func TestBackupArchiveCLI(t *testing.T) {
@@ -56,10 +59,22 @@ func TestBackupArchiveCLI(t *testing.T) {
 		stderr.Reset()
 		code = cli.RunContext(t.Context(), []string{"backup", "restore", "--repo", repository,
 			"--target", filepath.Join(tmp, "live-restore"), "--config", cfgPath, "--json"}, &stdout, &stderr)
-		r.Zero(code, "%s", stderr.String())
-		var restored backup.ArchiveRestoreReport
-		r.NoError(json.Unmarshal(stdout.Bytes(), &restored))
-		r.Positive(restored.ReferencesVerified)
+		r.NotZero(code, "%s", stdout.String())
+		r.Contains(stderr.String(), "recovery")
+		r.NoDirExists(filepath.Join(tmp, "live-restore"))
+		for _, baseURL := range []string{record.Metadata["web_url"], record.Endpoint().BaseURL()} {
+			body, err := json.Marshal(map[string]string{"repository": repository, "target": filepath.Join(tmp, "direct-restore")})
+			r.NoError(err)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, baseURL+"/api/v1/operator/backup-repository/restore", bytes.NewReader(body))
+			r.NoError(err)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Bearer "+record.Metadata["token"])
+			response, err := http.DefaultClient.Do(request)
+			r.NoError(err)
+			r.NoError(response.Body.Close())
+			r.Equal(http.StatusForbidden, response.StatusCode)
+		}
+		r.NoDirExists(filepath.Join(tmp, "direct-restore"))
 		for _, denied := range []struct {
 			name, hub, token, tag string
 			status                int
@@ -85,7 +100,7 @@ func TestBackupArchiveCLI(t *testing.T) {
 	})
 	// Listing and verification need only the repository, even after source loss.
 	r.NoError(os.Rename(filepath.Join(tmp, "flash"), filepath.Join(tmp, "offline-flash")))
-	startRecoveryServer(t, cfgPath)
+	recovery := startRecoveryServer(t, cfgPath)
 	stdout.Reset()
 	stderr.Reset()
 	code = cli.RunContext(t.Context(), []string{"backup", "list", "--config", cfgPath, "--repo", repository, "--json"}, &stdout, &stderr)
@@ -102,6 +117,15 @@ func TestBackupArchiveCLI(t *testing.T) {
 	// Recovery must not bootstrap or open the lost source installation.
 	r.NoError(os.RemoveAll(filepath.Join(tmp, "offline-flash")))
 	r.NoError(os.RemoveAll(filepath.Join(tmp, "nas")))
+	direct, err := client.RestoreArchive(t.Context(), cfgPath, recovery.Version,
+		httpapi.ArchiveRestoreRequest{Repository: repository, Target: filepath.Join(tmp, "direct-recovery")})
+	r.NoError(err)
+	r.Positive(direct.ReferencesVerified)
+	r.FileExists(direct.CatalogPath)
+	_, err = client.RestoreArchive(t.Context(), cfgPath, recovery.Version,
+		httpapi.ArchiveRestoreRequest{Repository: repository, Target: filepath.Join(tmp, "direct-recovery")})
+	r.Error(err)
+	r.Contains(err.Error(), "409")
 	stdout.Reset()
 	stderr.Reset()
 	code = cli.RunContext(t.Context(), []string{"backup", "restore", "--repo", repository,
@@ -114,6 +138,7 @@ func TestBackupArchiveCLI(t *testing.T) {
 	r.FileExists(restored.CatalogPath)
 	r.NoDirExists(filepath.Join(tmp, "flash"))
 	r.NoDirExists(filepath.Join(tmp, "nas"))
+	r.NoError((client.Lifecycle{ConfigPath: cfgPath, StopTimeout: 5 * time.Second}).Stop(t.Context()))
 	for _, kind := range []string{"database", "parent", "nested-relative"} {
 		t.Run("lost-symlink-"+kind, func(t *testing.T) {
 			r := require.New(t)
@@ -141,6 +166,9 @@ func TestBackupArchiveCLI(t *testing.T) {
 				t.Skipf("symlinks unavailable: %v", err)
 			}
 			t.Setenv("FOTOBANK_DB_PATH", dbPath)
+			startRecoveryServer(t, cfgPath)
+			// A requesting client cannot change the daemon's source selection.
+			t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "client-only", "catalog.sqlite"))
 			var stdout, stderr bytes.Buffer
 			code := cli.RunContext(t.Context(), []string{"backup", "restore", "--repo", repository,
 				"--target", filepath.Join(tmp, "recovered-"+kind), "--config", cfgPath}, &stdout, &stderr)
@@ -156,6 +184,7 @@ func TestBackupArchiveCLI(t *testing.T) {
 			}
 		})
 	}
+	startRecoveryServer(t, cfgPath)
 	// The lost deployment's paths remain reserved even though they are absent.
 	stdout.Reset()
 	stderr.Reset()
