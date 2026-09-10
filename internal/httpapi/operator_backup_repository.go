@@ -2,10 +2,12 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/fotobank/internal/content"
+	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/service"
 )
 
@@ -68,6 +70,9 @@ func registerBackupRepository(api huma.API, svc *service.BackupRepositoryService
 
 // This listener is host-operator-only. Keep actionable repository diagnostics
 // that the CLI previously returned, rather than the photo API's generic errors.
-func backupRepositoryError(err error) error {
+func backupRepositoryError(err error) huma.StatusError {
+	if errors.Is(err, errs.ErrBackupRepositoryLocked) {
+		return huma.Error409Conflict(err.Error())
+	}
 	return huma.NewError(Translate(err).GetStatus(), err.Error())
 }
