@@ -164,6 +164,32 @@ func TestDaemonLifecycle(t *testing.T) {
 	output, err = run("daemon", "stop")
 	r.NoError(err, "%s", output)
 	dbPath = savedDBPath
+	t.Run("retargeted catalog symlink", func(t *testing.T) {
+		r := require.New(t)
+		alias := filepath.Join(tmp, "catalog-alias")
+		if err := os.Symlink(filepath.Dir(savedDBPath), alias); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		dbPath = filepath.Join(alias, filepath.Base(savedDBPath))
+		defer func() { dbPath = savedDBPath }()
+		defer func() {
+			output, err := run("daemon", "stop")
+			r.NoError(err, "%s", output)
+		}()
+		output, err := run("albums", "create", "Symlink catalog")
+		r.NoError(err, "%s", output)
+		otherRoot := filepath.Join(tmp, "other-catalog")
+		r.NoError(os.Mkdir(otherRoot, 0o700))
+		r.NoError(os.Remove(alias))
+		r.NoError(os.Symlink(otherRoot, alias))
+		output, err = run("albums", "create", "Wrong symlink catalog")
+		r.Error(err, "%s", output)
+		r.Contains(string(output), "different catalog")
+		dbPath = savedDBPath
+		output, err = run("albums", "list")
+		r.NoError(err, "%s", output)
+		r.NotContains(string(output), "Wrong symlink catalog")
+	})
 	// Album commands start the daemon instead of opening the catalog themselves.
 	output, err = run("albums", "create", "Trip")
 	r.NoError(err, "%s", output)
