@@ -3,12 +3,19 @@ package client
 import (
 	"context"
 	"errors"
+	"go.kenn.io/fotobank/internal/backup"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/service"
 	"net/http"
 	"net/url"
 )
+
+func RestoreArchive(ctx context.Context, configPath, version string, input httpapi.ArchiveRestoreRequest) (backup.ArchiveRestoreReport, error) {
+	var out backup.ArchiveRestoreReport
+	err := call(ctx, configPath, version, http.MethodPost, "/api/v1/operator/backup-repository/restore", input, &out, "inspect the restore target before retrying; restore never overwrites an existing recovery")
+	return out, err
+}
 
 func InitBackupRepository(ctx context.Context, configPath, version, path string) (service.BackupRepositoryInfo, error) {
 	var out service.BackupRepositoryInfo

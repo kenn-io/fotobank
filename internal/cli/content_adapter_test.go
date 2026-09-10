@@ -65,7 +65,7 @@ root = %q
 		Target:     filepath.Join(nasAlias, "restore"),
 		Overwrite:  true,
 	})
-	r.ErrorIs(err, errs.ErrBadConfiguration)
+	r.ErrorIs(err, errs.ErrBackupRestoreTargetOverlap)
 	r.NoDirExists(filepath.Join(currentNAS, "restore"))
 
 	_, err = adapter.RestoreBackup(t.Context(), repository, content.BackupRestoreOptions{
@@ -73,7 +73,7 @@ root = %q
 		Target:     filepath.Join(originalNAS, "restore"),
 		Overwrite:  true,
 	})
-	r.ErrorIs(err, errs.ErrBadConfiguration)
+	r.ErrorIs(err, errs.ErrBackupRestoreTargetOverlap)
 	r.NoDirExists(filepath.Join(originalNAS, "restore"))
 }
 

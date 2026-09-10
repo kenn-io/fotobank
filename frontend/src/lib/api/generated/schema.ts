@@ -630,6 +630,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/backup-repository/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore and verify an archive into a separate target
+         * @description Requires the local operator credential and a recovery-mode daemon. The target must be empty and separate from source storage and the backup repository. Does not activate the restored deployment.
+         */
+        post: operations["restore-backup-archive"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operator/backup-repository/snapshots": {
         parameters: {
             query?: never;
@@ -1361,6 +1381,30 @@ export interface components {
             };
             /** Format: int64 */
             generation_id?: number;
+        };
+        ArchiveRestoreReport: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ArchiveRestoreReport.json
+             */
+            readonly $schema?: string;
+            catalog_path: string;
+            /** Format: int64 */
+            references_verified: number;
+            snapshot_id: string;
+            vault_root: string;
+        };
+        ArchiveRestoreRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/ArchiveRestoreRequest.json
+             */
+            readonly $schema?: string;
+            repository: string;
+            snapshot_id?: string;
+            target: string;
         };
         AutocompleteLocationsBody: {
             /**
@@ -4040,6 +4084,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BackupRepositoryInfo"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "restore-backup-archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArchiveRestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArchiveRestoreReport"];
                 };
             };
             /** @description Error */

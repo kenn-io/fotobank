@@ -276,6 +276,18 @@ func TestDaemonLifecycle(t *testing.T) {
 	build = exec.CommandContext(t.Context(), "go", "build", "-tags", "sqlite_fts5", "-ldflags", "-X main.vVersion=lifecycle-next", "-o", newBinary, "../../cmd/fotobank")
 	output, err = build.CombinedOutput()
 	r.NoError(err, "%s", output)
+	oldBinary := binary
+	output, err = run("daemon", "restart", "--recovery")
+	r.NoError(err, "%s", output)
+	binary = newBinary
+	for _, action := range []string{"init", "list", "verify"} {
+		output, err = run("backup", action, "--repo", filepath.Join(tmp, "archives"))
+		r.Error(err, "%s", output)
+		r.Contains(string(output), "daemon restart --recovery")
+	}
+	binary = oldBinary
+	output, err = run("daemon", "restart")
+	r.NoError(err, "%s", output)
 	binary = newBinary
 	output, err = run("daemon", "start")
 	r.NoError(err, "%s", output)

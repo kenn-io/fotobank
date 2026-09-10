@@ -137,7 +137,7 @@ func Start(ctx context.Context, configPath, version, address, webURL, catalogSel
 
 func recoveryOperation(path string) bool {
 	switch path {
-	case "/api/v1/operator/daemon", "/api/v1/operator/daemon/stop", "/api/docs":
+	case "/api/v1/operator/daemon", "/api/v1/operator/daemon/stop", "/api/docs", "/api/openapi-3.0.json", "/api/openapi-3.0.yaml":
 		return true
 	default:
 		return strings.HasPrefix(path, "/api/v1/operator/backup-repository/") ||

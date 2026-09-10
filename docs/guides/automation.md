@@ -5,7 +5,7 @@ configuration path for the whole operation instead of relying on the current
 working directory:
 
 ```sh
-export FOTOBANK_CONFIG=/etc/fotobank/config.toml
+export FOTOBANK_CONFIG=/var/lib/fotobank-control/config.toml
 fotobank config validate
 ```
 
@@ -62,7 +62,7 @@ that open that same vault cannot run alongside it. For the configured deployment
 | Import, album and sharing commands, every checkout command, or manual backup create | Uses the daemon in stub mode and starts it if needed; run under the same OS account and configuration. |
 | Browse or use the HTTP API, scan checkout edits, scheduled backups | Keep the server running. |
 | Backup init, list with `--repo`, or verify | Requires an already-running daemon in normal or recovery mode; never auto-starts. Requires configuration but no source storage in recovery mode. |
-| Restore an archive to a separate target | Still runs locally; requires the saved configuration but no source vault. |
+| Restore an archive to a separate target | Requires an already-running recovery daemon; never auto-starts or changes modes. Requires saved configuration but no source storage. |
 
 Use `fotobank daemon stop` and `fotobank daemon start` for background operation.
 For a supervised service, use its supervisor; for a foreground `fotobank serve`,
@@ -71,8 +71,8 @@ lock files or start a second vault owner to work around this limitation. The
 CLI submits imports, interrupted-import recovery, GPS backfill, album and sharing
 commands, owner management, privacy commands, thumbnail regeneration, every checkout command, and manual backup creation to the server.
 All AI commands, including generation administration, also use the daemon.
-Backup repository inspection and restore remain migration gaps, not alternate
-ways to access a daemon-owned deployment.
+Backup repository inspection also uses the daemon. Archive restore uses its
+recovery-only operation; explicitly start or restart with `--recovery` first.
 
 For tracked edits: keep the server running to create the checkout, edit and
 settle files, inspect `checkout status --json`, then explicitly

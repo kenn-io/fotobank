@@ -9,7 +9,6 @@ import (
 
 	"go.kenn.io/fotobank/internal/backup"
 	"go.kenn.io/fotobank/internal/client"
-	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/owners"
@@ -183,35 +182,34 @@ func backupRepositoryClient(cmd *cobra.Command, path string) (client.Lifecycle, 
 	if !status.Running {
 		return lifecycle, path, errors.New("no daemon running; run daemon start, or daemon start --recovery when photo storage is offline")
 	}
+	if status.Version != lifecycle.Version {
+		action := "daemon restart"
+		if status.Recovery {
+			action += " --recovery"
+		}
+		return lifecycle, path, fmt.Errorf("daemon version differs; run fotobank %s", action)
+	}
 	return lifecycle, path, nil
 }
 
 func restoreArchive(cmd *cobra.Command, repositoryPath, snapshotID, target string, asJSON bool) error {
-	cfgPath, _ := cmd.Flags().GetString("config")
-	if cfgPath == "" {
-		cfgPath = config.DefaultConfigPath()
-	}
-	cfg, err := config.LoadUnchecked(cfgPath)
+	target, err := localOperatorPath(target)
 	if err != nil {
 		return err
 	}
-	// Preserve configured aliases as well as validated destinations. Source
-	// directories may be missing after a storage loss; none are opened here.
-	configuredVault := cfg.Docbank.Root
-	if err := cfg.ValidateWithOptions(config.ValidationOptions{AllowUnavailableStorage: true}); err != nil {
-		return err
-	}
-	protected := []string{configuredVault, cfg.Docbank.Root, cfg.ConfiguredNASRoot(), cfg.NAS.Root,
-		cfg.ConfiguredFlashRoot(), cfg.Flash.Root, cfg.Backup.Repository}
-	target, protected, err = config.ArchiveRestorePaths(target, configuredDBPath(cfg), protected)
+	lifecycle, repositoryPath, err := backupRepositoryClient(cmd, repositoryPath)
 	if err != nil {
 		return err
 	}
-	repository, err := content.OpenBackupRepository(repositoryPath)
+	status, err := lifecycle.Status(cmd.Context())
 	if err != nil {
 		return err
 	}
-	report, err := backup.RestoreArchive(cmd.Context(), repository, snapshotID, target, protected)
+	if !status.Recovery {
+		return errors.New("archive restore requires recovery mode; run fotobank daemon restart --recovery")
+	}
+	report, err := client.RestoreArchive(cmd.Context(), lifecycle.ConfigPath, lifecycle.Version,
+		httpapi.ArchiveRestoreRequest{Repository: repositoryPath, SnapshotID: snapshotID, Target: target})
 	if err != nil {
 		return err
 	}

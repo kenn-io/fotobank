@@ -92,10 +92,13 @@ Three tiers per domain: **repo → service → transport**.
 - Host-operator permissions and photo-user permissions remain distinct. A
   shared OpenAPI contract does not grant ordinary photo users access to host
   paths, whole-deployment backup, or administrative commands.
-- Existing direct-storage commands are outstanding migration work tracked in
-  kata, not a pattern to extend. Architecture documentation must distinguish
-  that remaining behavior from the target boundary. Bootstrap and recovery
-  must be designed around daemon ownership, not a CLI database escape hatch.
+- Archive restore requires an explicitly started recovery daemon; repository
+  inspection accepts an already-running normal or recovery daemon. Neither
+  command family automatically chooses or switches modes.
+- Local configuration initialization, validation, and read-only host diagnostics
+  are bootstrap tools, not application-state operations. Diagnostics may inspect
+  files but must not open a live catalog connection, migrate, or repair storage.
+  Do not introduce a CLI database escape hatch for bootstrap or recovery.
 
 Background workers (e.g. `internal/thumb/worker.go`) follow the same rule: they're driven from a queue populated via repo/service calls, not by fan-out from a transport.
 

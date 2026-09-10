@@ -180,6 +180,14 @@ path component. During restore, Docbank always protects the repository that was
 actually opened, including a CLI `--repo` override; do not require Fotobank to
 duplicate that protection, but do flag a path that bypasses it.
 
+Recovery assumes the operator keeps storage aliases and their roles stable
+while the recovery daemon runs. Retargeting a source symlink, including a
+dangling one, requires stopping recovery and checking the source configuration
+before restarting. Do not require a historical inventory of alias destinations
+or report administrator retargeting as a security boundary bypass. Do flag
+overlaps under stable path resolution, dropped protections after configuration
+edits, or restore access by unauthorized callers.
+
 Fotobank does not claim to stop a hostile local actor who can rename an opened
 checkout directory into a managed root. Such an actor already needs write
 permission on that managed root's parent and can write there directly. Do not

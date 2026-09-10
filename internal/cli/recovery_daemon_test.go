@@ -51,6 +51,13 @@ func TestRecoveryDaemonWithoutSourceStorage(t *testing.T) {
 	r.NoError(os.Remove(filepath.Join(dir, "flash")))
 	databasePath := filepath.Join(dir, "lost", "catalog.sqlite")
 	t.Setenv("FOTOBANK_DB_PATH", databasePath)
+	var beforeOutput, beforeErrors bytes.Buffer
+	code := cli.RunContext(t.Context(), []string{"backup", "restore", "--repo", filepath.Join(dir, "archives"),
+		"--target", filepath.Join(dir, "restored"), "--config", configPath}, &beforeOutput, &beforeErrors)
+	r.NotZero(code)
+	r.Contains(beforeErrors.String(), "no daemon running")
+	r.NoDirExists(filepath.Join(dir, "restored"))
+	r.NoDirExists(filepath.Dir(databasePath))
 	record := startRecoveryServer(t, configPath)
 	repository := filepath.Join(dir, "archives")
 	for _, args := range [][]string{
@@ -63,7 +70,7 @@ func TestRecoveryDaemonWithoutSourceStorage(t *testing.T) {
 		r.NotEmpty(output.String())
 	}
 	var output, errors bytes.Buffer
-	code := cli.RunContext(t.Context(), []string{"backup", "verify", "--all", "--repo", repository, "--config", configPath}, &output, &errors)
+	code = cli.RunContext(t.Context(), []string{"backup", "verify", "--all", "--repo", repository, "--config", configPath}, &output, &errors)
 	r.NotZero(code)
 	r.Contains(errors.String(), "no snapshots")
 	r.Empty(output.String())
@@ -76,6 +83,8 @@ func TestRecoveryDaemonWithoutSourceStorage(t *testing.T) {
 		status      int
 	}{
 		{"/api/v1/media", record.Metadata["token"], http.StatusServiceUnavailable},
+		{"/api/openapi-3.0.json", record.Metadata["token"], http.StatusOK},
+		{"/api/openapi-3.0.yaml", record.Metadata["token"], http.StatusOK},
 		{"/api/v1/operator/backup-repository/snapshots?repository=" + url.QueryEscape(repository), "", http.StatusUnauthorized},
 	} {
 		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, record.Endpoint().BaseURL()+tc.path, nil)
@@ -90,4 +99,17 @@ func TestRecoveryDaemonWithoutSourceStorage(t *testing.T) {
 	r.NoDirExists(filepath.Dir(databasePath))
 	r.NoDirExists(filepath.Join(dir, "nas"))
 	r.NoDirExists(filepath.Join(dir, "flash"))
+}
+
+func TestRecoveryRejectsPhotoListenOverride(t *testing.T) {
+	for _, action := range []string{"start", "restart", "run"} {
+		t.Run(action, func(t *testing.T) {
+			var output, diagnostics bytes.Buffer
+			path := filepath.Join(t.TempDir(), "missing", "config.toml")
+			code := cli.RunContext(t.Context(), []string{"daemon", action, "--recovery", "--listen", "127.0.0.1:0", "--config", path}, &output, &diagnostics)
+			require.NotZero(t, code)
+			require.Contains(t, diagnostics.String(), "none of the others")
+			require.NoDirExists(t, filepath.Dir(path))
+		})
+	}
 }

@@ -47,7 +47,7 @@ func translateError(err error) error {
 	case errors.Is(err, docbank.ErrBackupRestoreTargetNotEmpty):
 		return fmt.Errorf("%w: %w", errs.ErrBackupRestoreTargetNotEmpty, err)
 	case errors.Is(err, docbank.ErrBackupRestoreTargetOverlap):
-		return fmt.Errorf("%w: %w", errs.ErrBadConfiguration, err)
+		return fmt.Errorf("%w: %w", errs.ErrBackupRestoreTargetOverlap, err)
 	default:
 		return err
 	}

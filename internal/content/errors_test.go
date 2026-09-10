@@ -26,7 +26,7 @@ func TestTranslateError(t *testing.T) {
 		{name: "backup restore target active", upstream: docbank.ErrBackupRestoreTargetActive, want: errs.ErrBackupRestoreTargetActive},
 		{name: "backup restore target changed", upstream: docbank.ErrBackupRestoreTargetChanged, want: errs.ErrBackupRestoreTargetChanged},
 		{name: "backup restore target not empty", upstream: docbank.ErrBackupRestoreTargetNotEmpty, want: errs.ErrBackupRestoreTargetNotEmpty},
-		{name: "backup restore overlap", upstream: docbank.ErrBackupRestoreTargetOverlap, want: errs.ErrBadConfiguration},
+		{name: "backup restore overlap", upstream: docbank.ErrBackupRestoreTargetOverlap, want: errs.ErrBackupRestoreTargetOverlap},
 	}
 
 	for _, tt := range tests {
