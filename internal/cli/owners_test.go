@@ -163,7 +163,7 @@ func TestOwnersInvalidArgumentsBeforeStartup(t *testing.T) {
 			command := append([]string{"owners", "--config", cfg}, args...)
 			r.Equal(2, cli.RunContext(t.Context(), command, &out, &stderr), "%s", stderr.String())
 			r.NoFileExists(dbPath)
-			r.NoDirExists(dbPath + ".operator")
+			r.NoDirExists(cfg + ".operator")
 		})
 	}
 }

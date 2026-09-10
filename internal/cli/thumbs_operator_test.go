@@ -108,7 +108,7 @@ func TestThumbsInvalidSelectorsBeforeStartup(t *testing.T) {
 			args := append([]string{"thumbs", "regenerate", "--config", cfg}, flags...)
 			r.Equal(2, cli.RunContext(t.Context(), args, &out, &stderr))
 			r.NoFileExists(dbPath)
-			r.NoDirExists(dbPath + ".operator")
+			r.NoDirExists(cfg + ".operator")
 		})
 	}
 }

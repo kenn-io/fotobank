@@ -144,7 +144,7 @@ func runHiddenSetup(cmd *cobra.Command, cfgPath string) error {
 	if _, err := lifecycle.Ensure(cmd.Context()); err != nil {
 		return err
 	}
-	if err := client.SetupHidden(cmd.Context(), lifecycle.DBPath, lifecycle.Version, httpapi.HiddenPasscodeRequest{Passcode: passcode}); err != nil {
+	if err := client.SetupHidden(cmd.Context(), lifecycle.ConfigPath, lifecycle.Version, httpapi.HiddenPasscodeRequest{Passcode: passcode}); err != nil {
 		return err
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "passcode set")
@@ -203,7 +203,7 @@ func runHiddenChange(cmd *cobra.Command, cfgPath string) error {
 	if _, err := lifecycle.Ensure(cmd.Context()); err != nil {
 		return err
 	}
-	if err := client.ChangeHidden(cmd.Context(), lifecycle.DBPath, lifecycle.Version, httpapi.HiddenChangeRequest{OldPasscode: current, NewPasscode: newPass}); err != nil {
+	if err := client.ChangeHidden(cmd.Context(), lifecycle.ConfigPath, lifecycle.Version, httpapi.HiddenChangeRequest{OldPasscode: current, NewPasscode: newPass}); err != nil {
 		return err
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "passcode changed")
@@ -257,7 +257,7 @@ func runHiddenDisable(cmd *cobra.Command, cfgPath string) error {
 	if _, err := lifecycle.Ensure(cmd.Context()); err != nil {
 		return err
 	}
-	if err := client.DisableHidden(cmd.Context(), lifecycle.DBPath, lifecycle.Version, httpapi.HiddenPasscodeRequest{Passcode: passcode}); err != nil {
+	if err := client.DisableHidden(cmd.Context(), lifecycle.ConfigPath, lifecycle.Version, httpapi.HiddenPasscodeRequest{Passcode: passcode}); err != nil {
 		return err
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "hidden-privacy disabled")
@@ -325,7 +325,7 @@ func runAdminResetHiddenPasscode(cmd *cobra.Command, cfgPath, ownerRaw string, c
 	if _, err := lifecycle.Ensure(cmd.Context()); err != nil {
 		return err
 	}
-	result, err := client.ResetHidden(cmd.Context(), lifecycle.DBPath, lifecycle.Version, httpapi.ResetHiddenRequest{Owner: ownerRaw, Confirm: confirm})
+	result, err := client.ResetHidden(cmd.Context(), lifecycle.ConfigPath, lifecycle.Version, httpapi.ResetHiddenRequest{Owner: ownerRaw, Confirm: confirm})
 	if err != nil {
 		return err
 	}

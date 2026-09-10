@@ -17,12 +17,13 @@ import (
 
 // Lifecycle identifies one configured deployment without opening its storage.
 type Lifecycle struct {
-	DBPath, ConfigPath, Version, Listen string
-	StartTimeout, StopTimeout           time.Duration
+	ConfigPath, Version, Listen string
+	StartTimeout, StopTimeout   time.Duration
+	Recovery, AnyMode           bool
 }
 
-func findDaemon(ctx context.Context, dbPath string) (daemon.RuntimeRecord, daemon.PingInfo, bool, error) {
-	store := daemon.RuntimeStore{Dir: dbPath + ".operator"}
+func findDaemon(ctx context.Context, configPath string) (daemon.RuntimeRecord, daemon.PingInfo, bool, error) {
+	store := daemon.RuntimeStore{Dir: configPath + ".operator"}
 	if _, err := os.Stat(store.Dir); errors.Is(err, os.ErrNotExist) {
 		return daemon.RuntimeRecord{}, daemon.PingInfo{}, false, nil
 	} else if err != nil {
@@ -53,7 +54,7 @@ func findDaemon(ctx context.Context, dbPath string) (daemon.RuntimeRecord, daemo
 }
 
 func (l Lifecycle) Status(ctx context.Context) (httpapi.DaemonStatus, error) {
-	rec, _, found, err := findDaemon(ctx, l.DBPath)
+	rec, _, found, err := findDaemon(ctx, l.ConfigPath)
 	if err != nil || !found {
 		return httpapi.DaemonStatus{}, err
 	}
@@ -68,7 +69,7 @@ func (l Lifecycle) Status(ctx context.Context) (httpapi.DaemonStatus, error) {
 func (l Lifecycle) Ensure(ctx context.Context) (httpapi.DaemonStatus, error) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	store := daemon.RuntimeStore{Dir: l.DBPath + ".operator"}
+	store := daemon.RuntimeStore{Dir: l.ConfigPath + ".operator"}
 	var output *os.File
 	defer func() {
 		if output != nil {
@@ -78,10 +79,15 @@ func (l Lifecycle) Ensure(ctx context.Context) (httpapi.DaemonStatus, error) {
 	childPID := 0
 	manager := daemon.Manager{Store: store}
 	manager.FindFunc = func(ctx context.Context) (daemon.RuntimeRecord, daemon.PingInfo, bool, error) {
-		rec, info, found, err := findDaemon(ctx, l.DBPath)
+		rec, info, found, err := findDaemon(ctx, l.ConfigPath)
 		if err == nil && childPID != 0 && !daemon.ProcessAlive(childPID) {
 			err = fmt.Errorf("daemon exited before becoming ready")
 			// Kit retries discovery errors; a child that has exited is terminal.
+			cancel(err)
+			return rec, info, false, err
+		}
+		if err == nil && found && !l.AnyMode && (rec.Metadata["mode"] == "recovery") != l.Recovery {
+			err = fmt.Errorf("daemon mode differs; use daemon restart with --recovery for recovery mode, or without it for normal photo operations")
 			cancel(err)
 			return rec, info, false, err
 		}
@@ -95,7 +101,7 @@ func (l Lifecycle) Ensure(ctx context.Context) (httpapi.DaemonStatus, error) {
 		if daemon.IsEphemeralExecutable(executable) {
 			return fmt.Errorf("build fotobank before starting a background daemon; test and go-run executables cannot own it")
 		}
-		rec, _, found, err := findDaemon(ctx, l.DBPath)
+		rec, _, found, err := findDaemon(ctx, l.ConfigPath)
 		if err != nil {
 			return err
 		}
@@ -109,12 +115,15 @@ func (l Lifecycle) Ensure(ctx context.Context) (httpapi.DaemonStatus, error) {
 			return err
 		}
 		args := []string{"daemon", "run", "--config", l.ConfigPath}
+		if l.Recovery || (l.AnyMode && found && rec.Metadata["mode"] == "recovery") {
+			args = append(args, "--recovery")
+		}
 		if l.Listen != "" {
 			args = append(args, "--listen", l.Listen)
 		}
 		return daemon.StartDetached(ctx, daemon.StartDetachedOptions{
 			Executable: executable, Args: args,
-			Env:    append(os.Environ(), "FOTOBANK_DB_PATH="+l.DBPath),
+			Env:    os.Environ(),
 			Stdout: output, Stderr: output, RefuseEphemeral: true,
 			AfterStart: func(cmd *exec.Cmd) { childPID = cmd.Process.Pid },
 		})
@@ -140,7 +149,7 @@ func (l Lifecycle) Ensure(ctx context.Context) (httpapi.DaemonStatus, error) {
 }
 
 func (l Lifecycle) Stop(ctx context.Context) error {
-	store := daemon.RuntimeStore{Dir: l.DBPath + ".operator"}
+	store := daemon.RuntimeStore{Dir: l.ConfigPath + ".operator"}
 	if _, err := os.Stat(store.Dir); errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
@@ -153,7 +162,7 @@ func (l Lifecycle) Stop(ctx context.Context) error {
 		return err
 	}
 	defer unlock()
-	rec, _, found, err := findDaemon(ctx, l.DBPath)
+	rec, _, found, err := findDaemon(ctx, l.ConfigPath)
 	if err != nil || !found {
 		return err
 	}
@@ -168,7 +177,7 @@ func (l Lifecycle) stopRecord(ctx context.Context, rec daemon.RuntimeRecord) err
 	if err := callRecord(ctx, rec, http.MethodPost, "/api/v1/operator/daemon/stop", nil, nil, "inspect daemon status before retrying"); err != nil {
 		return err
 	}
-	store := daemon.RuntimeStore{Dir: l.DBPath + ".operator"}
+	store := daemon.RuntimeStore{Dir: l.ConfigPath + ".operator"}
 	recordPath, err := store.Path(rec.PID)
 	if err != nil {
 		return err

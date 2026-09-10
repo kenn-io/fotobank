@@ -86,13 +86,13 @@ func TestLiveImportDisconnectReleasesImportLock(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	input := httpapi.ImportRequest{Hub: "h", UserID: "u", Source: source, Workers: 1, Wait: "0s"}
-	_, err := client.Import(ctx, dbPath, version.Short, input, func(httpapi.ImportProgress) { cancel() })
+	_, err := client.Import(ctx, configPath, version.Short, input, func(httpapi.ImportProgress) { cancel() })
 	r.Error(err)
 	// A new request must acquire the released lock, without stopping the daemon.
 	input.Wait = "5s"
 	retryCtx, retryCancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer retryCancel()
-	result, err := client.Import(retryCtx, dbPath, version.Short, input, nil)
+	result, err := client.Import(retryCtx, configPath, version.Short, input, nil)
 	r.NoError(err)
 	r.Equal(1, result.Imported+result.Duplicates)
 }
@@ -108,7 +108,7 @@ func TestLiveImportShutdownReportsInterruptedResult(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	stopped := false
-	_, err := client.Import(ctx, dbPath, version.Short,
+	_, err := client.Import(ctx, configPath, version.Short,
 		httpapi.ImportRequest{Hub: "h", UserID: "u", Source: source, Wait: "0s"},
 		func(httpapi.ImportProgress) {
 			if stopped {
@@ -125,7 +125,7 @@ func TestLiveImportShutdownReportsInterruptedResult(t *testing.T) {
 		})
 	r.True(stopped)
 	r.Error(err, "an interrupted stream must not report success")
-	recordPath, err := (daemon.RuntimeStore{Dir: dbPath + ".operator"}).Path(record.PID)
+	recordPath, err := (daemon.RuntimeStore{Dir: configPath + ".operator"}).Path(record.PID)
 	r.NoError(err)
 	r.Eventually(func() bool { _, err := os.Stat(recordPath); return os.IsNotExist(err) }, 5*time.Second, 10*time.Millisecond)
 }
@@ -283,7 +283,7 @@ func TestImportValidatesArgumentsBeforeStartingDaemon(t *testing.T) {
 		var result httpapi.ImportResult
 		r.NoError(json.Unmarshal(stdout.Bytes(), &result))
 		r.NotEmpty(result.Error)
-		_, err := os.Stat(dbPath + ".operator")
+		_, err := os.Stat(configPath + ".operator")
 		r.ErrorIs(err, os.ErrNotExist, "invalid arguments must not reach automatic launch")
 	}
 }

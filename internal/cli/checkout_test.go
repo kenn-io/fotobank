@@ -49,10 +49,10 @@ func startCheckoutServer(t *testing.T, cfgPath, dbPath string) daemon.RuntimeRec
 		}
 	})
 	r.Eventually(func() bool {
-		paths, err := filepath.Glob(dbPath + ".operator/daemon.*.json")
+		paths, err := filepath.Glob(cfgPath + ".operator/daemon.*.json")
 		return err == nil && len(paths) == 1
 	}, 10*time.Second, 20*time.Millisecond, "%s", serverErrors.String())
-	store := daemon.RuntimeStore{Dir: dbPath + ".operator"}
+	store := daemon.RuntimeStore{Dir: cfgPath + ".operator"}
 	records, err := store.List()
 	r.NoError(err)
 	r.Len(records, 1)

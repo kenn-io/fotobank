@@ -124,7 +124,7 @@ func runGPSBackfill(ctx context.Context, opts *gpsBackfillOpts, stdout, stderr i
 			_, err = lifecycle.Ensure(ctx)
 		}
 		if err == nil {
-			result, err = client.BackfillGPS(ctx, lifecycle.DBPath, version.Short, httpapi.GPSBackfillRequest{
+			result, err = client.BackfillGPS(ctx, lifecycle.ConfigPath, version.Short, httpapi.GPSBackfillRequest{
 				Mode: opts.mode, Since: opts.sinceTime, Owner: opts.owner, AllOwners: opts.allOwners,
 			})
 		}

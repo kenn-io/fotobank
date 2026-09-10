@@ -131,7 +131,7 @@ func TestAICommandValidationBeforeStartup(t *testing.T) {
 			_, _, code := runAICLI(append(tc.args, "--config", cfg)...)
 			require.NotZero(t, code)
 			require.NoFileExists(t, dbPath)
-			require.NoDirExists(t, dbPath+".operator")
+			require.NoDirExists(t, cfg+".operator")
 		})
 	}
 }

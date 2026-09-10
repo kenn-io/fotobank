@@ -224,7 +224,7 @@ func TestCLIAlbumsInvalidArgumentsBeforeStartup(t *testing.T) {
 			_, stderr, code := runAlbumsCLI(append(append([]string{"albums"}, args...), "--config", cfgPath)...)
 			r.Equal(2, code, "%s", stderr)
 			r.NoFileExists(dbPath)
-			r.NoDirExists(dbPath + ".operator")
+			r.NoDirExists(cfgPath + ".operator")
 		})
 	}
 }

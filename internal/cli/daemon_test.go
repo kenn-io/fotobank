@@ -57,7 +57,7 @@ func TestDaemonShutdownClosesOperatorBeforeDraining(t *testing.T) {
 		return false
 	}, 2*time.Second, 10*time.Millisecond, "operator listener still accepts connections during shutdown")
 	// Discovery stays reserved until the photo request and storage have drained.
-	recordPath, err := (daemon.RuntimeStore{Dir: dbPath + ".operator"}).Path(record.PID)
+	recordPath, err := (daemon.RuntimeStore{Dir: configPath + ".operator"}).Path(record.PID)
 	r.NoError(err)
 	_, err = os.Stat(recordPath)
 	r.NoError(err)
@@ -106,6 +106,22 @@ func TestDaemonLifecycle(t *testing.T) {
 	r.JSONEq(`{"running":false}`, string(output))
 	_, err = os.Stat(dbPath)
 	r.ErrorIs(err, os.ErrNotExist)
+	// Recovery uses the same process slot, but does not initialize the catalog.
+	output, err = run("daemon", "start", "--recovery")
+	r.NoError(err, "%s", output)
+	r.Contains(string(output), "recovery mode")
+	r.NoFileExists(dbPath)
+	output, err = run("daemon", "status", "--json")
+	r.NoError(err, "%s", output)
+	r.Contains(string(output), `"recovery":true`)
+	output, err = run("albums", "list")
+	r.Error(err)
+	r.Contains(string(output), "recovery")
+	output, err = run("daemon", "restart")
+	r.NoError(err, "%s", output)
+	r.Contains(string(output), "Web UI:")
+	output, err = run("daemon", "stop")
+	r.NoError(err, "%s", output)
 	// Album commands start the daemon instead of opening the catalog themselves.
 	output, err = run("albums", "create", "Trip")
 	r.NoError(err, "%s", output)

@@ -1,9 +1,9 @@
 package cli
 
 import (
-	"context"
 	json "encoding/json/v2"
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/fotobank/internal/client"
@@ -24,17 +24,18 @@ func daemonLifecycle(configPath, listen string) (client.Lifecycle, error) {
 	if err != nil {
 		return client.Lifecycle{}, err
 	}
-	dbPath, err := resolveDBPath(cfg)
+	configPath, err = filepath.EvalSymlinks(configPath)
 	if err != nil {
 		return client.Lifecycle{}, err
 	}
-	return client.Lifecycle{DBPath: dbPath, ConfigPath: configPath, Version: version.Short, Listen: listen,
+	return client.Lifecycle{ConfigPath: configPath, Version: version.Short, Listen: listen,
 		StartTimeout: cfg.Daemon.StartTimeout, StopTimeout: cfg.Daemon.StopTimeout}, nil
 }
 
 func newDaemonCmd() *cobra.Command {
 	var configPath, listen string
 	var asJSON bool
+	var recovery bool
 	cmd := &cobra.Command{Use: "daemon", Short: "Manage the Fotobank daemon"}
 	cmd.PersistentFlags().StringVar(&configPath, "config", "", "path to config.toml")
 	cmd.PersistentFlags().BoolVar(&asJSON, "json", false, "machine-readable output")
@@ -45,6 +46,7 @@ func newDaemonCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				lifecycle.Recovery = recovery
 				var status httpapi.DaemonStatus
 				switch action {
 				case "stop":
@@ -68,28 +70,25 @@ func newDaemonCmd() *cobra.Command {
 					_, err = fmt.Fprintln(cmd.OutOrStdout(), "daemon not running")
 					return err
 				}
+				if status.Recovery {
+					_, err = fmt.Fprintf(cmd.OutOrStdout(), "Fotobank is running in recovery mode (pid %d). Photo operations are unavailable.\n", status.PID)
+					return err
+				}
 				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Fotobank is running (pid %d).\nWeb UI: %s\n", status.PID, status.WebURL)
 				return err
 			}}
 		if action == "start" || action == "restart" {
+			child.Flags().BoolVar(&recovery, "recovery", false, "start without opening photo storage")
 			child.Flags().StringVar(&listen, "listen", "", "override [http].listen_address")
 		}
 		cmd.AddCommand(child)
 	}
 	run := &cobra.Command{Use: "run", Short: "Run Fotobank in the foreground", Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runServer(cmd.Context(), serverOpts{cfgPath: configPath, listen: listen, stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr()})
+			return runServer(cmd.Context(), serverOpts{cfgPath: configPath, listen: listen, recovery: recovery, stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr()})
 		}}
 	run.Flags().StringVar(&listen, "listen", "", "override [http].listen_address")
+	run.Flags().BoolVar(&recovery, "recovery", false, "run without opening photo storage")
 	cmd.AddCommand(run)
 	return cmd
-}
-
-func ensureOperator(ctx context.Context, configPath string) error {
-	lifecycle, err := daemonLifecycle(configPath, "")
-	if err != nil {
-		return err
-	}
-	_, err = lifecycle.Ensure(ctx)
-	return err
 }

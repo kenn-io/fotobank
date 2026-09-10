@@ -30,10 +30,14 @@ func TestBackupArchiveCLI(t *testing.T) {
 		r := require.New(t)
 		t.Chdir(tmp)
 		record := startCheckoutServer(t, cfgPath, filepath.Join(tmp, "flash", "fotobank.sqlite"))
+		response, err := http.Get(record.Metadata["web_url"] + "/api/v1/operator/backup-repository/snapshots?repository=/unused")
+		r.NoError(err)
+		r.NoError(response.Body.Close())
+		r.Equal(http.StatusForbidden, response.StatusCode)
 		for _, args := range [][]string{
-			{"backup", "init", "--repo", repository, "--json"},
+			{"backup", "init", "--config", cfgPath, "--repo", repository, "--json"},
 			{"backup", "create", "--config", cfgPath, "--repo", "repository", "--tag", "cli-drill", "--json"},
-			{"backup", "verify", "--repo", repository, "--all", "--json"},
+			{"backup", "verify", "--config", cfgPath, "--repo", repository, "--all", "--json"},
 		} {
 			stdout.Reset()
 			stderr.Reset()
@@ -81,9 +85,10 @@ func TestBackupArchiveCLI(t *testing.T) {
 	})
 	// Listing and verification need only the repository, even after source loss.
 	r.NoError(os.Rename(filepath.Join(tmp, "flash"), filepath.Join(tmp, "offline-flash")))
+	startRecoveryServer(t, cfgPath)
 	stdout.Reset()
 	stderr.Reset()
-	code = cli.RunContext(t.Context(), []string{"backup", "list", "--repo", repository, "--json"}, &stdout, &stderr)
+	code = cli.RunContext(t.Context(), []string{"backup", "list", "--config", cfgPath, "--repo", repository, "--json"}, &stdout, &stderr)
 	r.Equal(0, code, "%s", stderr.String())
 	var snapshots []content.BackupSnapshot
 	r.NoError(json.Unmarshal(stdout.Bytes(), &snapshots))
@@ -92,7 +97,7 @@ func TestBackupArchiveCLI(t *testing.T) {
 	r.Positive(snapshots[0].BlobBytes)
 	stdout.Reset()
 	stderr.Reset()
-	code = cli.RunContext(t.Context(), []string{"backup", "verify", snapshots[0].ID, "--repo", repository}, &stdout, &stderr)
+	code = cli.RunContext(t.Context(), []string{"backup", "verify", snapshots[0].ID, "--config", cfgPath, "--repo", repository}, &stdout, &stderr)
 	r.Equal(0, code, "%s", stderr.String())
 	// Recovery must not bootstrap or open the lost source installation.
 	r.NoError(os.RemoveAll(filepath.Join(tmp, "offline-flash")))

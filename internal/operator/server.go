@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,8 +31,8 @@ type Server struct {
 // Start serves host lifecycle and configured photo-owner operations. The caller
 // holds the server lifetime lock. Close must precede storage cleanup, and
 // RemoveRecord must follow storage and lifetime-lock cleanup.
-func Start(ctx context.Context, dbPath, version, address, webURL string, shutdown func(), deps httpapi.Deps) (*Server, error) {
-	store := daemon.RuntimeStore{Dir: dbPath + ".operator"}
+func Start(ctx context.Context, configPath, version, address, webURL string, recovery bool, shutdown func(), deps httpapi.Deps) (*Server, error) {
+	store := daemon.RuntimeStore{Dir: configPath + ".operator"}
 	if err := store.CheckWritable(); err != nil {
 		return nil, err
 	}
@@ -52,8 +53,11 @@ func Start(ctx context.Context, dbPath, version, address, webURL string, shutdow
 	// Kit atomically publishes the record inside a current-user-only directory.
 	// The credential is never sent until the peer proves possession of it.
 	rec.Metadata = map[string]string{"token": credential, "web_url": webURL}
+	if recovery {
+		rec.Metadata["mode"] = "recovery"
+	}
 	deps.Daemon = &httpapi.DaemonDeps{
-		Status:   httpapi.DaemonStatus{Running: true, PID: rec.PID, Version: version, Address: rec.Address, WebURL: webURL, StartedAt: &rec.StartedAt},
+		Status:   httpapi.DaemonStatus{Running: true, Recovery: recovery, PID: rec.PID, Version: version, Address: rec.Address, WebURL: webURL, StartedAt: &rec.StartedAt},
 		Shutdown: shutdown,
 	}
 	proof, err := daemon.NewProof([]byte(credential))
@@ -97,6 +101,10 @@ func Start(ctx context.Context, dbPath, version, address, webURL string, shutdow
 				http.Error(w, "operator authentication required", http.StatusUnauthorized)
 				return
 			}
+			if recovery && !recoveryOperation(r.URL.Path) {
+				http.Error(w, "photo operations unavailable in recovery mode; restart normally", http.StatusServiceUnavailable)
+				return
+			}
 			handler.ServeHTTP(w, r)
 		}),
 	}
@@ -123,4 +131,14 @@ func Start(ctx context.Context, dbPath, version, address, webURL string, shutdow
 		<-done
 		handlers.Wait()
 	}), RemoveRecord: sync.OnceFunc(func() { _ = os.Remove(runtimePath) }), Fatal: failures}, nil
+}
+
+func recoveryOperation(path string) bool {
+	switch path {
+	case "/api/v1/operator/daemon", "/api/v1/operator/daemon/stop", "/api/docs":
+		return true
+	default:
+		return strings.HasPrefix(path, "/api/v1/operator/backup-repository/") ||
+			strings.HasPrefix(path, "/api/openapi.") || strings.HasPrefix(path, "/api/schemas/")
+	}
 }

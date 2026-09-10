@@ -154,7 +154,7 @@ func runSharesCreate(ctx context.Context, o sharesCreateOpts) error {
 	if err != nil {
 		return err
 	}
-	s, err := client.CreateShare(ctx, sctx.DBPath, sctx.Version, req)
+	s, err := client.CreateShare(ctx, sctx.ConfigPath, sctx.Version, req)
 	if err != nil {
 		return err
 	}
@@ -236,7 +236,7 @@ func runSharesList(ctx context.Context, o sharesListOpts) error {
 	if err != nil {
 		return err
 	}
-	page, err := client.ListShares(ctx, sctx.DBPath, sctx.Version, filter)
+	page, err := client.ListShares(ctx, sctx.ConfigPath, sctx.Version, filter)
 	if err != nil {
 		return err
 	}
@@ -273,7 +273,7 @@ func newSharesShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			det, err := client.GetShare(cmd.Context(), sctx.DBPath, sctx.Version, args[0])
+			det, err := client.GetShare(cmd.Context(), sctx.ConfigPath, sctx.Version, args[0])
 			if err != nil {
 				return err
 			}
@@ -300,7 +300,7 @@ func newSharesRevokeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := client.RevokeShare(cmd.Context(), sctx.DBPath, sctx.Version, args[0])
+			s, err := client.RevokeShare(cmd.Context(), sctx.ConfigPath, sctx.Version, args[0])
 			if err != nil {
 				return err
 			}
@@ -327,7 +327,7 @@ func newSharesRetryCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s, err := client.RetryShare(cmd.Context(), sctx.DBPath, sctx.Version, args[0])
+			s, err := client.RetryShare(cmd.Context(), sctx.ConfigPath, sctx.Version, args[0])
 			if err != nil {
 				return err
 			}

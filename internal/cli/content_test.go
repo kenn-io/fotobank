@@ -132,7 +132,7 @@ func TestContentRecoveryOperatorAndImportLock(t *testing.T) {
 	var invalidResult httpapi.ContentRecoveryResult
 	r.NoError(json.Unmarshal(invalidOutput.Bytes(), &invalidResult))
 	r.NotEmpty(invalidResult.Error)
-	_, err := os.Stat(dbPath + ".operator")
+	_, err := os.Stat(cfgPath + ".operator")
 	r.ErrorIs(err, os.ErrNotExist)
 	record := startCheckoutServer(t, cfgPath, dbPath)
 	for _, tc := range []struct {
@@ -165,18 +165,18 @@ func TestContentRecoveryOperatorAndImportLock(t *testing.T) {
 	r.NoError(err)
 	defer unlock()
 	request := httpapi.ContentRecoveryRequest{Hub: "h", UserID: "u", Wait: "0s"}
-	result, err := client.RecoverContent(t.Context(), dbPath, version.Short, request)
+	result, err := client.RecoverContent(t.Context(), cfgPath, version.Short, request)
 	r.Error(err)
 	r.NotEmpty(result.Error)
 	r.Empty(result.Reports)
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 	request.Wait = "30s"
-	_, err = client.RecoverContent(ctx, dbPath, version.Short, request)
+	_, err = client.RecoverContent(ctx, cfgPath, version.Short, request)
 	r.ErrorIs(err, context.DeadlineExceeded)
 	unlock()
 	request.Wait = "1s"
-	result, err = client.RecoverContent(t.Context(), dbPath, version.Short, request)
+	result, err = client.RecoverContent(t.Context(), cfgPath, version.Short, request)
 	r.NoError(err)
 	r.Len(result.Reports, 1)
 }

@@ -18,6 +18,7 @@ type DaemonDeps struct {
 
 type DaemonStatus struct {
 	Running   bool       `json:"running"`
+	Recovery  bool       `json:"recovery,omitempty,omitzero"`
 	PID       int        `json:"pid,omitempty,omitzero"`
 	Version   string     `json:"version,omitempty"`
 	Address   string     `json:"address,omitempty"`
