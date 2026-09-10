@@ -39,7 +39,7 @@ func ArchiveRestorePaths(target, databasePath string, protected []string) (strin
 			return "", nil, err
 		}
 		if pathsOverlap(requestedTarget, configuredRoot) || pathsOverlap(resolvedTarget, configuredRoot) {
-			return "", nil, fmt.Errorf("%w: archive restore target overlaps configured storage %q", errs.ErrBadConfiguration, configuredRoot)
+			return "", nil, fmt.Errorf("%w: archive restore target overlaps configured storage %q", errs.ErrBackupRestoreTargetOverlap, configuredRoot)
 		}
 		resolved, err := canonicalUnavailableConfigPath(configuredRoot)
 		if err != nil {

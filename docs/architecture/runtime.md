@@ -182,6 +182,9 @@ storage, then uses saved configuration to protect source paths during restore.
 It also retains the configured vault, NAS, flash, and backup repository roots.
 If those settings change, restore refuses the request until an explicit recovery
 restart; it validates and resolves paths from the same configuration it compared.
+An overlapping restore target returns HTTP 400; changed storage settings return
+HTTP 409 with recovery-restart guidance. These expected refusals are distinct
+from internal restore failures.
 The CLI normalizes target and repository paths and submits one request; it never
 opens either database or retries a partially completed restore. Photo and normal
 operator listeners reject this operation. Recovery also serves both OpenAPI

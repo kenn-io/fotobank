@@ -130,7 +130,15 @@ func TestBackupArchiveCLI(t *testing.T) {
 		_, err = client.RestoreArchive(t.Context(), cfgPath, recovery.Version,
 			httpapi.ArchiveRestoreRequest{Repository: repository, Target: target})
 		r.ErrorContains(err, "storage configuration changed")
+		r.ErrorContains(err, "409 Conflict")
 		r.NoDirExists(target)
+	})
+	t.Run("overlapping restore target", func(t *testing.T) {
+		target := filepath.Join(tmp, "nas", "restored")
+		_, err := client.RestoreArchive(t.Context(), cfgPath, recovery.Version,
+			httpapi.ArchiveRestoreRequest{Repository: repository, Target: target})
+		require.ErrorContains(t, err, "400 Bad Request")
+		require.NoDirExists(t, target)
 	})
 	direct, err := client.RestoreArchive(t.Context(), cfgPath, recovery.Version,
 		httpapi.ArchiveRestoreRequest{Repository: repository, Target: filepath.Join(tmp, "direct-recovery")})

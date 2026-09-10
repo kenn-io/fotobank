@@ -240,7 +240,7 @@ func TestAdapterBackupRestoreRejectsManagedStorage(t *testing.T) {
 		Target:     target,
 		Overwrite:  true,
 	})
-	r.ErrorIs(err, errs.ErrBadConfiguration)
+	r.ErrorIs(err, errs.ErrBackupRestoreTargetOverlap)
 	r.NoDirExists(target)
 }
 
@@ -279,7 +279,7 @@ func TestAdapterBackupRestoreRejectsRetargetedManagedStorage(t *testing.T) {
 		Target:     target,
 		Overwrite:  true,
 	})
-	r.ErrorIs(err, errs.ErrBadConfiguration)
+	r.ErrorIs(err, errs.ErrBackupRestoreTargetOverlap)
 	r.NoDirExists(filepath.Join(currentTarget, "restore"))
 }
 

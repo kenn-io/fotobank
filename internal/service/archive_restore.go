@@ -40,7 +40,7 @@ func (s *ArchiveRestoreService) Restore(ctx context.Context, repositoryPath, sna
 		return backup.ArchiveRestoreReport{}, err
 	}
 	if archiveStorageRoots(cfg) != s.storageRoots {
-		return backup.ArchiveRestoreReport{}, fmt.Errorf("%w: storage configuration changed; check the source paths and run fotobank daemon restart --recovery", errs.ErrBadConfiguration)
+		return backup.ArchiveRestoreReport{}, fmt.Errorf("%w: check the source paths and run fotobank daemon restart --recovery", errs.ErrBackupRestoreConfigurationChanged)
 	}
 	configuredVault := cfg.Docbank.Root
 	if err := cfg.ValidateWithOptions(config.ValidationOptions{AllowUnavailableStorage: true}); err != nil {
