@@ -310,7 +310,7 @@ admin_listen = "127.0.0.1:0"
 // startWorkerTestServer owns the server through cleanup, including when a worker
 // assertion fails. These are functional smoke tests, not startup/shutdown latency
 // tests; allow the daemon's 30s drain budget plus time to release storage.
-func startWorkerTestServer(t *testing.T, cfgPath, addrFile string) string {
+func startWorkerTestServer(t *testing.T, cfgPath, addrFile string) (string, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -320,7 +320,8 @@ func startWorkerTestServer(t *testing.T, cfgPath, addrFile string) string {
 		defer close(done)
 		code = cli.RunContext(ctx, []string{"server", "--config", cfgPath}, io.Discard, &diagnostics)
 	}()
-	t.Cleanup(func() {
+	stop := func() {
+		t.Helper()
 		cancel()
 		select {
 		case <-done:
@@ -330,14 +331,15 @@ func startWorkerTestServer(t *testing.T, cfgPath, addrFile string) string {
 			_ = pprof.Lookup("goroutine").WriteTo(&stacks, 2)
 			assert.Fail(t, "server cleanup timed out", "stderr: %s\ngoroutines:\n%s", diagnostics.String(), stacks.String())
 		}
-	})
+	}
+	t.Cleanup(stop)
 	deadline := time.NewTimer(30 * time.Second)
 	defer deadline.Stop()
 	poll := time.NewTicker(20 * time.Millisecond)
 	defer poll.Stop()
 	for {
 		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
-			return strings.TrimSpace(string(b))
+			return strings.TrimSpace(string(b)), stop
 		}
 		select {
 		case <-done:
@@ -500,37 +502,12 @@ admin_listen = "127.0.0.1:0"
 	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
 
 	baseline := runtime.NumGoroutine()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	errCh := make(chan int, 1)
-	go func() {
-		var out, eout bytes.Buffer
-		errCh <- cli.RunContext(ctx, []string{"server", "--config", cfgPath}, &out, &eout)
-	}()
-
-	// Wait for boot so the worker is live and drain has started.
-	var booted bool
-	for range 200 {
-		if b, err := os.ReadFile(addrFile); err == nil && len(b) > 0 {
-			booted = true
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	r.True(booted, "server never published its bind address")
+	_, stop := startWorkerTestServer(t, cfgPath, addrFile)
 
 	// Let at least one poll tick fire so drain is mid-flight and
 	// processOne goroutines are running inside the worker's semaphore.
 	time.Sleep(40 * time.Millisecond)
-	cancel()
-
-	select {
-	case code := <-errCh:
-		r.Equal(0, code)
-	case <-time.After(5 * time.Second):
-		r.FailNow("server did not shut down within 5s")
-	}
+	stop()
 
 	// If the WaitGroup join is wired correctly, every thumb-worker
 	// goroutine has exited by the time RunContext returns. Allow a
@@ -933,7 +910,7 @@ admin_listen = "127.0.0.1:0"
 	addrFile := filepath.Join(tmp, "addr")
 	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
 
-	resolved := startWorkerTestServer(t, cfgPath, addrFile)
+	resolved, _ := startWorkerTestServer(t, cfgPath, addrFile)
 	client := &http.Client{Transport: &http.Transport{}, Timeout: 10 * time.Second}
 	t.Cleanup(client.CloseIdleConnections)
 
