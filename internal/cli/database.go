@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofrs/flock"
 
+	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/errs"
 )
@@ -24,7 +25,7 @@ type databaseLifetime struct {
 }
 
 func acquireDatabaseLifetime(path string) (*databaseLifetime, error) {
-	canonical, err := canonicalDBPath(path)
+	canonical, err := config.ResolveDatabasePath(path)
 	if err != nil {
 		return nil, err
 	}

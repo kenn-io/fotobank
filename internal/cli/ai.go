@@ -73,7 +73,7 @@ func runAIStatus(ctx context.Context, cfgPath string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	h, err := client.AIHealth(ctx, c.DBPath, c.Version)
+	h, err := client.AIHealth(ctx, c.ConfigPath, c.Version)
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func newAIBackfillCmd() *cobra.Command {
 			}
 			total := 0
 			for _, t := range tasks {
-				result, err := client.BackfillAI(cmd.Context(), c.DBPath, c.Version, httpapi.AIBackfillRequest{Task: string(t), Force: force})
+				result, err := client.BackfillAI(cmd.Context(), c.ConfigPath, c.Version, httpapi.AIBackfillRequest{Task: string(t), Force: force})
 				n := result.Enqueued
 				if err != nil {
 					return fmt.Errorf("backfill %s: %w", t, err)
@@ -144,7 +144,7 @@ func newAIRetryFailedCmd() *cobra.Command {
 				return err
 			}
 			for _, t := range tasks {
-				result, err := client.RetryFailedAI(cmd.Context(), c.DBPath, c.Version, httpapi.AIRetryFailedRequest{Task: string(t)})
+				result, err := client.RetryFailedAI(cmd.Context(), c.ConfigPath, c.Version, httpapi.AIRetryFailedRequest{Task: string(t)})
 				n := result.Enqueued
 				if err != nil {
 					return fmt.Errorf("retry %s: %w", t, err)
@@ -176,7 +176,7 @@ func newAIAcknowledgeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := client.AcknowledgeAI(cmd.Context(), c.DBPath, c.Version, httpapi.AIAcknowledgeRequest{Kind: "hidden_processing"}); err != nil {
+			if err := client.AcknowledgeAI(cmd.Context(), c.ConfigPath, c.Version, httpapi.AIAcknowledgeRequest{Kind: "hidden_processing"}); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "ok")
@@ -253,7 +253,7 @@ func runAIListGenerations(ctx context.Context, cfgPath, state string, stdout io.
 	if err != nil {
 		return err
 	}
-	result, err := client.ListGenerations(ctx, c.DBPath, c.Version, state)
+	result, err := client.ListGenerations(ctx, c.ConfigPath, c.Version, state)
 	if err != nil {
 		return err
 	}
@@ -288,7 +288,7 @@ func runAIPromoteGeneration(cmd *cobra.Command, cfgPath string, id int64, yes bo
 	if err != nil {
 		return err
 	}
-	details, err := client.GetGeneration(ctx, c.DBPath, c.Version, id)
+	details, err := client.GetGeneration(ctx, c.ConfigPath, c.Version, id)
 	if err != nil {
 		return err
 	}
@@ -313,7 +313,7 @@ func runAIPromoteGeneration(cmd *cobra.Command, cfgPath string, id int64, yes bo
 			return fmt.Errorf("aborted")
 		}
 	}
-	result, err := client.PromoteGeneration(ctx, c.DBPath, c.Version, id)
+	result, err := client.PromoteGeneration(ctx, c.ConfigPath, c.Version, id)
 	if err != nil {
 		return err
 	}
@@ -344,7 +344,7 @@ func runAICompactRetiredGenerations(ctx context.Context, cfgPath string, dryRun 
 	if err != nil {
 		return err
 	}
-	result, err := client.CompactGenerations(ctx, c.DBPath, c.Version, dryRun)
+	result, err := client.CompactGenerations(ctx, c.ConfigPath, c.Version, dryRun)
 	if err != nil {
 		return err
 	}

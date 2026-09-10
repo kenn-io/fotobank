@@ -166,7 +166,7 @@ func runThumbsRegenerate(ctx context.Context, opts regenerateOpts, stdout, _ io.
 	if _, err := lifecycle.Ensure(ctx); err != nil {
 		return err
 	}
-	result, err := client.RegenerateThumbs(ctx, lifecycle.DBPath, lifecycle.Version, httpapi.RegenerateThumbsRequest{
+	result, err := client.RegenerateThumbs(ctx, lifecycle.ConfigPath, lifecycle.Version, httpapi.RegenerateThumbsRequest{
 		All: opts.all, IDs: opts.parsedIDs, Type: opts.kind, Status: opts.status, Since: opts.sinceTime,
 		Owner: opts.owner, AllOwners: opts.allOwners,
 	})

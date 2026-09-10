@@ -79,7 +79,7 @@ func runAlbumsCreate(ctx context.Context, cfgPath, name string, stdout io.Writer
 	if err != nil {
 		return err
 	}
-	it, err := client.CreateAlbum(ctx, ac.DBPath, ac.Version, httpapi.AlbumNameRequest{Name: name})
+	it, err := client.CreateAlbum(ctx, ac.ConfigPath, ac.Version, httpapi.AlbumNameRequest{Name: name})
 	if err != nil {
 		return err
 	}
@@ -98,7 +98,7 @@ func newAlbumsRenameCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			it, err := client.RenameAlbum(cmd.Context(), ac.DBPath, ac.Version, args[0], httpapi.AlbumNameRequest{Name: args[1]})
+			it, err := client.RenameAlbum(cmd.Context(), ac.ConfigPath, ac.Version, args[0], httpapi.AlbumNameRequest{Name: args[1]})
 			if err != nil {
 				return err
 			}
@@ -121,7 +121,7 @@ func newAlbumsDeleteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := client.DeleteAlbum(cmd.Context(), ac.DBPath, ac.Version, args[0]); err != nil {
+			if err := client.DeleteAlbum(cmd.Context(), ac.ConfigPath, ac.Version, args[0]); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "deleted", args[0])
@@ -148,7 +148,7 @@ func newAlbumsListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := client.ListAlbums(cmd.Context(), ac.DBPath, ac.Version, httpapi.ListAlbumsInput{Limit: limit, Offset: offset})
+			result, err := client.ListAlbums(cmd.Context(), ac.ConfigPath, ac.Version, httpapi.ListAlbumsInput{Limit: limit, Offset: offset})
 			if err != nil {
 				return err
 			}
@@ -208,7 +208,7 @@ func runAlbumsShow(
 	if err != nil {
 		return err
 	}
-	detail, err := client.GetAlbum(ctx, ac.DBPath, ac.Version, id)
+	detail, err := client.GetAlbum(ctx, ac.ConfigPath, ac.Version, id)
 	if err != nil {
 		return err
 	}
@@ -220,7 +220,7 @@ func runAlbumsShow(
 		fmt.Fprintf(stdout, "cover:      media=%s version=%d\n",
 			detail.Cover.MediaID, detail.Cover.ThumbVersion)
 	}
-	result, err := client.ListAlbumMedia(ctx, ac.DBPath, ac.Version, filter)
+	result, err := client.ListAlbumMedia(ctx, ac.ConfigPath, ac.Version, filter)
 	if err != nil {
 		return err
 	}
@@ -242,7 +242,7 @@ func newAlbumsAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := client.AddAlbumMedia(cmd.Context(), ac.DBPath, ac.Version, args[0], httpapi.AddAlbumMediaRequest{MediaIDs: args[1:]})
+			result, err := client.AddAlbumMedia(cmd.Context(), ac.ConfigPath, ac.Version, args[0], httpapi.AddAlbumMediaRequest{MediaIDs: args[1:]})
 			if err != nil {
 				return err
 			}
@@ -265,7 +265,7 @@ func newAlbumsRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := client.RemoveAlbumMedia(cmd.Context(), ac.DBPath, ac.Version, args[0], args[1]); err != nil {
+			if err := client.RemoveAlbumMedia(cmd.Context(), ac.ConfigPath, ac.Version, args[0], args[1]); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "removed", args[1])

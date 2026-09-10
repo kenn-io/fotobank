@@ -57,7 +57,7 @@ func TestDaemonShutdownClosesOperatorBeforeDraining(t *testing.T) {
 		return false
 	}, 2*time.Second, 10*time.Millisecond, "operator listener still accepts connections during shutdown")
 	// Discovery stays reserved until the photo request and storage have drained.
-	recordPath, err := (daemon.RuntimeStore{Dir: dbPath + ".operator"}).Path(record.PID)
+	recordPath, err := (daemon.RuntimeStore{Dir: configPath + ".operator"}).Path(record.PID)
 	r.NoError(err)
 	_, err = os.Stat(recordPath)
 	r.NoError(err)
@@ -67,7 +67,7 @@ func TestDaemonLifecycle(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
 	configPath := writeBasicConfig(t, tmp)
-	dbPath := filepath.Join(tmp, "catalog.sqlite")
+	dbPath := filepath.Join(tmp, "flash", "catalog.sqlite")
 	// Reserve an available control port, then require the daemon to use it.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	r.NoError(err)
@@ -106,10 +106,109 @@ func TestDaemonLifecycle(t *testing.T) {
 	r.JSONEq(`{"running":false}`, string(output))
 	_, err = os.Stat(dbPath)
 	r.ErrorIs(err, os.ErrNotExist)
+	// Repository inspection must not recreate photo storage when no daemon
+	// is running. Exercise the built binary so automatic launch is possible.
+	r.NoError(os.Remove(filepath.Join(tmp, "nas")))
+	r.NoError(os.Remove(filepath.Join(tmp, "flash")))
+	for _, action := range []string{"list", "verify", "init"} {
+		output, err = run("backup", action, "--repo", filepath.Join(tmp, "archives"))
+		r.Error(err, "%s", output)
+		r.NoDirExists(filepath.Join(tmp, "flash"), "%s", output)
+		r.NoDirExists(filepath.Join(tmp, "nas"))
+		r.NoDirExists(configPath + ".operator")
+		r.Contains(string(output), "no daemon running")
+		r.Contains(string(output), "daemon start --recovery")
+	}
+	r.NoError(os.Mkdir(filepath.Join(tmp, "nas"), 0o700))
+	r.NoError(os.Mkdir(filepath.Join(tmp, "flash"), 0o700))
+	// Recovery uses the same process slot, but does not initialize the catalog.
+	output, err = run("daemon", "start", "--recovery")
+	r.NoError(err, "%s", output)
+	r.Contains(string(output), "recovery mode")
+	r.NoFileExists(dbPath)
+	output, err = run("daemon", "status", "--json")
+	r.NoError(err, "%s", output)
+	r.Contains(string(output), `"recovery":true`)
+	// Recovery is independent of the missing source catalog selection.
+	recoveryCommand := exec.CommandContext(t.Context(), binary, "backup", "init", "--repo", filepath.Join(tmp, "archives"), "--config", configPath)
+	recoveryCommand.Env = append(os.Environ(), "FOTOBANK_DB_PATH="+filepath.Join(tmp, "lost", "catalog.sqlite"))
+	output, err = recoveryCommand.CombinedOutput()
+	r.NoError(err, "%s", output)
+	r.NoDirExists(filepath.Join(tmp, "lost"))
+	output, err = run("albums", "list")
+	r.Error(err)
+	r.Contains(string(output), "recovery")
+	output, err = run("daemon", "restart")
+	r.NoError(err, "%s", output)
+	r.Contains(string(output), "Web UI:")
+	output, err = run("daemon", "stop")
+	r.NoError(err, "%s", output)
+	// With no environment override, a changed flash root selects a different
+	// catalog and must not reuse the daemon that still owns the old one.
+	savedDBPath := dbPath
+	dbPath = ""
+	output, err = run("albums", "create", "Default catalog")
+	r.NoError(err, "%s", output)
+	originalConfig, err := os.ReadFile(configPath)
+	r.NoError(err)
+	changedConfig := strings.ReplaceAll(string(originalConfig), fmt.Sprintf("%q", filepath.Join(tmp, "flash")), fmt.Sprintf("%q", filepath.Join(tmp, "other-flash")))
+	r.NotEqual(string(originalConfig), changedConfig)
+	r.NoError(os.WriteFile(configPath, []byte(changedConfig), 0o600))
+	output, err = run("albums", "create", "Wrong default catalog")
+	r.NoError(os.WriteFile(configPath, originalConfig, 0o600))
+	r.Error(err, "%s", output)
+	r.Contains(string(output), "different catalog")
+	output, err = run("albums", "list")
+	r.NoError(err, "%s", output)
+	r.NotContains(string(output), "Wrong default catalog")
+	output, err = run("daemon", "stop")
+	r.NoError(err, "%s", output)
+	dbPath = savedDBPath
+	t.Run("retargeted catalog symlink", func(t *testing.T) {
+		r := require.New(t)
+		alias := filepath.Join(tmp, "catalog-alias")
+		if err := os.Symlink(filepath.Dir(savedDBPath), alias); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		dbPath = filepath.Join(alias, filepath.Base(savedDBPath))
+		defer func() { dbPath = savedDBPath }()
+		defer func() {
+			output, err := run("daemon", "stop")
+			r.NoError(err, "%s", output)
+		}()
+		output, err := run("albums", "create", "Symlink catalog")
+		r.NoError(err, "%s", output)
+		otherRoot := filepath.Join(tmp, "other-catalog")
+		r.NoError(os.Mkdir(otherRoot, 0o700))
+		r.NoError(os.Remove(alias))
+		r.NoError(os.Symlink(otherRoot, alias))
+		output, err = run("albums", "create", "Wrong symlink catalog")
+		r.Error(err, "%s", output)
+		r.Contains(string(output), "different catalog")
+		dbPath = savedDBPath
+		output, err = run("albums", "list")
+		r.NoError(err, "%s", output)
+		r.NotContains(string(output), "Wrong symlink catalog")
+	})
 	// Album commands start the daemon instead of opening the catalog themselves.
 	output, err = run("albums", "create", "Trip")
 	r.NoError(err, "%s", output)
 	r.Contains(string(output), "Trip")
+	// A different shell's catalog override must not reuse this daemon.
+	for _, override := range []string{"", filepath.Join(tmp, "other.sqlite")} {
+		for _, args := range [][]string{{"albums", "create", "Wrong catalog"}, {"backup", "list", "--repo", filepath.Join(tmp, "archives")}} {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			command := exec.CommandContext(ctx, binary, append(args, "--config", configPath)...)
+			command.Env = append(os.Environ(), "FOTOBANK_DB_PATH="+override)
+			output, err = command.CombinedOutput()
+			cancel()
+			r.Error(err, "%s", output)
+			r.Contains(string(output), "different catalog")
+		}
+	}
+	output, err = run("albums", "list")
+	r.NoError(err, "%s", output)
+	r.NotContains(string(output), "Wrong catalog")
 	output, err = run("daemon", "status", "--json")
 	r.NoError(err, "%s", output)
 	var albumDaemon struct {
@@ -117,7 +216,9 @@ func TestDaemonLifecycle(t *testing.T) {
 	}
 	r.NoError(json.Unmarshal(output, &albumDaemon))
 	r.True(albumDaemon.Running)
-	output, err = run("daemon", "stop")
+	stopCommand := exec.CommandContext(t.Context(), binary, "daemon", "stop", "--config", configPath)
+	stopCommand.Env = append(os.Environ(), "FOTOBANK_DB_PATH="+filepath.Join(tmp, "other.sqlite"))
+	output, err = stopCommand.CombinedOutput()
 	r.NoError(err, "%s", output)
 	// A real import starts the daemon and uses its vault, not a second owner.
 	source := seedImportSource(t, "photo-no-exif.jpg")

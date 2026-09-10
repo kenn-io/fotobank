@@ -61,7 +61,7 @@ func newOwnersAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			owner, err := client.RegisterOwner(cmd.Context(), lifecycle.DBPath, lifecycle.Version, request)
+			owner, err := client.RegisterOwner(cmd.Context(), lifecycle.ConfigPath, lifecycle.Version, request)
 			if err != nil {
 				return err
 			}
@@ -88,7 +88,7 @@ func newOwnersListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := client.ListOwners(cmd.Context(), lifecycle.DBPath, lifecycle.Version)
+			result, err := client.ListOwners(cmd.Context(), lifecycle.ConfigPath, lifecycle.Version)
 			if err != nil {
 				return err
 			}
@@ -128,7 +128,7 @@ func newOwnersRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := client.RemoveOwner(cmd.Context(), lifecycle.DBPath, lifecycle.Version, httpapi.RemoveOwnerRequest{Hub: hub, UserID: userID}); err != nil {
+			if err := client.RemoveOwner(cmd.Context(), lifecycle.ConfigPath, lifecycle.Version, httpapi.RemoveOwnerRequest{Hub: hub, UserID: userID}); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "removed")

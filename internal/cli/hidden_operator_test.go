@@ -36,7 +36,7 @@ func TestHiddenInputValidationBeforeStartup(t *testing.T) {
 			_, _, code := runHiddenCLIIn(tc.input, append(tc.args, "--config", cfg)...)
 			r.NotZero(code)
 			r.NoFileExists(dbPath)
-			r.NoDirExists(dbPath + ".operator")
+			r.NoDirExists(cfg + ".operator")
 		})
 	}
 }

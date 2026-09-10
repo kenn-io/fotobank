@@ -25,6 +25,7 @@ func newBackupListCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&repositoryPath, "repo", "", "archive repository to list")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON to stdout")
+	cmd.Flags().String("config", "", "path to config file")
 	return cmd
 }
 

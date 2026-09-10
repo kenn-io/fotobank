@@ -54,7 +54,8 @@ schedule and which recovery points scheduled retention selects.
 `backup init`, `backup create`, `backup list`, `backup verify`, and
 `backup restore` require an explicit `--repo`. Creation opens an initialized
 repository; only `init` creates one. Repository listing and verification
-require neither configuration nor the original vault. Restore additionally
+run through the authenticated operator API and require configuration, but not
+the original vault when the daemon runs in explicit recovery mode. Restore additionally
 requires `--target` and uses a separate empty directory.
 
 `internal/backup.CreateArchive` snapshots Fotobank SQLite into private temporary

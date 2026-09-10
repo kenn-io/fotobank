@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/fotobank/internal/config"
 )
 
 func TestCanonicalDBPathAcceptsForwardSlashes(t *testing.T) {
@@ -15,7 +16,7 @@ func TestCanonicalDBPathAcceptsForwardSlashes(t *testing.T) {
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	r.NoError(err)
 
-	got, err := canonicalDBPath(filepath.ToSlash(filepath.Join(root, "missing", "fotobank.sqlite")))
+	got, err := config.ResolveDatabasePath(filepath.ToSlash(filepath.Join(root, "missing", "fotobank.sqlite")))
 	r.NoError(err)
 	r.Equal(filepath.Join(resolvedRoot, "missing", "fotobank.sqlite"), got)
 }

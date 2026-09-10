@@ -541,6 +541,85 @@
         ],
         "type": "object"
       },
+      "BackupRepositoryInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/BackupRepositoryInfo.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "root"
+        ],
+        "type": "object"
+      },
+      "BackupRepositoryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/BackupRepositoryRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "repository": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "repository"
+        ],
+        "type": "object"
+      },
+      "BackupRepositoryVerifyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/BackupRepositoryVerifyRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "all": {
+            "type": "boolean"
+          },
+          "repository": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "snapshot_id": {
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "required": [
+          "repository",
+          "all"
+        ],
+        "type": "object"
+      },
       "BackupRequest": {
         "additionalProperties": false,
         "properties": {
@@ -649,6 +728,69 @@
           "blob_bytes",
           "bytes_added",
           "duration_seconds"
+        ],
+        "type": "object"
+      },
+      "BackupVerifyProblem": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "snapshot_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshot_id",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "BackupVerifyReport": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/BackupVerifyReport.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "blobs_checked": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "bytes_read": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "problems": {
+            "items": {
+              "$ref": "#/components/schemas/BackupVerifyProblem"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "snapshots": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "snapshots",
+          "blobs_checked",
+          "bytes_read",
+          "problems"
         ],
         "type": "object"
       },
@@ -1313,6 +1455,9 @@
           "pid": {
             "format": "int64",
             "type": "integer"
+          },
+          "recovery": {
+            "type": "boolean"
           },
           "running": {
             "type": "boolean"
@@ -6045,6 +6190,153 @@
           }
         ],
         "summary": "Make a retired embedding generation active",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/backup-repository/init": {
+      "post": {
+        "operationId": "init-backup-repository",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupRepositoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRepositoryInfo"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Initialize a backup repository",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/backup-repository/snapshots": {
+      "get": {
+        "operationId": "list-backup-snapshots",
+        "parameters": [
+          {
+            "explode": false,
+            "in": "query",
+            "name": "repository",
+            "required": true,
+            "schema": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BackupSnapshot"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "List backup recovery points",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/backup-repository/verify": {
+      "post": {
+        "operationId": "verify-backup-repository",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupRepositoryVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupVerifyReport"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Verify backup recovery points",
         "tags": [
           "operator"
         ]

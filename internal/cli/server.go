@@ -120,23 +120,17 @@ func newServerCmd() *cobra.Command {
 }
 
 type serverOpts struct {
-	cfgPath string
-	listen  string
-	stdout  io.Writer
-	stderr  io.Writer
+	recovery bool
+	cfgPath  string
+	listen   string
+	stdout   io.Writer
+	stderr   io.Writer
 }
 
 // runServer loads config, opens the database, wires the identity provider
 // and HTTP handler, binds the configured listen address, and serves until
 // ctx is cancelled or the process receives SIGINT/SIGTERM.
-func runServer(ctx context.Context, opts serverOpts) (retErr error) {
-	// Keep discovery until all deferred storage and lock cleanup has completed.
-	var removeRuntime func()
-	defer func() {
-		if removeRuntime != nil {
-			removeRuntime()
-		}
-	}()
+func runPhotoServer(ctx context.Context, opts serverOpts, removeRuntime *func()) (retErr error) {
 	path := opts.cfgPath
 	if path == "" {
 		path = config.DefaultConfigPath()
@@ -604,6 +598,7 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	defer ln.Close()
 	var operatorFatal <-chan error
 	operatorDeps := apiDeps
+	operatorDeps.BackupRepository = &service.BackupRepositoryService{}
 	var activeOwner owners.Principal
 	if cfg.Identity.Mode == "stub" {
 		activeOwner = owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
@@ -976,14 +971,14 @@ func runServer(ctx context.Context, opts serverOpts) (retErr error) {
 	if webURL == "" {
 		webURL = listenURL(ln.Addr())
 	}
-	op, err := operator.Start(sigCtx, dbPath, version.Short, cfg.Daemon.ListenAddress, webURL, stop, operatorDeps)
+	op, err := operator.Start(sigCtx, opts.cfgPath, version.Short, cfg.Daemon.ListenAddress, webURL, dbPath, stop, operatorDeps)
 	if err != nil {
 		failed := make(chan error, 1)
 		failed <- fmt.Errorf("start operator interface: %w", err)
 		operatorFatal = failed
 	} else {
 		defer op.Close()
-		removeRuntime = op.RemoveRecord
+		*removeRuntime = op.RemoveRecord
 		operatorFatal = op.Fatal
 	}
 	select {

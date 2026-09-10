@@ -83,6 +83,10 @@ Three tiers per domain: **repo → service → transport**.
 - Use the shared lifecycle path for explicit start/restart and automatic
   startup before HTTP commands. Stop/status never launch a daemon. Keep
   ports and lifecycle budgets configurable; start/restart show the web UI URL.
+- Normal and recovery modes share config-based discovery and a deployment
+  lifetime lock. Recovery mode opens no photo storage and exposes only backup
+  repository administration and lifecycle operations. Switching modes requires
+  explicit restart; CLI commands must not silently switch modes.
 - Fotobank has no released API to preserve. Change the single contract in
   place; do not add protocol-version counters or compatibility fallbacks.
 - Host-operator permissions and photo-user permissions remain distinct. A

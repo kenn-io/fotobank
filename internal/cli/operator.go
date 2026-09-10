@@ -22,11 +22,11 @@ func localOperatorConfig(ctx context.Context, configPath string) (string, owners
 	if cfg.Identity.Mode != "stub" {
 		return "", owners.Principal{}, fmt.Errorf("local operator commands require identity.mode = stub")
 	}
-	dbPath, err := resolveDBPath(cfg)
+	lifecycle, err := daemonLifecycle(configPath, "")
 	if err == nil {
-		err = ensureOperator(ctx, configPath)
+		_, err = lifecycle.Ensure(ctx)
 	}
-	return dbPath, owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}, err
+	return lifecycle.ConfigPath, owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}, err
 }
 
 // localOperatorPath leaves symlink-sensitive parent components for the server

@@ -29,15 +29,15 @@ func TestCommitDoesNotSendCredentialToUnprovenEndpoint(t *testing.T) {
 		ping.ServeHTTP(w, req)
 	}))
 	defer server.Close()
-	dbPath := filepath.Join(t.TempDir(), "catalog.sqlite")
-	store := daemon.RuntimeStore{Dir: dbPath + ".operator"}
+	configPath := filepath.Join(t.TempDir(), "catalog.sqlite")
+	store := daemon.RuntimeStore{Dir: configPath + ".operator"}
 	record := daemon.NewRuntimeRecord("fotobank-operator", "test", daemon.Endpoint{
 		Network: daemon.NetworkTCP, Address: strings.TrimPrefix(server.URL, "http://"),
 	})
 	record.Metadata = map[string]string{"token": "synthetic-operator-credential"}
 	_, err := store.Write(record)
 	r.NoError(err)
-	_, err = client.Commit(context.Background(), dbPath, "test", "checkout", owners.Principal{Hub: "h", UserID: "u"})
+	_, err = client.Commit(context.Background(), configPath, "test", "checkout", owners.Principal{Hub: "h", UserID: "u"})
 	r.ErrorContains(err, "unreachable")
 	r.False(credentialSeen.Load())
 	r.False(commitSeen.Load())

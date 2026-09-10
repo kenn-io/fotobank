@@ -8,9 +8,9 @@ import (
 	"go.kenn.io/fotobank/internal/httpapi"
 )
 
-func BackfillGPS(ctx context.Context, dbPath, version string, request httpapi.GPSBackfillRequest) (httpapi.GPSBackfillResult, error) {
+func BackfillGPS(ctx context.Context, configPath, version string, request httpapi.GPSBackfillRequest) (httpapi.GPSBackfillResult, error) {
 	var result httpapi.GPSBackfillResult
-	err := call(ctx, dbPath, version, http.MethodPost, "/api/v1/operator/gps/backfill", request, &result, "inspect GPS results before rerunning backfill")
+	err := call(ctx, configPath, version, http.MethodPost, "/api/v1/operator/gps/backfill", request, &result, "inspect GPS results before rerunning backfill")
 	if err == nil && result.Error != "" {
 		err = errors.New(result.Error)
 	}

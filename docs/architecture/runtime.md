@@ -115,15 +115,15 @@ state there; the CLI opens neither the catalog nor the vault.
 
 The server also owns a separate configurable loopback control listener
 from `internal/operator`. Import, every checkout command, and manual backup creation
-use the typed `internal/client` HTTP client to discover it beside the canonical SQLite path, in
-`<database>.operator/`. Kit publishes a runtime record atomically
+use the typed `internal/client` HTTP client to discover it beside the canonical configuration file, in
+`<config>.operator/`. Kit publishes a runtime record atomically
 inside a current-user-only directory. A fresh random credential lives in that
 record. The client requires Kit's possession proof before sending the bearer
 credential and accepts only loopback endpoints with a matching service and
 reported application version. `internal/client/lifecycle.go` uses Kit's Manager
 and start lock to coordinate automatic or explicit startup, and StartDetached
 to launch the current executable with the same configuration, working directory,
-and canonical database path. Neither discovery nor launch opens the database
+and environment. Neither discovery nor launch resolves or opens the database
 or vault in the client. A different running build version is stopped through
 the authenticated shutdown operation before replacement. Development builds
 with the same version string require explicit restart after rebuilding. There
@@ -143,7 +143,34 @@ during that drain. The client waits for the runtime record to disappear
 after workers, storage, and lifetime locks have closed. Restart then starts
 the replacement. Stop uses `daemon.stop_timeout`; startup/replacement uses
 `daemon.start_timeout`. Timeouts report an error rather than force-killing
-unfinished writes. Background logs live at `<database>.operator/daemon.log`.
+unfinished writes. Background logs live at `<config>.operator/daemon.log`.
+
+Normal daemons record their startup catalog selection in discovery metadata:
+`FOTOBANK_DB_PATH`, or `[flash].root/fotobank.sqlite` when no override is set.
+Application clients compare the selection from their current configuration and
+environment, rejecting a different catalog rather than silently reusing or
+replacing the daemon. Discovery and database opening share the same resolver:
+relative paths include their working directory and existing symlinks resolve
+before comparison. The runtime record contains the resolved startup database
+path, so retargeting an alias requires an explicit restart. Unresolvable source
+paths fail normal application discovery. Status and stop remain scoped to the
+configuration so changes cannot prevent stopping the old daemon. Recovery bypasses
+source-path resolution and comparison because it opens no source catalog.
+
+`daemon start --recovery` (or `restart --recovery`) starts only the operator
+listener, without opening the catalog, Docbank, NAS, or flash storage. It
+validates the control-listener settings rather than normal storage settings.
+The config file must remain available. Both modes hold the same configuration
+lifetime lock; status and stop use the same discovery record. Changing modes
+requires explicit restart. Recovery mode advertises no web UI and rejects photo
+operations. `daemon restart` returns to normal operation.
+
+`backup init`, `list`, and `verify` use `BackupRepositoryService` through the
+documented `/api/v1/operator/backup-repository/` operations in either mode.
+They accept `--config`, normalize repository paths before discovery, and do not
+open repositories in the CLI. They require an already-running daemon and never
+start or replace one. When none is running, the error explains how to start
+normal mode or recovery mode explicitly, without recreating lost photo storage.
 
 The local and photo listeners use the same `httpapi.New` registrations and
 OpenAPI document at `/api/openapi.json`, with documentation at `/api/docs`.
@@ -366,8 +393,8 @@ service; photo listeners and header-mode deployments reject these operations.
 The daemon reuses its generation registry, activation counter, and compactor.
 The CLI performs no catalog reads, including promotion inspection and dry-run.
 
-The daemon-only command boundary is not yet complete. Backup repository
-inspection and restore still run in the CLI.
+The daemon-only command boundary is not yet complete. Archive restore still
+runs in the CLI.
 These existing paths are migration work in kata, not exceptions to extend.
 The accepted boundary is one daemon-owned implementation per application
 operation, shared by HTTP, the CLI, and a future MCP client. Bootstrap and

@@ -26,21 +26,23 @@ func newBackupInitCmd() *cobra.Command {
 			if repositoryPath == "" {
 				return errors.New("--repo is required")
 			}
-			repository, err := content.InitBackupRepository(repositoryPath)
+			lifecycle, path, err := backupRepositoryClient(cmd, repositoryPath)
+			if err != nil {
+				return err
+			}
+			repository, err := client.InitBackupRepository(cmd.Context(), lifecycle.ConfigPath, lifecycle.Version, path)
 			if err != nil {
 				return err
 			}
 			if asJSON {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
-					ID   string `json:"id"`
-					Root string `json:"root"`
-				}{repository.ID(), repository.Root()})
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(repository)
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "archive repository initialized: %s\n", repository.Root())
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "archive repository initialized: %s\n", repository.Root)
 			return err
 		},
 	}
 	cmd.Flags().StringVar(&repositoryPath, "repo", "", "new or empty archive repository directory (required)")
+	cmd.Flags().String("config", "", "path to config file")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON to stdout")
 	return cmd
 }
@@ -107,15 +109,15 @@ func newBackupVerifyCmd() *cobra.Command {
 			if all && len(args) != 0 {
 				return errors.New("--all and a snapshot ID are mutually exclusive")
 			}
-			repository, err := content.OpenBackupRepository(repositoryPath)
+			lifecycle, path, err := backupRepositoryClient(cmd, repositoryPath)
 			if err != nil {
 				return err
 			}
-			options := content.BackupVerifyOptions{All: all}
+			options := httpapi.BackupRepositoryVerifyRequest{Repository: path, All: all}
 			if len(args) != 0 {
 				options.SnapshotID = args[0]
 			}
-			report, err := repository.Verify(cmd.Context(), options)
+			report, err := client.VerifyBackupRepository(cmd.Context(), lifecycle.ConfigPath, lifecycle.Version, options)
 			if err != nil {
 				return err
 			}
@@ -140,15 +142,16 @@ func newBackupVerifyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repositoryPath, "repo", "", "archive repository directory (required)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON to stdout")
 	cmd.Flags().BoolVar(&all, "all", false, "verify all recovery points (default: latest)")
+	cmd.Flags().String("config", "", "path to config file")
 	return cmd
 }
 
 func listArchives(cmd *cobra.Command, repositoryPath string, asJSON bool) error {
-	repository, err := content.OpenBackupRepository(repositoryPath)
+	lifecycle, path, err := backupRepositoryClient(cmd, repositoryPath)
 	if err != nil {
 		return err
 	}
-	snapshots, err := repository.Snapshots()
+	snapshots, err := client.ListBackupSnapshots(cmd.Context(), lifecycle.ConfigPath, lifecycle.Version, path)
 	if err != nil {
 		return err
 	}
@@ -161,6 +164,26 @@ func listArchives(cmd *cobra.Command, repositoryPath string, asJSON bool) error 
 		}
 	}
 	return nil
+}
+
+func backupRepositoryClient(cmd *cobra.Command, path string) (client.Lifecycle, string, error) {
+	path, err := localOperatorPath(path)
+	if err != nil {
+		return client.Lifecycle{}, "", err
+	}
+	configPath, _ := cmd.Flags().GetString("config")
+	lifecycle, err := daemonLifecycle(configPath, "")
+	if err != nil {
+		return lifecycle, "", err
+	}
+	status, err := lifecycle.Status(cmd.Context())
+	if err != nil {
+		return lifecycle, path, err
+	}
+	if !status.Running {
+		return lifecycle, path, errors.New("no daemon running; run daemon start, or daemon start --recovery when photo storage is offline")
+	}
+	return lifecycle, path, nil
 }
 
 func restoreArchive(cmd *cobra.Command, repositoryPath, snapshotID, target string, asJSON bool) error {

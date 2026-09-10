@@ -613,6 +613,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/backup-repository/init": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Initialize a backup repository */
+        post: operations["init-backup-repository"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/backup-repository/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List backup recovery points */
+        get: operations["list-backup-snapshots"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/backup-repository/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify backup recovery points */
+        post: operations["verify-backup-repository"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operator/backups": {
         parameters: {
             query?: never;
@@ -1329,6 +1380,36 @@ export interface components {
             readonly $schema?: string;
             tags: components["schemas"]["TagSuggestionDTO"][] | null;
         };
+        BackupRepositoryInfo: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/BackupRepositoryInfo.json
+             */
+            readonly $schema?: string;
+            id: string;
+            root: string;
+        };
+        BackupRepositoryRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/BackupRepositoryRequest.json
+             */
+            readonly $schema?: string;
+            repository: string;
+        };
+        BackupRepositoryVerifyRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/BackupRepositoryVerifyRequest.json
+             */
+            readonly $schema?: string;
+            all: boolean;
+            repository: string;
+            snapshot_id?: string;
+        };
         BackupRequest: {
             /**
              * Format: uri
@@ -1368,6 +1449,24 @@ export interface components {
             nodes: number;
             parent_id: string;
             tag: string;
+        };
+        BackupVerifyProblem: {
+            detail: string;
+            snapshot_id: string;
+        };
+        BackupVerifyReport: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/BackupVerifyReport.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            blobs_checked: number;
+            /** Format: int64 */
+            bytes_read: number;
+            problems: components["schemas"]["BackupVerifyProblem"][] | null;
+            snapshots: string[] | null;
         };
         CaptionItem: {
             /** Format: date-time */
@@ -1601,6 +1700,7 @@ export interface components {
             address?: string;
             /** Format: int64 */
             pid?: number;
+            recovery?: boolean;
             running: boolean;
             /** Format: date-time */
             started_at?: string;
@@ -3907,6 +4007,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PromoteGenerationResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "init-backup-repository": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupRepositoryRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupRepositoryInfo"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "list-backup-snapshots": {
+        parameters: {
+            query: {
+                repository: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupSnapshot"][] | null;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "verify-backup-repository": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupRepositoryVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupVerifyReport"];
                 };
             };
             /** @description Error */

@@ -11,6 +11,7 @@ running server. Run the CLI as the server's OS account, using the same
 configuration and Fotobank version in stub identity mode:
 
 ```sh
+fotobank daemon start
 fotobank backup init --repo /backups/photos
 fotobank backup create --repo /backups/photos --tag before-upgrade
 fotobank backup list --repo /backups/photos
@@ -18,12 +19,28 @@ fotobank backup verify --repo /backups/photos
 ```
 
 `create` requires an existing repository; it never initializes a missing one.
-Use `--config /path/to/fotobank.toml` on `create` to select the deployment.
-The CLI starts a missing daemon and never opens a second vault. If the
-connection is interrupted, list and verify the repository before retrying:
+Use `--config /path/to/fotobank.toml` on each command to select the deployment.
+`backup create` starts a missing daemon in normal mode and never opens a second
+vault. If the connection is interrupted, list and verify the repository before retrying:
 the server may already have published the recovery point.
-`init`, `list --repo`, and `verify` work without a Fotobank configuration or
-source vault. Each command supports `--json`. Verification selects the latest
+`init`, `list --repo`, and `verify` require an already-running daemon. They never
+start one or choose its mode. When source storage is unavailable, start recovery
+mode using the saved configuration:
+
+```sh
+fotobank daemon start --recovery --config /saved/fotobank.toml
+fotobank backup list --repo /backups/photos --config /saved/fotobank.toml
+fotobank backup verify --repo /backups/photos --all --config /saved/fotobank.toml
+```
+
+Use `daemon restart --recovery` instead if the daemon is already running.
+Recovery mode opens no photo storage and has no web UI or photo operations.
+It uses the same local operator authentication and process slot as normal mode.
+After repairing storage or configuring the recovered copy, use `daemon restart`
+with that configuration to return to normal operation. Configuration and the
+adjacent daemon discovery directory must live on available local storage.
+
+Each command supports `--json`. Verification selects the latest
 recovery point by default; pass its ID or `--all` to select older points.
 
 The archive includes all owners and hidden media. The catalog is captured as

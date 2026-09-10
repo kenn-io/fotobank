@@ -164,7 +164,7 @@ func TestSharesInvalidArgumentsBeforeStartup(t *testing.T) {
 			_, stderr, code := runSharesCLI(t, cfgPath, args...)
 			r.Equal(2, code, "%s", stderr)
 			r.NoFileExists(dbPath)
-			r.NoDirExists(dbPath + ".operator")
+			r.NoDirExists(cfgPath + ".operator")
 		})
 	}
 }

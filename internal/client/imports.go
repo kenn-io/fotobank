@@ -13,9 +13,9 @@ import (
 
 // Import streams a single request-bound import. Missing terminal results are
 // errors; a broken connection never causes the client to resubmit the request.
-func Import(ctx context.Context, dbPath, version string, input httpapi.ImportRequest, progress func(httpapi.ImportProgress)) (httpapi.ImportResult, error) {
+func Import(ctx context.Context, configPath, version string, input httpapi.ImportRequest, progress func(httpapi.ImportProgress)) (httpapi.ImportResult, error) {
 	var result httpapi.ImportResult
-	rec, _, found, err := findDaemon(ctx, dbPath)
+	rec, _, found, err := findDaemon(ctx, configPath)
 	if err != nil {
 		return result, err
 	}

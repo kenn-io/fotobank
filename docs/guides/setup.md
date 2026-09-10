@@ -106,8 +106,12 @@ Repeated `start` calls reuse the running daemon. Restart applies configuration
 changes and prints the new web UI URL. Status and stop never start a daemon.
 Stop waits for requests, workers, and storage to close; it reports a timeout
 instead of force-killing unfinished writes. Background output goes to
-`<database>.operator/daemon.log` and is replaced on the next launch. Startup
+`<config>.operator/daemon.log` and is replaced on the next launch. Startup
 errors include that path and recent output.
+
+The daemon account needs write access to the configuration directory for its
+discovery directory and deployment lock. Keep that directory on local storage
+that remains available when the photo storage is offline.
 
 Use `fotobank daemon run` or `fotobank serve` for foreground operation under a
 supervisor or while developing. Lifecycle commands use the same configuration

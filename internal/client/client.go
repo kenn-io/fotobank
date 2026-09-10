@@ -19,9 +19,9 @@ import (
 
 // Commit discovers a proven local server without opening SQLite or Docbank.
 // The caller ensures the daemon first. Requests never fall back to local writes.
-func Commit(ctx context.Context, dbPath, version, checkoutID string, owner owners.Principal) (httpapi.CheckoutCommitResult, error) {
+func Commit(ctx context.Context, configPath, version, checkoutID string, owner owners.Principal) (httpapi.CheckoutCommitResult, error) {
 	out := httpapi.CheckoutCommitResult{CheckoutID: checkoutID}
-	err := call(ctx, dbPath, version, http.MethodPost, "/api/v1/operator/checkouts/"+url.PathEscape(checkoutID)+"/commit",
+	err := call(ctx, configPath, version, http.MethodPost, "/api/v1/operator/checkouts/"+url.PathEscape(checkoutID)+"/commit",
 		httpapi.CheckoutCommitRequest{Hub: owner.Hub, UserID: owner.UserID}, &out, "inspect checkout list/status before retrying")
 	if err == nil && out.Error != "" {
 		err = errors.New(out.Error)
@@ -31,8 +31,8 @@ func Commit(ctx context.Context, dbPath, version, checkoutID string, owner owner
 
 // call proves the peer before sending a command. Requests are never retried:
 // a lost response may follow a successful mutation.
-func call(ctx context.Context, dbPath, version, method, path string, input, output any, recoveryHint string) error {
-	rec, _, found, err := findDaemon(ctx, dbPath)
+func call(ctx context.Context, configPath, version, method, path string, input, output any, recoveryHint string) error {
+	rec, _, found, err := findDaemon(ctx, configPath)
 	if err != nil {
 		return err
 	}
