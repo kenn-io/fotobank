@@ -17,7 +17,6 @@ import (
 
 	"go.kenn.io/kit/daemon"
 
-	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/httpapi"
 )
 
@@ -32,15 +31,9 @@ type Server struct {
 // Start serves host lifecycle and configured photo-owner operations. The caller
 // holds the server lifetime lock. Close must precede storage cleanup, and
 // RemoveRecord must follow storage and lifetime-lock cleanup.
-func Start(ctx context.Context, configPath, version, address, webURL string, recovery bool, shutdown func(), deps httpapi.Deps) (*Server, error) {
-	var databaseOverride string
-	if !recovery {
-		var err error
-		databaseOverride, err = config.DatabaseOverride()
-		if err != nil {
-			return nil, err
-		}
-	}
+// An empty catalogSelection selects recovery mode.
+func Start(ctx context.Context, configPath, version, address, webURL, catalogSelection string, shutdown func(), deps httpapi.Deps) (*Server, error) {
+	recovery := catalogSelection == ""
 	store := daemon.RuntimeStore{Dir: configPath + ".operator"}
 	if err := store.CheckWritable(); err != nil {
 		return nil, err
@@ -61,7 +54,7 @@ func Start(ctx context.Context, configPath, version, address, webURL string, rec
 	rec := daemon.NewRuntimeRecord(serviceName, version, daemon.Endpoint{Network: daemon.NetworkTCP, Address: ln.Addr().String()})
 	// Kit atomically publishes the record inside a current-user-only directory.
 	// The credential is never sent until the peer proves possession of it.
-	rec.Metadata = map[string]string{"token": credential, "web_url": webURL, "database_override": databaseOverride}
+	rec.Metadata = map[string]string{"token": credential, "web_url": webURL, "catalog_selection": catalogSelection}
 	if recovery {
 		rec.Metadata["mode"] = "recovery"
 	}

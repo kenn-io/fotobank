@@ -139,6 +139,10 @@ func runPhotoServer(ctx context.Context, opts serverOpts, removeRuntime *func())
 	if err != nil {
 		return err
 	}
+	catalogSelection, err := config.CatalogSelection(cfg)
+	if err != nil {
+		return err
+	}
 	validationOptions := config.ValidationOptions{AllowUnavailableNAS: true}
 	if err := cfg.ValidateWithOptions(validationOptions); err != nil {
 		return err
@@ -971,7 +975,7 @@ func runPhotoServer(ctx context.Context, opts serverOpts, removeRuntime *func())
 	if webURL == "" {
 		webURL = listenURL(ln.Addr())
 	}
-	op, err := operator.Start(sigCtx, opts.cfgPath, version.Short, cfg.Daemon.ListenAddress, webURL, false, stop, operatorDeps)
+	op, err := operator.Start(sigCtx, opts.cfgPath, version.Short, cfg.Daemon.ListenAddress, webURL, catalogSelection, stop, operatorDeps)
 	if err != nil {
 		failed := make(chan error, 1)
 		failed <- fmt.Errorf("start operator interface: %w", err)

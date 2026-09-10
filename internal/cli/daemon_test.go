@@ -143,6 +143,27 @@ func TestDaemonLifecycle(t *testing.T) {
 	r.Contains(string(output), "Web UI:")
 	output, err = run("daemon", "stop")
 	r.NoError(err, "%s", output)
+	// With no environment override, a changed flash root selects a different
+	// catalog and must not reuse the daemon that still owns the old one.
+	savedDBPath := dbPath
+	dbPath = ""
+	output, err = run("albums", "create", "Default catalog")
+	r.NoError(err, "%s", output)
+	originalConfig, err := os.ReadFile(configPath)
+	r.NoError(err)
+	changedConfig := strings.ReplaceAll(string(originalConfig), fmt.Sprintf("%q", filepath.Join(tmp, "flash")), fmt.Sprintf("%q", filepath.Join(tmp, "other-flash")))
+	r.NotEqual(string(originalConfig), changedConfig)
+	r.NoError(os.WriteFile(configPath, []byte(changedConfig), 0o600))
+	output, err = run("albums", "create", "Wrong default catalog")
+	r.NoError(os.WriteFile(configPath, originalConfig, 0o600))
+	r.Error(err, "%s", output)
+	r.Contains(string(output), "different catalog")
+	output, err = run("albums", "list")
+	r.NoError(err, "%s", output)
+	r.NotContains(string(output), "Wrong default catalog")
+	output, err = run("daemon", "stop")
+	r.NoError(err, "%s", output)
+	dbPath = savedDBPath
 	// Album commands start the daemon instead of opening the catalog themselves.
 	output, err = run("albums", "create", "Trip")
 	r.NoError(err, "%s", output)
@@ -156,7 +177,7 @@ func TestDaemonLifecycle(t *testing.T) {
 			output, err = command.CombinedOutput()
 			cancel()
 			r.Error(err, "%s", output)
-			r.Contains(string(output), "different FOTOBANK_DB_PATH")
+			r.Contains(string(output), "different catalog")
 		}
 	}
 	output, err = run("albums", "list")

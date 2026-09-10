@@ -23,19 +23,23 @@ type Lifecycle struct {
 	Recovery                    bool
 }
 
-var errDatabaseOverride = errors.New("running daemon uses a different FOTOBANK_DB_PATH; run daemon stop before changing the database override")
+var errCatalogSelection = errors.New("running daemon uses a different catalog; run daemon restart after changing FOTOBANK_DB_PATH or the configured flash root")
 
 func findDaemon(ctx context.Context, configPath string) (daemon.RuntimeRecord, daemon.PingInfo, bool, error) {
 	rec, info, found, err := discoverDaemon(ctx, configPath)
 	if err != nil || !found || rec.Metadata["mode"] == "recovery" {
 		return rec, info, found, err
 	}
-	override, err := config.DatabaseOverride()
+	cfg, err := config.LoadUnchecked(configPath)
 	if err != nil {
 		return rec, info, false, err
 	}
-	if override != rec.Metadata["database_override"] {
-		return rec, info, false, errDatabaseOverride
+	selection, err := config.CatalogSelection(cfg)
+	if err != nil {
+		return rec, info, false, err
+	}
+	if selection != rec.Metadata["catalog_selection"] {
+		return rec, info, false, errCatalogSelection
 	}
 	return rec, info, true, nil
 }
@@ -100,7 +104,7 @@ func (l Lifecycle) Ensure(ctx context.Context) (httpapi.DaemonStatus, error) {
 	manager := daemon.Manager{Store: store}
 	manager.FindFunc = func(ctx context.Context) (daemon.RuntimeRecord, daemon.PingInfo, bool, error) {
 		rec, info, found, err := findDaemon(ctx, l.ConfigPath)
-		if errors.Is(err, errDatabaseOverride) {
+		if errors.Is(err, errCatalogSelection) {
 			cancel(err)
 			return rec, info, false, err
 		}

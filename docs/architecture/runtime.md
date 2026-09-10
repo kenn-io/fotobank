@@ -145,14 +145,15 @@ the replacement. Stop uses `daemon.stop_timeout`; startup/replacement uses
 `daemon.start_timeout`. Timeouts report an error rather than force-killing
 unfinished writes. Background logs live at `<config>.operator/daemon.log`.
 
-Normal daemons record their `FOTOBANK_DB_PATH` override in discovery metadata.
-Application clients reject a different override rather than reuse the wrong
-catalog or automatically replace the daemon. Relative overrides include their
-working directory; comparison does not access source storage or resolve aliases.
-Use the same override spelling for commands, or explicitly stop/restart after
-changing it. Status and stop remain configuration-scoped so a changed shell
-environment cannot prevent stopping the old daemon. Recovery ignores the
-override because it opens no source catalog.
+Normal daemons record their startup catalog selection in discovery metadata:
+`FOTOBANK_DB_PATH`, or `[flash].root/fotobank.sqlite` when no override is set.
+Application clients compare the selection from their current configuration and
+environment, rejecting a different catalog rather than silently reusing or
+replacing the daemon. Relative paths include their working directory; comparison
+does not access source storage or resolve aliases. Use the same path spelling
+for commands, or explicitly restart after changing the selection. Status and
+stop remain configuration-scoped so changes cannot prevent stopping the old
+daemon. Recovery bypasses this comparison because it opens no source catalog.
 
 `daemon start --recovery` (or `restart --recovery`) starts only the operator
 listener, without opening the catalog, Docbank, NAS, or flash storage. It

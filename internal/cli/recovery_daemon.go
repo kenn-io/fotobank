@@ -50,7 +50,7 @@ func runServer(ctx context.Context, opts serverOpts) error {
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	op, err := operator.Start(ctx, opts.cfgPath, version.Short, cfg.Daemon.ListenAddress, "", true, stop,
+	op, err := operator.Start(ctx, opts.cfgPath, version.Short, cfg.Daemon.ListenAddress, "", "", stop,
 		httpapi.Deps{BackupRepository: &service.BackupRepositoryService{}})
 	if err != nil {
 		return err
