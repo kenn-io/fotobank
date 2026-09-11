@@ -115,11 +115,11 @@ Album commands use the configured stub owner and start the daemon if needed.
 Run them under the same OS account and configuration as the server:
 
 ```sh
-fotobank albums create "Autumn walk"
-fotobank albums add <album-uuid> <media-uuid> [<media-uuid>...]
+fotobank albums create "Autumn walk" --json
+fotobank albums add <album-uuid> <media-uuid> [<media-uuid>...] --json
 fotobank albums list --json --limit 100 --offset 0
-fotobank albums show <album-uuid> --sort-by taken --sort-asc
-fotobank albums rename <album-uuid> "Autumn walks"
+fotobank albums show <album-uuid> --sort-by taken --sort-asc --json
+fotobank albums rename <album-uuid> "Autumn walks" --json
 fotobank albums remove <album-uuid> <media-uuid>
 fotobank albums delete <album-uuid>
 ```
@@ -128,6 +128,19 @@ fotobank albums delete <album-uuid>
 `next_offset`. Pass that offset to the next request. List and member pages
 default to 100 rows and are capped at 1,000. `show` accepts `--limit`, `--offset`,
 and sorting by `added`, `imported`, or `taken`.
+
+`create --json` and `rename --json` return the album object, including its `id`.
+`add --json` returns `added` and `already_present` counts, so adding the same
+photos again has an inspectable result. `show --json` returns `album` details
+and a `media` page with `items` and optional `next_offset`. Continue that page
+with `--offset` while keeping the same sort flags. The details and member page
+are separate daemon reads, not an atomic snapshot of a concurrently edited album.
+
+These JSON commands write a result only after their requests succeed. On a
+request failure, stdout is empty, stderr explains the failure, and the exit code
+is nonzero. `remove` and `delete` still print human confirmations; neither API
+operation returns a result body. Use `fotobank albums --help` for examples and
+each subcommand's `--help` for its flags.
 
 Adding existing members is harmless. Removing a member or deleting an album
 does not delete the photos; outstanding shares can block album deletion.
