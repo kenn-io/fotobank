@@ -641,6 +641,8 @@ func TestServerListensOnUnixSocket(t *testing.T) {
 	nasRoot := filepath.Join(tmp, "nas")
 	r.NoError(os.MkdirAll(nasRoot, 0o700))
 	sockPath := filepath.Join(tmp, "s.sock") // short enough for macOS's sun_path cap
+	addrFile := filepath.Join(tmp, "listening")
+	t.Setenv("FOTOBANK_TEST_LISTEN_ADDR_SINK", addrFile)
 
 	cfgPath := filepath.Join(tmp, "c.toml")
 	r.NoError(os.WriteFile(cfgPath, fmt.Appendf(nil, `
@@ -667,7 +669,8 @@ admin_listen = "127.0.0.1:0"
 			ctx, []string{"server", "--config", cfgPath}, io.Discard, &stderr)
 	}()
 
-	// Wait for the socket while also surfacing a real startup failure
+	// Wait for net.Listen to finish, not just for its socket file to appear.
+	// Also surface a real startup failure
 	// immediately. The full suite starts many packages concurrently, so a
 	// fixed two-second polling loop is too tight on loaded CI hosts.
 	deadline := time.NewTimer(10 * time.Second)
@@ -675,7 +678,7 @@ admin_listen = "127.0.0.1:0"
 	poll := time.NewTicker(20 * time.Millisecond)
 	defer poll.Stop()
 	for {
-		if _, err := os.Stat(sockPath); err == nil {
+		if _, err := os.Stat(addrFile); err == nil {
 			break
 		}
 		select {

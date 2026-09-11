@@ -307,6 +307,25 @@ identity. Both operations run through the owner-scoped checkout service, so a
 checkout belonging to another owner is indistinguishable from a missing one.
 Their JSON forms are the automation boundary for agents and scripts.
 
+`checkout retire <checkout-id> --confirm` marks the ledger `retired` through
+`POST /api/v1/operator/checkouts/{id}/retire`. Without confirmation, the CLI
+only shows recorded status. Retirement preserves entries, selections, pending
+observations and errors for inspection. It releases the live-root reservation
+but neither accesses nor deletes the working directory, and does not write
+Docbank versions. Missing working directories do not prevent retirement.
+Repeated retirement returns the retained status without changing it.
+
+The daemon passes one checkout lifecycle read/write lock to the scanner,
+materializer, committer and checkout service. Scans, creates and commits hold
+the read side; retirement holds the write side, waiting for current work.
+A waiting retirement also blocks new checkout work across the deployment.
+The scanner rereads state after acquiring the lock, so a previously listed
+checkout cannot be scanned after retirement. Retired checkouts remain visible
+in list/status, but cannot be committed. This coordinates daemon operations,
+not edits by external applications. Reported observations are not a fresh
+filesystem scan. A released root must still meet normal checkout creation
+requirements, including being empty, before it can be reused.
+
 Scanning does not write new Docbank versions. `fotobank checkout commit
 <checkout-id>` consumes settled tracked `pending` entries. Each replacement is
 bound to the Docbank node revision for the entry's exact base version, so a

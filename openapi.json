@@ -1168,6 +1168,38 @@
         ],
         "type": "object"
       },
+      "CheckoutRetireRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/CheckoutRetireRequest.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "confirm": {
+            "description": "Acknowledge that uncommitted edits remain only in the working folder",
+            "type": "boolean"
+          },
+          "hub": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "user_id": {
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "required": [
+          "hub",
+          "user_id",
+          "confirm"
+        ],
+        "type": "object"
+      },
       "CheckoutSelectionOutput": {
         "additionalProperties": false,
         "properties": {
@@ -6765,6 +6797,62 @@
           }
         ],
         "summary": "Commit settled tracked edits",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/checkouts/{id}/retire": {
+      "post": {
+        "operationId": "retire-checkout",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutRetireRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckoutStatusOutput"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "localOperator": []
+          }
+        ],
+        "summary": "Stop tracking a checkout without deleting its files",
         "tags": [
           "operator"
         ]

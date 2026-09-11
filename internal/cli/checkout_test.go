@@ -399,8 +399,11 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	} {
 		t.Run(denied.name, func(t *testing.T) {
 			check := require.New(t)
-			for _, endpoint := range []string{"/api/v1/operator/checkouts/" + checkoutID + "/commit", "/api/v1/operator/checkouts/estimate", "/api/v1/operator/checkouts"} {
+			for _, endpoint := range []string{"/api/v1/operator/checkouts/" + checkoutID + "/retire", "/api/v1/operator/checkouts/" + checkoutID + "/commit", "/api/v1/operator/checkouts/estimate", "/api/v1/operator/checkouts"} {
 				body := map[string]any{"hub": denied.hub, "user_id": "u"}
+				if strings.HasSuffix(endpoint, "/retire") {
+					body["confirm"] = true
+				}
 				if endpoint == "/api/v1/operator/checkouts/estimate" || endpoint == "/api/v1/operator/checkouts" {
 					body["selection"] = map[string]any{"all": true, "asset_ids": []string{}, "album_ids": []string{}, "years": []any{}}
 				}
@@ -428,6 +431,19 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
+	t.Run("retirement requires API confirmation", func(t *testing.T) {
+		r := require.New(t)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+			record.Endpoint().BaseURL()+"/api/v1/operator/checkouts/"+checkoutID+"/retire",
+			strings.NewReader(`{"hub":"h","user_id":"u","confirm":false}`))
+		r.NoError(err)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+record.Metadata["token"])
+		response, err := record.Endpoint().HTTPClient(daemon.HTTPClientOptions{Timeout: 5 * time.Second, DisableKeepAlives: true}).Do(request)
+		r.NoError(err)
+		defer response.Body.Close()
+		r.Equal(http.StatusBadRequest, response.StatusCode)
+	})
 	code = cli.RunContext(t.Context(), []string{
 		"checkout", "commit", "--config", cfgPath, checkoutID, "--json",
 	}, &stdout, &stderr)
@@ -458,6 +474,41 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	updated, err := media.NewRepo(database.WriteDB(), database.ReadDB()).GetByID(t.Context(), item.ID)
 	r.NoError(err)
 	r.NotEqual(item.CurrentVersionID, updated.CurrentVersionID)
+	r.NoError(database.Close())
+	workingPath := filepath.Join(root, "undated", item.ID, "IMG_0100.JPG")
+	r.NoError(os.WriteFile(workingPath, []byte("edits to keep locally"), 0o600))
+	for _, confirm := range []bool{false, true, true} {
+		stdout.Reset()
+		stderr.Reset()
+		args := []string{"checkout", "retire", checkoutID, "--config", cfgPath, "--json"}
+		if confirm {
+			args = append(args, "--confirm")
+		}
+		code := cli.RunContext(t.Context(), args, &stdout, &stderr)
+		r.Zero(code, "%s", stderr.String())
+		var result struct {
+			Checkout struct {
+				State string `json:"state"`
+			} `json:"checkout"`
+		}
+		r.NoError(json.Unmarshal(stdout.Bytes(), &result))
+		if confirm {
+			r.Equal("retired", result.Checkout.State)
+		} else {
+			r.Equal("active", result.Checkout.State)
+		}
+	}
+	got, err = os.ReadFile(workingPath)
+	r.NoError(err)
+	r.Equal("edits to keep locally", string(got))
+	stdout.Reset()
+	stderr.Reset()
+	r.NotZero(cli.RunContext(t.Context(), []string{"checkout", "commit", checkoutID, "--config", cfgPath}, &stdout, &stderr))
+	database, err = db.Open(dbPath)
+	r.NoError(err)
+	afterRetirement, err := media.NewRepo(database.WriteDB(), database.ReadDB()).GetByID(t.Context(), item.ID)
+	r.NoError(err)
+	r.Equal(updated.CurrentVersionID, afterRetirement.CurrentVersionID)
 	r.NoError(database.Close())
 }
 

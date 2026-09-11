@@ -18,6 +18,7 @@ const (
 	StateBuilding State = "building"
 	StateActive   State = "active"
 	StateError    State = "error"
+	StateRetired  State = "retired"
 )
 
 type EntryState string

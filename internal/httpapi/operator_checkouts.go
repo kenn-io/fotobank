@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"path/filepath"
+	"uuid"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/fotobank/internal/checkout"
@@ -38,7 +39,33 @@ type CheckoutCreateResult struct {
 	Error        string `json:"error,omitempty"`
 }
 
+type CheckoutRetireRequest struct {
+	Hub     string `json:"hub" maxLength:"256"`
+	UserID  string `json:"user_id" maxLength:"256"`
+	Confirm bool   `json:"confirm" doc:"Acknowledge that uncommitted edits remain only in the working folder"`
+}
+
 func registerOperatorCheckouts(api huma.API, deps *OperatorDeps) {
+	huma.Register(api, huma.Operation{
+		OperationID: "retire-checkout", Method: http.MethodPost, Path: "/api/v1/operator/checkouts/{id}/retire",
+		Tags: []string{"operator"}, Security: []map[string][]string{{"localOperator": {}}},
+		Summary: "Stop tracking a checkout without deleting its files", MaxBodyBytes: 4096,
+	}, func(ctx context.Context, input *struct {
+		CheckoutID uuid.UUID `path:"id"`
+		Body       CheckoutRetireRequest
+	}) (*struct{ Body CheckoutStatusOutput }, error) {
+		if deps == nil || input.Body.Hub != deps.Owner.Hub || input.Body.UserID != deps.Owner.UserID {
+			return nil, huma.Error403Forbidden("local operator authentication and configured owner required")
+		}
+		if !input.Body.Confirm {
+			return nil, huma.Error400BadRequest("inspect checkout status and confirm retirement; uncommitted edits are not saved to Docbank")
+		}
+		status, err := deps.Checkouts.Retire(ctx, deps.Owner, input.CheckoutID.String())
+		if err != nil {
+			return nil, Translate(err)
+		}
+		return &struct{ Body CheckoutStatusOutput }{projectCheckoutStatus(status)}, nil
+	})
 	huma.Register(api, huma.Operation{
 		OperationID: "estimate-checkout", Method: http.MethodPost, Path: "/api/v1/operator/checkouts/estimate",
 		Tags: []string{"operator"}, Security: []map[string][]string{{"localOperator": {}}},

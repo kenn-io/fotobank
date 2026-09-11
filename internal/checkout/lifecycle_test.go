@@ -3,6 +3,7 @@ package checkout
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,7 +34,7 @@ func TestCreateRecordsActivationCancellationAsError(t *testing.T) {
 	resolver := contentresolver.New(media.NewRepo(database.WriteDB(), database.ReadDB()), adapter)
 	lockDir := t.TempDir()
 	materializer := NewMaterializer(
-		repo, resolver, filepath.Join(lockDir, "checkout.lock"))
+		repo, resolver, filepath.Join(lockDir, "checkout.lock"), &sync.RWMutex{})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	calls := 0

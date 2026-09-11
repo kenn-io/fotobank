@@ -115,5 +115,27 @@ retrying does not repeat an already completed entry.
 
 Uncommitted working files
 are excluded from archive backups, so commit edits before capturing an archive
-that must include them. Checkout retirement and automatic reconstruction of
-working trees are not yet exposed as commands.
+that must include them. Automatic reconstruction of working trees is not yet
+exposed as a command.
+
+## Stop tracking a working folder
+
+Retirement stops Fotobank scanning or committing a checkout. The working files
+stay where they are; Docbank originals and versions are unchanged.
+
+```sh
+fotobank checkout retire <checkout-uuid>
+fotobank checkout retire <checkout-uuid> --confirm --json
+```
+
+The first command only shows the last recorded status. Review pending edits,
+conflicts, missing files and errors before confirming. This is not a fresh scan:
+external edits may be newer than the recorded observations. Commit any edits
+you want saved to Docbank before retiring; retirement does not save them.
+
+The confirmed command uses the normal daemon and waits for in-flight checkout
+work to finish. It retains the history in `checkout list` and `checkout status`,
+including their JSON output, and releases the folder reservation. It can retire
+a missing folder or an incomplete checkout, and repeating it is harmless.
+There is no reactivation command. A new checkout still requires an empty folder;
+Fotobank will not adopt or overwrite the files left by the retired checkout.

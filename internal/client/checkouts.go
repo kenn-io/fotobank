@@ -5,7 +5,16 @@ import (
 	"errors"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"net/http"
+	"uuid"
 )
+
+func RetireCheckout(ctx context.Context, configPath, version string, id uuid.UUID, request httpapi.CheckoutRetireRequest) (httpapi.CheckoutStatusOutput, error) {
+	var out httpapi.CheckoutStatusOutput
+	err := call(ctx, configPath, version, http.MethodPost,
+		"/api/v1/operator/checkouts/"+id.String()+"/retire", request, &out,
+		"inspect checkout status before retrying retirement")
+	return out, err
+}
 
 func Estimate(ctx context.Context, configPath, version string, request httpapi.CheckoutEstimateRequest) (httpapi.CheckoutEstimateResult, error) {
 	var out httpapi.CheckoutEstimateResult

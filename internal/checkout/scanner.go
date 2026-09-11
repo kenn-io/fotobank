@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"go.kenn.io/fotobank/internal/content"
@@ -42,19 +43,21 @@ type ScanResult struct {
 // Filesystem notifications may ask it to run sooner, but the catalog and a
 // complete tree walk are the correctness boundary.
 type Scanner struct {
-	repo    *Repo
-	content *content.Adapter
-	config  ScannerConfig
-	now     func() time.Time
+	repo      *Repo
+	content   *content.Adapter
+	config    ScannerConfig
+	now       func() time.Time
+	lifecycle *sync.RWMutex
 }
 
-func NewScanner(repo *Repo, contentStore *content.Adapter, config ScannerConfig) *Scanner {
+func NewScanner(repo *Repo, contentStore *content.Adapter, config ScannerConfig, lifecycle *sync.RWMutex) *Scanner {
 	if config.Logger == nil {
 		config.Logger = slog.Default()
 	}
 	return &Scanner{
 		repo: repo, content: contentStore, config: config,
-		now: func() time.Time { return time.Now().UTC() },
+		now:       func() time.Time { return time.Now().UTC() },
+		lifecycle: lifecycle,
 	}
 }
 
@@ -133,6 +136,16 @@ func (s *Scanner) validate() error {
 }
 
 func (s *Scanner) scanCheckout(ctx context.Context, checkout Checkout) (ScanResult, error) {
+	s.lifecycle.RLock()
+	defer s.lifecycle.RUnlock()
+	// ListActive may predate a retirement while this scan waited for the gate.
+	current, err := s.repo.Get(ctx, checkout.ID)
+	if err != nil {
+		return ScanResult{}, err
+	}
+	if current.State != StateActive {
+		return ScanResult{}, nil
+	}
 	validatedRoot, err := s.content.ResolveCheckoutRoot(checkout.Root)
 	if err != nil {
 		return ScanResult{}, err
