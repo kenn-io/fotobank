@@ -49,8 +49,8 @@ covered by the same manifest checks as the content. Catalog settings and stored
 authentication hashes, including hidden-media passcode hashes, are preserved.
 Configuration files, provider credentials, disposable thumbnails, and working
 checkout files are excluded. Commit checkout edits before taking the archive
-if you need those
-edits captured. Keep configuration files and provider credentials separately.
+if you need those edits captured. Keep configuration files and provider
+credentials separately.
 
 Repositories are not encrypted. Store them on protected storage. Manual
 archives are retained independently of the schedule. The tag
@@ -144,9 +144,8 @@ and separate NAS and flash roots. Set `FOTOBANK_DB_PATH` to the reported
 `catalog_path`. Restore configuration files and provider credentials separately.
 The catalog retains old checkout paths, but the archive does not contain those
 working files: review those paths before starting the server, whose scanner
-will inspect active
-checkouts. This command does not relocate checkouts or automate deployment
-cutover.
+will inspect active checkouts. This command does not relocate checkouts or
+automate deployment cutover.
 
 For an isolated drill, do not mount the original working folders into the test
 environment. After starting the normal daemon with the recovered configuration,
@@ -163,13 +162,68 @@ entries and stops further scanning and commits; it never removes files or saves
 uncommitted edits. The recovery daemon does not expose this operation because
 it does not open the recovered catalog.
 
-## What a recovery drill must prove
+## Try the recovered library
 
-A useful drill runs complete archive restore into a separate directory and
-checks the recovered originals. After reviewing configuration and checkout
-paths, it should also start Fotobank against the recovered storage and exercise
-the normal user workflows. SQLite integrity alone does not prove that the
-media archive is recoverable.
+A successful restore is the start of the drill, not its finish. Use a separate
+machine or isolated environment where the original storage and working folders
+are unavailable. Do not delete your real library to simulate a loss.
+
+1. Restore an archive as described above. Save its `vault_root` and
+   `catalog_path` output. Stop the recovery daemon before opening the restored
+   vault in normal mode:
+
+   ```sh
+   fotobank daemon stop --config /saved/fotobank.toml
+   ```
+
+2. Create `/saved/recovered.toml` using the saved configuration. Keep the same
+   owner identity. Set `[docbank].root` to `vault_root`, and point `[nas].root`
+   and `[flash].root` to separate, already-provisioned test directories. Review
+   other host paths, including `[imports].file_lock_path`. Disable scheduled
+   backups and optional AI processing for the drill, and bind listeners to
+   loopback so the copy does not act as another live deployment.
+
+   Set the catalog path in the environment of both the daemon and subsequent
+   commands. For the example restore target above:
+
+   ```sh
+   export FOTOBANK_DB_PATH=/recovery/photos/application/catalog.sqlite
+   fotobank daemon start --config /saved/recovered.toml
+   ```
+
+   Use the actual `catalog_path` from your restore output. The start command
+   prints the recovered web UI address. Inspect and retire old checkout
+   bindings using the commands above; their working files are not in the archive.
+
+3. Open the recovered web UI. Find a known album and confirm its membership.
+   Download representative originals and attached files, such as XMP sidecars,
+   and compare their checksums with records saved before the drill. You can also
+   inspect album membership through the daemon-backed CLI:
+
+   ```sh
+   fotobank albums list --config /saved/recovered.toml --json
+   fotobank albums show <album-uuid> --config /saved/recovered.toml
+   ```
+
+4. Rebuild the disposable thumbnails, then confirm the recovered photos display
+   correctly. Enqueuing work alone does not establish that rebuilding succeeded:
+
+   ```sh
+   fotobank thumbs regenerate --all --config /saved/recovered.toml
+   ```
+
+5. Stop the test daemon when finished:
+
+   ```sh
+   fotobank daemon stop --config /saved/recovered.toml
+   ```
+
+The automated recovery test exercises this flow with synthetic JPEGs, an XMP
+attachment, an album, and a recorded checkout. It removes its temporary source
+storage before restoring, checks downloaded bytes against the inputs, and
+fetches rebuilt thumbnails through the recovered photo API. It does not prove
+that uncommitted working-folder edits or separately held credentials are backed
+up, and it does not exercise every media format or optional AI provider.
 
 `backup verify` checks stored bytes, including the captured catalog, but does
 not validate Fotobank's catalog-to-content relationships. `backup restore
