@@ -770,6 +770,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/checkouts/{id}/retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop tracking a checkout without deleting its files */
+        post: operations["retire-checkout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operator/content/recover": {
         parameters: {
             query?: never;
@@ -1624,6 +1641,18 @@ export interface components {
             state: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        CheckoutRetireRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/CheckoutRetireRequest.json
+             */
+            readonly $schema?: string;
+            /** @description Acknowledge that uncommitted edits remain only in the working folder */
+            confirm: boolean;
+            hub: string;
+            user_id: string;
         };
         CheckoutSelectionOutput: {
             album_ids: string[] | null;
@@ -4381,6 +4410,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CheckoutCommitResult"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "retire-checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckoutRetireRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckoutStatusOutput"];
                 };
             };
             /** @description Error */

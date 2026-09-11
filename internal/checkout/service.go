@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -34,16 +35,19 @@ type Materializer struct {
 	creationLockPath string
 	now              func() time.Time
 	newID            func() string
+	lifecycle        *sync.RWMutex
 }
 
 func NewMaterializer(
 	repo *Repo,
 	resolver *contentresolver.Resolver,
 	creationLockPath string,
+	lifecycle *sync.RWMutex,
 ) *Materializer {
 	return &Materializer{
 		repo: repo, resolver: resolver,
 		creationLockPath: creationLockPath,
+		lifecycle:        lifecycle,
 		now:              time.Now, newID: uuid.NewString,
 	}
 }
@@ -94,6 +98,8 @@ func (s *Materializer) Create(
 		return CreateResult{}, fmt.Errorf("create checkout: %w: service is not configured", errs.ErrInvalidArgument)
 	}
 	defer request.Root.Close()
+	s.lifecycle.RLock()
+	defer s.lifecycle.RUnlock()
 	if s.creationLockPath == "" {
 		return CreateResult{}, fmt.Errorf("create checkout: %w: creation lock is not configured", errs.ErrInvalidArgument)
 	}

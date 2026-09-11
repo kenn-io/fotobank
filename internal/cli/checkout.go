@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"uuid"
 
 	"github.com/spf13/cobra"
 
@@ -30,6 +31,49 @@ func newCheckoutCmd() *cobra.Command {
 	cmd.AddCommand(newCheckoutCommitCmd())
 	cmd.AddCommand(newCheckoutListCmd())
 	cmd.AddCommand(newCheckoutStatusCmd())
+	cmd.AddCommand(newCheckoutRetireCmd())
+	return cmd
+}
+
+func newCheckoutRetireCmd() *cobra.Command {
+	var configPath string
+	var asJSON, confirm bool
+	cmd := &cobra.Command{
+		Use:   "retire <checkout-id>",
+		Short: "Stop tracking a checkout; leave its files untouched",
+		Long:  "Without --confirm, show the last recorded status only. Retirement stops scans and commits, releases the folder reservation, and keeps history. It does not save uncommitted edits to Docbank or delete working files.",
+		Args:  usageArgs(cobra.ExactArgs(1)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := uuid.Parse(args[0])
+			if err != nil {
+				return fmt.Errorf("invalid checkout ID: %w", err)
+			}
+			if !confirm {
+				if err := runCheckoutStatus(cmd.Context(), configPath, args[0], asJSON, cmd.OutOrStdout()); err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.ErrOrStderr(), "Not retired. Review this recorded status, then repeat with --confirm. Uncommitted edits will remain only in the working folder.")
+				return nil
+			}
+			path, owner, err := localOperatorConfig(cmd.Context(), configPath)
+			if err != nil {
+				return err
+			}
+			result, err := client.RetireCheckout(cmd.Context(), path, version.Short, id,
+				httpapi.CheckoutRetireRequest{Hub: owner.Hub, UserID: owner.UserID, Confirm: true})
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				return writeCheckoutJSON(cmd.OutOrStdout(), result)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Retired checkout %s. Working files left untouched at %s.\n", result.Checkout.ID, result.Checkout.Root)
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&configPath, "config", "", "path to config file")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit recorded checkout status as JSON")
+	cmd.Flags().BoolVar(&confirm, "confirm", false, "retire without committing edits or deleting files")
 	return cmd
 }
 

@@ -387,7 +387,7 @@ CREATE TABLE checkouts (
     root            TEXT NOT NULL,
     layout          TEXT NOT NULL CHECK (layout IN ('capture_date')),
     include_all     INTEGER NOT NULL DEFAULT 0 CHECK (include_all IN (0, 1)),
-    state           TEXT NOT NULL CHECK (state IN ('building', 'active', 'error')),
+    state           TEXT NOT NULL CHECK (state IN ('building', 'active', 'error', 'retired')),
     last_error      TEXT,
     created_at      TIMESTAMP NOT NULL,
     updated_at      TIMESTAMP NOT NULL,

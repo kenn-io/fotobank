@@ -148,6 +148,21 @@ will inspect active
 checkouts. This command does not relocate checkouts or automate deployment
 cutover.
 
+For an isolated drill, do not mount the original working folders into the test
+environment. After starting the normal daemon with the recovered configuration,
+inspect and retire obsolete bindings:
+
+```sh
+fotobank checkout list --config /saved/recovered.toml --json
+fotobank checkout retire <checkout-uuid> --config /saved/recovered.toml
+fotobank checkout retire <checkout-uuid> --config /saved/recovered.toml --confirm --json
+```
+
+Retirement works even when the old folder is missing. It keeps the historical
+entries and stops further scanning and commits; it never removes files or saves
+uncommitted edits. The recovery daemon does not expose this operation because
+it does not open the recovered catalog.
+
 ## What a recovery drill must prove
 
 A useful drill runs complete archive restore into a separate directory and

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +22,18 @@ import (
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil"
 )
+
+func TestScannerSkipsCheckoutRetiredAfterListing(t *testing.T) {
+	r := require.New(t)
+	f := newScannerFixture(t)
+	r.NoError(f.repo.SetState(t.Context(), f.checkout.ID, StateRetired, "", f.now))
+	// A stale ListActive result must not inspect even a now-missing root.
+	r.NoError(os.RemoveAll(f.root))
+	result, err := f.scanner().scanCheckout(t.Context(), f.checkout)
+	r.NoError(err)
+	r.Zero(result.Files)
+	r.Equal(EntryClean, f.entry(t).State)
+}
 
 func TestScannerQueuesSettledTrackedChangeAcrossRestart(t *testing.T) {
 	r := require.New(t)
@@ -341,7 +354,7 @@ func (f *scannerFixture) scanner() *Scanner {
 	scanner := NewScanner(f.repo, f.content, ScannerConfig{
 		ScanInterval: time.Hour, SettleInterval: 2 * time.Second,
 		IgnorePatterns: []string{"*.catalog.lock"},
-	})
+	}, &sync.RWMutex{})
 	scanner.now = func() time.Time { return f.now }
 	return scanner
 }

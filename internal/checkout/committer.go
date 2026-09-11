@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"sync"
 	"time"
 
 	"go.kenn.io/fotobank/internal/content"
@@ -22,16 +23,18 @@ import (
 // pending records the exact base and expected local identity before Docbank is
 // touched, and an exact current Docbank head can be adopted after interruption.
 type Committer struct {
-	repo    *Repo
-	content *content.Adapter
-	places  media.PlaceResolver
-	now     func() time.Time
+	repo      *Repo
+	content   *content.Adapter
+	places    media.PlaceResolver
+	now       func() time.Time
+	lifecycle *sync.RWMutex
 }
 
-func NewCommitter(repo *Repo, contentStore *content.Adapter, places media.PlaceResolver) *Committer {
+func NewCommitter(repo *Repo, contentStore *content.Adapter, places media.PlaceResolver, lifecycle *sync.RWMutex) *Committer {
 	return &Committer{
 		repo: repo, content: contentStore, places: places,
-		now: func() time.Time { return time.Now().UTC() },
+		now:       func() time.Time { return time.Now().UTC() },
+		lifecycle: lifecycle,
 	}
 }
 
@@ -44,6 +47,8 @@ func (c *Committer) Commit(
 		return CommitResult{}, fmt.Errorf("commit checkout: %w: committer is not configured",
 			errs.ErrContentUnavailable)
 	}
+	c.lifecycle.RLock()
+	defer c.lifecycle.RUnlock()
 	checkout, err := c.repo.Get(ctx, checkoutID)
 	if err != nil {
 		return CommitResult{}, err

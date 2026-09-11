@@ -87,6 +87,7 @@ func TestOperatorOperationsShareAPIContract(t *testing.T) {
 	handler, err := httpapi.New(httpapi.Deps{})
 	require.NoError(t, err)
 	for _, tc := range []struct{ method, path, operation, body string }{
+		{"POST", "/api/v1/operator/checkouts/{id}/retire", "retire-checkout", `{"hub":"h","user_id":"u","confirm":true}`},
 		{"GET", "/api/v1/operator/owners", "list-owners", ""},
 		{"POST", "/api/v1/operator/owners", "register-owner", `{"hub":"h","user_id":"guest"}`},
 		{"DELETE", "/api/v1/operator/owners", "remove-owner", ""},
@@ -110,7 +111,7 @@ func TestOperatorOperationsShareAPIContract(t *testing.T) {
 			}
 			r.NotNil(op)
 			r.Equal(tc.operation, op.OperationID)
-			path := strings.ReplaceAll(strings.ReplaceAll(tc.path, "{id}", "checkout-a"), "{checkout_id}", "checkout-a")
+			path := strings.ReplaceAll(strings.ReplaceAll(tc.path, "{id}", "550e8400-e29b-41d4-a716-446655440000"), "{checkout_id}", "checkout-a")
 			if tc.method == http.MethodDelete {
 				path += "?hub=h&user_id=guest"
 			}

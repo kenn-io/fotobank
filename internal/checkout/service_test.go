@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -343,7 +344,7 @@ func TestNonCleanCommitForcesFreshCheckoutObservation(t *testing.T) {
 
 	scanner := checkout.NewScanner(fixture.checkouts, fixture.content, checkout.ScannerConfig{
 		ScanInterval: time.Second, SettleInterval: 0,
-	})
+	}, fixture.lifecycle)
 	_, err = scanner.Scan(t.Context())
 	r.NoError(err)
 	_, err = scanner.Scan(t.Context())
@@ -640,6 +641,7 @@ type fixture struct {
 	checkouts *checkout.Repo
 	service   *checkout.Materializer
 	committer *checkout.Committer
+	lifecycle *sync.RWMutex
 }
 
 func newFixture(t *testing.T) fixture {
@@ -658,12 +660,14 @@ func newFixture(t *testing.T) fixture {
 	checkoutRepo := checkout.NewRepo(database.WriteDB(), database.ReadDB())
 	resolver := contentresolver.New(mediaRepo, contentStore)
 	lockDir := t.TempDir()
+	lifecycle := &sync.RWMutex{}
 	return fixture{
 		db: database, owner: owner, content: contentStore, media: mediaRepo,
 		checkouts: checkoutRepo,
+		lifecycle: lifecycle,
 		service: checkout.NewMaterializer(
-			checkoutRepo, resolver, filepath.Join(lockDir, "checkout.lock")),
-		committer: checkout.NewCommitter(checkoutRepo, contentStore, nil),
+			checkoutRepo, resolver, filepath.Join(lockDir, "checkout.lock"), lifecycle),
+		committer: checkout.NewCommitter(checkoutRepo, contentStore, nil, lifecycle),
 	}
 }
 
@@ -693,7 +697,7 @@ func createPendingEdit(
 	r.NoError(os.WriteFile(workingPath, replacement, 0o600))
 	scanner := checkout.NewScanner(fixture.checkouts, fixture.content, checkout.ScannerConfig{
 		ScanInterval: time.Second, SettleInterval: 0,
-	})
+	}, fixture.lifecycle)
 	_, err = scanner.Scan(t.Context())
 	r.NoError(err)
 	_, err = scanner.Scan(t.Context())
