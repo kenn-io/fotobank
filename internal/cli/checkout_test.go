@@ -32,26 +32,43 @@ func startCheckoutServer(t *testing.T, cfgPath, dbPath string) daemon.RuntimeRec
 	t.Helper()
 	r := require.New(t)
 	serverCtx, stopServer := context.WithCancel(t.Context())
-	serverDone := make(chan int, 1)
+	serverDone := make(chan struct{})
+	var code int
 	var serverErrors lockedBuffer
 	go func() {
-		serverDone <- cli.RunContext(serverCtx, []string{
+		defer close(serverDone)
+		code = cli.RunContext(serverCtx, []string{
 			"serve", "--config", cfgPath, "--listen", "127.0.0.1:0",
 		}, io.Discard, &serverErrors)
 	}()
 	t.Cleanup(func() {
 		stopServer()
 		select {
-		case code := <-serverDone:
+		case <-serverDone:
 			r.Zero(code, "%s", serverErrors.String())
-		case <-time.After(10 * time.Second):
+		case <-time.After(40 * time.Second):
 			r.Fail("server did not stop", "%s", serverErrors.String())
 		}
 	})
-	r.Eventually(func() bool {
+	// Match the other server fixtures: allow startup under CI load, report
+	// an early exit immediately, and include diagnostics captured at failure.
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(20 * time.Millisecond)
+	defer poll.Stop()
+	for {
 		paths, err := filepath.Glob(cfgPath + ".operator/daemon.*.json")
-		return err == nil && len(paths) == 1
-	}, 10*time.Second, 20*time.Millisecond, "%s", serverErrors.String())
+		if err == nil && len(paths) == 1 {
+			break
+		}
+		select {
+		case <-serverDone:
+			r.FailNow("server exited before publishing its runtime record", "exit code %d; stderr: %s", code, serverErrors.String())
+		case <-deadline.C:
+			r.FailNow("server startup timed out", "%s", serverErrors.String())
+		case <-poll.C:
+		}
+	}
 	store := daemon.RuntimeStore{Dir: cfgPath + ".operator"}
 	records, err := store.List()
 	r.NoError(err)
