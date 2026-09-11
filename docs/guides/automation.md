@@ -17,6 +17,7 @@ precedence over the environment variable.
 Use `--json` where the command provides it, including:
 
 ```sh
+fotobank config diagnose --json
 fotobank import /media/card-or-export --json
 fotobank content recover --json
 fotobank backup create --repo /backups/photos --json
@@ -37,8 +38,19 @@ fotobank owners list --json
 Do not parse human progress output when a JSON form exists. Commands return zero
 on success, one for runtime failures, and two for invalid command usage.
 
-`config diagnose` currently produces human-readable output only. Import writes
-its final JSON result to stdout and live progress to stderr; interrupted
+`config diagnose --json` writes an array of checks to stdout. Each check has
+`name`, `status`, and `detail`, plus `action` when there is a suggested next step.
+Statuses are `ok`, `error`, or `disabled`; disabled backups do not count as an
+error. Match checks by name rather than array position, and use the exit code:
+the command still emits its results when a check fails, then exits with one.
+A configuration that cannot be loaded or validated produces a single
+`configuration` error check. The failure summary goes to stderr.
+
+Diagnostics inspect local configuration and storage without starting a daemon
+or initializing missing storage. They do not prove full catalog integrity or
+that a configured mount is healthy.
+
+Import writes its final JSON result to stdout and live progress to stderr; interrupted
 connections and partial failures exit nonzero.
 Checkout list and status ask the daemon for saved catalog observations, not a
 fresh filesystem scan. They do not open or initialize a database in the CLI.

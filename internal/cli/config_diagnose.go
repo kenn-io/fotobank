@@ -1,6 +1,7 @@
 package cli
 
 import (
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -16,14 +17,15 @@ import (
 const sqliteHeader = "SQLite format 3\x00"
 
 type configDiagnostic struct {
-	name   string
-	status string
-	detail string
-	action string
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Detail string `json:"detail"`
+	Action string `json:"action,omitempty"`
 }
 
 func newConfigDiagnoseCmd() *cobra.Command {
 	var cfgPath string
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "diagnose",
 		Short: "Check configuration and required storage without changing them",
@@ -36,11 +38,18 @@ func newConfigDiagnoseCmd() *cobra.Command {
 			checks := diagnoseConfig(path)
 			failed := false
 			for _, check := range checks {
-				fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-8s %s\n", check.name, check.status, check.detail)
-				if check.action != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  action: %s\n", check.action)
+				if !asJSON {
+					fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-8s %s\n", check.Name, check.Status, check.Detail)
+					if check.Action != "" {
+						fmt.Fprintf(cmd.OutOrStdout(), "  action: %s\n", check.Action)
+					}
 				}
-				failed = failed || check.status == "error"
+				failed = failed || check.Status == "error"
+			}
+			if asJSON {
+				if err := json.MarshalWrite(cmd.OutOrStdout(), checks); err != nil {
+					return fmt.Errorf("write configuration diagnostics: %w", err)
+				}
 			}
 			if failed {
 				return fmt.Errorf("%w: one or more configuration diagnostics failed", errs.ErrBadConfiguration)
@@ -49,6 +58,7 @@ func newConfigDiagnoseCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit diagnostic checks as JSON")
 	return cmd
 }
 
@@ -56,88 +66,88 @@ func diagnoseConfig(path string) []configDiagnostic {
 	cfg, err := config.LoadUnchecked(path)
 	if err != nil {
 		return []configDiagnostic{{
-			name: "configuration", status: "error", detail: err.Error(),
-			action: "fix the named setting in " + path + " and run this command again",
+			Name: "configuration", Status: "error", Detail: err.Error(),
+			Action: "fix the named setting in " + path + " and run this command again",
 		}}
 	}
 	if cfg == nil {
 		return []configDiagnostic{{
-			name: "configuration", status: "error", detail: "configuration loader returned no result",
-			action: "check that " + path + " is a readable TOML configuration file",
+			Name: "configuration", Status: "error", Detail: "configuration loader returned no result",
+			Action: "check that " + path + " is a readable TOML configuration file",
 		}}
 	}
 	if err := cfg.ValidateWithOptions(config.ValidationOptions{AllowUnavailableStorage: true}); err != nil {
 		return []configDiagnostic{{
-			name: "configuration", status: "error", detail: err.Error(),
-			action: "fix the named setting in " + path + " and run this command again",
+			Name: "configuration", Status: "error", Detail: err.Error(),
+			Action: "fix the named setting in " + path + " and run this command again",
 		}}
 	}
 
 	checks := []configDiagnostic{{
-		name: "configuration", status: "ok", detail: path,
+		Name: "configuration", Status: "ok", Detail: path,
 	}}
 
 	dbPath, err := resolveDBPath(cfg)
 	if err != nil {
 		checks = append(checks, configDiagnostic{
-			name: "sqlite", status: "error", detail: err.Error(),
-			action: "fix [flash].root or FOTOBANK_DB_PATH",
+			Name: "sqlite", Status: "error", Detail: err.Error(),
+			Action: "fix [flash].root or FOTOBANK_DB_PATH",
 		})
 	} else if err := inspectSQLiteFile(dbPath); err != nil {
 		checks = append(checks, configDiagnostic{
-			name: "sqlite", status: "error", detail: fmt.Sprintf("%s: %v", dbPath, err),
-			action: "make the database readable, or run fotobank serve once to initialize a new database",
+			Name: "sqlite", Status: "error", Detail: fmt.Sprintf("%s: %v", dbPath, err),
+			Action: "make the database readable, or run fotobank serve once to initialize a new database",
 		})
 	} else {
 		checks = append(checks, configDiagnostic{
-			name: "sqlite", status: "ok", detail: dbPath,
+			Name: "sqlite", Status: "ok", Detail: dbPath,
 		})
 	}
 
 	if err := content.InspectVault(cfg.Docbank.Root); err != nil {
 		checks = append(checks, configDiagnostic{
-			name: "docbank", status: "error", detail: fmt.Sprintf("%s: %v", cfg.Docbank.Root, err),
-			action: "make [docbank].root available and initialize the vault with fotobank serve",
+			Name: "docbank", Status: "error", Detail: fmt.Sprintf("%s: %v", cfg.Docbank.Root, err),
+			Action: "make [docbank].root available and initialize the vault with fotobank serve",
 		})
 	} else {
 		checks = append(checks, configDiagnostic{
-			name: "docbank", status: "ok", detail: cfg.Docbank.Root,
+			Name: "docbank", Status: "ok", Detail: cfg.Docbank.Root,
 		})
 	}
 
 	nasErr := inspectDirectory(cfg.NAS.Root)
 	if nasErr != nil {
 		checks = append(checks, configDiagnostic{
-			name: "nas artifacts", status: "error", detail: fmt.Sprintf("%s: %v", cfg.NAS.Root, nasErr),
-			action: "mount or create [nas].root before importing or serving artifacts",
+			Name: "nas artifacts", Status: "error", Detail: fmt.Sprintf("%s: %v", cfg.NAS.Root, nasErr),
+			Action: "mount or create [nas].root before importing or serving artifacts",
 		})
 	} else {
 		checks = append(checks, configDiagnostic{
-			name: "nas artifacts", status: "ok", detail: cfg.NAS.Root + " is available",
+			Name: "nas artifacts", Status: "ok", Detail: cfg.NAS.Root + " is available",
 		})
 	}
 
 	checks = append(checks, configDiagnostic{
-		name: "checkout boundaries", status: "ok",
-		detail: "[docbank].root, [nas].root, and [flash].root passed configured boundary checks",
+		Name: "checkout boundaries", Status: "ok",
+		Detail: "[docbank].root, [nas].root, and [flash].root passed configured boundary checks",
 	})
 	checks = append(checks, configDiagnostic{
-		name: "identity", status: "ok", detail: "mode=" + cfg.Identity.Mode,
+		Name: "identity", Status: "ok", Detail: "mode=" + cfg.Identity.Mode,
 	})
 
 	if !cfg.Backup.Enabled {
 		checks = append(checks, configDiagnostic{
-			name: "backups", status: "disabled", detail: "[backup].enabled=false",
+			Name: "backups", Status: "disabled", Detail: "[backup].enabled=false",
 		})
 		return checks
 	}
 	if _, err := content.OpenBackupRepository(cfg.Backup.Repository); err != nil {
 		checks = append(checks, configDiagnostic{
-			name: "backups", status: "error", detail: fmt.Sprintf("%s: %v", cfg.Backup.Repository, err),
-			action: "make [backup].repository available; initialize a new repository with fotobank backup init --repo PATH",
+			Name: "backups", Status: "error", Detail: fmt.Sprintf("%s: %v", cfg.Backup.Repository, err),
+			Action: "make [backup].repository available; initialize a new repository with fotobank backup init --repo PATH",
 		})
 	} else {
-		checks = append(checks, configDiagnostic{name: "backups", status: "ok", detail: cfg.Backup.Repository + " is an initialized archive repository"})
+		checks = append(checks, configDiagnostic{Name: "backups", Status: "ok", Detail: cfg.Backup.Repository + " is an initialized archive repository"})
 	}
 	return checks
 }
