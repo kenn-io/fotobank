@@ -27,7 +27,7 @@ func TestRetireCheckoutKeepsHistoryAndFiles(t *testing.T) {
 	r.NoError(err)
 	repo := checkout.NewRepo(database.WriteDB(), database.ReadDB())
 	lifecycle := &sync.RWMutex{}
-	svc := service.NewCheckoutService(repo, nil, nil, "", nil, lifecycle)
+	svc := service.NewCheckoutService(repo, nil, nil, nil, service.CheckoutServiceOptions{Lifecycle: lifecycle})
 	for _, state := range []checkout.State{checkout.StateActive, checkout.StateError, checkout.StateBuilding} {
 		t.Run(string(state), func(t *testing.T) {
 			r := require.New(t)

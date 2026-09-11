@@ -24,20 +24,24 @@ type CheckoutService struct {
 	lifecycle    *sync.RWMutex
 }
 
+type CheckoutServiceOptions struct {
+	CreationLockPath string
+	Lifecycle        *sync.RWMutex
+}
+
 func NewCheckoutService(
 	repo *checkout.Repo,
 	resolver *contentresolver.Resolver,
 	contentStore *content.Adapter,
-	creationLockPath string,
 	places media.PlaceResolver,
-	lifecycle *sync.RWMutex,
+	options CheckoutServiceOptions,
 ) *CheckoutService {
 	return &CheckoutService{
 		repo:         repo,
-		materializer: checkout.NewMaterializer(repo, resolver, creationLockPath, lifecycle),
-		committer:    checkout.NewCommitter(repo, contentStore, places, lifecycle),
+		materializer: checkout.NewMaterializer(repo, resolver, options.CreationLockPath, options.Lifecycle),
+		committer:    checkout.NewCommitter(repo, contentStore, places, options.Lifecycle),
 		contentStore: contentStore,
-		lifecycle:    lifecycle,
+		lifecycle:    options.Lifecycle,
 	}
 }
 

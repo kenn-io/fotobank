@@ -241,6 +241,8 @@ func runPhotoServer(ctx context.Context, opts serverOpts, removeRuntime *func())
 	contentResolver := contentresolver.New(mediaRepo, contentStore)
 	mediaSvc := service.NewMediaService(mediaRepo, contentResolver)
 	checkoutLifecycle := &sync.RWMutex{}
+	// A waiting retirement blocks new checkout work across this deployment.
+	// If that becomes a bottleneck, use per-checkout gates plus creation coordination.
 	checkoutScanner := checkout.NewScanner(
 		checkout.NewRepo(d.WriteDB(), d.ReadDB()),
 		contentStore,
@@ -619,7 +621,9 @@ func runPhotoServer(ctx context.Context, opts serverOpts, removeRuntime *func())
 		places := gpsPlaces
 		checkoutService := service.NewCheckoutService(
 			checkout.NewRepo(d.WriteDB(), d.ReadDB()), contentResolver,
-			contentStore, dbPath+".checkout.lock", places, checkoutLifecycle)
+			contentStore, places, service.CheckoutServiceOptions{
+				CreationLockPath: dbPath + ".checkout.lock", Lifecycle: checkoutLifecycle,
+			})
 		operatorOwner := owners.Principal{Hub: cfg.Identity.Stub.Hub, UserID: cfg.Identity.Stub.UserID}
 		operatorDeps.GenerationsOperator = &httpapi.GenerationOperatorDeps{
 			Owner:   operatorOwner,

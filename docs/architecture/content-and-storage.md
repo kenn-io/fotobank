@@ -318,6 +318,7 @@ Repeated retirement returns the retained status without changing it.
 The daemon passes one checkout lifecycle read/write lock to the scanner,
 materializer, committer and checkout service. Scans, creates and commits hold
 the read side; retirement holds the write side, waiting for current work.
+A waiting retirement also blocks new checkout work across the deployment.
 The scanner rereads state after acquiring the lock, so a previously listed
 checkout cannot be scanned after retirement. Retired checkouts remain visible
 in list/status, but cannot be committed. This coordinates daemon operations,
