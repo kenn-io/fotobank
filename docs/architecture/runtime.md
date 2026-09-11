@@ -418,7 +418,9 @@ operation, shared by HTTP, the CLI, and a future MCP client. Bootstrap and
 lost-source recovery must retain that ownership boundary.
 Local configuration setup and validation remain bootstrap tools. Read-only
 `config diagnose` inspects storage paths and file headers without opening a live
-catalog connection or performing migrations or repairs.
+catalog connection or performing migrations or repairs. Its human and `--json`
+output use the same diagnostic checks. JSON includes failed checks on stdout;
+any error check produces a nonzero exit and a summary on stderr.
 
 Long-running operations honor `context.Context`. Background loops use bounded
 polling, concurrency, and shutdown waits; they do not start untracked

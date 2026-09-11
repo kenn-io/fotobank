@@ -76,6 +76,8 @@ The diagnostic reports configuration, SQLite, Docbank, NAS artifacts,
 checkout boundaries, identity, and backups separately. It names the setting
 and corrective action for each failure. It does not create a database, vault,
 storage root, or backup directory, and it never writes a probe file.
+Add `--json` for scripts and agents. It emits the same checks as structured
+results, including failures, and exits nonzero if any check reports an error.
 
 Start the application after validation:
 

@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"bytes"
+	json "encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -132,6 +133,23 @@ root = %q
 		r.Contains(out.String(), check)
 	}
 	r.Contains(out.String(), "backups              disabled")
+	out.Reset()
+	eout.Reset()
+	r.Zero(cli.Run([]string{"config", "diagnose", "--config", cfgPath, "--json"}, &out, &eout), eout.String())
+	var checks []map[string]string
+	r.NoError(json.Unmarshal(out.Bytes(), &checks))
+	r.Len(checks, 7)
+	for _, check := range checks {
+		r.NotEmpty(check["name"])
+		r.NotEmpty(check["detail"])
+		if check["name"] == "backups" {
+			r.Equal("disabled", check["status"])
+		} else {
+			r.Equal("ok", check["status"])
+		}
+	}
+	r.Empty(eout.String())
+	r.NoDirExists(cfgPath + ".operator")
 }
 
 func TestConfigDiagnoseDoesNotInitializeMissingStorage(t *testing.T) {
@@ -160,9 +178,43 @@ root = %q
 	r.Contains(out.String(), "backups              disabled")
 	r.Contains(out.String(), "action:")
 	r.Contains(eout.String(), "configuration diagnostics failed")
+	out.Reset()
+	eout.Reset()
+	r.Equal(1, cli.Run([]string{"config", "diagnose", "--config", cfgPath, "--json"}, &out, &eout))
+	var checks []map[string]string
+	r.NoError(json.Unmarshal(out.Bytes(), &checks))
+	errorsByName := map[string]string{}
+	for _, check := range checks {
+		if check["status"] == "error" {
+			errorsByName[check["name"]] = check["action"]
+			r.NotEmpty(check["detail"])
+		}
+	}
+	r.Len(errorsByName, 3)
+	for _, name := range []string{"sqlite", "docbank", "nas artifacts"} {
+		r.NotEmpty(errorsByName[name])
+	}
+	r.Contains(eout.String(), "configuration diagnostics failed")
+	r.NoDirExists(cfgPath + ".operator")
 	r.NoDirExists(flashRoot)
 	r.NoDirExists(nasRoot)
 	r.NoDirExists(docbankRoot)
+}
+
+func TestConfigDiagnoseJSONInvalidConfiguration(t *testing.T) {
+	r := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	r.NoError(os.WriteFile(path, []byte("[broken"), 0o600))
+	var out, eout bytes.Buffer
+	r.Equal(1, cli.Run([]string{"config", "diagnose", "--config", path, "--json"}, &out, &eout))
+	var checks []map[string]string
+	r.NoError(json.Unmarshal(out.Bytes(), &checks))
+	r.Len(checks, 1)
+	r.Equal("configuration", checks[0]["name"])
+	r.Equal("error", checks[0]["status"])
+	r.NotEmpty(checks[0]["detail"])
+	r.NotEmpty(checks[0]["action"])
+	r.NoDirExists(path + ".operator")
 }
 
 func TestConfigDiagnoseReportsUnavailableStorageSeparately(t *testing.T) {
