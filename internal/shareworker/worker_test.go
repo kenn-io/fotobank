@@ -233,27 +233,43 @@ func TestWorkerContextErrorFromBrokerAbortsDrain(t *testing.T) {
 func TestWorkerRunExitsOnContextDeadline(t *testing.T) {
 	r := require.New(t)
 	fx := newWorkerFixture(t)
-	// Override the tick to something tiny so the first drain runs and we
-	// don't wait seconds for the test.
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	r.ErrorIs(fx.w.Run(ctx), context.DeadlineExceeded)
+}
+
+func TestWorkerRunDrainsBeforeFirstTick(t *testing.T) {
+	r := require.New(t)
+	fx := newWorkerFixture(t)
 	w := shareworker.New(shareworker.Config{
 		Repo:   fx.repo,
 		Broker: fx.fake,
 		Now:    func() time.Time { return fx.now },
 		Rand:   rand.New(rand.NewSource(1)),
-		Tick:   1 * time.Millisecond,
+		Tick:   time.Hour,
 	})
 	id := fx.insertPending(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	err := w.Run(ctx)
-	r.ErrorIs(err, context.DeadlineExceeded)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			r.ErrorIs(err, context.Canceled)
+		case <-time.After(5 * time.Second):
+			r.Fail("worker did not stop after cancellation")
+		}
+	})
 
-	// The immediate drain should have processed the pending row.
+	// Wait for the result, not an assumed database completion time. The
+	// hour-long tick ensures this is the immediate drain rather than a retry.
+	r.Eventually(func() bool {
+		got, err := fx.repo.GetByUUID(ctx, id)
+		return err == nil && got.BrokerStatus == share.StatusActive
+	}, 5*time.Second, 10*time.Millisecond)
 	r.Contains(fx.fake.ObservedPublishes(), id)
-	got, err := fx.repo.GetByUUID(context.Background(), id)
-	r.NoError(err)
-	r.Equal(share.StatusActive, got.BrokerStatus)
 }
 
 func TestWorkerEmitsPublishResultMetrics(t *testing.T) {

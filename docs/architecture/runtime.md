@@ -231,12 +231,20 @@ connection, not a second set of operator-only album handlers:
 | CLI command | HTTP operation |
 | --- | --- |
 | `albums create` | `POST /api/v1/albums` |
+| `media list` | `GET /api/v1/media` |
+| `media show` | `GET /api/v1/media/{id}` |
 | `albums rename` | `PATCH /api/v1/albums/{id}` |
 | `albums delete` | `DELETE /api/v1/albums/{id}` |
 | `albums list` | `GET /api/v1/albums` |
 | `albums show` | `GET /api/v1/albums/{id}` and `GET /api/v1/albums/{id}/media` |
 | `albums add` | `POST /api/v1/albums/{id}/media` |
 | `albums remove` | `DELETE /api/v1/albums/{id}/media/{media_id}` |
+
+`internal/client/media.go` shares the media Huma input and response types.
+The CLI validates IDs and pagination before automatic startup, then delegates
+filtering, owner scope and hidden-media handling to the existing media service.
+List JSON is a single API page; detail JSON includes attached files. Neither
+command provides hidden unlock credentials or direct storage access.
 
 `internal/client/albums.go` uses request and response types from the Huma
 registrations in `internal/httpapi/albums.go`. The CLI validates argument syntax

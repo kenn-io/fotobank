@@ -2192,19 +2192,6 @@ export interface components {
             readonly $schema?: string;
             items: components["schemas"]["MediaDTO"][] | null;
         };
-        ListMediaOutputBody: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/api/schemas/ListMediaOutputBody.json
-             */
-            readonly $schema?: string;
-            items: components["schemas"]["MediaDTO"][] | null;
-            /** Format: int64 */
-            next_offset?: number;
-            /** Format: int64 */
-            total?: number;
-        };
         LocationSuggestionDTO: {
             /** Format: int64 */
             count: number;
@@ -2270,6 +2257,19 @@ export interface components {
         MediaFailure: {
             kind: string;
             message: string;
+        };
+        MediaListResult: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/api/schemas/MediaListResult.json
+             */
+            readonly $schema?: string;
+            items: components["schemas"]["MediaDTO"][] | null;
+            /** Format: int64 */
+            next_offset?: number;
+            /** Format: int64 */
+            total?: number;
         };
         MediaView: {
             /**
@@ -3781,7 +3781,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ListMediaOutputBody"];
+                    "application/json": components["schemas"]["MediaListResult"];
                 };
             };
             /** @description Error */

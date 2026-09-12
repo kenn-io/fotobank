@@ -290,7 +290,7 @@ type listAlbumMediaOutput struct {
 }
 
 type AlbumMediaResult struct {
-	Items      []mediaDTO `json:"items"`
+	Items      []MediaDTO `json:"items"`
 	NextOffset *int       `json:"next_offset,omitempty"`
 }
 
@@ -360,7 +360,7 @@ func registerListAlbumMedia(api huma.API, svc *service.AlbumService) {
 			next := offset + limit
 			out.Body.NextOffset = &next
 		}
-		out.Body.Items = make([]mediaDTO, 0, len(rows))
+		out.Body.Items = make([]MediaDTO, 0, len(rows))
 		for _, m := range rows {
 			out.Body.Items = append(out.Body.Items, toMediaDTO(m))
 		}

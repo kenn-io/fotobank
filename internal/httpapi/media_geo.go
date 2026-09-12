@@ -28,7 +28,7 @@ type listMediaGeoInput struct {
 
 type listMediaGeoOutput struct {
 	Body struct {
-		Items []mediaDTO `json:"items"`
+		Items []MediaDTO `json:"items"`
 	}
 }
 
@@ -82,7 +82,7 @@ func registerMediaGeo(api huma.API, svc *service.MediaService, hiddenAuth *hidde
 			return nil, Translate(err)
 		}
 		out := &listMediaGeoOutput{}
-		out.Body.Items = make([]mediaDTO, 0, len(rows))
+		out.Body.Items = make([]MediaDTO, 0, len(rows))
 		for _, m := range rows {
 			out.Body.Items = append(out.Body.Items, toMediaDTO(m))
 		}
