@@ -247,6 +247,10 @@ CLI requests. These commands neither open the catalog nor construct services.
 They start a missing daemon through the shared lifecycle and never retry an
 HTTP mutation automatically. `albums list --json` returns the HTTP page shape
 with `items` and optional `next_offset`.
+Album creation, renaming and member addition also offer JSON using their HTTP
+response types. `show --json` groups the two existing responses under `album`
+and `media`, retaining member pagination. Both reads must succeed before the
+CLI writes the combined output; they do not form a transactional snapshot.
 
 Sharing commands follow the same pattern through `internal/client/shares.go`
 and the existing Huma registrations in `internal/httpapi/shares.go`:

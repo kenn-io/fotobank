@@ -228,3 +228,74 @@ func TestCLIAlbumsInvalidArgumentsBeforeStartup(t *testing.T) {
 		})
 	}
 }
+
+func TestCLIAlbumsJSONWorkflow(t *testing.T) {
+	r := require.New(t)
+	dir := t.TempDir()
+	cfgPath := writeBasicConfig(t, dir)
+	dbPath := filepath.Join(dir, "catalog.sqlite")
+	t.Setenv("FOTOBANK_DB_PATH", dbPath)
+	first := seedReadyRow(t, dbPath)
+	second := seedReadyRow(t, dbPath)
+	startCheckoutServer(t, cfgPath, dbPath)
+
+	stdout, stderr, code := runAlbumsCLI("albums", "create", "Coast trip", "--json", "--config", cfgPath)
+	r.Zero(code, "%s", stderr)
+	var created httpapi.AlbumDTO
+	r.NoError(json.Unmarshal([]byte(stdout), &created))
+	r.NotEmpty(created.ID)
+	r.Equal("Coast trip", created.Name)
+	r.Empty(stderr)
+	stdout, stderr, code = runAlbumsCLI("albums", "rename", created.ID, "Summer trip", "--json", "--config", cfgPath)
+	r.Zero(code, "%s", stderr)
+	var renamed httpapi.AlbumDTO
+	r.NoError(json.Unmarshal([]byte(stdout), &renamed))
+	r.Equal(created.ID, renamed.ID)
+	r.Equal("Summer trip", renamed.Name)
+
+	stdout, stderr, code = runAlbumsCLI("albums", "add", created.ID, first.ID, second.ID, "--json", "--config", cfgPath)
+	r.Zero(code, "%s", stderr)
+	var added httpapi.AddAlbumMediaResult
+	r.NoError(json.Unmarshal([]byte(stdout), &added))
+	r.Equal(2, added.Added)
+	r.Zero(added.AlreadyPresent)
+	stdout, stderr, code = runAlbumsCLI("albums", "add", created.ID, first.ID, "--json", "--config", cfgPath)
+	r.Zero(code, "%s", stderr)
+	r.NoError(json.Unmarshal([]byte(stdout), &added))
+	r.Zero(added.Added)
+	r.Equal(1, added.AlreadyPresent)
+
+	var page struct {
+		Album httpapi.AlbumDTO         `json:"album"`
+		Media httpapi.AlbumMediaResult `json:"media"`
+	}
+	stdout, stderr, code = runAlbumsCLI("albums", "show", created.ID, "--json", "--limit", "1", "--sort-by", "imported", "--sort-asc", "--config", cfgPath)
+	r.Zero(code, "%s", stderr)
+	r.NoError(json.Unmarshal([]byte(stdout), &page))
+	r.Equal("Summer trip", page.Album.Name)
+	r.Equal(2, page.Album.ItemCount)
+	r.Len(page.Media.Items, 1)
+	r.Equal(first.ID, page.Media.Items[0].ID)
+	r.NotNil(page.Media.NextOffset)
+	r.Equal(1, *page.Media.NextOffset)
+	stdout, stderr, code = runAlbumsCLI("albums", "show", created.ID, "--json", "--limit", "1", "--offset", "1", "--sort-by", "imported", "--sort-asc", "--config", cfgPath)
+	r.Zero(code, "%s", stderr)
+	page.Media = httpapi.AlbumMediaResult{}
+	r.NoError(json.Unmarshal([]byte(stdout), &page))
+	r.Len(page.Media.Items, 1)
+	r.Equal(second.ID, page.Media.Items[0].ID)
+	r.Nil(page.Media.NextOffset)
+
+	_, stderr, code = runAlbumsCLI("albums", "delete", created.ID, "--config", cfgPath)
+	r.Zero(code, "%s", stderr)
+	for _, args := range [][]string{
+		{"show", created.ID},
+		{"rename", created.ID, "Gone"},
+		{"add", created.ID, first.ID},
+	} {
+		stdout, stderr, code = runAlbumsCLI(append(append([]string{"albums"}, args...), "--json", "--config", cfgPath)...)
+		r.Equal(1, code)
+		r.Empty(stdout, "failed operations must not emit a successful JSON result")
+		r.Contains(stderr, "404")
+	}
+}

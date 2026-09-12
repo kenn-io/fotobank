@@ -2,7 +2,7 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
+	json "encoding/json/v2"
 	"fmt"
 	"io"
 	"strings"
@@ -42,9 +42,12 @@ func ensureAlbumDaemon(ctx context.Context, cfgPath string) (client.Lifecycle, e
 func newAlbumsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "albums",
-		Short:             "Manage albums (create, rename, delete, add/remove media)",
+		Short:             "Organize photos into albums",
 		Args:              usageArgs(cobra.NoArgs),
 		PersistentPreRunE: validateAlbumCommand,
+		Example: `  fotobank albums create "Summer trip" --json
+  fotobank albums add <album-id> <photo-id> --json
+  fotobank albums show <album-id> --limit 20 --json`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_ = cmd.Usage()
 			return newUsageError("a subcommand is required")
@@ -62,19 +65,21 @@ func newAlbumsCmd() *cobra.Command {
 
 func newAlbumsCreateCmd() *cobra.Command {
 	var cfgPath string
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a new album",
 		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAlbumsCreate(cmd.Context(), cfgPath, args[0], cmd.OutOrStdout())
+			return runAlbumsCreate(cmd.Context(), cfgPath, args[0], asJSON, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the created album as JSON")
 	return cmd
 }
 
-func runAlbumsCreate(ctx context.Context, cfgPath, name string, stdout io.Writer) error {
+func runAlbumsCreate(ctx context.Context, cfgPath, name string, asJSON bool, stdout io.Writer) error {
 	ac, err := ensureAlbumDaemon(ctx, cfgPath)
 	if err != nil {
 		return err
@@ -83,12 +88,16 @@ func runAlbumsCreate(ctx context.Context, cfgPath, name string, stdout io.Writer
 	if err != nil {
 		return err
 	}
+	if asJSON {
+		return json.MarshalWrite(stdout, it)
+	}
 	fmt.Fprintf(stdout, "%s\t%s\n", it.ID, it.Name)
 	return nil
 }
 
 func newAlbumsRenameCmd() *cobra.Command {
 	var cfgPath string
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "rename <id> <name>",
 		Short: "Rename an album",
@@ -102,11 +111,15 @@ func newAlbumsRenameCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if asJSON {
+				return json.MarshalWrite(cmd.OutOrStdout(), it)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", it.ID, it.Name)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the renamed album as JSON")
 	return cmd
 }
 
@@ -114,7 +127,7 @@ func newAlbumsDeleteCmd() *cobra.Command {
 	var cfgPath string
 	cmd := &cobra.Command{
 		Use:   "delete <id>",
-		Short: "Delete an album (cascades album_media)",
+		Short: "Delete an album without deleting its photos",
 		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ac, err := ensureAlbumDaemon(cmd.Context(), cfgPath)
@@ -153,7 +166,7 @@ func newAlbumsListCmd() *cobra.Command {
 				return err
 			}
 			if asJSON {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+				return json.MarshalWrite(cmd.OutOrStdout(), result)
 			}
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintln(tw, "UUID\tName\tItems\tUpdated")
@@ -174,6 +187,7 @@ func newAlbumsListCmd() *cobra.Command {
 
 func newAlbumsShowCmd() *cobra.Command {
 	var (
+		asJSON  bool
 		cfgPath string
 		limit   int
 		offset  int
@@ -182,12 +196,12 @@ func newAlbumsShowCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "show <id>",
-		Short: "Show album detail + a page of member media IDs",
+		Short: "Show an album and a page of its photos",
 		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAlbumsShow(cmd.Context(), cfgPath, args[0],
+			return runAlbumsShow(cmd.Context(), cfgPath,
 				httpapi.ListAlbumMediaInput{AlbumID: args[0], Limit: limit, Offset: offset, SortBy: sortBy, SortAsc: sortAsc},
-				cmd.OutOrStdout())
+				asJSON, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
@@ -195,22 +209,34 @@ func newAlbumsShowCmd() *cobra.Command {
 	cmd.Flags().IntVar(&offset, "offset", 0, "pagination offset")
 	cmd.Flags().StringVar(&sortBy, "sort-by", "added", "added, imported, or taken")
 	cmd.Flags().BoolVar(&sortAsc, "sort-asc", false, "invert the default DESC sort")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit album details and a page of media as JSON")
 	return cmd
 }
 
 func runAlbumsShow(
 	ctx context.Context,
-	cfgPath, id string,
+	cfgPath string,
 	filter httpapi.ListAlbumMediaInput,
+	asJSON bool,
 	stdout io.Writer,
 ) error {
 	ac, err := ensureAlbumDaemon(ctx, cfgPath)
 	if err != nil {
 		return err
 	}
-	detail, err := client.GetAlbum(ctx, ac.ConfigPath, ac.Version, id)
+	detail, err := client.GetAlbum(ctx, ac.ConfigPath, ac.Version, filter.AlbumID)
 	if err != nil {
 		return err
+	}
+	result, err := client.ListAlbumMedia(ctx, ac.ConfigPath, ac.Version, filter)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		return json.MarshalWrite(stdout, struct {
+			Album httpapi.AlbumDTO         `json:"album"`
+			Media httpapi.AlbumMediaResult `json:"media"`
+		}{Album: detail, Media: result})
 	}
 	fmt.Fprintf(stdout, "id:         %s\n", detail.ID)
 	fmt.Fprintf(stdout, "name:       %s\n", detail.Name)
@@ -219,10 +245,6 @@ func runAlbumsShow(
 	if detail.Cover != nil {
 		fmt.Fprintf(stdout, "cover:      media=%s version=%d\n",
 			detail.Cover.MediaID, detail.Cover.ThumbVersion)
-	}
-	result, err := client.ListAlbumMedia(ctx, ac.ConfigPath, ac.Version, filter)
-	if err != nil {
-		return err
 	}
 	fmt.Fprintln(stdout, "members:")
 	for _, m := range result.Items {
@@ -233,9 +255,10 @@ func runAlbumsShow(
 
 func newAlbumsAddCmd() *cobra.Command {
 	var cfgPath string
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "add <album_id> <media_id> [<media_id>...]",
-		Short: "Add one or more media rows to an album (idempotent)",
+		Short: "Add photos to an album; existing members are left unchanged",
 		Args:  usageArgs(cobra.MinimumNArgs(2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ac, err := ensureAlbumDaemon(cmd.Context(), cfgPath)
@@ -246,11 +269,15 @@ func newAlbumsAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if asJSON {
+				return json.MarshalWrite(cmd.OutOrStdout(), result)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "added %d, already present %d\n", result.Added, result.AlreadyPresent)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit added and already-present counts as JSON")
 	return cmd
 }
 
@@ -258,7 +285,7 @@ func newAlbumsRemoveCmd() *cobra.Command {
 	var cfgPath string
 	cmd := &cobra.Command{
 		Use:   "remove <album_id> <media_id>",
-		Short: "Remove a media row from an album",
+		Short: "Remove a photo from an album without deleting it",
 		Args:  usageArgs(cobra.ExactArgs(2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ac, err := ensureAlbumDaemon(cmd.Context(), cfgPath)
