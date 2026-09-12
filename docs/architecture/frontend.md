@@ -80,6 +80,8 @@ the user closes it or presses Escape. The sidebar remains mounted, preserving
 its filter state. Desktop retains its persistent sidebar and timeline rail;
 on phones, year shortcuts flow above the grid instead of reserving a rail.
 The header puts search on its own row, and search options wrap on narrow views.
+The map fills the main pane's available height rather than subtracting a
+separate header estimate from the viewport.
 
 ![Phone library with loaded synthetic photos](images/mobile-library.png)
 

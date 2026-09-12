@@ -389,7 +389,8 @@
   .map-page {
     display: flex;
     flex-direction: column;
-    height: calc(100vh - var(--header-height, 56px));
+    height: 100%;
+    min-height: 0;
   }
   .loading,
   .error,
@@ -450,8 +451,8 @@
      to be wide enough that 60% leaves enough room for the map AND 40%
      leaves enough room for ~3 grid columns. Below 1240px the main pane
      is < 1020px and 40% of that fits only one and a half thumbnails;
-     fall back to tabs. The sidebar doesn't collapse on mobile, so a
-     viewport-relative breakpoint here matches actual main-pane width. */
+     fall back to tabs. Phones retain tabs when the shell collapses
+     the sidebar, since their full width is still too narrow for split view. */
   @media (max-width: 1239px) {
     .tabs {
       display: flex;

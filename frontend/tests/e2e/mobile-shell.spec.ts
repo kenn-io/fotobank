@@ -2,6 +2,20 @@ import { test, expect } from "@playwright/test";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
+test("map fits its content pane on phones and desktop", async ({ page }) => {
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/map");
+    await expect(page.getByTestId("map-loaded")).toBeVisible();
+    const pane = page.locator(".main");
+    const map = page.locator(".map-page");
+    const available = (await pane.boundingBox())!;
+    const actual = (await map.boundingBox())!;
+    expect(actual.height).toBeCloseTo(available.height, 0);
+    expect(await pane.evaluate((element) => element.scrollHeight)).toBeLessThanOrEqual(Math.ceil(available.height));
+  }
+});
+
 test("phone navigation gives photos the screen and keeps filters accessible", async ({ page }) => {
   await page.goto("/library");
   const browse = page.getByRole("button", { name: "Browse & filters" });
