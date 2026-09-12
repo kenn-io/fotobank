@@ -118,6 +118,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newThumbsCmd())
 	root.AddCommand(newGPSCmd())
 	root.AddCommand(newAlbumsCmd())
+	root.AddCommand(newMediaCmd())
 	root.AddCommand(newAICmd())
 	root.AddCommand(newSharesCmd())
 	root.AddCommand(newBackupCmd())

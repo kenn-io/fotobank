@@ -2693,41 +2693,6 @@
         ],
         "type": "object"
       },
-      "ListMediaOutputBody": {
-        "additionalProperties": false,
-        "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/api/schemas/ListMediaOutputBody.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/MediaDTO"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "next_offset": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "total": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
       "LocationSuggestionDTO": {
         "additionalProperties": false,
         "properties": {
@@ -2909,6 +2874,41 @@
         "required": [
           "kind",
           "message"
+        ],
+        "type": "object"
+      },
+      "MediaListResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/MediaListResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MediaDTO"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_offset": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -5814,7 +5814,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListMediaOutputBody"
+                  "$ref": "#/components/schemas/MediaListResult"
                 }
               }
             },

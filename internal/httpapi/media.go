@@ -14,11 +14,11 @@ import (
 	"go.kenn.io/fotobank/internal/service"
 )
 
-// mediaDTO is the JSON shape of one media row. ThumbStatus and
+// MediaDTO is the JSON shape of one media row. ThumbStatus and
 // ThumbVersion are included so clients can decide whether to issue a
 // /thumb request and cache-bust via the ?v= param when a regenerate
 // bumps the version.
-type mediaDTO struct {
+type MediaDTO struct {
 	ID               string     `json:"id"`
 	Type             string     `json:"type"`
 	MimeType         string     `json:"mime_type"`
@@ -43,14 +43,14 @@ type mediaDTO struct {
 	GPSAt            *time.Time `json:"gps_at,omitempty"`
 	LocationLabel    string     `json:"location_label,omitempty"`
 
-	Files *[]fileDTO `json:"files,omitempty"`
+	Files *[]FileDTO `json:"files,omitzero" nullable:"false"`
 
 	// F2.4 Hidden privacy. Omitted (omitempty) when nil so the field is
 	// absent from visible-media responses — minimises client-side noise.
 	HiddenAt *time.Time `json:"hidden_at,omitempty"`
 }
 
-type fileDTO struct {
+type FileDTO struct {
 	ID               string `json:"id"`
 	Role             string `json:"role"`
 	MimeType         string `json:"mime_type"`
@@ -59,8 +59,8 @@ type fileDTO struct {
 	SHA256           string `json:"sha256"`
 }
 
-func toMediaDTO(m media.Media) mediaDTO {
-	dto := mediaDTO{
+func toMediaDTO(m media.Media) MediaDTO {
+	dto := MediaDTO{
 		ID:               m.ID,
 		Type:             string(m.Type),
 		MimeType:         m.MimeType,
@@ -89,7 +89,7 @@ func toMediaDTO(m media.Media) mediaDTO {
 	return dto
 }
 
-type listMediaInput struct {
+type ListMediaInput struct {
 	MediaType string   `query:"media_type" doc:"photo or video; anything else returns zero rows"`
 	Limit     int      `query:"limit" doc:"max rows to return (default 100, cap 1000)"`
 	Offset    int      `query:"offset" doc:"pagination offset"`
@@ -105,11 +105,14 @@ type listMediaInput struct {
 }
 
 type listMediaOutput struct {
-	Body struct {
-		Items      []mediaDTO `json:"items"`
-		NextOffset *int       `json:"next_offset,omitempty"`
-		Total      *int       `json:"total,omitempty"`
-	}
+	Body MediaListResult
+}
+
+// MediaListResult is one page of visible photos and videos.
+type MediaListResult struct {
+	Items      []MediaDTO `json:"items"`
+	NextOffset *int       `json:"next_offset,omitempty"`
+	Total      *int       `json:"total,omitempty"`
 }
 
 type getMediaInput struct {
@@ -117,7 +120,7 @@ type getMediaInput struct {
 }
 
 type getMediaOutput struct {
-	Body mediaDTO
+	Body MediaDTO
 }
 
 const (
@@ -137,7 +140,7 @@ func registerMedia(api huma.API, svc *service.MediaService) {
 		Method:      http.MethodGet,
 		Path:        "/api/v1/media",
 		Summary:     "List media visible to the caller",
-	}, func(ctx context.Context, in *listMediaInput) (*listMediaOutput, error) {
+	}, func(ctx context.Context, in *ListMediaInput) (*listMediaOutput, error) {
 		if svc == nil {
 			return nil, huma.Error503ServiceUnavailable("media service not configured")
 		}
@@ -186,7 +189,7 @@ func registerMedia(api huma.API, svc *service.MediaService) {
 			next := in.Offset + limit
 			out.Body.NextOffset = &next
 		}
-		out.Body.Items = make([]mediaDTO, 0, len(rows))
+		out.Body.Items = make([]MediaDTO, 0, len(rows))
 		for _, m := range rows {
 			out.Body.Items = append(out.Body.Items, toMediaDTO(m))
 		}
@@ -222,13 +225,13 @@ func registerMedia(api huma.API, svc *service.MediaService) {
 			return nil, err
 		}
 		dto := toMediaDTO(m)
-		filesDTO := make([]fileDTO, 0)
+		filesDTO := make([]FileDTO, 0)
 		files, err := svc.ListFiles(ctx, m.ID, caller, includeHidden)
 		if err != nil {
 			return nil, err
 		}
 		for _, file := range files {
-			filesDTO = append(filesDTO, fileDTO{
+			filesDTO = append(filesDTO, FileDTO{
 				ID: file.ID, Role: string(file.Role), MimeType: file.MimeType,
 				OriginalFilename: file.OriginalFilename, Size: file.Size, SHA256: file.SHA256,
 			})
