@@ -275,7 +275,7 @@
 {#if hiddenStore.unlocked}
   <HiddenLockStrip {hiddenStore} />
 {/if}
-<ThreeColumnLayout>
+<ThreeColumnLayout routeKey={router.current.route}>
   {#snippet sidebar()}
     <Sidebar
       active={activeId(router.current)}

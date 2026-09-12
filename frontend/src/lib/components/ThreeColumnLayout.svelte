@@ -1,16 +1,45 @@
 <!-- frontend/src/lib/components/ThreeColumnLayout.svelte -->
 <script lang="ts">
-  import type { Snippet } from "svelte";
+  import { untrack, type Snippet } from "svelte";
 
-  let { sidebar, main, detail }: {
+  let { sidebar, main, detail, routeKey = "" }: {
     sidebar: Snippet;
     main: Snippet;
     detail?: Snippet;
+    routeKey?: string;
   } = $props();
+  let navigationOpen = $state(false);
+  let toggle: HTMLButtonElement;
+  let previousSection: string | undefined;
+
+  function closeNavigation() {
+    navigationOpen = false;
+    toggle?.focus();
+  }
+
+  // Keep filters open while refining a query, but return to content when
+  // choosing a different section. Both views use the same sidebar instance.
+  $effect(() => {
+    const section = routeKey;
+    untrack(() => {
+      if (section !== previousSection && navigationOpen) closeNavigation();
+      previousSection = section;
+    });
+  });
 </script>
 
-<div class="shell">
-  <aside class="sidebar">{@render sidebar()}</aside>
+<svelte:window onkeydown={(event) => {
+  if (event.key === "Escape" && navigationOpen) closeNavigation();
+}} />
+
+<div class="shell" class:navigation-open={navigationOpen}>
+  <div class="mobile-navigation">
+    <button bind:this={toggle} type="button" aria-expanded={navigationOpen}
+      aria-controls="browse-sidebar" onclick={() => (navigationOpen = !navigationOpen)}>
+      {navigationOpen ? "Close browse & filters" : "Browse & filters"}
+    </button>
+  </div>
+  <aside id="browse-sidebar" class="sidebar">{@render sidebar()}</aside>
   <section class="main">{@render main()}</section>
   {#if detail}
     <aside class="detail">{@render detail()}</aside>
@@ -40,6 +69,7 @@
        scrollbar AND the day-header's Select-group buttons. */
     --rail-width: 64px;
   }
+  .mobile-navigation { display: none; }
   .sidebar {
     background: var(--bg-surface);
     border-right: 1px solid var(--border-default);
@@ -49,6 +79,7 @@
     box-shadow: inset 0 1px 0 var(--fb-rim-highlight);
   }
   .main {
+    min-width: 0;
     overflow: auto;
     background: var(--bg-primary);
     /* Right-side rail: padding-right reserves the gutter that
@@ -70,5 +101,41 @@
     border-left: 1px solid var(--border-default);
     overflow-y: auto;
     box-shadow: inset 0 1px 0 var(--fb-rim-highlight);
+  }
+  @media (max-width: 760px) {
+    .shell {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr);
+      height: calc(100dvh - 102px);
+      --rail-width: 0px;
+    }
+    .mobile-navigation {
+      display: flex;
+      padding: 4px 12px;
+      border-bottom: 1px solid var(--border-default);
+      background: var(--bg-surface);
+    }
+    .mobile-navigation button {
+      min-height: 44px;
+      padding: 8px 12px;
+      color: var(--text-primary);
+      background: var(--bg-inset);
+      border: 1px solid var(--border-default);
+      border-radius: 4px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .mobile-navigation button:focus-visible {
+      outline: 2px solid var(--accent-blue);
+      outline-offset: 2px;
+    }
+    .sidebar { display: none; border-right: 0; }
+    .sidebar :global(.entry), .sidebar :global(button) {
+      min-height: 44px;
+      font-size: 14px;
+    }
+    .navigation-open .sidebar { display: block; }
+    .navigation-open .main { display: none; }
+    .main { scrollbar-gutter: auto; }
   }
 </style>

@@ -75,4 +75,22 @@
     align-items: center;
     gap: 10px;
   }
+  @media (max-width: 760px) {
+    header.top {
+      height: 102px;
+      box-sizing: border-box;
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-rows: 36px 44px;
+      gap: 6px 12px;
+      padding: 8px 12px;
+    }
+    header.top :global(.search-bar) {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      max-width: none;
+      min-width: 0;
+    }
+    header.top :global(.kit-search-input) { height: 44px; font-size: 16px; }
+    .top-right { justify-self: end; min-width: 0; }
+  }
 </style>

@@ -97,4 +97,8 @@
     height: 5px;
     margin-right: 7px;
   }
+  @media (max-width: 760px) {
+    .id-chip-label { display: none; }
+    .id-chip-value { max-width: 100px; overflow: hidden; white-space: nowrap; }
+  }
 </style>

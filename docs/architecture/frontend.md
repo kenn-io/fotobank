@@ -72,6 +72,17 @@ product's visual identity.
 
 ![Fotobank header using the darkroom theme over kit-ui tokens](images/kit-ui-theme-foundation.png)
 
+At 760px and below, `ThreeColumnLayout` gives the main view the full width and
+puts the existing sidebar behind a “Browse & filters” button. The panel
+replaces the content view while open rather than covering it with a modal.
+Changing sections closes the panel; changing filters keeps it open until
+the user closes it or presses Escape. The sidebar remains mounted, preserving
+its filter state. Desktop retains its persistent sidebar and timeline rail;
+on phones, year shortcuts flow above the grid instead of reserving a rail.
+The header puts search on its own row, and search options wrap on narrow views.
+
+![Phone library with loaded synthetic photos](images/mobile-library.png)
+
 Album creation uses the shared modal, text field, buttons, and empty state.
 The controls inherit Fotobank's darkroom palette, and the modal supplies the
 close, backdrop, focus-trap, and keyboard behavior for the route.
