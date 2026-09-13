@@ -49,9 +49,10 @@
     {
       key: "manage",
       label: "MANAGE",
-      entries: appConfig.sharingEnabled
-        ? [{ id: "shares", label: "Shares", href: "/shares" }]
-        : [],
+      entries: [
+        ...(appConfig.sharingEnabled ? [{ id: "shares", label: "Shares", href: "/shares" }] : []),
+        { id: "settings", label: "Settings", href: "/settings" },
+      ],
     },
   ]);
 </script>
