@@ -80,6 +80,30 @@ archives are retained independently of the schedule. The tag
 `fotobank:scheduled` is reserved for the scheduler and cannot be passed to
 `backup create --tag`.
 
+## Before changing development builds
+
+Fotobank pins unreleased Docbank commits. Docbank preserves released storage
+formats, but it does not automatically upgrade every unreleased layout. The
+current pin uses storage schema 9 and cannot directly open a development vault
+using schema 5. Do not change the schema marker by hand.
+
+If you need to keep an existing development library:
+
+1. Use its working Fotobank binary to create and verify a complete archive as
+   described above. Keep that binary, the original storage, and the saved
+   configuration until recovery is verified.
+2. Stop the old daemon before replacing the binary.
+3. Start the new binary in recovery mode and restore the archive into separate
+   storage. Recovery does not need to open the old vault.
+4. Follow [Try the recovered library](#try-the-recovered-library) before
+   switching to the recovered configuration. Check originals, relationships,
+   albums, thumbnails, and retained checkout paths.
+
+Reopening a vault and restoring an archive are different operations. Restore
+rebuilds Docbank's catalog from the archive's logical records instead of trying
+to open the old SQLite layout. An archive restore does not migrate Fotobank's
+own catalog schema; check that separately if a build changes it.
+
 ## Enable scheduled archives
 
 Initialize a repository with `fotobank backup init --repo /backups/photos`,
