@@ -122,6 +122,7 @@ export class MediaStore {
     this.byId.clear();
     this.byMediaId.clear();
     this.months = [];
+    this.loadError = false;
     this.exhausted = false;
     this.nextOffset = 0;
     this.inflight = null;
@@ -154,8 +155,15 @@ export class MediaStore {
 
   async loadInitial() { await this.loadMore(); }
 
+  loadError = $state(false);
+
+  retry(): Promise<void> {
+    this.loadError = false;
+    return this.loadMore();
+  }
+
   loadMore(): Promise<void> {
-    if (this.exhausted) return Promise.resolve();
+    if (this.exhausted || this.loadError) return Promise.resolve();
     // Re-entry: hand back the in-flight promise so `await loadMore()` only
     // resolves once the original load completes. Returning `Promise.resolve()`
     // here would let the caller's loop spin against `loading=true` and
@@ -188,7 +196,10 @@ export class MediaStore {
         // every byte of this response so it cannot leak into the
         // post-reset store.
         if (myToken !== this.fetchToken) return;
-        if (res.error || !res.data) return;
+        if (res.error || !res.data) {
+          this.loadError = true;
+          return;
+        }
         const items = ((res.data as { items?: Array<Record<string, unknown>> }).items ?? [])
           .map(toMedia)
           .filter((m): m is Media => m !== null);
@@ -196,6 +207,8 @@ export class MediaStore {
         const next = (res.data as { next_offset?: number | null }).next_offset ?? null;
         this.nextOffset = next;
         if (next === null) this.exhausted = true;
+      } catch {
+        if (myToken === this.fetchToken) this.loadError = true;
       } finally {
         // Only the latest fetch owns the loading flag and the inflight
         // slot; a stale completion must not clobber state owned by the

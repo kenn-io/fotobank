@@ -25,6 +25,8 @@ export interface SearchStore {
   readonly effectiveSort: SearchSort;
   readonly requestHash: string | null;
   readonly loading: boolean;
+  readonly loadError: boolean;
+  retry(): Promise<void>;
   setQuery(q: string): Promise<void>;
   setFilters(f: SearchFilters): Promise<void>;
   setSort(s: SearchSort): Promise<void>;
@@ -129,7 +131,7 @@ function buildParams(
 // any 400 to /search as a cursor-mismatch cue. This is intentionally
 // permissive — a future 400 from a different cause (e.g. invalid
 // limit) would also restart pagination, which is harmless: the next
-// request will surface the same failure and the user sees the empty
+// request will surface the same failure and the user sees the error
 // state. Surfacing 400s via unhandled exception is the wrong UX.
 function isCursorMismatch(e: unknown): boolean {
   return e instanceof SearchHTTPError && e.status === 400;
@@ -170,6 +172,8 @@ export function createSearchStore(opts: CreateSearchStoreOptions): SearchStore {
   let effectiveSort = $state<SearchSort>("newest");
   let requestHash = $state<string | null>(null);
   let loading = $state<boolean>(false);
+  let loadError = $state(false);
+  let failedCursor: string | null = null;
 
   // Inflight management: every issue() bumps the token, captures it,
   // aborts any prior in-flight request, and drops its own response if
@@ -199,6 +203,12 @@ export function createSearchStore(opts: CreateSearchStoreOptions): SearchStore {
     inflightController = ctrl;
     const token = ++inflightToken;
     loading = true;
+    loadError = false;
+    if (reqCursor === null) {
+      results = [];
+      hasMore = false;
+      total = null;
+    }
 
     const params = buildParams(query, sort, filters, reqCursor, explainGetter());
     let res: SearchResponse;
@@ -216,11 +226,10 @@ export function createSearchStore(opts: CreateSearchStoreOptions): SearchStore {
         // the recursive issue() does that itself.
         return issue(null);
       }
-      // Any other error: clear loading on the active token and rethrow
-      // to surface in the caller's promise. setQuery / fetchNextPage
-      // catch nothing, so the rejection propagates to the route.
       loading = false;
-      throw e;
+      loadError = true;
+      failedCursor = reqCursor;
+      return null;
     }
     if (token !== inflightToken) return null;
 
@@ -274,6 +283,7 @@ export function createSearchStore(opts: CreateSearchStoreOptions): SearchStore {
   }
 
   async function fetchNextPage(): Promise<void> {
+    if (loading || loadError) return;
     if (cursor === null) return;
     if (!hasMore) return;
     await issue(cursor);
@@ -311,6 +321,11 @@ export function createSearchStore(opts: CreateSearchStoreOptions): SearchStore {
     get effectiveSort() { return effectiveSort; },
     get requestHash() { return requestHash; },
     get loading() { return loading; },
+    get loadError() { return loadError; },
+    async retry() {
+      if (loading || !loadError) return;
+      await issue(failedCursor);
+    },
     setQuery,
     setFilters,
     setSort,

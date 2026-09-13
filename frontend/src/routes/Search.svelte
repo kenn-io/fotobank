@@ -10,6 +10,7 @@
      into the UI; an SSE handler invalidates the store's requestHash
      when the activator promotes a new generation. -->
 <script lang="ts">
+  import PhotoReadError from "../lib/components/PhotoReadError.svelte";
   import { createSearchStore, emptyFilters, type SearchStore } from "../lib/search/searchStore.svelte";
   import { searchClient } from "../lib/search/client";
   import type { SearchClient } from "../lib/search/client";
@@ -471,16 +472,21 @@
   <div class="search-toolbar">
     <SearchFiltersPopover filters={s.filters} onChange={onSearchFiltersChange} />
     <SearchSortSegment sort={s.sort} query={s.query} onChange={onSortChange} />
-    <IndexingStatusPill completeness={s.embeddingCompleteness} />
+    {#if !s.loadError && !s.loading}
+      <IndexingStatusPill completeness={s.embeddingCompleteness} />
+    {/if}
   </div>
   <SearchFilterChips filters={s.filters} onChange={onSearchFiltersChange} />
   <FilterChipStrip filters={activeFilters} {tagLabels} onChange={onFiltersChange} />
-  <IndexingStatusBanner
-    completeness={s.embeddingCompleteness}
-    semanticUnavailable={s.semanticUnavailable}
-    reason={s.semanticUnavailableReason}
-    hasQuery={s.query !== ""}
-  />
+  {#if !s.loadError && !s.loading}
+    <IndexingStatusBanner
+      completeness={s.embeddingCompleteness}
+      semanticUnavailable={s.semanticUnavailable}
+      reason={s.semanticUnavailableReason}
+      hasQuery={s.query !== ""}
+    />
+  {/if}
+
   {#if s.results.length > 0}
     <VirtualGrid
       {months}
@@ -497,6 +503,8 @@
     </VirtualGrid>
   {:else if s.loading}
     <div class="search-status">Searching…</div>
+  {:else if s.loadError}
+    <!-- The retry message below replaces the empty state. -->
   {:else if s.query !== ""}
     <div class="search-status" data-testid="search-empty-state">
       No results for &ldquo;{s.query}&rdquo;.
@@ -505,6 +513,9 @@
     <div class="search-status" data-testid="search-idle-state">
       Type a query above to search your photos.
     </div>
+  {/if}
+  {#if s.loadError}
+    <PhotoReadError message={s.results.length ? "Couldn’t load more search results." : "Couldn’t load search results."} onRetry={() => s.retry()} />
   {/if}
 </div>
 
