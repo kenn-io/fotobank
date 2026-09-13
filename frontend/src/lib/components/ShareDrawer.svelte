@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy } from "svelte";
   import { Button } from "@kenn-io/kit-ui";
   import type {
     ScopeListRow,
@@ -30,12 +30,16 @@
   let detailLoading = $state(false);
   let previewLoading = $state(false);
   let closeButton: HTMLButtonElement;
+  let trigger: Element | null = null;
+  // Status refreshes must not move focus; selecting another share must.
+  const selectedUuid = $derived(scope.uuid);
 
-  onMount(() => {
-    const trigger = document.activeElement;
+  $effect(() => {
+    void selectedUuid;
+    trigger = document.activeElement;
     closeButton.focus();
-    return () => { if (trigger instanceof HTMLElement) trigger.focus(); };
   });
+  onDestroy(() => { if (trigger instanceof HTMLElement) trigger.focus(); });
 
   // Capture scope.uuid before await so a fast prop swap (user clicks a
   // different row mid-flight) can't land a stale response on top of the

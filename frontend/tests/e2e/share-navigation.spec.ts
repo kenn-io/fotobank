@@ -10,6 +10,15 @@ test("keyboard users can open share details and return to the share", async ({ p
   await page.keyboard.press("Escape");
   await expect(page.locator(".drawer")).toBeHidden();
   await expect(open).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  const other = page.getByRole("button", { name: "Active album e2e share", exact: true });
+  await other.click();
+  await expect(page.locator(".drawer h2")).toHaveText("Active album e2e share");
+  await expect(page.getByRole("button", { name: "Close drawer" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".drawer")).toBeHidden();
+  await expect(other).toBeFocused();
 });
 
 test("phone share list shows details and actions without horizontal scrolling", async ({ page }) => {
