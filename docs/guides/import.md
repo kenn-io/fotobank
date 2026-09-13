@@ -23,7 +23,7 @@ must not be inside Docbank, the artifact root, or the flash directory, and
 symbolic-link media files are rejected.
 
 The server stays running. You can browse completed imports while background
-workers build thumbnails and other enabled projections. `--workers` defaults
+workers build thumbnails and other enabled derived data. `--workers` defaults
 to the daemon's import configuration; `--wait` controls how long to wait for
 another import to finish (zero fails immediately if busy).
 
@@ -37,7 +37,7 @@ automatically.
 
 ## Interrupted imports
 
-Import uses durable operation records across Fotobank SQLite and Docbank. Run
+Fotobank saves import progress in its catalog and records files in Docbank. Run
 the recovery command after a crash or interrupted copy. It runs through the
 daemon, starting it if needed, with the same local operator access as import:
 
@@ -45,7 +45,8 @@ daemon, starting it if needed, with the same local operator access as import:
 fotobank content recover
 ```
 
-Recovery adopts matching Docbank content and finishes ready assets. It reports
+Recovery links matching Docbank files to their saved import records and marks
+completed photos ready. It reports
 conflicts and unmatched Docbank paths without deleting or overwriting them.
 It checks every registered owner, not just the configured photo owner. Recovery
 and imports share a lock; use `--wait 30s` to wait for an import to finish.

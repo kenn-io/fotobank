@@ -1,5 +1,7 @@
 <!-- frontend/src/routes/Sessions.svelte -->
 <script lang="ts">
+  import EmptyLibrary from "../lib/components/EmptyLibrary.svelte";
+  import { fromRoute } from "../lib/filters/activeFilters";
   import PhotoReadError from "../lib/components/PhotoReadError.svelte";
   import MonthChunk from "../lib/grid/MonthChunk.svelte";
   import type { MediaStore } from "../lib/media/mediaStore.svelte";
@@ -37,6 +39,12 @@
     toastStore: ToastStore;
     appConfig: AppConfigStore;
   } = $props();
+
+  // Sessions shows the whole library, not a filter retained from Library.
+  $effect(() => {
+    mediaStore.setFilters(fromRoute({ route: "sessions" }));
+    void mediaStore.loadInitial();
+  });
 
   const density = new DensityStore(api, "sessions");
   density.load();
@@ -238,8 +246,8 @@
 {/if}
 {#if mediaStore.loadError}
   <PhotoReadError message={mediaStore.months.length ? "Couldn’t load more photos." : "Couldn’t load photos."} onRetry={() => mediaStore.retry()} />
-{:else if mediaStore.months.length === 0 && !mediaStore.loading}
-  <div style="padding:24px; color: var(--text-secondary)">No photos yet.</div>
+{:else if mediaStore.months.length === 0 && !mediaStore.loading && mediaStore.exhausted}
+  <EmptyLibrary />
 {/if}
 
 {#if addOpen}

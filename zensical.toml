@@ -29,6 +29,7 @@ nav = [
     {"Frontend" = "architecture/frontend.md"},
     {"Operations" = "architecture/operations.md"},
   ]},
+  {"Maintain the documentation" = "publishing.md"},
 ]
 
 [project.extra]

@@ -1,16 +1,16 @@
 # Fotobank
 
-> Fotobank is a self-hosted photo system of record built on Docbank's content-addressed storage. The project is pre-alpha.
+> Fotobank is a self-hosted photo system of record built on Docbank. The project is pre-alpha.
 
 ## Product overview
 
-- [Website Markdown](/index.md): Product position, authority boundary, and current status.
+- [Website Markdown](/index.md): Purpose, division of responsibility, and current status.
 - [Storage and editing guide](/guide.md): How one photograph moves from import through recovery.
 
 ## Technical documentation
 
 - [Documentation](/docs/): Current architecture and operational boundaries.
-- [System map](/docs/architecture/): Package ownership and system invariants.
+- [System map](/docs/architecture/): Package ownership and rules for changing the code.
 - [Content and storage](/docs/architecture/content-and-storage/): Docbank, NAS, thumbnails, imports, and checkouts.
 - [Data model](/docs/architecture/data-model/): Assets, files, albums, shares, and ownership.
 - [Search and AI](/docs/architecture/search-and-ai/): Current search and optional AI implementation.
@@ -21,8 +21,4 @@
 - [Import and recover](/docs/guides/import/): Import, finish interrupted imports, and refresh photo locations through the daemon, with structured results for automation.
 - [Checkouts](/docs/guides/checkouts/): Create working copies, scan edits, inspect saved state, and explicitly commit.
 - [Backup and restore](/docs/guides/backup/): Archive both the catalog and content, schedule backups, and restore separately.
-- [Automation](/docs/guides/automation/): Structured output, daemon-backed album, sharing, and owner commands, server-stop requirements, and current API limits.
-
-## Status
-
-Docbank already supplies exact versions, source metadata, and canonical image previews. Optional AI jobs, embeddings, and search still run in Fotobank; their move into Docbank is not yet integrated. The project is not yet a supported photo product. Material labeled “planned” or “direction” is not implemented product behavior.
+- [Automation](/docs/guides/automation/): Structured output, daemon requirements, and current command and API limits.

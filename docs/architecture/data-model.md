@@ -1,8 +1,12 @@
 # Data Model
 
+The catalog records your photos, their related files, and your organizational
+choices. This page describes the SQLite tables and the rules that keep their
+references consistent.
+
 ## SQLite ownership
 
-Fotobank SQLite is authoritative for product state: owners, assets, metadata,
+Fotobank's SQLite catalog stores product state: owners, assets, metadata,
 albums, shares, privacy, thumbnail state, AI results, search generations, and
 application settings. Docbank owns media content and version history; it does
 not own Fotobank's product relationships.
@@ -36,13 +40,13 @@ SHA-256. Database triggers prevent later inserts, updates, deletions, or owner
 changes from breaking those invariants.
 
 Capture time, camera, lens, exposure, dimensions, duration, and GPS columns are
-a rebuildable projection of the primary file's Docbank source metadata. The
+a projection: a rebuildable copy of the primary file's Docbank metadata. The
 asset stores the exact content version, extractor fingerprint, and metadata
 checksum beside those fields. Applying a projection requires that version to
 still be current. Primary checkout writeback processes the new exact Docbank
-version before applying its receipt, then replaces the facts and fence in the
-same transaction that advances the file mapping. Library queries therefore do
-not expose metadata from older bytes.
+version before applying its receipt. It replaces the metadata and version checks
+in the same transaction that advances the file mapping. Library queries therefore
+do not expose metadata from older bytes.
 
 Product columns named `media_id` use “media” as product language. Their values
 are asset UUIDs and their foreign keys target `assets`.

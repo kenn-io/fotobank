@@ -61,10 +61,9 @@ proposing tags and descriptions, preparing an album for review, or handing
 selected files to an editing tool. These are directions for agent workflows,
 not claims that Fotobank already has an autonomous assistant.
 
-The architectural commitment is one daemon-owned HTTP API for the web app,
-CLI, and eventually MCP. Much of the CLI already follows it; the remaining
-migrations are identified in the [automation guide](docs/guides/automation.md).
-There is no separate agent-owned catalog to keep in sync.
+The web app and CLI use the daemon's HTTP API. See the
+[automation guide](docs/guides/automation.md) for command behavior and limits.
+MCP integration remains a goal. Agents do not own a separate catalog.
 
 ## Docbank stores the record. Fotobank understands the photo library.
 
@@ -79,18 +78,6 @@ exact Docbank version. Complete recovery archives capture both the catalog and
 Docbank content: your album choices and file relationships cannot be recovered
 from the original bytes alone.
 
-Reusable intelligence belongs in Docbank. Tagging, enrichment, renditions,
-embeddings, and semantic retrieval should be capabilities applications can
-share, not pipelines each application has to reinvent. Fotobank's job is to
-turn those capabilities into useful photographic workflows.
-
-That integration is still in progress. Optional tagging, captioning,
-embedding, and hybrid-search code currently runs in Fotobank; it has not all
-moved to Docbank. Broader enrichment and agent workflows remain aspirations.
-AI is disabled by default. Enabling it requires configuring providers and
-acknowledging processing of hidden media. Hidden-media controls are application
-privacy, not encryption; understand that boundary before enabling processing.
-
 ## What you can do today
 
 - Import photos, videos, RAW files, and sidecars without modifying the source.
@@ -101,8 +88,8 @@ privacy, not encryption; understand that boundary before enabling processing.
 - Create partial, writable checkouts for editors and shell tools. Inspect
   changes and explicitly commit settled edits as new versions, with conflicts
   reported when the stored base has changed.
-- Try optional AI tagging, captioning, and hybrid text/vector search with
-  configured providers. Generated results retain model and input provenance.
+- Try optional AI tagging, captioning, and search that combines text matches
+  with visual similarity. Results record the model and input that produced them.
 - Create complete recovery archives, schedule backups with retention, and
   verify a restore into separate storage.
 
@@ -111,9 +98,23 @@ product. Start with the [workflow guide](website/guide.md),
 [operating documentation](docs/index.md), and
 [current architecture](docs/architecture/README.md).
 
+## Optional AI and future work
+
+AI is disabled by default. Enabling it requires configuring providers and
+acknowledging processing of hidden media. Hidden-media controls govern access
+through the application; they do not encrypt files. Read the
+[AI privacy rules](docs/architecture/search-and-ai.md#failure-and-privacy-rules)
+before enabling processing.
+
+Tagging, captioning, image embeddings, and search currently run in Fotobank.
+Embeddings are numeric descriptions used to compare images and search text.
+The goal is to move reusable AI processing into Docbank so applications can
+share it. Broader enrichment and agent workflows remain aspirations.
+
 ## Getting Started
 
-The setup path is still developer-oriented.
+The setup path is still developer-oriented. The
+[setup guide](docs/guides/setup.md) explains configuration and startup.
 
 Requirements:
 
@@ -146,19 +147,11 @@ Create a config with the installed binary:
 bin/fotobank config init
 ```
 
-Fotobank uses TOML. The loader resolves the config path with this precedence:
-
-1. `--config <path>` flag
-2. `FOTOBANK_CONFIG` environment variable
-3. `$XDG_CONFIG_HOME/fotobank/config.toml`
-4. `$HOME/.config/fotobank/config.toml`
-5. `./config.toml`
-
-The command never overwrites an existing file. Edit `[docbank].root` and
-`[nas].root` before first use. They should be separate directories on durable
-storage: Docbank holds original media, while the NAS artifact root holds
-rebuildable files. Complete backups use a separately initialized repository.
-The default stub identity is usable for local development.
+The command never overwrites an existing file. Edit the storage paths before
+first use, following the [setup guide](docs/guides/setup.md). The default stub
+identity provides one local owner. See the
+[configuration reference](docs/architecture/operations.md#configuration) for
+how Fotobank selects a configuration file.
 
 Validate and run:
 
@@ -172,14 +165,7 @@ Start prints the web UI URL. By default the server listens on
 `127.0.0.1:8090`; ports and lifecycle settings are configurable. Use
 `bin/fotobank serve` instead for foreground operation.
 
-Scheduled backups are disabled by default. Initialize an archive repository
-with `bin/fotobank backup init --repo /backups/photos`, then set
-`[backup].enabled = true` and `[backup].repository = "/backups/photos"` in the
-configuration. The default schedule captures a complete archive every 24 hours
-and retains 30 scheduled recovery points. Manual archives are retained
-independently.
-See the [backup guide](docs/guides/backup.md) for configuration and recovery
-drills.
+See the [backup guide](docs/guides/backup.md) to configure backups and test recovery.
 
 Common commands:
 

@@ -1,5 +1,9 @@
 # Runtime and Boundaries
 
+The daemon owns the catalog, file storage, and background work. The CLI and web
+app send it requests. This page explains that call path and the access checks
+at each boundary.
+
 ## Process shape
 
 Fotobank is one Go binary with two main uses:
@@ -22,8 +26,11 @@ Docbank vault, or storage tree for convenience.
 The normal call path is:
 
 ```text
-HTTP or CLI transport → authorization service → domain repository → SQLite
-                                      └──────→ content/artifact boundary
+CLI → typed HTTP client → daemon HTTP handler
+Web app ────────────────→ daemon HTTP handler
+
+HTTP handler → authorization service → repository → SQLite
+                                    └→ content/artifact storage
 ```
 
 - Repositories under `internal/<domain>` own SQL and domain persistence. They
@@ -31,7 +38,8 @@ HTTP or CLI transport → authorization service → domain repository → SQLite
 - Services under `internal/service` are the authorization boundary. Every
   user-scoped operation receives an `owners.Principal`, clamps queries to that
   caller, and normally returns `errs.ErrNotFound` for another owner's object.
-- HTTP and CLI transports call services to keep owner scoping consistent.
+- HTTP handlers call services; CLI commands reach those handlers through the
+  typed HTTP client. This keeps owner checks in one place.
   The host operator is trusted to control local configuration and storage;
   application ownership checks do not isolate data from that operator.
 - Background workers claim durable queue rows, perform bounded work, and
@@ -149,6 +157,8 @@ available independently of photo storage. The setup guide uses a service-owned
 local directory rather than `/etc`, since discovery and locks live beside the
 configuration in both normal and recovery mode.
 
+### Catalog selection
+
 Normal daemons record their startup catalog selection in discovery metadata:
 `FOTOBANK_DB_PATH`, or `[flash].root/fotobank.sqlite` when no override is set.
 Application clients compare the selection from their current configuration and
@@ -160,6 +170,8 @@ path, so retargeting an alias requires an explicit restart. Unresolvable source
 paths fail normal application discovery. Status and stop remain scoped to the
 configuration so changes cannot prevent stopping the old daemon. Recovery bypasses
 source-path resolution and comparison because it opens no source catalog.
+
+### Recovery mode
 
 `daemon start --recovery` (or `restart --recovery`) starts only the operator
 listener, without opening the catalog, Docbank, NAS, or flash storage. It
@@ -191,6 +203,8 @@ operator listeners reject this operation. Recovery also serves both OpenAPI
 3.1 and 3.0 JSON/YAML variants. `--listen` is invalid with `--recovery`, which
 binds only the configured control listener.
 
+### Shared API and command routes
+
 The local and photo listeners use the same `httpapi.New` registrations and
 OpenAPI document at `/api/openapi.json`, with documentation at `/api/docs`.
 `internal/httpapi` owns the wire types shared with `internal/client`, following
@@ -202,7 +216,7 @@ API request. Only it receives `OperatorDeps` and `DaemonDeps`; the photo listene
 operator operations even for an authenticated photo owner. The shared schema
 marks these operations with the `localOperator` bearer requirement.
 
-The migrated command/API pairs are below (paths start with
+The command/API pairs are below (paths start with
 `/api/v1/operator`). List and status take `hub` and `user_id` query parameters;
 photo operations take the configured principal in their JSON body. Lifecycle
 operations use the host credential without a photo principal.
@@ -280,6 +294,8 @@ return HTTP 409 and a nonzero CLI exit, not a CLI-only success. Sharing access
 checks and hidden-content filtering remain in the existing services and byte
 handlers. No new sharing authorization is granted by this transport change.
 
+### Import requests and cancellation
+
 `POST /api/v1/operator/imports` calls `ImportService` using the daemon's catalog,
 content adapter, and geo resolver. The configured owner is checked at both
 the transport and service boundary. The service takes the existing import
@@ -298,6 +314,8 @@ Shutdown closes and joins the operator handlers before storage cleanup. There
 is no detached import job or CLI storage fallback. Human progress remains on
 stdout normally, or stderr with `import --json`; JSON stdout is the final result.
 
+### Checkout and backup requests
+
 `POST /api/v1/operator/checkouts/{id}/commit` accepts the configured hub
 and user ID, checks them against the server's stub owner, and calls the existing
 `CheckoutService.Commit`. Estimate and create use
@@ -307,8 +325,9 @@ prefixes relative destinations with its working directory without cleaning
 symlink-sensitive `..` components. `CheckoutService.CreateAt` binds and validates
 the destination through the server's content adapter before materialization.
 Only authenticated local operators can request host-file creation, not photo users.
-Header identity mode exposes only lifecycle operations on the local control
-interface; it does not grant photo-management permissions through that interface.
+Header identity mode rejects these checkout operations. It permits the explicit
+host-administration operations described below, including owner management,
+GPS backfill, and thumbnail regeneration.
 
 `POST /api/v1/operator/backups` checks the same configured stub principal and invokes
 `BackupService.Create` with an absolute repository path and optional tag. It
@@ -335,6 +354,8 @@ not automatically retried. Shutdown cancels operator requests,
 stops accepting work, and joins handlers before storage closes. Discovery is
 removed only after all storage and lifetime-lock cleanup has completed.
 
+### Import recovery and GPS maintenance
+
 `content recover` calls `ImportService.Recover` through the operator API. The
 configured host operator can reconcile every registered owner's interrupted
 imports; this is not a photo-user permission. Recovery holds the same import
@@ -355,6 +376,8 @@ version remains current. Relabeling reads catalog coordinates, not source
 bytes. Cancellation stops further rows; per-photo failures are collected while
 other rows continue. The final result contains counts, failures and any error;
 the CLI exits nonzero on partial failure and never retries automatically.
+
+### Owner administration
 
 Owner registration, listing, and removal use `internal/client/owners.go` and
 the host-operator routes in `internal/httpapi/operator_owners.go`:
@@ -384,6 +407,8 @@ checkouts, albums, or shares also return HTTP 409, as do duplicate storage keys.
 Foreign-key enforcement remains the final reference check. Unsupported requests
 remain invalid arguments rather than owner-in-use conflicts.
 
+### Thumbnail regeneration
+
 Thumbnail regeneration uses `POST /api/v1/operator/thumbs/regenerate` and the
 typed client in `internal/client/thumbs.go`. `ThumbAdminService` resolves the
 requested owner scope and enqueues through the server-owned thumbnail queue.
@@ -393,6 +418,8 @@ work in header mode, behind the host-operator credential. Queue eligibility stay
 restricted to ready, visible assets. Results contain per-owner queued counts and
 an optional error for an incomplete run; earlier owner updates are not rolled
 back. Repeating the request increments thumbnail versions again.
+
+### Privacy commands
 
 Privacy commands call the existing `/api/v1/auth/hidden/setup`, `/change`, and
 `/disable` operations through the typed client. They remain scoped to the
@@ -407,6 +434,8 @@ passcode revokes existing sessions without changing hidden flags.
 The daemon shares one hidden-auth service between listeners. Its mutation lock
 serializes setup, change, disable, unlock, and reset through their database
 writes, so an in-flight credential check cannot undo a completed reset.
+
+### AI commands
 
 `ai status` reads `/api/v1/ai/health` through the typed client, including the
 daemon's provider probe and owner-scoped queue counts. `ai acknowledge` calls
@@ -425,6 +454,8 @@ service; photo listeners and header-mode deployments reject these operations.
 The daemon reuses its generation registry, activation counter, and compactor.
 The CLI performs no catalog reads, including promotion inspection and dry-run.
 
+### Bootstrap and diagnostics
+
 The accepted boundary is one daemon-owned implementation per application
 operation, shared by HTTP, the CLI, and a future MCP client. Bootstrap and
 lost-source recovery must retain that ownership boundary.
@@ -433,6 +464,8 @@ Local configuration setup and validation remain bootstrap tools. Read-only
 catalog connection or performing migrations or repairs. Its human and `--json`
 output use the same diagnostic checks. JSON includes failed checks on stdout;
 any error check produces a nonzero exit and a summary on stderr.
+
+### Background work and shutdown
 
 Long-running operations honor `context.Context`. Background loops use bounded
 polling, concurrency, and shutdown waits; they do not start untracked

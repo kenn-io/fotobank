@@ -1,8 +1,8 @@
 # Work with checkouts
 
 A checkout is an ordinary writable copy for editors, file managers, and shell
-tools. Docbank remains authoritative until you explicitly commit a settled
-tracked edit.
+tools. To save an edit in Docbank, wait until Fotobank marks the file pending,
+then run `checkout commit`.
 
 ## Estimate the copy
 
@@ -25,7 +25,7 @@ Selectors are repeatable and may be combined. Hidden assets are excluded. An
 all-library checkout still requires an explicit byte limit at creation so it
 cannot silently create a second full archive copy.
 
-## Create the working tree
+## Create the working folder
 
 With the server running, create an empty directory outside every
 Fotobank-managed storage root, then run:
@@ -42,7 +42,8 @@ fotobank checkout create /work/all-photos --all --max-bytes 500000000000
 ```
 
 Do not open or edit the directory until creation finishes. Fotobank copies exact
-Docbank versions and never hardlinks writable files to content-addressed blobs.
+Docbank versions. Each working file is a separate copy, so editing it does not
+change the stored version.
 
 Relative destinations are resolved from the command's working directory. The
 server validates the destination against its own storage configuration.
@@ -96,8 +97,8 @@ fotobank checkout commit <checkout-uuid>
 fotobank checkout commit <checkout-uuid> --json
 ```
 
-Each changed tracked file becomes a new immutable Docbank version. Concurrent
-changes become visible conflicts rather than overwriting newer authority.
+Each changed tracked file becomes a new immutable Docbank version. If the stored
+base version has changed, Fotobank reports a conflict and keeps the newer version.
 Current writeback does not import new untracked files, apply deletions, infer
 renames, or resolve conflicts.
 
@@ -113,10 +114,9 @@ the counts even on a nonzero exit. If you cancel or lose the connection, inspect
 `checkout status --json` before retrying. Committed versions remain committed;
 retrying does not repeat an already completed entry.
 
-Uncommitted working files
-are excluded from archive backups, so commit edits before capturing an archive
-that must include them. Automatic reconstruction of working trees is not yet
-exposed as a command.
+Uncommitted working files are excluded from archive backups. Commit edits before
+capturing an archive that must include them. Automatic reconstruction of working
+trees is not yet exposed as a command.
 
 ## Stop tracking a working folder
 

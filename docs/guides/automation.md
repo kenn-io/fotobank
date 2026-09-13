@@ -57,8 +57,9 @@ fresh filesystem scan. They do not open or initialize a database in the CLI.
 
 ## Know which process owns the vault
 
-The running server holds the embedded Docbank vault open exclusively. Commands
-that open that same vault cannot run alongside it. For the configured deployment:
+The daemon is Fotobank's background server. It owns the catalog, the Docbank
+vault, and application operations. Commands send requests to it. Some commands
+start it automatically; recovery requires an explicit choice:
 
 | Operation | Server state |
 | --- | --- |
@@ -78,13 +79,9 @@ that open that same vault cannot run alongside it. For the configured deployment
 
 Use `fotobank daemon stop` and `fotobank daemon start` for background operation.
 For a supervised service, use its supervisor; for a foreground `fotobank serve`,
-interrupt it and wait for shutdown to complete. Do not remove
-lock files or start a second vault owner to work around this limitation. The
-CLI submits imports, interrupted-import recovery, GPS backfill, album and sharing
-commands, owner management, privacy commands, thumbnail regeneration, every checkout command, and manual backup creation to the server.
-All AI commands, including generation administration, also use the daemon.
-Backup repository inspection also uses the daemon. Archive restore uses its
-recovery-only operation; explicitly start or restart with `--recovery` first.
+interrupt it and wait for shutdown to complete. Do not remove lock files or
+start a second process that opens the same vault. See the
+[backup guide](backup.md#restore-a-complete-archive) for recovery mode.
 
 For tracked edits: keep the server running to create the checkout, edit and
 settle files, inspect `checkout status --json`, then explicitly
@@ -238,7 +235,7 @@ referenced by assets, saved checkouts, albums, or shares cannot be removed, and
 change the identity configuration and restart first. After a lost response, list
 owners before repeating a change.
 
-## Keep authority changes explicit
+## Before a command changes stored data
 
 - Validate configuration before imports or checkout writeback.
 - Confirm the source path printed at import startup and use `config diagnose`
@@ -246,7 +243,7 @@ owners before repeating a change.
 - Run only one import or content-recovery operation at a time; the application
   lock rejects concurrent mutation.
 - Estimate a checkout before creating it and set `--max-bytes` for `--all`.
-- Treat `checkout commit` as an authority-changing action.
+- Review pending edits before `checkout commit`; it saves new stored versions.
 - Verify the archive before a recovery drill and restore into a separate empty
   directory. Starting the recovered deployment is a separate operator action.
 

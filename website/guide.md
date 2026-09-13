@@ -10,9 +10,9 @@ exact bytes. It does not rename, move, or edit the source.
 
 ## Store the exact content in Docbank
 
-Fotobank supplies the expected SHA-256 and size. Docbank accepts those bytes
-into content-addressed storage and creates an immutable version under a stable
-node.
+Fotobank supplies the file's SHA-256 checksum and size. The checksum identifies
+its exact contents. Docbank checks the bytes and records an immutable version:
+later edits create new versions without replacing this one.
 
 ## Record the file relationships
 
@@ -21,10 +21,10 @@ sidecar belongs to it. Each file points to an exact Docbank version.
 
 ## Build disposable data for browsing
 
-Docbank extracts source metadata, including EXIF and GPS, and supplies canonical
-image previews for supported formats. Fotobank projects those facts into its
-catalog, sizes thumbnails for browsing, and maintains search indexes. These
-derived outputs can be rebuilt from the stored versions.
+Docbank reads metadata recorded in the file, such as camera settings and GPS
+coordinates. It also supplies standard image previews for supported formats.
+Fotobank copies those facts into its catalog, sizes thumbnails for browsing,
+and maintains search indexes. Fotobank can rebuild this data from stored versions.
 
 ## Edit files through a checkout
 
@@ -36,8 +36,8 @@ Only an explicit `fotobank checkout commit` saves them as new Docbank versions.
 Uncommitted edits exist only in the working copy and are not in archive backups.
 
 Keep the server running to create checkouts, scan and commit tracked edits,
-and browse your library. Import still requires stopping the server because it
-opens the vault itself. See the [checkout workflow](/docs/guides/checkouts/)
+and browse your library. Import also uses the daemon and starts it if needed.
+See the [import guide](/docs/guides/import/) and [checkout workflow](/docs/guides/checkouts/)
 for the full sequence and current limits.
 
 ## Keep catalog decisions in Fotobank
@@ -62,9 +62,9 @@ starting the recovered deployment. See
 
 ## Intelligence today and next
 
-Metadata extraction and canonical previews already come from Docbank. Optional
-AI jobs, embeddings, and search still run in Fotobank. Moving that reusable
-intelligence into Docbank remains work ahead. Photographer decisions stay in
+Metadata and standard previews already come from Docbank. Optional AI processing
+and search currently run in Fotobank. Moving reusable AI processing into Docbank
+remains work ahead. Photographer decisions stay in
 Fotobank; planned features such as ratings and people curation are not yet
 available.
 

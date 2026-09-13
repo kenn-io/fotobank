@@ -1,5 +1,9 @@
 # Content and Storage
 
+Docbank keeps original files and their versions. Fotobank records how those
+files form a photo library and creates replaceable files for browsing and
+editing. This page explains how data moves between those stores.
+
 ## Authority model
 
 Docbank is authoritative for every imported photo, video, RAW file, and XMP
@@ -17,7 +21,7 @@ API and renders streamed progress; it opens no application storage. The same
 import lock excludes overlapping imports and content recovery. Each import
 uses the daemon's effective AI settings at the time it acquires that lock.
 
-Import is copy semantics. The importer leaves source paths and bytes untouched.
+The importer copies files and leaves source paths and bytes untouched.
 It observes size and modification time twice across `imports.settle_interval`,
 then revalidates them immediately before creating content.
 
@@ -28,9 +32,9 @@ ambiguous groups are rejected. The importer computes SHA-256 and size, reserves
 stable IDs and durable operations, creates each file in Docbank, records exact
 receipts, and makes the asset ready only after every operation is applied.
 Before the ready transition, the importer asks Docbank to ensure source
-metadata for the exact primary version and stores Fotobank's query projection
-with its version, extractor, and checksum fence. Thumbnail, full-text, and AI
-work starts after the asset is ready.
+metadata for the exact primary version and stores a queryable copy in Fotobank.
+It records the version, extractor, and checksum used to produce that copy.
+Thumbnail, full-text, and AI work starts after the asset is ready.
 
 An owner can reserve a SHA-256 identity only once. Concurrent imports either
 create that reservation or resume the committed winner. Re-running an import
@@ -65,11 +69,10 @@ content snapshot, and releases content writers before immutable backup bytes
 stream. Host files that contain credentials or tokens retain Docbank's
 sensitivity marker and require an explicit plaintext-backup opt-in. Backup and
 restore reports are projected into Fotobank types, and restore always targets a
-separate vault root rather than replacing the open authority. Manual capture
-owns a vault opened by the CLI; scheduled capture reuses the server's live
-adapter. The adapter supplies Docbank with every configured NAS and
-flash-managed root as protected storage, so restore rejects their descendants
-and filesystem aliases before it creates or overwrites a target. One boundary
+separate vault root rather than replacing the open vault. Manual and scheduled
+capture both reuse the daemon's live adapter. The adapter supplies Docbank with
+every configured NAS and flash-managed root as protected storage. Restore rejects
+their descendants and filesystem aliases before it creates or overwrites a target. One boundary
 set retains each configured alias, its validated destination, and the target
 resolved when the adapter opened. Restore, import, and checkout validation
 resolve that complete set again before use, so a retargeted storage alias does
@@ -89,9 +92,8 @@ Fotobank owns scheduled retention selection: only points tagged
 archive is published. `BackupRepository.Forget` and `BackupRepository.Prune`
 delegate mutation and repository locking to Docbank. Retained manual archives
 continue to protect their referenced bytes during pruning. The scheduler
-never removes repository files directly or prunes the live vault. Unused packs
-can be reclaimed, while partially used packs may retain unused bytes. Full
-pack compaction is outside the current retention contract.
+never removes repository files directly or prunes the live vault. See
+[backup retention](operations.md#backup-and-restore) for pack cleanup behavior.
 
 `internal/contentresolver` is the shared product-to-content boundary above the
 adapter. It resolves a ready asset and either its primary or a named attached
@@ -199,10 +201,10 @@ validated tree.
 
 ## Writable checkouts
 
-A checkout is a materialized working copy for external tools, never content
-authority. `fotobank checkout estimate` reports the distinct file and byte
-count selected by explicit assets, albums, inclusive capture-year ranges, or
-all ready visible assets. Hidden assets are excluded because the CLI has no
+A checkout is an ordinary writable copy for external tools. An edit becomes a
+stored version only after an explicit commit. `fotobank checkout estimate`
+reports the distinct file and byte count selected by explicit assets, albums,
+inclusive capture-year ranges, or all ready visible assets. Hidden assets are excluded because the CLI has no
 hidden-media unlock session. An all-assets checkout requires a caller-supplied
 byte ceiling so a second full archive copy is never created implicitly.
 Selector validation and candidate loading share one SQLite read transaction,
