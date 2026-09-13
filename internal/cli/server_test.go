@@ -529,9 +529,9 @@ func TestServerShutdownEvictsSSEConnections(t *testing.T) {
 	//
 	// Strategy: boot the server, open an SSE connection, read the
 	// "hello" frame so we know the handler is parked in its select
-	// loop, then cancel and assert RunContext returns in well under
-	// the 30s shutdownTimeout. A 5s ceiling is generous enough to
-	// tolerate CI scheduling noise without masking the regression.
+	// loop, then cancel and observe EOF before the 30s HTTP drain
+	// deadline. Full shutdown also joins workers and closes storage;
+	// its elapsed time does not tell us when the SSE handler exited.
 	r := require.New(t)
 	tmp := t.TempDir()
 	nasRoot := filepath.Join(tmp, "nas")
@@ -613,18 +613,24 @@ admin_listen = "127.0.0.1:0"
 		r.FailNow("never received SSE hello frame")
 	}
 
-	start := time.Now()
+	streamClosed := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, resp.Body)
+		streamClosed <- err
+	}()
 	cancel()
+	select {
+	case err := <-streamClosed:
+		r.NoError(err, "SSE stream should end cleanly during shutdown")
+	case <-time.After(10 * time.Second):
+		r.FailNow("SSE stream stayed open during shutdown")
+	}
+
 	select {
 	case code := <-errCh:
 		r.Equal(0, code)
-		// Generous ceiling: anything under shutdownTimeout (30s) catches
-		// the regression. The success path completes in milliseconds.
-		r.Lessf(time.Since(start), 5*time.Second,
-			"shutdown took %s — SSE connection likely held srv.Shutdown until its deadline",
-			time.Since(start))
-	case <-time.After(10 * time.Second):
-		r.FailNow("server did not shut down within 10s")
+	case <-time.After(30 * time.Second):
+		r.FailNowf("server did not finish shutdown after closing SSE", "stderr: %s", eout.String())
 	}
 }
 
