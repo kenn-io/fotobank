@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { render } from "@testing-library/svelte";
 import { flushSync, tick } from "svelte";
 import Search from "./Search.svelte";
@@ -40,6 +40,8 @@ beforeEach(() => {
   window.history.replaceState({}, "", "/search");
   router.syncFromLocation();
 });
+
+afterEach(() => vi.restoreAllMocks());
 
 // makeStore builds a SearchStore stub. Each method is a vi.fn() so
 // individual tests can spy on the calls; getter values are the raw

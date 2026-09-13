@@ -1,5 +1,5 @@
 import { render } from "@testing-library/svelte";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import L from "leaflet";
 import "leaflet.markercluster";
 import MapPane from "./MapPane.svelte";
@@ -159,8 +159,8 @@ function emptyMapPaneProps() {
 }
 
 type CallbackOverrides = Partial<{
-  onMarkerClick: ReturnType<typeof vi.fn>;
-  onClusterClick: ReturnType<typeof vi.fn>;
+  onMarkerClick: Mock<(id: string) => void>;
+  onClusterClick: Mock<(ids: string[]) => void>;
 }>;
 
 type MarkerClusterClickOptions = L.LayerOptions & {
@@ -174,8 +174,8 @@ type MarkerClusterClickOptions = L.LayerOptions & {
 // The cluster is reachable via map.eachLayer; the addLayer spy is the
 // minimum-friction way to grab the map instance Svelte holds privately.
 function mountAndCaptureCluster(overrides: CallbackOverrides = {}): {
-  onMarkerClick: ReturnType<typeof vi.fn>;
-  onClusterClick: ReturnType<typeof vi.fn>;
+  onMarkerClick: Mock<(id: string) => void>;
+  onClusterClick: Mock<(ids: string[]) => void>;
   cg: L.MarkerClusterGroup;
   childMarkers: L.Marker[];
   rerender: (props: { items: Media[] }) => Promise<void>;
