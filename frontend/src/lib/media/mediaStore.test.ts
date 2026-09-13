@@ -10,6 +10,49 @@ describe("monthKey", () => {
 });
 
 describe("MediaStore", () => {
+  it("clears failure on a filter change and ignores failures from the old filter", async () => {
+    let reject!: (error: Error) => void;
+    const GET = vi.fn()
+      .mockResolvedValueOnce({ error: { status: 503 } })
+      .mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }))
+      .mockResolvedValueOnce({ data: { items: [], next_offset: null } });
+    const store = new MediaStore({ GET } as never);
+    await store.loadInitial();
+    expect(store.loadError).toBe(true);
+    const filters = { cameras: ["First"], lenses: [], tagKeys: [], hasGps: null, mediaType: null };
+    store.setFilters(filters);
+    expect(store.loadError).toBe(false);
+    const old = store.loadInitial();
+    store.setFilters({ ...filters, cameras: ["Second"] });
+    await store.loadInitial();
+    reject(new Error("old filter failed"));
+    await old;
+    expect(store.loadError).toBe(false);
+    expect(store.exhausted).toBe(true);
+  });
+
+  it.each(["http", "network"])("retries a %s failure without losing filters or loaded pages", async (kind) => {
+    const GET = vi.fn().mockResolvedValueOnce({ data: { items: [
+      { id: "a", timestamp: "2026-04-18T12:00:00Z", width: 3, height: 2 },
+    ], next_offset: 200 } });
+    if (kind === "http") GET.mockResolvedValueOnce({ error: { status: 503 } });
+    else GET.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    GET.mockResolvedValueOnce({ data: { items: [], next_offset: null } });
+    const store = new MediaStore({ GET } as never);
+    store.setFilters({ cameras: ["Camera"], lenses: [], tagKeys: [], hasGps: null, mediaType: null });
+    await store.loadInitial();
+    await store.loadMore();
+    expect(store.loadError).toBe(true);
+    expect(store.loading).toBe(false);
+    expect(store.months[0]?.items[0]?.id).toBe("a");
+    await store.loadMore();
+    expect(GET).toHaveBeenCalledTimes(2);
+    await store.retry();
+    expect(GET.mock.calls[2]).toEqual(GET.mock.calls[1]);
+    expect(store.loadError).toBe(false);
+    expect(store.exhausted).toBe(true);
+  });
+
   it("groups loaded media by month, descending", async () => {
     const fakeClient = {
       GET: vi.fn().mockResolvedValue({

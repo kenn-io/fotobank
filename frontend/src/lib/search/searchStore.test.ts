@@ -41,6 +41,54 @@ function makeClient(responses: SearchResponse[] | (() => SearchResponse)) {
 }
 
 describe("searchStore", () => {
+  it("exposes failed reads and retries the same query and filters", async () => {
+    const { client } = makeClient([canned()]);
+    vi.mocked(client.search).mockRejectedValueOnce(new SearchHTTPError(503, "unavailable", {}));
+    const store = createSearchStore({ client });
+    await store.setRequestShape({ query: "beach", sort: "newest", filters: { ...emptyFilters(), cameras: ["Camera"] } });
+    expect(store.loadError).toBe(true);
+    expect(store.loading).toBe(false);
+    await store.retry();
+    expect(vi.mocked(client.search).mock.calls[1]?.[0]).toEqual(vi.mocked(client.search).mock.calls[0]?.[0]);
+    expect(store.loadError).toBe(false);
+  });
+
+  it("keeps loaded results and retries the failed page without automatic retries", async () => {
+    const first = canned({ next_cursor: "next", has_more: true, results: [{
+      media_id: "a", media_type: "photo", timestamp: "2025-01-01T00:00:00Z",
+      imported_at: "2025-01-01T00:00:00Z", width: 100, height: 100,
+      thumb_version: 1, thumb_status: "ready",
+    }] });
+    const { client } = makeClient([first, canned()]);
+    const store = createSearchStore({ client });
+    await store.setQuery("beach");
+    vi.mocked(client.search).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await store.fetchNextPage();
+    expect(store.loadError).toBe(true);
+    expect(store.cursor).toBe("next");
+    expect(store.results).toEqual(first.results);
+    await store.fetchNextPage();
+    expect(client.search).toHaveBeenCalledTimes(2);
+    await store.retry();
+    expect(vi.mocked(client.search).mock.calls[2]?.[0]?.cursor).toBe("next");
+    expect(store.loadError).toBe(false);
+    expect(store.results).toEqual(first.results);
+  });
+
+  it("ignores a stale failure after a new query succeeds", async () => {
+    const { client } = makeClient([canned()]);
+    let reject!: (error: Error) => void;
+    vi.mocked(client.search).mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+    const store = createSearchStore({ client });
+    const old = store.setQuery("old");
+    await store.setQuery("new");
+    reject(new Error("old request failed"));
+    await old;
+    expect(store.loadError).toBe(false);
+    expect(store.query).toBe("new");
+    expect(store.loading).toBe(false);
+  });
+
   it("setQuery resets cursor and re-fetches", async () => {
     // First page comes back with a cursor and has_more=true so the
     // store has state worth resetting; the second response comes from

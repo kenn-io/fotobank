@@ -1,5 +1,6 @@
 <!-- frontend/src/routes/Library.svelte -->
 <script lang="ts">
+  import PhotoReadError from "../lib/components/PhotoReadError.svelte";
   import VirtualGrid from "../lib/grid/VirtualGrid.svelte";
   import GroupSelectButton from "../lib/components/GroupSelectButton.svelte";
   import type { MediaStore } from "../lib/media/mediaStore.svelte";
@@ -194,7 +195,9 @@
 {#if mediaStore.loading}
   <div style="padding:12px; color: var(--text-muted)">Loading…</div>
 {/if}
-{#if mediaStore.months.length === 0 && !mediaStore.loading}
+{#if mediaStore.loadError}
+  <PhotoReadError message={mediaStore.months.length ? "Couldn’t load more photos." : "Couldn’t load photos."} onRetry={() => mediaStore.retry()} />
+{:else if mediaStore.months.length === 0 && !mediaStore.loading}
   {#if !isEmpty(activeFilters)}
     <div class="empty-filtered" role="status">
       <p>No photos match these filters.</p>

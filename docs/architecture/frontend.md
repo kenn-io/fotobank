@@ -28,6 +28,14 @@ remain in the generated contract.
 
 ## Routes and state
 
+Library, Sessions, and Search distinguish failed photo reads from successful
+empty results. Their stores retain the request and any loaded pages; an inline
+Retry action repeats the failed page without clearing filters or the query.
+Automatic pagination pauses on failure. A new search or filter selection clears
+the old error, and stale requests cannot replace the current request's state.
+Search hides indexing status while a request is loading or failed rather than
+presenting missing response data as zero indexing progress.
+
 `frontend/src/App.svelte` owns top-level routing and session feature flags.
 Route components cover the library, media detail, map, albums, hidden library,
 shares, search, sessions, and user/admin AI settings.
