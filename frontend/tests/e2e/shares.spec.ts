@@ -50,15 +50,10 @@ test.describe("F2.3 owner-side sharing", () => {
     await expect(page.locator(".pill").first()).toBeVisible();
   });
 
-  test("share drawer opens on row click", async ({ page }) => {
+  test("share drawer opens from its label", async ({ page }) => {
     await page.goto("/shares");
     await expect(page.getByText("Active e2e share")).toBeVisible();
-    // Clicking the row body opens the ShareDrawer (action cell stops
-    // propagation so Revoke/Retry don't trigger the open).
-    const row = page.locator("tr", {
-      has: page.getByText("Active e2e share"),
-    });
-    await row.click();
+    await page.getByRole("button", { name: "Active e2e share", exact: true }).click();
     await expect(page.locator(".drawer")).toBeVisible();
     await expect(
       page.locator(".drawer dt", { hasText: "Grantee" }),

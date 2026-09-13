@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "@kenn-io/kit-ui";
   import type { ScopeListRow } from "../shares/sharesStore.svelte";
   import ShareStatePill from "./ShareStatePill.svelte";
 
@@ -52,33 +53,37 @@
   }
 </script>
 
-<table class="shares">
-  <thead>
-    <tr>
-      <th>Label</th>
-      <th>Type</th>
-      <th>Grantee</th>
-      <th>State</th>
-      <th>Created</th>
-      <th class="actions-col">Actions</th>
+<!-- Explicit roles preserve table semantics when the phone layout uses blocks. -->
+<!-- svelte-ignore a11y_no_redundant_roles -->
+<table class="shares" role="table" aria-label="Shares">
+  <!-- svelte-ignore a11y_no_redundant_roles -->
+  <thead role="rowgroup">
+    <!-- svelte-ignore a11y_no_redundant_roles -->
+    <tr role="row">
+      <th role="columnheader" scope="col">Label</th>
+      <th role="columnheader" scope="col">Type</th>
+      <th role="columnheader" scope="col">Grantee</th>
+      <th role="columnheader" scope="col">State</th>
+      <th role="columnheader" scope="col">Created</th>
+      <th role="columnheader" scope="col" class="actions-col">Actions</th>
     </tr>
   </thead>
-  <tbody>
+  <!-- svelte-ignore a11y_no_redundant_roles -->
+  <tbody role="rowgroup">
     {#each scopes as s (s.uuid)}
-      <!-- Row click opens detail. The actions cell stops propagation so
-           clicking Revoke/Retry doesn't also fire the row open. -->
-      <tr onclick={() => onOpen(s.uuid)}>
-        <td>{labelText(s)}</td>
-        <td><span class="type">{s.target_type === "media_set" ? "Photos" : "Album"}</span></td>
-        <td class="mono">{granteeText(s)}</td>
-        <td><ShareStatePill scope={s} /></td>
-        <td title={s.created_at}>{fmtRelative(s.created_at)}</td>
-        <td class="actions-col" onclick={(e) => e.stopPropagation()}>
+      <!-- svelte-ignore a11y_no_redundant_roles -->
+      <tr role="row">
+        <td role="cell" class="label-col"><button type="button" class="open-share" onclick={() => onOpen(s.uuid)}>{labelText(s)}</button></td>
+        <td role="cell"><span class="mobile-label" aria-hidden="true">Type</span><span class="type">{s.target_type === "media_set" ? "Photos" : "Album"}</span></td>
+        <td role="cell"><span class="mobile-label" aria-hidden="true">Grantee</span><span class="mono">{granteeText(s)}</span></td>
+        <td role="cell"><span class="mobile-label" aria-hidden="true">State</span><ShareStatePill scope={s} /></td>
+        <td role="cell" title={s.created_at}><span class="mobile-label" aria-hidden="true">Created</span>{fmtRelative(s.created_at)}</td>
+        <td role="cell" class="actions-col">
           {#if canRetry(s)}
-            <button type="button" onclick={() => onRetry(s.uuid)}>Retry</button>
+            <Button onclick={() => onRetry(s.uuid)}>Retry</Button>
           {/if}
           {#if canRevoke(s)}
-            <button type="button" class="danger" onclick={() => onRevoke(s.uuid)}>Revoke</button>
+            <Button tone="danger" onclick={() => onRevoke(s.uuid)}>Revoke</Button>
           {/if}
         </td>
       </tr>
@@ -90,10 +95,22 @@
   table.shares { width: 100%; border-collapse: collapse; }
   th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border-default); }
   th { background: var(--bg-inset); color: var(--text-muted); font-weight: 500; font-size: 12px; }
-  tbody tr { cursor: pointer; }
-  tbody tr:hover { background: var(--bg-inset); }
+  .mobile-label { display: none; }
+  .open-share { border: 0; padding: 8px 0; background: transparent; color: var(--accent-blue); font: inherit; text-align: left; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 3px; }
   .actions-col { width: 1%; white-space: nowrap; }
-  .type { color: var(--text-muted); font-size: 12px; }
+  .type { color: var(--text-secondary); font-size: 12px; }
   .mono { font-family: monospace; font-size: 13px; }
-  .danger { color: var(--accent-red); border-color: var(--accent-red); }
+  @media (max-width: 760px) {
+    /* Keep explicit table roles when CSS changes its visual layout. */
+    table.shares, tbody, tr { display: block; }
+    thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    tr { padding: 12px 16px; border-bottom: 1px solid var(--border-default); }
+    td { display: flex; align-items: baseline; gap: 12px; padding: 4px 0; border: 0; overflow-wrap: anywhere; }
+    .mobile-label { display: inline-block; flex: 0 0 64px; color: var(--text-secondary); }
+    .label-col { display: block; }
+    .open-share { min-height: 44px; font-size: var(--font-size-lg); }
+    .actions-col { width: auto; white-space: normal; margin-top: 8px; }
+    .actions-col :global(button) { min-height: 44px; }
+  }
 </style>
