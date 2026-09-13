@@ -1,0 +1,71 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["gomod", "bun", "pep621", "mise", "github-actions"],
+  "timezone": "America/Chicago",
+  "schedule": ["* 0-8 * * 1"],
+  "automerge": false,
+  "dependencyDashboard": true,
+  "minimumReleaseAge": "7 days",
+  "minimumReleaseAgeBehaviour": "timestamp-required",
+  "prCreation": "not-pending",
+  "internalChecksFilter": "strict",
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "minimumReleaseAge": null,
+    "prCreation": "immediate"
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["* 0-8 * * 1"]
+  },
+  "packageRules": [
+    {
+      "matchManagers": ["gomod"],
+      "postUpdateOptions": ["gomodTidy"]
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "Go dependencies"
+    },
+    {
+      "matchManagers": ["bun"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "frontend dependencies"
+    },
+    {
+      "matchManagers": ["pep621"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "documentation dependencies"
+    },
+    {
+      "matchManagers": ["mise", "github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "build tools and CI"
+    },
+    {
+      "matchManagers": ["bun"],
+      "matchDepTypes": ["packageManager"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "build tools and CI"
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "groupName": null,
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Review Docbank and Kit UI integration changes explicitly.",
+      "matchDepNames": ["go.kenn.io/docbank", "@kenn-io/kit-ui"],
+      "enabled": false
+    },
+    {
+      "description": "The PR dispatcher deliberately calls the workflow on main.",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["workflow"],
+      "matchDepNames": ["kenn-io/fotobank"],
+      "enabled": false
+    }
+  ]
+}

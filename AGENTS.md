@@ -190,6 +190,16 @@ Don't track ad-hoc one-turn tasks in kata — it's for outstanding designed/plan
 
 ## Git and pull requests
 
+Renovate groups routine dependency updates on Monday mornings (America/Chicago)
+using `renovate.json`. Go, frontend, documentation, and build/CI updates have
+separate batches. Major upgrades need Dependency Dashboard approval; nothing
+merges automatically. Security-fix PRs can bypass the weekly window and release
+age delay. Review Docbank's development pin and Kit UI's commit pin manually;
+remove those exclusions when each integration follows ordinary released versions.
+Keep shared tool versions in `mise.toml`, workflow inputs, and `packageManager`
+aligned when reviewing updates. Lockfile maintenance does not replace review of
+the remaining dependency advisories tracked in kata.
+
 1. Commit every turn that changes tracked files; never amend.
 2. Never push to or commit on `main`. Use feature branches and pull requests.
    Use an isolated worktree when an implementation workflow requires one or
