@@ -115,12 +115,11 @@ describe("Sidebar grouped entries", () => {
 
 describe("Sidebar — sharing gate", () => {
   it("hides the Shares entry when appConfig.sharingEnabled is false", () => {
-    const { queryByText, container } = render(Sidebar, {
+    const { queryByText, getByRole } = render(Sidebar, {
       props: { active: "", appConfig: defaultAppConfig(), ...navProps },
     });
     expect(queryByText("Shares")).toBeNull();
-    // The MANAGE group should not render either when its only entry is gated.
-    expect(container.querySelector(".group[data-group='manage']")).toBeNull();
+    expect(getByRole("link", { name: "Settings" }).getAttribute("href")).toBe("/settings");
   });
 
   it("shows the Shares entry when sharingEnabled is true", async () => {

@@ -12,6 +12,7 @@
   import SharesPage from "./routes/SharesPage.svelte";
   import HiddenLibrary from "./routes/HiddenLibrary.svelte";
   import SettingsAI from "./routes/SettingsAI.svelte";
+  import Settings from "./routes/Settings.svelte";
   import AdminSettingsAI from "./routes/AdminSettingsAI.svelte";
   import Search from "./routes/Search.svelte";
   import Map from "./routes/Map.svelte";
@@ -319,7 +320,7 @@
     {:else if router.current.route === "hidden"}
       <HiddenLibrary {hiddenStore} {albumsStore} {toastStore} {appConfig} />
     {:else if router.current.route === "settings"}
-      <div style="padding:20px">Settings (placeholder)</div>
+      <Settings />
     {:else if router.current.route === "settings.ai"}
       <SettingsAI {appConfig} />
     {:else if router.current.route === "admin.settings.ai"}

@@ -1,5 +1,10 @@
 # Frontend
 
+The shared desktop and mobile navigation links to `/settings`. That page routes
+users to existing AI controls, Hidden photos, and workflow guides. It does not
+edit host configuration or grant additional permissions. AI provider settings
+remain behind the existing admin checks on their own route.
+
 The web app lets people browse and manage the library through the daemon's API.
 This page describes its build, server contract, and shared interaction behavior.
 
