@@ -115,6 +115,38 @@ in Docbank. Fotobank will consume those results and apply photographer-facing
 curation, ownership, visibility, and query behavior. That integration is not
 implemented yet; the packages above describe the code that runs today.
 
+The pinned Docbank now exposes `PlanProcessing`, `StartProcessing`,
+`ProcessingStatus`, `Rendition`, `DocumentCoverage`, and `SearchDocuments`
+through its embedded vault. These operations retain exact-version results and
+can run embeddings without a text rendition. Fotobank opens the vault without
+processing profiles, so updating the dependency does not enable these jobs or
+make provider calls.
+
+The current embedded contract differs from Fotobank's photo-search contract:
+
+- Embedding inputs are original files or rendition text chunks. Fotobank sends
+  stripped, downscaled previews. Selecting original-file embeddings would
+  change which photo bytes leave the application; it is not an equivalent
+  replacement for the current preview policy.
+- Search requires an explicit set of 1–4,096 content-version IDs and returns at
+  most 100 results without a continuation cursor. Fotobank has larger libraries,
+  paginated results, and owner, hidden-media, album, and photographer filters.
+  Those filters must constrain candidates before ranking, not just remove
+  unauthorized results afterward.
+- Embedded processing uses one operator consent scope. Fotobank's owner consent
+  and hidden-media policy remain application responsibilities; a shared vault's
+  processing grant does not authorize work for every photo owner.
+- The processing API does not provide a typed caption/tag annotation surface.
+  Extracted rendition text is not a replacement for generated annotations or
+  human-curated tags.
+
+The [embedded operations](https://github.com/kenn-io/docbank/blob/main/processing.go),
+[request types](https://github.com/kenn-io/docbank/blob/main/types.go), and
+[processing service](https://github.com/kenn-io/docbank/blob/main/internal/processing/service.go)
+define these upstream boundaries. Follow-up work lives in kata. Fotobank's
+current search and AI implementation remains active until its replacement
+preserves these product contracts.
+
 ## Failure and privacy rules
 
 - Gateway probes are bounded and never make health endpoints enqueue work.

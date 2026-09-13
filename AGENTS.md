@@ -117,6 +117,8 @@ Background workers (e.g. `internal/thumb/worker.go`) follow the same rule: they'
 
 Write for the person trying to use or maintain Fotobank.
 
+- Fotobank has never been released. Do not add upgrade or migration guides for
+  unreleased development builds unless the user explicitly requests them.
 - Lead with the outcome, name who does what, use short sentences, and explain
   unfamiliar terms.
 - Organize around reader questions. Put purpose and current capabilities first.
