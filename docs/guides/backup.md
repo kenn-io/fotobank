@@ -1,6 +1,6 @@
 # Back up and restore
 
-Fotobank backs up its SQLite catalog and authoritative Docbank content together
+Fotobank backs up its photo catalog and stored Docbank files together
 in a complete recovery archive. You can create an archive manually or enable a
 schedule in the running server. Scheduling is disabled by default.
 
@@ -10,13 +10,35 @@ Initialize a separate repository once, then capture the archive through the
 running server. Run the CLI as the server's OS account, using the same
 configuration and Fotobank version in stub identity mode:
 
-```sh
-fotobank daemon start
-fotobank backup init --repo /backups/photos
-fotobank backup create --repo /backups/photos --tag before-upgrade
-fotobank backup list --repo /backups/photos
-fotobank backup verify --repo /backups/photos
-```
+1. Start the daemon:
+
+   ```sh
+   fotobank daemon start
+   ```
+
+2. Initialize the repository:
+
+   ```sh
+   fotobank backup init --repo /backups/photos
+   ```
+
+3. Create an archive:
+
+   ```sh
+   fotobank backup create --repo /backups/photos --tag before-upgrade
+   ```
+
+4. List the saved recovery points:
+
+   ```sh
+   fotobank backup list --repo /backups/photos
+   ```
+
+5. Verify the latest recovery point:
+
+   ```sh
+   fotobank backup verify --repo /backups/photos
+   ```
 
 `create` requires an existing repository; it never initializes a missing one.
 Use `--config /path/to/fotobank.toml` on each command to select the deployment.
@@ -35,7 +57,8 @@ fotobank backup verify --repo /backups/photos --all --config /saved/fotobank.tom
 
 Use `daemon restart --recovery` instead if the daemon is already running.
 Recovery mode opens no photo storage and has no web UI or photo operations.
-It uses the same local operator authentication and process slot as normal mode.
+It uses the same local operator authentication as normal mode. Only one mode
+can run for a configuration at a time.
 After repairing storage or configuring the recovered copy, use `daemon restart`
 with that configuration to return to normal operation. Configuration and the
 adjacent daemon discovery directory must live on available local storage.
@@ -145,7 +168,7 @@ and separate NAS and flash roots. Set `FOTOBANK_DB_PATH` to the reported
 The catalog retains old checkout paths, but the archive does not contain those
 working files: review those paths before starting the server, whose scanner
 will inspect active checkouts. This command does not relocate checkouts or
-automate deployment cutover.
+switch the running installation to the recovered copy.
 
 For an isolated drill, do not mount the original working folders into the test
 environment. After starting the normal daemon with the recovered configuration,

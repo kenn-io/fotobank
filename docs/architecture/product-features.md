@@ -1,13 +1,20 @@
 # Product Features
 
+Fotobank groups related files into photos, organizes them into albums, and
+controls access to them. This page describes the services behind those features.
+
 ## Import and metadata
 
-`internal/ingest` discovers supported photos, videos, RAW files, and XMP
-sidecars; ignores common filesystem metadata; prevents concurrent import
-processes with a file lock; and bounds worker concurrency. It waits for stable
-source observations, groups related files into assets, computes SHA-256, and
-uses durable operations to create exact versions in Docbank. Search and
-derived work are queued only after every file mapping is complete.
+`internal/ingest` copies supported photos, videos, RAW files, and XMP sidecars
+into Docbank. It ignores common filesystem metadata. A file lock prevents
+concurrent imports, and a worker limit bounds parallel processing.
+
+For each import, it:
+
+1. Waits for source files to stop changing.
+2. Groups related files into assets and computes SHA-256 checksums.
+3. Records each operation and creates exact versions in Docbank.
+4. Queues search and derived work after every file mapping is complete.
 
 Docbank extracts capture time, camera, lens, exposure, dimensions, duration,
 orientation, and GPS evidence from the exact immutable primary version.
@@ -73,7 +80,7 @@ capabilities and media UUIDs are opaque identifiers, not substitutes for these
 checks.
 
 `[ui].sharing_enabled` hides owner sharing controls in the frontend. It does
-not disable the CLI or backend sharing data plane.
+not disable sharing through the CLI or HTTP API.
 
 ## Hidden media
 

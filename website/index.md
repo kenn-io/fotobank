@@ -10,7 +10,7 @@ It must preserve each file, record which files belong to the same photograph,
 and support external editors without treating a working directory as the
 archive.
 
-1. **Import:** Read a settled source without changing it.
+1. **Import:** Copy files after they stop changing, leaving the source untouched.
 2. **Store:** Keep exact bytes and immutable versions in Docbank.
 3. **Link:** Group JPEG, RAW, sidecar, and edited files as one photograph.
 4. **Edit:** Put selected versions in a writable checkout.
@@ -19,8 +19,8 @@ archive.
 
 ## Docbank stores files; Fotobank models photographs
 
-Docbank answers “what exact content do we have?” It owns content-addressed
-originals, immutable versions, provenance, integrity, storage, and recovery.
+Docbank stores exact originals and version history. It identifies file content
+by its checksum and checks that stored bytes match that checksum.
 
 Fotobank answers “what does it mean in a photo library?” It owns assets and
 file relationships, albums, privacy and sharing, and photographer workflows
@@ -39,7 +39,7 @@ Fotobank can record a primary JPEG, camera RAW file, and XMP sidecar as one
 photograph. Each file remains an exact Docbank record. Fotobank stores the
 relationship instead of inferring it every time from filenames.
 
-## What this boundary prevents
+## How Fotobank preserves your record
 
 - Import does not mutate the source. A retry finds the same content or reports
   a conflict.
@@ -52,12 +52,12 @@ relationship instead of inferring it every time from filenames.
 
 ## Shared intelligence, built on Docbank
 
-Docbank already supplies source metadata and canonical image previews for
-supported formats. Fotobank uses them for photo details and thumbnails.
+Docbank supplies metadata from the original files and standard image previews
+for supported formats. Fotobank uses them for photo details and thumbnails.
 
-Optional AI jobs, embeddings, and search still run in Fotobank. Moving reusable
-intelligence into Docbank is the direction; it is not yet the implemented
-integration. Photo relationships, albums, privacy, and sharing stay in Fotobank.
+Optional AI processing and search currently run in Fotobank. The goal is to move
+reusable AI processing into Docbank. That integration is not implemented yet.
+Photo relationships, albums, privacy, and sharing stay in Fotobank.
 
 Continue with the [guide to storage and editing](/guide/) or the [technical
 documentation](/docs/).

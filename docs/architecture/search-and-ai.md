@@ -1,12 +1,17 @@
 # Search and AI
 
+Fotobank searches photo metadata and can use optional AI to describe and find
+images. AI is disabled by default. This page describes the current indexes,
+processing jobs, and privacy limits.
+
 ## Search indexes
 
 Fotobank combines two SQLite-backed indexes:
 
-- FTS5 stores searchable captions, tags, camera/lens values, filenames, and
-  location labels.
-- sqlite-vec stores image embeddings for semantic similarity.
+- FTS5, SQLite's full-text index, stores searchable captions, tags, camera/lens
+  values, filenames, and location labels.
+- sqlite-vec stores image embeddings: numeric descriptions used to compare
+  images and search text.
 
 Both indexes are rebuildable projections keyed by the product media ID.
 Repositories update source metadata and FTS rows transactionally when a
@@ -103,6 +108,8 @@ lifecycle in Fotobank. Source projections use Fotobank media/asset identity and
 exact input versions. Docbank already supplies source extraction, including
 camera evidence, and canonical image previews through `internal/content`.
 
+## Future Docbank integration
+
 The accepted boundary places reusable model outputs, embeddings, and retrieval
 in Docbank. Fotobank will consume those results and apply photographer-facing
 curation, ownership, visibility, and query behavior. That integration is not
@@ -111,18 +118,18 @@ implemented yet; the packages above describe the code that runs today.
 ## Failure and privacy rules
 
 - Gateway probes are bounded and never make health endpoints enqueue work.
-- Provider checks run on AI status requests, not daemon startup or consent
-  recording. Vision and embedding probes use the current runtime settings,
-  including endpoint and credentials, after admin settings changes. With AI
-  and embeddings enabled, `embed.provider` reports the embedding endpoint's
-  image/text probe result. The daemon shares successful and failed embedding
-  results for 30 seconds and allows only one check at a time, with a five-second
-  total timeout, independent of the initiating caller's cancellation. Endpoint,
-  credential, model, dimension, or timeout changes invalidate that result.
-  `last_check_at` records the actual check, not the
-  cache read; owner consent and queue counts are still read fresh. The probe uses
-  synthetic inputs; it never reads photos. Outages and provider-side errors do not prevent
-  the daemon from serving diagnostics or recording consent. Local configuration
+- AI status requests check providers. Daemon startup and consent recording do not.
+- Provider checks use current settings, including changed endpoints and credentials.
+  With AI and embeddings enabled, `embed.provider` reports the embedding
+  endpoint's image/text check result.
+- The daemon caches successful and failed embedding checks for 30 seconds.
+  It allows one check at a time, with a five-second total timeout independent
+  of the initiating caller's cancellation. Endpoint, credential, model,
+  dimension, or timeout changes invalidate the cached result.
+- `last_check_at` records the actual check time. Reading the cache does not
+  change it. Owner consent and queue counts are read fresh.
+- Provider checks use synthetic inputs and never read photos.
+- Provider outages do not prevent diagnostics or consent recording. Local
   validation still rejects invalid URLs, missing models, and invalid dimensions.
 - Embedding health errors expose fixed categories, not provider response bodies
   or arbitrary error text. The same response serves photo users and operators;

@@ -1,5 +1,8 @@
 # Frontend
 
+The web app lets people browse and manage the library through the daemon's API.
+This page describes its build, server contract, and shared interaction behavior.
+
 ## Build and embedding
 
 `frontend/` is a Svelte and TypeScript single-page application built with Bun.
@@ -43,6 +46,14 @@ Automatic pagination pauses on failure. A new search or filter selection clears
 the old error, and stale requests cannot replace the current request's state.
 Search hides indexing status while a request is loading or failed rather than
 presenting missing response data as zero indexing progress.
+
+After a successful unfiltered read returns no photos, Library and Sessions show
+`EmptyLibrary` import guidance. It tells users to run the import command on the
+daemon's machine with the same account and configuration, explains that imports
+leave source files unchanged, and links to setup and import guides. Users of
+someone else's library are directed to its operator. Sessions resets retained
+Library filters before loading. Filtered empty results and request failures
+keep their separate messages.
 
 `frontend/src/App.svelte` owns top-level routing and session feature flags.
 Route components cover the library, media detail, map, albums, hidden library,

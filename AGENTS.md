@@ -113,7 +113,31 @@ Background workers (e.g. `internal/thumb/worker.go`) follow the same rule: they'
 - Cross-build (e.g. macOS host → Linux deploy): set `CC` to a cross-compiler (`zig cc -target x86_64-linux-musl`, `musl-cross`, or equivalent). Plain `GOOS=linux GOARCH=amd64 go build` without a cross `CC` will fail at link time.
 - Scale fixtures (Playwright `test:e2e:scale`) are cached under `~/.cache/fotobank/scale-fixtures/` so repeat runs skip the seed. Bust the cache by bumping `mediaseed.SeedVersion`, setting `FOTOBANK_E2E_SCALE_NO_CACHE=1`, or `trash`-ing the cache dir. See `internal/testutil/scalecache/`.
 
-## Architecture documentation
+## Documentation
+
+Write for the person trying to use or maintain Fotobank.
+
+- Lead with the outcome, name who does what, use short sentences, and explain
+  unfamiliar terms.
+- Organize around reader questions. Put purpose and current capabilities first.
+  Separate limitations and future work. Use only the sections the topic needs.
+- Give each bullet one main idea. Use numbered steps for sequences, paragraphs
+  for rationale, and tables or diagrams when they clarify a comparison or flow.
+- State rules directly. Preserve exact commands, field names, authorization
+  checks, limits, and failure behavior when simplifying the wording.
+- Give each fact an owning guide or reference and link to it elsewhere. Update
+  that section instead of appending a narrative of the latest change. Indexes
+  should route readers, not repeat implementation status.
+- Describe current architecture separately from approved but unbuilt work,
+  proposals, and historical decisions. Preserve rationale and active exceptions
+  with their removal conditions. Track unbuilt work and approvals in kata; keep
+  superseded designs outside normal documentation navigation.
+- Keep the website, its Markdown companions, README, and documentation on
+  message. Distinguish the latest release from newer `main` functionality; do
+  not imply an unreleased capability is available in a release. Follow
+  [`docs/publishing.md`](docs/publishing.md) for the publishing layout and checks.
+
+### Architecture documentation
 
 Living architecture documentation starts at
 [`docs/architecture/README.md`](docs/architecture/README.md). It describes the

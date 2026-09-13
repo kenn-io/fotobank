@@ -62,8 +62,8 @@ mode is for a deployment behind a trusted identity-aware proxy; see
 fotobank config validate
 ```
 
-Validation resolves storage paths and rejects overlapping authority, artifact,
-and cache roots. It does not make an unavailable external mount safe: the
+Validation resolves storage paths and rejects overlap between the Docbank,
+artifact, and cache directories. It does not verify an external mount: the
 server reports an absent NAS through readiness, and commands that need it fail.
 
 For a read-only check of the complete local setup, run:
@@ -119,13 +119,9 @@ instead of force-killing unfinished writes. Background output goes to
 `<config>.operator/daemon.log` and is replaced on the next launch. Startup
 errors include that path and recent output.
 
-The daemon account needs write access to the configuration directory for its
-discovery directory and deployment lock. Keep that directory on local storage
-that remains available when the photo storage is offline.
-
 Use `fotobank daemon run` or `fotobank serve` for foreground operation under a
 supervisor or while developing. Lifecycle commands use the same configuration
 selection as the rest of Fotobank (`--config` or `FOTOBANK_CONFIG`).
 
-Checkout commands and `backup create` automatically start a missing daemon.
-Other CLI families still need migration; see [automation](automation.md).
+See the [automation guide](automation.md#know-which-process-owns-the-vault) for
+which commands start the daemon and which require an already-running daemon.

@@ -1,9 +1,19 @@
 # Operations
 
+Use this reference to understand configuration, server lifecycle, backup, and
+maintenance. For commands to run, start with the [setup guide](../guides/setup.md)
+or [backup guide](../guides/backup.md).
+
 ## Configuration
 
-Fotobank loads TOML from an explicit `--config`, `FOTOBANK_CONFIG`, the XDG
-config directory, the user config directory, or `./config.toml`, in that order.
+Fotobank selects its TOML configuration in this order:
+
+1. `--config <path>`
+2. `FOTOBANK_CONFIG`
+3. `$XDG_CONFIG_HOME/fotobank/config.toml`
+4. `$HOME/.config/fotobank/config.toml`
+5. `./config.toml`
+
 `fotobank config init` writes the embedded canonical example to the selected
 path without replacing an existing file. The same example remains in
 `internal/config/config.example.toml` for source readers.

@@ -51,7 +51,7 @@
           <p>It must preserve each file, record which files belong to the same photograph, and support external editors without treating a working directory as the archive.</p>
         </div>
         <ol class="record-flow">
-          <li><strong>Import</strong><p>Read a settled source without changing it.</p></li>
+          <li><strong>Import</strong><p>Copy files after they stop changing, leaving the source untouched.</p></li>
           <li><strong>Store</strong><p>Keep exact bytes and immutable versions in Docbank.</p></li>
           <li><strong>Link</strong><p>Group JPEG, RAW, sidecar, and edited files as one photograph.</p></li>
           <li><strong>Edit</strong><p>Put selected versions in a writable checkout.</p></li>
@@ -72,8 +72,8 @@
           </article>
           <div class="version-seam" aria-hidden="true"></div>
           <article class="layer record">
-            <h3>Docbank file authority</h3>
-            <ul><li>Content-addressed originals</li><li>Immutable versions and provenance</li><li>Integrity, storage, and recovery</li></ul>
+            <h3>Docbank file storage</h3>
+            <ul><li>Exact originals identified by checksum</li><li>Immutable version history</li><li>Stored bytes checked against their checksum</li></ul>
           </article>
         </div>
       </section>
@@ -99,7 +99,7 @@
       <section class="site-section proof-section" aria-labelledby="proof-title">
         <div class="section-heading">
           <div>
-            <h2 id="proof-title">What this boundary prevents.</h2>
+            <h2 id="proof-title">How Fotobank preserves your record.</h2>
           </div>
         </div>
         <div class="proof-grid">
@@ -113,10 +113,10 @@
       <section class="site-section direction" aria-labelledby="direction-title">
         <div>
           <h2 id="direction-title">Shared intelligence, built on Docbank</h2>
-          <p>Docbank already supplies source metadata and canonical image previews for supported formats. Fotobank uses them for photo details and thumbnails.</p>
+          <p>Docbank supplies metadata from the original files and standard image previews for supported formats. Fotobank uses them for photo details and thumbnails.</p>
         </div>
         <div class="direction-details">
-          <p>Optional AI jobs, embeddings, and search still run in Fotobank. Moving reusable intelligence into Docbank is the direction; it is not yet the implemented integration.</p>
+          <p>Optional AI processing and search currently run in Fotobank. The goal is to move reusable AI processing into Docbank. That integration is not implemented yet.</p>
           <p>Photo relationships, albums, privacy, and sharing stay in Fotobank.</p>
         </div>
       </section>
