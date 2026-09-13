@@ -52,13 +52,13 @@
 
   function onRevoke(uuid: string) {
     revokingUuid = uuid;
-    openUuid = null;
   }
 
   async function confirmRevoke() {
     if (!revokingUuid) return;
     await sharesStore.revoke(revokingUuid);
     revokingUuid = null;
+    openUuid = null;
   }
 
   async function onRetry(uuid: string) {

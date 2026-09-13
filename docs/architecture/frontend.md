@@ -28,6 +28,14 @@ remain in the generated contract.
 
 ## Routes and state
 
+`ConfirmModal` uses Kit's focus attachment to move keyboard focus into the
+dialog, contain Tab navigation, and restore focus on dismissal. Fotobank's
+modal stack still owns Escape handling. While confirmation is pending, focus
+stays on the dialog and dismissal remains disabled. This applies to album
+deletion and share revocation. A share drawer stays open behind its revocation
+confirmation so canceling can return focus to Revoke; Escape closes only the
+confirmation while it is open. Other custom dialogs have separate lifecycles.
+
 Library, Sessions, and Search distinguish failed photo reads from successful
 empty results. Their stores retain the request and any loaded pages; an inline
 Retry action repeats the failed page without clearing filters or the query.

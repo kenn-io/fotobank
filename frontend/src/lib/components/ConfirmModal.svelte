@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { trapFocus } from "@kenn-io/kit-ui";
   import { modalStack } from "../lightbox/modalStack.svelte";
 
   let {
@@ -21,6 +22,7 @@
   } = $props();
 
   let pending = $state(false);
+  let surface: HTMLDivElement | null = $state(null);
 
   const modalId = `confirm-${Math.random().toString(36).slice(2)}`;
   // onEscape returns false while pending so a later Esc can still
@@ -35,6 +37,9 @@
   onDestroy(() => modalStack.pop(modalId));
 
   async function confirm() {
+    // Both buttons become disabled while saving. Keep focus on the
+    // dialog so Tab and Escape still reach its handlers.
+    surface?.focus();
     pending = true;
     try {
       await onConfirm();
@@ -47,7 +52,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div class="modal-backdrop" role="presentation" onclick={() => { if (!pending) onCancel(); }}>
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="modal" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" onclick={(e) => e.stopPropagation()}>
+  <div class="modal" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" bind:this={surface} {@attach trapFocus} onclick={(e) => e.stopPropagation()}>
     <h2>{title}</h2>
     <p>{body}</p>
     <div class="actions">
