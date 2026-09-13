@@ -7,6 +7,7 @@
   } from "../shares/sharesStore.svelte";
   import { handleInternalLinkClick } from "../router/router.svelte";
   import ShareStatePill from "./ShareStatePill.svelte";
+  import { modalStack } from "../lightbox/modalStack.svelte";
 
   let {
     scope,
@@ -65,7 +66,9 @@
   const summaryLabel = $derived(scope.target_summary?.label ?? "(unknown)");
 </script>
 
-<svelte:window onkeydown={(e) => { if (e.key === "Escape") onClose(); }} />
+<svelte:window onkeydown={(e) => {
+  if (e.key === "Escape" && !e.defaultPrevented && modalStack.top() === null) onClose();
+}} />
 
 <aside class="drawer">
   <header>
