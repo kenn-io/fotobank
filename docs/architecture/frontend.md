@@ -1,5 +1,10 @@
 # Frontend
 
+The Shares list uses a button on each share name to open the existing details
+drawer. Opening it moves keyboard focus to Close; closing returns focus to the
+share name. At phone widths, table fields stack with labels so details and
+Revoke/Retry stay available without horizontal scrolling.
+
 The shared desktop and mobile navigation links to `/settings`. That page routes
 users to existing AI controls, Hidden photos, and workflow guides. It does not
 edit host configuration or grant additional permissions. AI provider settings

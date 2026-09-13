@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+  import { Button } from "@kenn-io/kit-ui";
   import type {
     ScopeListRow,
     ScopeDetail,
@@ -27,6 +29,13 @@
   let preview = $state<SharePreview | null>(null);
   let detailLoading = $state(false);
   let previewLoading = $state(false);
+  let closeButton: HTMLButtonElement;
+
+  onMount(() => {
+    const trigger = document.activeElement;
+    closeButton.focus();
+    return () => { if (trigger instanceof HTMLElement) trigger.focus(); };
+  });
 
   // Capture scope.uuid before await so a fast prop swap (user clicks a
   // different row mid-flight) can't land a stale response on top of the
@@ -74,7 +83,7 @@
   <header>
     <h2>{scope.label || summaryLabel}</h2>
     <ShareStatePill {scope} />
-    <button type="button" class="close" onclick={onClose} aria-label="Close drawer">×</button>
+    <button bind:this={closeButton} type="button" class="close" onclick={onClose} aria-label="Close drawer">×</button>
   </header>
 
   <dl>
@@ -106,9 +115,9 @@
     </a>
   {:else if scope.target_type === "media_set"}
     {#if !preview}
-      <button type="button" onclick={loadPreview} disabled={previewLoading}>
+      <Button onclick={loadPreview} disabled={previewLoading}>
         {previewLoading ? "Loading preview…" : "Preview"}
-      </button>
+      </Button>
     {:else}
       <div class="preview">
         <pre>{JSON.stringify(preview, null, 2)}</pre>
@@ -122,24 +131,25 @@
 
   <div class="actions">
     {#if scope.broker_status === "failed"}
-      <button type="button" onclick={() => onRetry(scope.uuid)}>Retry</button>
+      <Button onclick={() => onRetry(scope.uuid)}>Retry</Button>
     {/if}
     {#if scope.broker_status !== "revoking" && scope.broker_status !== "revoked_remote"}
-      <button type="button" class="danger" onclick={() => onRevoke(scope.uuid)}>Revoke</button>
+      <Button tone="danger" onclick={() => onRevoke(scope.uuid)}>Revoke</Button>
     {/if}
   </div>
 </aside>
 
 <style>
   .drawer {
-    position: fixed; right: 0; top: 0; bottom: 0; width: 360px;
+    position: fixed; right: 0; top: 0; bottom: 0; width: min(360px, 100vw);
     background: var(--bg-inset); border-left: 1px solid var(--border-default);
     padding: 16px; overflow-y: auto; z-index: 50;
     display: flex; flex-direction: column; gap: 12px;
   }
   .drawer header { display: flex; align-items: center; gap: 8px; }
   .drawer h2 { margin: 0; font-size: 16px; flex: 1; }
-  .close { background: transparent; border: 0; font-size: 20px; cursor: pointer; color: var(--text-muted); }
+  .close { background: transparent; border: 0; font-size: 20px; cursor: pointer; color: var(--text-secondary); min-width: 44px; min-height: 44px; }
+  button:focus-visible, a:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 3px; }
   dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 13px; margin: 0; }
   dt { color: var(--text-muted); }
   dd { margin: 0; }
@@ -148,5 +158,5 @@
   .error { color: var(--accent-red); white-space: pre-wrap; }
   .preview pre { background: var(--bg-surface); padding: 8px; font-size: 11px; overflow: auto; border-radius: 4px; margin: 0; }
   .actions { display: flex; gap: 8px; margin-top: auto; }
-  .danger { color: var(--accent-red); border-color: var(--accent-red); }
+  @media (max-width: 760px) { .drawer :global(button) { min-height: 44px; } }
 </style>
