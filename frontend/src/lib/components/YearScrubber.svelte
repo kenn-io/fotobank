@@ -83,4 +83,14 @@
     outline-offset: 1px;
     color: var(--accent-blue);
   }
+  @media (max-width: 760px) {
+    .scrubber {
+      position: static;
+      flex-direction: row;
+      flex-wrap: wrap;
+      background: none;
+      padding: 4px 8px;
+    }
+    .scrubber button { min-width: 44px; min-height: 44px; font-size: 12px; }
+  }
 </style>

@@ -7,7 +7,7 @@ import { test, expect } from "@playwright/test";
 test.describe("FilterSidebar mount", () => {
   test("renders FILTERS section on /library", async ({ page }) => {
     await page.goto("/library");
-    await expect(page.getByText("FILTERS")).toBeVisible();
+    await expect(page.getByText("FILTERS", { exact: true })).toBeVisible();
     await expect(page.getByText("Cameras")).toBeVisible();
     await expect(page.getByText("Lenses")).toBeVisible();
     await expect(page.getByText("Tags")).toBeVisible();
@@ -19,13 +19,13 @@ test.describe("FilterSidebar mount", () => {
   // suppressed (the FilterSidebar conditions on `route !== "map"`).
   test("hides Places on /map", async ({ page }) => {
     await page.goto("/map");
-    await expect(page.getByText("FILTERS")).toBeVisible();
+    await expect(page.getByText("FILTERS", { exact: true })).toBeVisible();
     await expect(page.getByText("Cameras")).toBeVisible();
     await expect(page.getByText("Places")).toHaveCount(0);
   });
 
   test("absent on /albums", async ({ page }) => {
     await page.goto("/albums");
-    await expect(page.getByText("FILTERS")).toHaveCount(0);
+    await expect(page.getByText("FILTERS", { exact: true })).toHaveCount(0);
   });
 });

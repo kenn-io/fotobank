@@ -512,6 +512,7 @@
   .search-page { padding: 12px 16px; }
   .search-toolbar {
     display: flex;
+    flex-wrap: wrap;
     gap: 12px;
     align-items: center;
     margin-bottom: 8px;
