@@ -42,7 +42,7 @@ for (const view of ["library", "search"]) {
     });
     await page.goto(view === "library" ? "/library?facet_tag=beach" : "/search?q=photo");
     await expect(page.getByRole("alert")).toContainText("Couldn’t load");
-    await expect(page.getByText("No photos yet.")).toBeHidden();
+    await expect(page.getByRole("heading", { name: "Add photos to your library" })).toBeHidden();
     await expect(page.getByTestId("search-empty-state")).toBeHidden();
     await expect(page.getByText("0% indexed", { exact: true })).toBeHidden();
     const url = page.url();
