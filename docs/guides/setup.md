@@ -1,5 +1,35 @@
 # Set up Fotobank
 
+Fotobank is pre-alpha software, with no stability guarantees. Expect bugs and
+changing interfaces and schemas. Use copies of a small photo collection while
+trying it, and keep independent copies of irreplaceable files.
+
+## Build the current source
+
+The current setup is developer-oriented. You need Git, Make, Go 1.27 or newer,
+a C compiler for SQLite, and Bun 1.3.11 for the web app. The pinned frontend
+and tooling versions live in `frontend/package.json` and `mise.toml`.
+
+These commands use a POSIX shell:
+
+```sh
+git clone https://github.com/kenn-io/fotobank.git
+cd fotobank
+make build
+```
+
+`make build` builds the web app and embeds it in `bin/fotobank`. A direct
+`go build` alone does not build the web app. Try `./bin/fotobank --help` to
+see the commands without starting a server or creating a library.
+
+The examples below use `fotobank` on your `PATH`. Either install it with
+`make install`, or use `./bin/fotobank` in place of `fotobank` from this checkout.
+`make install` builds the binary and copies it to `~/.local/bin` when that
+directory exists; otherwise it uses `GOBIN` or Go's default binary directory.
+Ensure the chosen directory is on your `PATH`.
+
+## Choose storage locations
+
 Fotobank needs three separate storage locations:
 
 - a local state directory for SQLite and disposable cache data;
@@ -51,6 +81,11 @@ root = "/srv/photo-archive/docbank"
 [nas]
 root = "/srv/photo-archive/fotobank-artifacts"
 ```
+
+Create the chosen directories and give the daemon's OS account read and write
+access. If they belong on a NAS or another mounted disk, make sure that storage
+is mounted first; do not create replacement directories on the local disk during
+an outage. Configuration validation alone does not establish mount availability.
 
 The default `stub` identity is suitable for one local owner. Header identity
 mode is for a deployment behind a trusted identity-aware proxy; see
@@ -125,3 +160,27 @@ selection as the rest of Fotobank (`--config` or `FOTOBANK_CONFIG`).
 
 See the [automation guide](automation.md#know-which-process-owns-the-vault) for
 which commands start the daemon and which require an already-running daemon.
+
+## Try a small collection
+
+Use a source directory outside the configured storage roots, on the machine
+running the daemon:
+
+```sh
+fotobank import /path/to/sample-photos
+fotobank media list --limit 5 --json
+```
+
+Open the web UI URL printed at startup. Imported photos appear in the library;
+thumbnails are built in the background. Import copies source files rather than
+moving or editing them. A discovered file format is not a promise that every
+file of that type has a preview; see [import behavior](import.md) and
+[thumbnail processing](../architecture/content-and-storage.md#artifact-storage).
+
+Next, [create and verify a backup](backup.md), then test restoration into a
+separate directory. Backups are disabled until you configure them. Keep source
+copies even after a successful test: this remains pre-alpha software.
+
+For scripts or agents, continue with [listing, searching, and inspecting
+photos](automation.md#find-and-inspect-photos). For an external editor, read
+[working with checkouts](checkouts.md).

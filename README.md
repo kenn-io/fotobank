@@ -8,13 +8,21 @@ history, creative work, and moments you cannot recreate. Fotobank exists to
 keep that record under your control—and make it useful as your collection,
 tools, and ways of working change.
 
-It combines an exact, versioned archive with a photo catalog and a web app.
-The ambition goes further: a place where agents can help organize, describe,
-find, and work with your photographs without becoming the owners of the record.
+It combines a versioned archive with a photo catalog, a web app, and commands
+for your own tools and agents. Browse and search photos, keep related files
+together, organize albums, and work with selected files in an editor.
 
-Fotobank is pre-alpha. Core workflows are implemented, but interfaces and
-schemas still change. Keep independent copies of irreplaceable files and test
-recovery before relying on it.
+Fotobank is pre-alpha software, with no stability guarantees. Expect bugs and
+changing interfaces and schemas. Keep independent copies of irreplaceable
+photos. Start with copies of a small collection and test recovery separately.
+
+[Try Fotobank](docs/guides/setup.md) · [How it works](website/guide.md) ·
+[Commands for agents](docs/guides/automation.md)
+
+![Fotobank's library displaying a sample landscape collection](website/images/library.jpg)
+
+The running app with a sample library. Sample photos from
+[Unsplash](https://unsplash.com); [image credits](docs/publishing.md#sample-library-screenshot).
 
 ## Why another photo application?
 
@@ -88,8 +96,9 @@ from the original bytes alone.
 - Create partial, writable checkouts for editors and shell tools. Inspect
   changes and explicitly commit settled edits as new versions, with conflicts
   reported when the stored base has changed.
-- Try optional AI tagging, captioning, and search that combines text matches
-  with visual similarity. Results record the model and input that produced them.
+- Search photo metadata without AI, from the web app or CLI. Configure
+  providers to try optional tagging, captioning, and embedding-based search.
+  Generated results record the model and input that produced them.
 - Create complete recovery archives, schedule backups with retention, and
   verify a restore into separate storage.
 
@@ -111,80 +120,26 @@ Embeddings are numeric descriptions used to compare images and search text.
 The goal is to move reusable AI processing into Docbank so applications can
 share it. Broader enrichment and agent workflows remain aspirations.
 
-## Getting Started
+## Get started
 
-The setup path is still developer-oriented. The
-[setup guide](docs/guides/setup.md) explains configuration and startup.
+The [setup guide](docs/guides/setup.md) covers building the current source,
+configuring storage, starting the daemon, and importing a small collection.
+The setup is developer-oriented; it is not a stable release or a managed service.
 
-Requirements:
-
-- Go 1.27+
-- A C compiler, because SQLite uses `mattn/go-sqlite3`, FTS5, and sqlite-vec
-- Bun 1.3+ for frontend builds
-- A writable NAS/archive directory
-
-Build:
+After setup, use the same configuration and OS account for the web app and CLI:
 
 ```sh
-make build            # → bin/fotobank (debug)
-make build-release    # → bin/fotobank (release; trimpath + stripped)
-make install          # copies bin/fotobank to ~/.local/bin or $GOBIN
-make dev              # live-reload via air
+fotobank daemon start                 # prints the web UI URL
+fotobank import /path/to/sample-photos
+fotobank media list --limit 5 --json
+fotobank media search "sunset" --json
 ```
 
-`make build` is the preferred entry point — it builds the SPA into
-`internal/web/dist/` before the Go build embeds it. The direct
-`go build -tags sqlite_fts5 …` path skips the SPA build, so it produces a
-backend-only binary unless `internal/web/dist/` is already populated:
-
-```sh
-go build -tags sqlite_fts5 -o bin/fotobank ./cmd/fotobank
-```
-
-Create a config with the installed binary:
-
-```sh
-bin/fotobank config init
-```
-
-The command never overwrites an existing file. Edit the storage paths before
-first use, following the [setup guide](docs/guides/setup.md). The default stub
-identity provides one local owner. See the
-[configuration reference](docs/architecture/operations.md#configuration) for
-how Fotobank selects a configuration file.
-
-Validate and run:
-
-```sh
-bin/fotobank config validate
-bin/fotobank daemon start
-bin/fotobank import /path/to/source
-```
-
-Start prints the web UI URL. By default the server listens on
-`127.0.0.1:8090`; ports and lifecycle settings are configurable. Use
-`bin/fotobank serve` instead for foreground operation.
-
-See the [backup guide](docs/guides/backup.md) to configure backups and test recovery.
-
-Common commands:
-
-```sh
-bin/fotobank serve             # HTTP API + background workers
-bin/fotobank config init       # write an editable config without replacing one
-bin/fotobank config path
-bin/fotobank import <dir>      # import photos/videos
-bin/fotobank content recover   # finish imports and report unmatched Docbank files
-bin/fotobank checkout          # estimate/create working copies and commit edits
-bin/fotobank thumbs regenerate # rebuild thumbnails
-bin/fotobank albums            # CRUD over albums
-bin/fotobank shares            # CRUD over share scopes (CLI works regardless of [ui].sharing_enabled)
-bin/fotobank hidden            # manage the hidden-privacy passcode
-bin/fotobank ai                # AI status / backfill / retry / acknowledge
-bin/fotobank gps               # GPS metadata management
-bin/fotobank backup            # init / create / list / verify / restore complete archives
-bin/fotobank owners            # list / register principals
-```
+Metadata search works without AI. The [automation guide](docs/guides/automation.md)
+explains filters, pagination, structured results, and command limits.
+[Checkouts](docs/guides/checkouts.md) provide working files for editors.
+[Back up and restore](docs/guides/backup.md) explains how to capture the catalog
+and content together and test recovery into separate storage.
 
 ## Development
 

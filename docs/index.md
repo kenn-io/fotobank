@@ -1,15 +1,26 @@
-# Fotobank technical documentation
+# Use and understand Fotobank
 
 Use these guides to set up Fotobank, manage your photos, and recover your library.
 Fotobank is a self-hosted photo system of record built on Docbank.
 
-Fotobank is pre-alpha. These pages describe the code as it works now. They are
-living architecture documentation, not a promise that unfinished features are
-available.
+Fotobank is pre-alpha software, with no stability guarantees. Expect bugs and
+changing interfaces and schemas. Keep independent copies of irreplaceable
+photos. These pages describe current development code; planned features are
+identified separately.
+
+## Start here
+
+Follow [Set up Fotobank](guides/setup.md) to build the application, choose storage,
+start the daemon, and import a small collection. Then [create a backup and test
+recovery](guides/backup.md) into separate storage.
+
+If you are writing a script or using an agent, start with
+[Automate Fotobank](guides/automation.md). The CLI and web app use the same
+daemon; an agent does not need direct database access.
 
 ## Use Fotobank
 
-- [Set up Fotobank](guides/setup.md) — create and validate a configuration.
+- [Set up Fotobank](guides/setup.md) — build, configure, and try a first import.
 - [Import and recover](guides/import.md) — copy media into Docbank and finish
   interrupted imports.
 - [Work with checkouts](guides/checkouts.md) — create ordinary writable

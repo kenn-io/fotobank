@@ -69,6 +69,7 @@ a { color: var(--amber); text-underline-offset: .18em; }
 a:hover { color: #f6bc70; }
 .skip-link { position: fixed; left: 1rem; top: -5rem; z-index: 40; padding: .7rem 1rem; background: var(--paper); color: var(--ink); }
 .skip-link:focus { top: 1rem; }
+.skip-link:hover { color: var(--ink); }
 
 .site-header,
 footer,
@@ -87,12 +88,9 @@ main { width: min(1180px, calc(100% - 48px)); margin-inline: auto; }
 .wordmark { color: var(--paper); text-decoration: none; font-weight: 600; letter-spacing: -.02em; }
 
 .hero {
-  min-height: 670px;
   display: grid;
-  grid-template-columns: 1.08fr .92fr;
-  align-items: center;
-  gap: clamp(3rem, 7vw, 7rem);
-  padding: 7rem 0;
+  gap: 3rem;
+  padding: 5rem 0;
   border-bottom: 1px solid var(--line);
 }
 h1,
@@ -100,8 +98,8 @@ h2,
 h3,
 p { margin-top: 0; }
 h1,
-h2 { font-family: var(--serif); font-weight: 520; letter-spacing: -.045em; }
-h1 { max-width: 800px; margin-bottom: 1.6rem; font-size: clamp(3.8rem, 7.2vw, 7.2rem); line-height: .92; }
+h2 { font-family: var(--serif); font-weight: 520; letter-spacing: -.03em; }
+h1 { max-width: 960px; margin-bottom: 1.6rem; font-size: clamp(3.8rem, 7.2vw, 6rem); line-height: 1; text-wrap: balance; }
 h1 em { color: var(--amber); font-weight: 420; }
 h2 { margin-bottom: 1.4rem; font-size: clamp(2.4rem, 4.4vw, 4.6rem); line-height: 1; }
 h3 { margin-bottom: .7rem; font-size: 1.15rem; line-height: 1.25; }
@@ -112,19 +110,11 @@ h3 { margin-bottom: .7rem; font-size: 1.15rem; line-height: 1.25; }
 .button.primary { border-color: var(--amber); color: var(--ink); background: var(--amber); font-weight: 600; }
 .button.primary:hover { background: #f1b15d; }
 
-.contact-sheet { display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: 92px; gap: 10px; transform: rotate(1.4deg); }
-.frame { position: relative; overflow: hidden; display: flex; align-items: end; padding: .65rem; border: 8px solid #19191e; box-shadow: 0 14px 40px rgba(0,0,0,.35); background: var(--raised); }
-.frame::after { content: ""; position: absolute; inset: 0; background: linear-gradient(140deg, transparent 35%, rgba(255,255,255,.18)); }
-.frame b { z-index: 1; color: rgba(255,255,255,.78); font: 400 .58rem var(--mono); letter-spacing: .09em; }
-.frame.tall { grid-row: span 2; }
-.frame.wide { grid-column: span 2; }
-.frame.small { grid-column: span 1; }
-.frame.warm { background: linear-gradient(145deg, #1d1714, #8d5636 45%, #e2a55c 46%, #2b2524 75%); }
-.frame.dusk { background: radial-gradient(circle at 70% 30%, #f2b56d 0 8%, transparent 9%), linear-gradient(#51465b, #1e2735 52%, #29221e 53%); }
-.frame.amber { background: linear-gradient(45deg, #241b12 30%, #a96922); }
-.frame.cool { background: linear-gradient(155deg, #17202b, #36616b 45%, #b1c7b4 46%, #344333); }
-.frame.field { background: linear-gradient(150deg, #222c1f, #78915d 52%, #21231f 53%); }
-.frame.ink { background: repeating-linear-gradient(90deg, #16161a 0 8px, #202027 9px 10px); }
+.project-status { max-width: 70ch; margin: 1.5rem 0 0; color: #c5c2ba; }
+.product-view { min-width: 0; margin: 0; }
+.product-view img { display: block; width: 100%; height: auto; border: 1px solid var(--line); }
+.product-view figcaption { margin-top: .8rem; color: var(--muted); font-size: .9rem; }
+a:focus-visible { outline: 2px solid var(--amber); outline-offset: 4px; }
 
 .site-section { padding: 7.5rem 0; border-bottom: 1px solid var(--line); }
 .section-heading { display: grid; grid-template-columns: 1.1fr .9fr; gap: 5rem; align-items: end; margin-bottom: 4rem; }
@@ -217,11 +207,11 @@ footer a { color: var(--muted); }
   .site-header,
   footer,
   main { width: min(100% - 28px, 1180px); }
-  .site-header { align-items: flex-start; padding: 1rem 0; }
-  .site-header nav { flex-direction: column; gap: .25rem; text-align: right; }
+  .site-header { flex-wrap: wrap; gap: .5rem; }
+  .site-header nav { gap: 1rem; }
+  .site-header nav a { display: inline-flex; align-items: center; min-height: 44px; }
   h1 { font-size: clamp(3.1rem, 15vw, 5rem); }
   .hero { min-height: 0; }
-  .contact-sheet { grid-auto-rows: 70px; }
   .site-section { padding: 5rem 0; }
   .record-flow,
   .proof-grid { grid-template-columns: 1fr; }
