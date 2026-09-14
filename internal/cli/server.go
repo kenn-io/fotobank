@@ -452,6 +452,7 @@ func runPhotoServer(ctx context.Context, opts serverOpts, removeRuntime *func())
 	// resolver is scoped inside its own block below and not visible at
 	// this scope.
 	embedResolver := imginput.NewResolver(d.ReadDB(), storeLayer)
+	embedRuntime := runtimeEmbedWorkerConfig(aiProvider)
 	embedWorker = embedding.NewWorker(embedding.WorkerDeps{
 		Q:        aiQueue,
 		Gens:     embedGens,
@@ -463,7 +464,7 @@ func runPhotoServer(ctx context.Context, opts serverOpts, removeRuntime *func())
 		Skipped:  aiSkipped,
 		Failures: aiFailures,
 		Metrics:  metricsObj,
-		Runtime:  runtimeEmbedWorkerConfig(aiProvider),
+		Runtime:  embedRuntime,
 	})
 
 	// Activator. Tick is overridable for tests; the H2 Run loop
@@ -489,21 +490,12 @@ func runPhotoServer(ctx context.Context, opts serverOpts, removeRuntime *func())
 	retainRetired := time.Duration(cfg.Search.RetainRetiredDays) * 24 * time.Hour
 	embedCompactr = embedding.NewCompactor(d.WriteDB(), d.ReadDB(), retainRetired)
 
-	var searchEmbedClient embedding.ClientIface
-	if cfg.AI.Enabled && cfg.AI.Embed.Enabled {
-		searchEmbedClient = embedding.NewClient(embedding.Config{
-			Endpoint:   cfg.AI.Embed.Endpoint,
-			APIKey:     cfg.AI.Embed.APIKey(),
-			Model:      cfg.AI.Embed.Model,
-			Dimension:  cfg.AI.Embed.Dimension,
-			Timeout:    cfg.AI.Embed.Timeout,
-			MaxRetries: cfg.AI.Embed.MaxRetries,
-		})
-	}
-	// Metadata search is always available. Only query embeddings require AI;
-	// the engine resolves the active generation on each request when enabled.
+	// Search and workers share current enablement, endpoint, and credentials.
+	// The engine still chooses the active generation's model and dimensions.
 	searchBackend := index.NewSQLiteVecBackend(d.ReadDB(), embedding.Row{})
-	searchEngine := hybrid.NewEngine(searchBackend, searchEmbedClient, embedGens, cfg.Search)
+	searchEngine := hybrid.NewEngine(searchBackend, func(ctx context.Context) embedding.ClientIface {
+		return embedRuntime(ctx).Client
+	}, embedGens, cfg.Search)
 	searchService = searchsvc.New(searchEngine, usersettingsSvc,
 		tagLabelResolver{ro: d.ReadDB()}, hiddenCheckAdapter{}, embedGens, d.ReadDB())
 

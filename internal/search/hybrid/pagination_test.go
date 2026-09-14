@@ -1,6 +1,7 @@
 package hybrid_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"slices"
@@ -65,7 +66,7 @@ func TestSearchPagination(t *testing.T) {
 					if mode == "hybrid" {
 						provider = &fakeTextClient{vec: make([]float32, 768)}
 					}
-					engine := hybrid.NewEngine(index.NewSQLiteVecBackend(d.ReadDB(), embedding.Row{}), provider, gens, engineCfg())
+					engine := hybrid.NewEngine(index.NewSQLiteVecBackend(d.ReadDB(), embedding.Row{}), func(context.Context) embedding.ClientIface { return provider }, gens, engineCfg())
 					req := hybrid.Request{Owner: owner, Query: "sunset", Sort: sort, Limit: limit}
 					if mode == "filter" {
 						req.Query = ""

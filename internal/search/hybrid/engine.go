@@ -27,19 +27,20 @@ import (
 // per process is fine.
 type Engine struct {
 	backend     index.Backend
-	embedClient embedding.ClientIface
+	embedClient func(context.Context) embedding.ClientIface
 	gens        *embedding.Generations
 	cfg         search.Config
 }
 
 // NewEngine wires an Engine over the supplied dependencies. b drives
-// the SQL side, c is the embeddings HTTP client (needed only for
-// query-time text encoding), g resolves the active generation row
+// the SQL side, c resolves a client from current settings once per text query,
+// and g resolves the active generation row
 // (carries dim, model, vec table name), and cfg supplies KPerSignal /
 // RRFK.
 //
-// A nil client disables semantic search; metadata search remains available.
-func NewEngine(b index.Backend, c embedding.ClientIface, g *embedding.Generations, cfg search.Config) *Engine {
+// A nil resolver or returned client disables semantic search. A query already
+// in flight finishes with its captured settings; later queries see updates.
+func NewEngine(b index.Backend, c func(context.Context) embedding.ClientIface, g *embedding.Generations, cfg search.Config) *Engine {
 	return &Engine{backend: b, embedClient: c, gens: g, cfg: cfg}
 }
 
@@ -123,7 +124,11 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 	semanticReason := ""
 	if hasText {
 		mode = engineModeBM25Only
-		switch e.embedClient {
+		var client embedding.ClientIface
+		if e.embedClient != nil {
+			client = e.embedClient(ctx)
+		}
+		switch client {
 		case nil:
 			semanticReason = "embeddings_disabled"
 		default:
@@ -137,7 +142,7 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 			}
 			if activeGen == nil {
 				semanticReason = "no_active_generation"
-			} else if texter, ok := e.embedClient.(textEmbedder); ok {
+			} else if texter, ok := client.(textEmbedder); ok {
 				vectors, err := texter.EmbedTexts(ctx, activeGen.ModelID, activeGen.Dimension, []string{req.Query})
 				if err != nil || len(vectors) == 0 || len(vectors[0]) == 0 {
 					semanticReason = "query_embedding_failed"

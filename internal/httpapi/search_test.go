@@ -171,7 +171,7 @@ func newSearchAPIFixtureWithSettings(t *testing.T, inspectionOn bool, opts *sear
 	tc := &searchFakeText{vec: make([]float32, 64), embedTextsErr: opts.embedTextsErr}
 	cfg := search.Config{}
 	cfg.ApplyDefaults()
-	eng := hybrid.NewEngine(be, tc, gens, cfg)
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return tc }, gens, cfg)
 	checker := &searchFakeChecker{valid: false}
 
 	var settings searchsvc.UserSettingsRepo = searchFakeSettings{}
@@ -630,7 +630,7 @@ func TestRoute_Search_BindsSidebarFacetExplodeParams(t *testing.T) {
 	tc := &searchFakeText{vec: make([]float32, 64)}
 	cfg := search.Config{}
 	cfg.ApplyDefaults()
-	eng := hybrid.NewEngine(be, tc, gens, cfg)
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return tc }, gens, cfg)
 	checker := &searchFakeChecker{valid: false}
 	svc := searchsvc.New(eng, searchFakeSettings{}, searchFakeTags{}, checker, gens, ro)
 
