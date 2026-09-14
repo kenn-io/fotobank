@@ -242,6 +242,8 @@ test.describe("F2.5 lightbox", () => {
   }) => {
     await page.goto("/library");
     await expect(page.getByLabel("Photo gps-fixture-1")).toBeVisible();
+    // These fixtures are in March; offscreen month cells are unmounted.
+    await page.locator('[data-month="2026-03"]').scrollIntoViewIfNeeded();
     const ids = [
       "lightbox-select-5-id-001",
       "lightbox-select-5-id-002",
@@ -296,6 +298,7 @@ test.describe("F2.5 lightbox", () => {
   }) => {
     await page.goto("/library");
     await expect(page.getByLabel("Photo gps-fixture-1")).toBeVisible();
+    await page.locator('[data-month="2026-03"]').scrollIntoViewIfNeeded();
     const selectedIds = [
       "lightbox-select-5-id-001",
       "lightbox-select-5-id-002",
@@ -409,6 +412,7 @@ test.describe("F2.5 lightbox", () => {
 
     // /library now shows the unhidden id.
     await page.goto("/library");
+    await page.locator('[data-month="2026-03"]').scrollIntoViewIfNeeded();
     await expect(
       page.locator(`[data-media-id="lightbox-hidden-2-id-001"]`),
     ).toBeVisible();
