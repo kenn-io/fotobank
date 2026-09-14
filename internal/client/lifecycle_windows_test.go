@@ -4,8 +4,11 @@ package client
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -32,15 +35,22 @@ func TestStopWaitsForDeletePendingRuntimeRecord(t *testing.T) {
 			r := require.New(t)
 			var deleted atomic.Bool
 			var ping http.Handler
-			var recordPath *uint16
+			var recordPath string
+			var handle windows.Handle
 			var releaseRecord func()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				if req.URL.Path == daemon.DefaultPingPath {
 					ping.ServeHTTP(w, req)
 					return
 				}
-				if err := windows.DeleteFile(recordPath); err != nil {
+				// Keep the handle that marks deletion open until the test releases it.
+				deleteOnClose := byte(1) // FILE_DISPOSITION_INFO.DeleteFile (BOOLEAN).
+				if err := windows.SetFileInformationByHandle(handle, windows.FileDispositionInfo, &deleteOnClose, 1); err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				if _, err := os.Stat(recordPath); !errors.Is(err, os.ErrPermission) {
+					http.Error(w, fmt.Sprintf("expected a delete-pending permission error, got %v", err), http.StatusInternalServerError)
 					return
 				}
 				deleted.Store(true)
@@ -62,11 +72,11 @@ func TestStopWaitsForDeletePendingRuntimeRecord(t *testing.T) {
 
 			configPath := filepath.Join(t.TempDir(), "fotobank.toml")
 			store := daemon.RuntimeStore{Dir: configPath + ".operator"}
-			path, err := store.Write(record)
+			recordPath, err = store.Write(record)
 			r.NoError(err)
-			recordPath, err = windows.UTF16PtrFromString(path)
+			name, err := windows.UTF16PtrFromString(recordPath)
 			r.NoError(err)
-			handle, err := windows.CreateFile(recordPath, windows.DELETE,
+			handle, err = windows.CreateFile(name, windows.DELETE,
 				windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 				nil, windows.OPEN_EXISTING, 0, 0)
 			r.NoError(err)
