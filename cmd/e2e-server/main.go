@@ -395,12 +395,22 @@ func startMockEmbed() (string, *http.Server, error) {
 			return
 		}
 		var body struct {
-			Input []string `json:"input"`
-			Model string   `json:"model"`
+			Input json.RawMessage `json:"input"`
+			Model string          `json:"model"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		// The admin probe sends one string; embedding jobs send a batch.
+		var inputs []string
+		if err := json.Unmarshal(body.Input, &inputs); err != nil {
+			var input string
+			if err := json.Unmarshal(body.Input, &input); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			inputs = []string{input}
 		}
 		// One vector per input, in input order. deterministicVec
 		// derives a vector from the input index so the response is
@@ -410,7 +420,7 @@ func startMockEmbed() (string, *http.Server, error) {
 			Data  []map[string]any `json:"data"`
 			Model string           `json:"model"`
 		}{Model: body.Model}
-		for i := range body.Input {
+		for i := range inputs {
 			out.Data = append(out.Data, map[string]any{
 				"embedding": deterministicVec(i, e2eEmbedDim),
 				"index":     i,
@@ -1348,8 +1358,9 @@ func writeFixtureThumbs(
 // active tag + caption results for each (so FTS picks them up), an
 // active embedding generation matching cfg.AI.Embed, and 22/30
 // media_embedding_ids mappings for the visible photos so embedding
-// completeness lands at ≈73% — under the 80% banner threshold. Every ready
-// row also gets a decodable grid thumbnail so the browser fixture is honest.
+// completeness stays under the 80% banner threshold even as other suites
+// add eligible photos. Every ready row also gets a decodable grid thumbnail
+// so the browser fixture is honest.
 //
 // Captions are seeded with a deterministic three-keyword pattern
 // ("beach", "mountain", or "sunset") so the Playwright suite can

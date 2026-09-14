@@ -14,8 +14,8 @@ import { test, expect, type Page } from "@playwright/test";
 //     (beach / mountain / sunset every 3rd); hidden photos use a
 //     "hiddencache" marker so a search for that string verifies the
 //     hidden gate.
-//   - One active embedding generation with 22/30 mappings → completeness
-//     ≈73% (under the 80% banner threshold).
+//   - One active embedding generation with 22 mappings. Other suites add
+//     eligible photos, keeping completeness below the 80% banner threshold.
 //
 // Deferred tests (per task plan): scrolling near bottom triggers next
 // page (covered by VirtualGrid units); query_embedding_failed banner
@@ -118,27 +118,28 @@ test.describe("W1 Search", () => {
   });
 
   // -------------------------------------------------------------------------
-  // The indexing-status pill renders when completeness < 1. The seed
-  // pins 22 mappings against 32 eligible photos (30 visible + 2 AI
-  // fixtures with thumb_status='ready'), landing completeness at
-  // 22/32 = 0.6875 → 69% after rounding. The pill is visible
-  // irrespective of whether a query has been typed (it surfaces
-  // from the search response, which fires on hydration even with
-  // empty q).
+  // The pill must reflect the search response, not an assumed count of
+  // eligible photos: all suites share the seeded library.
   // -------------------------------------------------------------------------
   test("Indexing-status pill shows the partial completeness", async ({ page }) => {
+    const responsePromise = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/api/v1/search",
+    );
     await page.goto("/search?q=photo");
+    const response = await responsePromise;
+    expect(response.ok()).toBe(true);
+    const { embedding_completeness: completeness } = await response.json();
+    expect(completeness).toBeGreaterThan(0);
+    expect(completeness).toBeLessThan(0.8);
     const pill = page.getByTestId("indexing-status-pill");
     await expect(pill).toBeVisible({ timeout: 5_000 });
-    // 22/32 = 0.6875 → Math.round(68.75) = 69. Match a forgiving 60-79
-    // band so a future fixture-set tweak doesn't snap this assertion.
-    await expect(pill).toContainText(/[67]\d%\s*indexed/);
+    await expect(pill).toHaveText(`${Math.round(completeness * 100)}% indexed`);
   });
 
   // -------------------------------------------------------------------------
   // The under-80% banner appears when (a) the user has typed a query
   // AND (b) completeness < 0.80 AND (c) semantic_unavailable is false.
-  // The seed lands at 73% with an active generation present, so the
+  // The seed has partial coverage with an active generation, so the
   // banner should surface with a non-empty query.
   // -------------------------------------------------------------------------
   test("Under-80% banner shows when completeness < 0.80 with a query", async ({ page }) => {
