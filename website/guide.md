@@ -3,6 +3,10 @@
 The stored file and the photo catalog have different jobs. This guide shows
 where each piece of information lives.
 
+Fotobank is pre-alpha software, with no stability guarantees. Keep independent
+copies of irreplaceable photos. To try it, start with the
+[setup guide](/docs/guides/setup/).
+
 ## Import a stable file
 
 Fotobank waits until size and modification time stop changing, then reads the

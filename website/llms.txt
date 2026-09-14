@@ -1,10 +1,10 @@
 # Fotobank
 
-> Fotobank is a self-hosted photo system of record built on Docbank. The project is pre-alpha.
+> Fotobank is a photo system of record for you and your agents, built on embedded Docbank. It is pre-alpha software with no stability guarantees. Keep independent copies of irreplaceable photos.
 
 ## Product overview
 
-- [Website Markdown](/index.md): Purpose, division of responsibility, and current status.
+- [Website Markdown](/index.md): Purpose, current workflows, the personal OS direction alongside Docbank and msgvault, and pre-alpha limits.
 - [Storage and editing guide](/guide.md): How one photograph moves from import through recovery.
 
 ## Technical documentation
@@ -17,8 +17,8 @@
 
 ## User and agent workflows
 
-- [Setup](/docs/guides/setup/): Configure storage, diagnose availability, and start the server.
+- [Setup](/docs/guides/setup/): Build from source, configure storage, start the daemon, and try a first import and backup.
 - [Import and recover](/docs/guides/import/): Import, finish interrupted imports, and refresh photo locations through the daemon, with structured results for automation.
 - [Checkouts](/docs/guides/checkouts/): Create working copies, scan edits, inspect saved state, and explicitly commit.
 - [Backup and restore](/docs/guides/backup/): Archive both the catalog and content, schedule backups, and restore separately.
-- [Automation](/docs/guides/automation/): Structured output, daemon requirements, and current command and API limits.
+- [Automation](/docs/guides/automation/): List, search, and inspect photos through the daemon; structured output and current command and API limits. MCP integration is not implemented.

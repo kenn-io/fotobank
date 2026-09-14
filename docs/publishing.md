@@ -37,3 +37,29 @@ code.
 A successful build does not verify capability claims. Check commands, defaults,
 authorization rules, and failure behavior against the code. Keep aspirations
 separate from features that work today.
+
+## Sample library screenshot
+
+`website/images/library.jpg` shows the built application after importing ten
+sample photos into an isolated library, with AI disabled. It is not a UI mockup
+or a private photo collection. The same image is used in the README.
+
+The photos come from Unsplash under the
+[Unsplash License](https://unsplash.com/license), not this repository's software
+license. The source images are:
+
+- [Lake](https://images.unsplash.com/photo-1470770841072-f978cf4d019e)
+- [Forest](https://images.unsplash.com/photo-1441974231531-c6227db76b6e)
+- [Night sky](https://images.unsplash.com/photo-1519681393784-d120267933ba)
+- [Water](https://images.unsplash.com/photo-1501785888041-af3ef285b470)
+- [Waterfall](https://images.unsplash.com/photo-1433086966358-54859d0ed716)
+- [Meadow](https://images.unsplash.com/photo-1500534623283-312aade485b7)
+- [Woodland](https://images.unsplash.com/photo-1447752875215-b2761acb3c5d)
+- [Ridge](https://images.unsplash.com/photo-1469474968028-56623f02e42e)
+- [Ocean](https://images.unsplash.com/photo-1518837695005-2083093ee35b)
+- [River](https://images.unsplash.com/photo-1426604966848-d7adac402bff)
+
+The sample downloads use `w=1200&q=85&fm=jpg&cs=strip`. They have no embedded
+color profiles; the current Docbank preview producer rejects ICC-tagged JPEGs.
+This is a sample-data choice, not a recommendation to strip metadata from a
+user's originals. Only the application screenshot is included in this repository.

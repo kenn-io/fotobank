@@ -1,33 +1,43 @@
 # A photo system of record you control
 
-Fotobank is a self-hosted photo archive. Docbank stores the exact files and
-their version history. Fotobank groups related files into photographs and
-provides the catalog around them.
+Your photographs hold family history, creative work, and moments you cannot
+recreate. Fotobank brings them into a library you can browse, organize, and
+work with through your own tools and agents.
 
-## A photo archive needs more than a directory tree
+[Try Fotobank](/docs/guides/setup/) or [see how it works](/guide/).
 
-It must preserve each file, record which files belong to the same photograph,
-and support external editors without treating a working directory as the
-archive.
+Fotobank is pre-alpha software, with no stability guarantees. Expect bugs and
+changing interfaces and schemas. Keep independent copies of irreplaceable photos.
+
+![Fotobank's library displaying landscape photos, with browsing filters and a capture-date timeline.](/images/library.jpg)
+
+The running app with a sample library. [View full size](/images/library.jpg).
+Sample photos from [Unsplash](https://unsplash.com).
+
+## One photograph can have many files
+
+A camera RAW, a JPEG, an XMP sidecar, and an edit tell different parts of the
+same story. Fotobank keeps those relationships in its photo catalog and exact
+file versions in Docbank.
 
 1. **Import:** Copy files after they stop changing, leaving the source untouched.
-2. **Store:** Keep exact bytes and immutable versions in Docbank.
-3. **Link:** Group JPEG, RAW, sidecar, and edited files as one photograph.
-4. **Edit:** Put selected versions in a writable checkout.
-5. **Recover:** Restore the photo catalog and stored content together, then
-   rebuild derived data.
+2. **Browse:** Find photos by date, camera, tags, or location. Metadata search
+   works without AI.
+3. **Organize:** Keep related files together and collect photographs into albums.
+4. **Edit:** Create ordinary working files, then explicitly save tracked edits
+   as new versions.
+5. **Back up:** Capture the photo catalog and stored content together. Test
+   recovery into separate storage.
 
-## Docbank stores files; Fotobank models photographs
+## Built on Docbank, made for photographs
 
-Docbank stores exact originals and version history. It identifies file content
-by its checksum and checks that stored bytes match that checksum.
+Fotobank embeds [Docbank](https://github.com/kenn-io/docbank) as a library, not a
+second server. Docbank stores exact files and immutable versions and supplies
+source metadata and image previews.
 
-Fotobank answers “what does it mean in a photo library?” It owns assets and
-file relationships, albums, privacy and sharing, and photographer workflows
-such as timelines, maps, review, and writable checkouts.
-
-Each Fotobank file record points to one exact Docbank version. That reference
-is the boundary between the archive and the photo catalog.
+Fotobank owns photographs and related files, albums, privacy, sharing,
+browsing, search, and working copies. Docbank identifies originals by checksum
+and checks stored bytes against that checksum.
 
 Both must be backed up. Albums, file relationships, and sharing choices cannot
 be reconstructed from Docbank's files alone. Fotobank's recovery archives
@@ -35,35 +45,50 @@ capture the catalog and Docbank content together.
 
 ## Related files stay related
 
-Fotobank can record a primary JPEG, camera RAW file, and XMP sidecar as one
-photograph. Each file remains an exact Docbank record. Fotobank stores the
-relationship instead of inferring it every time from filenames.
+A JPEG, camera RAW file, and XMP sidecar can represent one photograph. Fotobank
+records that relationship directly instead of inferring it every time from
+filenames. Each file remains an exact Docbank record.
 
-## How Fotobank preserves your record
+## Work with the record, not around it
 
-- Import does not mutate the source. A retry finds the same content or reports
-  a conflict.
-- External tools edit checkout files. An explicit `checkout commit` saves a
-  settled edit as a new Docbank version and rejects a changed base.
-- Thumbnails, extracted metadata, and search data can be rebuilt from the exact
-  stored version.
-- Fotobank checks ownership and visibility before it lists, serves, exports, or
-  shares a file.
+### Use files in an editor
 
-## Shared intelligence, built on Docbank
+A checkout is a working copy of selected files. The server scans tracked edits;
+`checkout commit` saves them as new versions. Uncommitted edits are not in
+archive backups. [Read the workflow and limits](/docs/guides/checkouts/).
 
-Docbank supplies metadata from the original files and standard image previews
-for supported formats. Fotobank uses them for photo details and thumbnails.
+### Use commands with an agent
 
-Optional AI processing and search currently run in Fotobank. The goal is to move
-reusable AI processing into Docbank. That integration is not implemented yet.
-Photo relationships, albums, privacy, and sharing stay in Fotobank.
+List and search photos, inspect metadata, and manage albums through the CLI
+and documented HTTP API. Commands use the same daemon as the web app.
+[See command examples](/docs/guides/automation/).
 
-Continue with the [guide to storage and editing](/guide/) or the [technical
-documentation](/docs/).
+### Choose whether to use AI
 
-## Project status
+Optional tagging, captions, and embedding-based search require configured
+providers. AI is disabled by default. Read the
+[processing and hidden-media rules](/docs/architecture/search-and-ai/#failure-and-privacy-rules)
+before enabling it.
 
-Fotobank is pre-alpha software. Core archive workflows are taking shape, but
-this is not yet a supported photo product. The source is licensed under
-Apache-2.0.
+### Know what a backup includes
+
+Recovery archives include stored content and the photo catalog, but not
+configuration files, provider credentials, or working copies. Repositories are
+not encrypted. [Set up and test a backup](/docs/guides/backup/).
+
+## Part of a personal OS for the agentic era
+
+The idea is simple: keep the important parts of your life in systems you
+control, with interfaces your chosen tools and agents can use. Fotobank is
+the photographic part of that work, alongside
+[Docbank](https://github.com/kenn-io/docbank) and [msgvault](https://msgvault.io).
+
+Today, optional AI and search run in Fotobank. Moving reusable intelligence into
+Docbank is work ahead. Photo relationships, albums, privacy, and sharing stay
+in Fotobank.
+
+Broader enrichment, people curation, and MCP integration are aspirations, not
+shipped features. Fotobank has no autonomous assistant.
+[Try the current source](/docs/guides/setup/) with copies of a small collection.
+
+Copyright 2026 Kenn Software LLC. Licensed under Apache-2.0.
