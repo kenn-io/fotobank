@@ -22,7 +22,7 @@ import (
 //     CTE drives the result set, sorted by SearchInput.Sort.
 //
 // All three return rows in best-first order with at most SearchInput.Limit
-// elements. The cursor is opaque to the engine for now; M3 fills it in.
+// elements, starting at Offset in the ordered result set.
 type Backend interface {
 	FusedSearch(ctx context.Context, in SearchInput) ([]Hit, error)
 	BM25Only(ctx context.Context, in SearchInput) ([]Hit, error)
@@ -32,9 +32,7 @@ type Backend interface {
 // SearchInput is the per-request bundle of every signal a Backend
 // method may consume. Fields irrelevant to the chosen mode are ignored
 // (FilterOnly does not look at Query / QueryVector / KPerSignal /
-// RRFK), and zero values are accepted: an empty Filter.SQL means "no
-// filter" — which the L1 happy-path test relies on indirectly via the
-// test-supplied owner predicate.
+// RRFK). Every call requires an explicit owner-scoped Filter.SQL.
 type SearchInput struct {
 	// Query is a tokenized + escaped FTS5 MATCH expression. For L1 the
 	// caller is the test helper; M2 produces the shape from raw user
@@ -56,9 +54,8 @@ type SearchInput struct {
 	// location / hidden CTE body and its bind args. The Backend treats
 	// it as opaque SQL.
 	Filter FilterCTE
-	// Sort is consumed by FilterOnly (relevance has no meaning when
-	// neither BM25 nor ANN is in play). FusedSearch always orders by
-	// RRF DESC; BM25Only by bm25 ASC.
+	// Sort orders the selected candidates by relevance or capture date.
+	// FilterOnly treats relevance as newest.
 	Sort Sort
 	// KPerSignal caps the per-signal candidate pool for both the BM25
 	// and ANN CTEs. Higher values trade latency for recall.
@@ -68,10 +65,9 @@ type SearchInput struct {
 	RRFK int
 	// Limit caps the final result set size returned to the caller.
 	Limit int
-	// Cursor pages through the previously-resolved result list. nil
-	// means first page. The L1 backend does not consult Cursor — M3
-	// adds the encode/decode logic and the WHERE-clause shaping.
-	Cursor *Cursor
+	// Offset skips rows after ranking and visibility filtering.
+	// ponytail: deep pages scan skipped rows; use keysets if that cost matters.
+	Offset int
 	// Gen is the active embedding generation resolved for THIS request.
 	// FusedSearch uses it to look up the per-generation vec0 table; when
 	// nil, the backend falls back to its construction-time generation
@@ -120,9 +116,7 @@ type ScoreComponents struct {
 	RankVector *int
 }
 
-// Sort discriminates the FilterOnly ordering. FusedSearch and BM25Only
-// implicitly sort by their own scoring functions and ignore this
-// field.
+// Sort selects relevance or capture-date ordering in all three modes.
 type Sort string
 
 const (
@@ -147,10 +141,6 @@ func SortFromString(s string) Sort {
 		return SortNewest
 	}
 }
-
-// Cursor is opaque at the L1 layer. The engine module (M3) fills in
-// the fields used to skip already-seen rows on subsequent pages.
-type Cursor struct{}
 
 // FilterCTE is the SQL body and bind args that pre-resolve the
 // per-request media subset. The body must be a SELECT producing the

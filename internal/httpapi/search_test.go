@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -477,59 +478,52 @@ func TestRoute_Search_LimitTooLargeReturns400(t *testing.T) {
 		"limit above the cap must surface as a 4xx, not 200/5xx")
 }
 
-// TestRoute_Search_CursorRoundTrip — first page returns a non-empty
-// next_cursor; reusing the same cursor with the same request shape
-// returns 200 (the v1 engine validates the hash matches but doesn't
-// yet skip rows). A tampered cursor (corrupted base64) must surface
-// as 400 via Translate(ErrInvalidArgument).
+// Cursor continuation must advance through real SQL results at the HTTP boundary.
 func TestRoute_Search_CursorRoundTrip(t *testing.T) {
 	r := require.New(t)
-	fx := newSearchAPIFixtureWith(t, &searchFixtureOpts{
-		hits: []index.Hit{
-			{MediaID: "m1", ImportedAt: time.Now().UTC()},
-			{MediaID: "m2", ImportedAt: time.Now().UTC()},
-		},
-	})
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "local", "alice")
+	var ids []string
+	for i := range 3 {
+		id := testutil.SeedPhoto(t, d.WriteDB(), owner, fmt.Sprintf("puppy-%d", i))
+		_, err := d.WriteDB().ExecContext(t.Context(), `INSERT INTO media_fts(media_id, filename) VALUES (?, 'puppy.jpg')`, id)
+		r.NoError(err)
+		ids = append(ids, id)
+	}
+	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	cfg := search.Config{}
+	cfg.ApplyDefaults()
+	eng := hybrid.NewEngine(index.NewSQLiteVecBackend(d.ReadDB(), embedding.Row{}), nil, gens, cfg)
+	svc := searchsvc.New(eng, searchFakeSettings{}, searchFakeTags{}, &searchFakeChecker{}, gens, d.ReadDB())
+	h, err := httpapi.New(httpapi.Deps{IdentityProvider: identity.NewStub(owner, "Alice"), Search: svc})
+	r.NoError(err)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	fx := searchAPIFixture{srv: srv, owner: owner}
 
-	// Page 1: limit=2 with len(hits)==2 fills the page so the engine
-	// emits a cursor.
-	q := url.Values{}
-	q.Set("q", "puppy")
-	q.Set("sort", "relevance")
-	q.Set("limit", "2")
-
+	q := url.Values{"q": {"puppy"}, "sort": {"relevance"}, "limit": {"2"}}
 	resp1, body1 := doGetSearch(t, fx, q)
 	r.Equal(http.StatusOK, resp1.StatusCode)
 	r.NotNil(body1)
-	r.True(body1.HasMore, "len(hits)==Limit must produce next_cursor + has_more")
+	r.Len(body1.Results, 2)
+	r.True(body1.HasMore)
 	r.NotNil(body1.NextCursor)
 	r.NotEmpty(*body1.NextCursor)
 
-	// Page 2: replay the cursor with the same request shape. Hash
-	// matches → engine accepts; v1 still serves the same rows because
-	// the page-skip math is deferred. We only assert the round-trip
-	// succeeds, not the row contents.
-	q2 := url.Values{}
-	q2.Set("q", "puppy")
-	q2.Set("sort", "relevance")
-	q2.Set("limit", "2")
-	q2.Set("cursor", *body1.NextCursor)
-
-	resp2, body2 := doGetSearch(t, fx, q2)
-	r.Equal(http.StatusOK, resp2.StatusCode, "unchanged request shape + valid cursor must succeed")
+	q.Set("cursor", *body1.NextCursor)
+	resp2, body2 := doGetSearch(t, fx, q)
+	r.Equal(http.StatusOK, resp2.StatusCode)
 	r.NotNil(body2)
+	r.Len(body2.Results, 1)
+	r.False(body2.HasMore)
+	r.Nil(body2.NextCursor)
+	got := []string{body1.Results[0].MediaID, body1.Results[1].MediaID, body2.Results[0].MediaID}
+	r.ElementsMatch(ids, got)
 
-	// Page 3: replay with a tampered cursor — base64 garbage that does
-	// not decode. The engine surfaces ErrInvalidArgument and the route
-	// maps it to 400.
-	q3 := url.Values{}
-	q3.Set("q", "puppy")
-	q3.Set("sort", "relevance")
-	q3.Set("limit", "2")
-	q3.Set("cursor", "this-is-not-a-valid-cursor-blob")
-
-	resp3, _ := doGetSearch(t, fx, q3)
-	r.Equal(http.StatusBadRequest, resp3.StatusCode, "tampered cursor must surface as 400")
+	q.Set("cursor", "this-is-not-a-valid-cursor-blob")
+	resp3, _ := doGetSearch(t, fx, q)
+	defer resp3.Body.Close()
+	r.Equal(http.StatusBadRequest, resp3.StatusCode)
 }
 
 // autocompleteTagsBodyDTO mirrors the wire shape of the

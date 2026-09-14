@@ -17,11 +17,30 @@ Both indexes are rebuildable projections keyed by the product media ID.
 Repositories update source metadata and FTS rows transactionally when a
 product mutation would otherwise expose stale text.
 
-`internal/search/hybrid` parses the query, applies owner and visibility
-filters, retrieves lexical and vector candidates, normalizes scores, and
-returns one ranked page. Cursor state records enough ordering information for
-stable continuation. Hidden rows are filtered in SQL rather than removed after
-ranking, which prevents result counts and timing from exposing them.
+The daemon always provides metadata search. When started with AI or embeddings
+disabled, text queries use FTS5 without calling an
+embedding provider, even if the catalog retains an active embedding generation.
+Queries without searchable text use the catalog filters and date ordering.
+Disabled embeddings are an ordinary metadata-search mode, not a provider-outage
+banner.
+
+Search currently captures embedding settings at daemon startup. Unlike the
+workers, it does not consume later admin setting changes. Restart the daemon
+after changing these settings so search uses the new enablement, endpoint,
+or credentials. Removing this limitation is tracked in kata.
+
+`internal/search/hybrid` applies owner and visibility filters in SQL before
+ranking. Text search selects up to `search.k_per_signal` candidates from each
+index (200 by default), then combines their ranks when embeddings are available.
+Pagination traverses that bounded candidate set; filter-only browsing has no
+candidate cap.
+
+Each page requests one extra row to determine whether more results exist.
+An opaque cursor carries the next offset and binds it to the query, filters,
+owner, effective sort, search mode, ranking settings, and active hybrid
+generation. Reusing it with a different search returns a validation error.
+Ties use the media ID for deterministic ordering. Pages are live reads, not
+a snapshot: imports, edits, and indexing between requests can shift results.
 
 Autocomplete for tags and locations uses active visible data for the caller.
 Facets apply the same camera, lens, tag, GPS, owner, and hidden filters as the

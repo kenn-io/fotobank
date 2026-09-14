@@ -151,11 +151,11 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	sb.WriteString("    SELECT mf.media_id AS id, bm25(media_fts) AS score\n")
 	sb.WriteString("    FROM media_fts mf JOIN filter f ON f.id = mf.media_id\n")
 	sb.WriteString("    WHERE media_fts MATCH ?\n")
-	sb.WriteString("    ORDER BY score\n")
+	sb.WriteString("    ORDER BY score, id\n")
 	sb.WriteString("    LIMIT ?\n")
 	sb.WriteString("  ),\n")
 	sb.WriteString("  bm25 AS (\n")
-	sb.WriteString("    SELECT id, score, ROW_NUMBER() OVER (ORDER BY score) AS rank_bm25\n")
+	sb.WriteString("    SELECT id, score, ROW_NUMBER() OVER (ORDER BY score, id) AS rank_bm25\n")
 	sb.WriteString("    FROM bm25_raw\n")
 	sb.WriteString("  ),\n")
 	sb.WriteString("  ann_raw AS (\n")
@@ -165,7 +165,7 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	sb.WriteString("  ),\n")
 	sb.WriteString("  ann AS (\n")
 	sb.WriteString("    SELECT x.media_id AS id, ann_raw.distance AS score,\n")
-	sb.WriteString("           ROW_NUMBER() OVER (ORDER BY ann_raw.distance) AS rank_vector\n")
+	sb.WriteString("           ROW_NUMBER() OVER (ORDER BY ann_raw.distance, x.media_id) AS rank_vector\n")
 	sb.WriteString("    FROM ann_raw\n")
 	sb.WriteString("    JOIN media_embedding_ids x ON x.generation_id = ? AND x.vec_id = ann_raw.vec_id\n")
 	sb.WriteString("    JOIN filter f ON f.id = x.media_id\n")
@@ -209,9 +209,9 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	// candidates — consistent with the msgvault pattern. SortRelevance
 	// (and the zero value) falls through to RRF DESC.
 	sb.WriteString(fusedOrderBy(in.Sort))
-	sb.WriteString("LIMIT ?")
+	sb.WriteString("LIMIT ? OFFSET ?")
 
-	args := make([]any, 0, len(in.Filter.Args)+9)
+	args := make([]any, 0, len(in.Filter.Args)+10)
 	args = append(args, in.Filter.Args...)
 	// bm25_raw: MATCH ? then LIMIT ?
 	args = append(args, in.Query, in.KPerSignal)
@@ -224,7 +224,7 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 	// ann: generation_id = ?, then LIMIT KPerSignal (post-filter cap).
 	args = append(args, gen.ID, in.KPerSignal)
 	// SELECT: RRF k for BM25 then for vector, then outer LIMIT.
-	args = append(args, in.RRFK, in.RRFK, in.Limit)
+	args = append(args, in.RRFK, in.RRFK, in.Limit, in.Offset)
 
 	rows, err := b.ro.QueryContext(ctx, sb.String(), args...)
 	if err != nil {
@@ -255,11 +255,11 @@ func (b *SQLiteVecBackend) BM25Only(ctx context.Context, in SearchInput) ([]Hit,
 	sb.WriteString("    SELECT mf.media_id AS id, bm25(media_fts) AS score\n")
 	sb.WriteString("    FROM media_fts mf JOIN filter f ON f.id = mf.media_id\n")
 	sb.WriteString("    WHERE media_fts MATCH ?\n")
-	sb.WriteString("    ORDER BY score\n")
+	sb.WriteString("    ORDER BY score, id\n")
 	sb.WriteString("    LIMIT ?\n")
 	sb.WriteString("  ),\n")
 	sb.WriteString("  bm25 AS (\n")
-	sb.WriteString("    SELECT id, score, ROW_NUMBER() OVER (ORDER BY score) AS rank_bm25\n")
+	sb.WriteString("    SELECT id, score, ROW_NUMBER() OVER (ORDER BY score, id) AS rank_bm25\n")
 	sb.WriteString("    FROM bm25_raw\n")
 	sb.WriteString("  )\n")
 	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version, m.thumb_status,\n")
@@ -269,11 +269,11 @@ func (b *SQLiteVecBackend) BM25Only(ctx context.Context, in SearchInput) ([]Hit,
 	// FusedSearch: the bm25 CTE picks the top-K by BM25 score, then
 	// the final SELECT applies the user's sort over that pool.
 	sb.WriteString(bm25OrderBy(in.Sort))
-	sb.WriteString("LIMIT ?")
+	sb.WriteString("LIMIT ? OFFSET ?")
 
-	args := make([]any, 0, len(in.Filter.Args)+3)
+	args := make([]any, 0, len(in.Filter.Args)+4)
 	args = append(args, in.Filter.Args...)
-	args = append(args, in.Query, in.KPerSignal, in.Limit)
+	args = append(args, in.Query, in.KPerSignal, in.Limit, in.Offset)
 
 	rows, err := b.ro.QueryContext(ctx, sb.String(), args...)
 	if err != nil {
@@ -344,11 +344,11 @@ func (b *SQLiteVecBackend) FilterOnly(ctx context.Context, in SearchInput) ([]Hi
 		// "newest first" — relevance is meaningless without a query.
 		sb.WriteString("ORDER BY m.timestamp IS NULL, m.timestamp DESC, m.imported_at DESC, m.id\n")
 	}
-	sb.WriteString("LIMIT ?")
+	sb.WriteString("LIMIT ? OFFSET ?")
 
-	args := make([]any, 0, len(in.Filter.Args)+1)
+	args := make([]any, 0, len(in.Filter.Args)+2)
 	args = append(args, in.Filter.Args...)
-	args = append(args, in.Limit)
+	args = append(args, in.Limit, in.Offset)
 
 	rows, err := b.ro.QueryContext(ctx, sb.String(), args...)
 	if err != nil {
