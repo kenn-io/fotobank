@@ -104,7 +104,8 @@ const (
 )
 
 // Search returns one live page. The cursor binds an offset to the effective
-// query, owner, filters, ranking settings, and (for hybrid search) generation.
+// query, owner, filters, ranking settings, and (for hybrid search) generation
+// and query vector. A changed vector requires restarting pagination.
 func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 	if req.Limit <= 0 || req.Limit == math.MaxInt {
 		return Response{}, fmt.Errorf("positive bounded page size required: %w", errs.ErrInvalidArgument)
@@ -166,6 +167,7 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 	}
 	if mode == engineModeHybrid && activeGen != nil {
 		binding.GenerationID = activeGen.ID
+		binding.QueryVector = queryVec
 	}
 	hash := NormalizedHash(binding)
 	offset := 0

@@ -41,8 +41,12 @@ candidate cap.
 
 Each page requests one extra row to determine whether more results exist.
 An opaque cursor carries the next offset and binds it to the query, filters,
-owner, effective sort, search mode, ranking settings, and active hybrid
-generation. Reusing it with a different search returns a validation error.
+owner, effective sort, search mode, ranking settings, active hybrid generation,
+and query vector. Reusing it with a different search returns a validation error.
+If a provider change produces a different vector, pagination must restart;
+the web interface already does this on cursor rejection. This also applies
+if the same provider returns different vectors for repeated queries. The cursor
+contains only the combined hash and offset, not provider settings or credentials.
 Ties use the media ID for deterministic ordering. Pages are live reads, not
 a snapshot: imports, edits, and indexing between requests can shift results.
 
