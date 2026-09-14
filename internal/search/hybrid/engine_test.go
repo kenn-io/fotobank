@@ -406,11 +406,7 @@ func TestEngine_FilterOnly_PureJunkNoActiveGenDoesNotSetSemanticUnavailable(t *t
 	r.Empty(resp.SemanticUnavailableReason)
 }
 
-// TestEngine_HasMoreSetWhenLimitFilled — len(hits) == Limit means
-// the v1 cursor is emitted and HasMore is true. Pin the round-trip
-// shape so a follow-up that wires page-skip math doesn't silently
-// break the contract.
-func TestEngine_HasMoreSetWhenLimitFilled(t *testing.T) {
+func TestEngine_HasMoreRequiresLookahead(t *testing.T) {
 	r := require.New(t)
 	d := testutil.OpenTestDB(t)
 	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
@@ -419,6 +415,7 @@ func TestEngine_HasMoreSetWhenLimitFilled(t *testing.T) {
 	be := &fakeBackend{hits: []index.Hit{
 		{MediaID: "m1", Score: 0.5},
 		{MediaID: "m2", Score: 0.4},
+		{MediaID: "m3", Score: 0.3},
 	}}
 	tc := &fakeTextClient{vec: make([]float32, 768)}
 	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
@@ -435,7 +432,8 @@ func TestEngine_HasMoreSetWhenLimitFilled(t *testing.T) {
 
 	c, err := hybrid.DecodeCursor(resp.NextCursor)
 	r.NoError(err)
-	r.Equal("m2", c.ID)
+	r.Equal(2, c.Offset)
+	r.Len(resp.Hits, 2)
 	r.NotEmpty(c.ReqHash)
 }
 

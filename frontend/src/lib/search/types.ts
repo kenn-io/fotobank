@@ -89,6 +89,7 @@ export interface SearchResponse {
   semantic_unavailable: boolean;
   semantic_unavailable_reason:
     | ""
+    | "embeddings_disabled"
     | "no_active_generation"
     | "query_embedding_failed";
 }

@@ -16,15 +16,13 @@ import (
 
 // TestCursor_RoundTrip pins the encode/decode contract: every field
 // the engine populates survives the base64+json round-trip with the
-// same value. The float and int are deliberately non-zero so a
+// same value. The offset is deliberately non-zero so a
 // silently dropped field would surface as a zero on decode.
 func TestCursor_RoundTrip(t *testing.T) {
 	r := require.New(t)
 	in := hybrid.Cursor{
 		ReqHash: "abcdef1234567890",
-		K1:      0.0125,
-		K2:      1730000000,
-		ID:      "media-123",
+		Offset:  60,
 	}
 
 	enc := hybrid.EncodeCursor(in)
@@ -44,9 +42,7 @@ func TestCursor_RejectsHashMismatch(t *testing.T) {
 	r := require.New(t)
 	enc := hybrid.EncodeCursor(hybrid.Cursor{
 		ReqHash: "hash-from-page-1",
-		K1:      1.0,
-		K2:      42,
-		ID:      "m-7",
+		Offset:  7,
 	})
 
 	_, err := hybrid.DecodeCursorAndCheck(enc, "different-hash-from-page-2")
@@ -56,7 +52,7 @@ func TestCursor_RejectsHashMismatch(t *testing.T) {
 	// Sanity: the same cursor decodes cleanly when the hash matches.
 	c, err := hybrid.DecodeCursorAndCheck(enc, "hash-from-page-1")
 	r.NoError(err)
-	r.Equal("m-7", c.ID)
+	r.Equal(7, c.Offset)
 }
 
 // TestCursor_ReqHashUsesEffectiveSort pins the contract that the hash
@@ -92,7 +88,7 @@ func TestCursor_ReqHashUsesEffectiveSort(t *testing.T) {
 
 	// Map-iteration-order independence: extra key/value pairs added in
 	// arbitrary order produce the same hash because the hash sorts
-	// keys before joining.
+	// keys when encoding.
 	c1 := hybrid.NormalizedReq{
 		Q:             "dog",
 		Sort:          "newest",
@@ -148,6 +144,7 @@ func TestNormalizedHash_TagKeysOrderIndependent(t *testing.T) {
 	be := &fakeBackend{hits: []index.Hit{
 		{MediaID: "m1", Score: 0.9},
 		{MediaID: "m2", Score: 0.8},
+		{MediaID: "m3", Score: 0.7},
 	}}
 	tc := &fakeTextClient{vec: make([]float32, 768)}
 	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
@@ -164,7 +161,7 @@ func TestNormalizedHash_TagKeysOrderIndependent(t *testing.T) {
 		},
 	})
 	r.NoError(err)
-	r.NotEmpty(respA.NextCursor, "page 1 must mint a cursor when len(hits)==Limit")
+	r.NotEmpty(respA.NextCursor, "lookahead must mint a cursor when another row exists")
 
 	respB, err := eng.Search(context.Background(), hybrid.Request{
 		Owner: owner,

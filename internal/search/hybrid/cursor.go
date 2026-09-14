@@ -6,9 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
-	"strconv"
-	"strings"
+
+	"go.kenn.io/fotobank/internal/owners"
 )
 
 // Cursor is the opaque pagination token round-tripped between server
@@ -17,16 +16,11 @@ import (
 // "dog" against query "cat" and accidentally page through unrelated
 // rows.
 //
-// K1 / K2 / ID are placeholders for the per-mode last-page sort keys
-// (e.g. RRF score, timestamp, media id). v1's engine populates them on
-// the way out but the page-skip math is not yet wired — DecodeCursor
-// returns the values for the future engine to consume. See the package
-// doc on Engine.Search for the v1 simplification.
+// Offset counts results already returned. Pages are live reads; changes to
+// the catalog between requests can shift results.
 type Cursor struct {
-	ReqHash string  `json:"req_hash"`
-	K1      float64 `json:"k1"`
-	K2      int64   `json:"k2"`
-	ID      string  `json:"id"`
+	ReqHash string `json:"req_hash"`
+	Offset  int    `json:"offset"`
 }
 
 // EncodeCursor renders c as a URL-safe base64-encoded JSON blob. The
@@ -90,47 +84,23 @@ func DecodeCursorAndCheck(s, expectedHash string) (Cursor, error) {
 // Filter is a flat string→string map; the production caller flattens
 // the structured Input before hashing so each filter (date_after,
 // tag, media_type, …) appears as one key. Multi-valued keys (e.g.
-// tags) join their values with "," before going into the map.
+// tags) encode sorted values as JSON arrays before going into the map.
 type NormalizedReq struct {
 	Q             string
 	Sort          string
 	IncludeHidden bool
 	EngineMode    string
 	Filter        map[string]string
+	Owner         owners.Principal
+	GenerationID  int64
+	KPerSignal    int
+	RRFK          int
 }
 
-// NormalizedHash returns the hex sha256 of the normalized request. The
-// hash input is a single string assembled from the fields in fixed
-// order with `|` separators; map keys are sorted before joining so the
-// hash is independent of map iteration order. Sha256 (not a faster
-// 64-bit hash) is fine — cursor hashing happens once per request and
-// is not on a hot loop. The returned hash is hex-encoded so it round-
-// trips through JSON without escaping concerns.
+// NormalizedHash binds the request without delimiter ambiguity. The JSON
+// encoder sorts map keys; flattenFilter sorts multi-valued fields.
 func NormalizedHash(r NormalizedReq) string {
-	keys := make([]string, 0, len(r.Filter))
-	for k := range r.Filter {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	var sb strings.Builder
-	sb.WriteString(r.Q)
-	sb.WriteByte('|')
-	sb.WriteString(r.Sort)
-	sb.WriteByte('|')
-	sb.WriteString(strconv.FormatBool(r.IncludeHidden))
-	sb.WriteByte('|')
-	sb.WriteString(r.EngineMode)
-	sb.WriteByte('|')
-	for i, k := range keys {
-		if i > 0 {
-			sb.WriteByte(',')
-		}
-		sb.WriteString(k)
-		sb.WriteByte('=')
-		sb.WriteString(r.Filter[k])
-	}
-
-	sum := sha256.Sum256([]byte(sb.String()))
+	encoded, _ := json.Marshal(r)
+	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])
 }

@@ -15,6 +15,7 @@ import (
 	"runtime/pprof"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/fotobank/internal/ai"
+	"go.kenn.io/fotobank/internal/ai/embedding"
 	"go.kenn.io/fotobank/internal/ai/jobs"
 	airuntime "go.kenn.io/fotobank/internal/ai/runtime"
 	appsettingsstore "go.kenn.io/fotobank/internal/appsettings"
@@ -30,6 +32,7 @@ import (
 	"go.kenn.io/fotobank/internal/db"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
+	"go.kenn.io/fotobank/internal/search/index"
 	"go.kenn.io/fotobank/internal/testutil/assetfixture"
 )
 
@@ -955,11 +958,17 @@ admin_listen = "127.0.0.1:0"
 // with [ai.embed].enabled=false and asserts:
 //
 //  1. The server boots successfully (no probe runs, no embed wiring).
-//  2. Search remains in the contract but returns service unavailable.
+//  2. Metadata search works without starting an embedding provider.
 //  3. A pre-seeded TaskEmbed job stays in 'pending' for the duration
 //     of the boot — confirming no embed worker is consuming the queue.
 func TestServer_LeavesEmbedSubsystemDormantWhenDisabled(t *testing.T) {
 	r := require.New(t)
+	var providerCalls atomic.Int32
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		providerCalls.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(endpoint.Close)
 	tmp := t.TempDir()
 	nasRoot := filepath.Join(tmp, "nas")
 	r.NoError(os.MkdirAll(filepath.Join(nasRoot, "h", "u"), 0o700))
@@ -982,11 +991,12 @@ listen_address = "127.0.0.1:0"
 enabled = false
 [ai.embed]
 enabled = false
+endpoint = %q
 [search]
 retain_retired_days = 30
 [observability]
 admin_listen = "127.0.0.1:0"
-`, nasRoot, filepath.Join(tmp, "flash")), 0o600))
+`, nasRoot, filepath.Join(tmp, "flash"), endpoint.URL), 0o600))
 
 	dbPath := filepath.Join(tmp, "fotobank.sqlite")
 	t.Setenv("FOTOBANK_CONFIG", cfgPath)
@@ -1005,8 +1015,17 @@ admin_listen = "127.0.0.1:0"
 	repoM := media.NewRepo(d.WriteDB(), d.ReadDB())
 	assetfixture.Insert(t, repoM, media.Media{
 		ID: mid, Owner: p, Type: media.TypePhoto, MimeType: "image/jpeg",
-		OriginalFilename: mid + ".jpg", ImportedAt: time.Now().UTC(), ThumbStatus: "ready",
+		OriginalFilename: "sunset.jpg", ImportedAt: time.Now().UTC(), ThumbStatus: "ready",
 	})
+	tx, err := d.WriteDB().BeginTx(t.Context(), nil)
+	r.NoError(err)
+	r.NoError(index.RefreshMediaFTS(t.Context(), tx, mid))
+	r.NoError(tx.Commit())
+	// Retained generations must not enable provider calls when embeddings are off.
+	gens := embedding.NewGenerations(d.WriteDB(), d.ReadDB())
+	gen, err := gens.FindOrCreateBuilding(t.Context(), ai.Fingerprint{ModelID: "test", InputProfile: "test"}, 3)
+	r.NoError(err)
+	r.NoError(gens.Promote(t.Context(), gen.ID))
 	q := jobs.NewQueue(d.WriteDB(), d.ReadDB())
 	settingsRepo := appsettingsstore.NewRepo(d.WriteDB(), d.ReadDB())
 	provider, err := airuntime.NewProvider(context.Background(), airuntime.Source{
@@ -1050,12 +1069,22 @@ admin_listen = "127.0.0.1:0"
 	client := &http.Client{Transport: &http.Transport{}, Timeout: 10 * time.Second}
 	t.Cleanup(client.CloseIdleConnections)
 
-	// 1. Search remains discoverable even though its service is unavailable.
-	resp, err := client.Get("http://" + resolved + "/api/v1/search?q=")
+	// 1. Search reads indexed filenames even with embeddings disabled.
+	resp, err := client.Get("http://" + resolved + "/api/v1/search?q=sunset")
 	r.NoError(err)
+	var page struct {
+		Results []struct {
+			MediaID string `json:"media_id"`
+		} `json:"results"`
+		SemanticUnavailable bool `json:"semantic_unavailable"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&page)
 	_ = resp.Body.Close()
-	r.Equal(http.StatusServiceUnavailable, resp.StatusCode,
-		"search must report its unavailable service when embed is disabled")
+	r.Equal(http.StatusOK, resp.StatusCode)
+	r.NoError(err)
+	r.Len(page.Results, 1)
+	r.Equal(mid, page.Results[0].MediaID)
+	r.True(page.SemanticUnavailable)
 	resp, err = client.Get("http://" + resolved + "/api/openapi.json")
 	r.NoError(err)
 	var contract struct {
@@ -1081,6 +1110,7 @@ admin_listen = "127.0.0.1:0"
 		`SELECT status FROM ai_jobs WHERE id=?`, jobID).Scan(&status))
 	r.Equal("pending", status,
 		"embed job must stay pending when embed is disabled; got status=%q", status)
+	r.Zero(providerCalls.Load(), "disabled embeddings must not contact the provider")
 
 	// Release this test's HTTP connections before timing server shutdown.
 	// An unused pooled connection can otherwise hold Shutdown in its
