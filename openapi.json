@@ -6050,6 +6050,233 @@
         "summary": "Return the detail for a single media item"
       }
     },
+    "/api/v1/media/{id}/files/{fileID}/content": {
+      "get": {
+        "description": "Returns the owned file's current bytes with its stored media type. Hidden media requires an owner-matched unlock session. A file attached to a different asset returns 404. Use media details to obtain the expected size and SHA-256, then verify a complete download before using it; concurrent edits can invalidate those details.",
+        "operationId": "download-media-file",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "fileID",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional single byte range",
+            "in": "header",
+            "name": "Range",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional cached content ETag",
+            "in": "header",
+            "name": "If-None-Match",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Complete file",
+            "headers": {
+              "Accept-Ranges": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "description": "Number of response bytes",
+                "schema": {
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "ETag": {
+                "description": "Quoted content SHA-256 for visible media; omitted for hidden media",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "206": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Requested byte range",
+            "headers": {
+              "Content-Length": {
+                "description": "Number of response bytes",
+                "schema": {
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "Content-Range": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Cached content still current"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "File not found or not visible to the caller"
+          },
+          "416": {
+            "description": "Malformed or unsatisfiable byte range"
+          },
+          "500": {
+            "description": "Content unavailable or could not be opened"
+          }
+        },
+        "summary": "Read original file bytes"
+      }
+    },
+    "/api/v1/media/{id}/original": {
+      "get": {
+        "description": "Returns the owned file's current bytes with its stored media type. Hidden media requires an owner-matched unlock session. A file attached to a different asset returns 404. Use media details to obtain the expected size and SHA-256, then verify a complete download before using it; concurrent edits can invalidate those details.",
+        "operationId": "download-media-original",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional single byte range",
+            "in": "header",
+            "name": "Range",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional cached content ETag",
+            "in": "header",
+            "name": "If-None-Match",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Complete file",
+            "headers": {
+              "Accept-Ranges": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "description": "Number of response bytes",
+                "schema": {
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "ETag": {
+                "description": "Quoted content SHA-256 for visible media; omitted for hidden media",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "206": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Requested byte range",
+            "headers": {
+              "Content-Length": {
+                "description": "Number of response bytes",
+                "schema": {
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "Content-Range": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Cached content still current"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "File not found or not visible to the caller"
+          },
+          "416": {
+            "description": "Malformed or unsatisfiable byte range"
+          },
+          "500": {
+            "description": "Content unavailable or could not be opened"
+          }
+        },
+        "summary": "Read original file bytes"
+      }
+    },
     "/api/v1/media/{media_id}/ai": {
       "get": {
         "operationId": "ai-media-view",

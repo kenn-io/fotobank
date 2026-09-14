@@ -13,6 +13,22 @@ import (
 	"go.kenn.io/fotobank/internal/identity"
 )
 
+func TestMediaDownloadAPIContract(t *testing.T) {
+	spec := httpapi.OpenAPISpec()
+	for _, path := range []string{"/api/v1/media/{id}/original", "/api/v1/media/{id}/files/{fileID}/content"} {
+		t.Run(path, func(t *testing.T) {
+			r := require.New(t)
+			r.NotNil(spec.Paths[path])
+			op := spec.Paths[path].Get
+			r.NotNil(op)
+			r.Contains(op.Responses, "200")
+			r.Contains(op.Responses["200"].Content, "*/*")
+			r.Contains(op.Responses, "206")
+			r.Contains(op.Responses, "404")
+		})
+	}
+}
+
 // These operations must remain discoverable without opening databases or
 // configuring providers. Missing services must not leave callable nil handlers.
 func TestOptionalServiceAPIContract(t *testing.T) {

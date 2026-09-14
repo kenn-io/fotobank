@@ -99,6 +99,8 @@ from the original bytes alone.
 - Search photo metadata without AI, from the web app or CLI. Configure
   providers to try optional tagging, captioning, and embedding-based search.
   Generated results record the model and input that produced them.
+- Download verified originals and attachments through the CLI for scripts and
+  agents, without direct access to the archive's internal files.
 - Create complete recovery archives, schedule backups with retention, and
   verify a restore into separate storage.
 

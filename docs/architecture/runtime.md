@@ -70,8 +70,10 @@ operation from the contract. A configured server keeps its existing behavior.
 
 The server publishes the contract at `/api/openapi.json` and interactive docs
 at `/api/docs`. `make api-generate` writes the checked-in `openapi.json` and
-frontend TypeScript bindings. Raw byte and event routes remain outside Huma's
-JSON contract; their handlers own streaming, headers, and range behavior. See
+frontend TypeScript bindings. The primary and attached-file download registrations
+also add their binary response contracts to Huma's OpenAPI document. Their raw
+handlers still own streaming, headers, and range behavior; other byte and event
+routes remain outside the generated contract. See
 [`frontend.md`](frontend.md#api-contract) for the frontend boundary.
 
 The middleware execution order is request metrics and recovery, identity,
@@ -248,6 +250,8 @@ connection, not a second set of operator-only album handlers:
 | `media list` | `GET /api/v1/media` |
 | `media search` | `GET /api/v1/search` |
 | `media show` | `GET /api/v1/media/{id}` |
+| `media download` | `GET /api/v1/media/{id}/original` |
+| `media download --file` | `GET /api/v1/media/{id}/files/{fileID}/content` |
 | `albums rename` | `PATCH /api/v1/albums/{id}` |
 | `albums delete` | `DELETE /api/v1/albums/{id}` |
 | `albums list` | `GET /api/v1/albums` |
@@ -260,6 +264,17 @@ The CLI validates IDs and pagination before automatic startup, then delegates
 filtering, owner scope and hidden-media handling to the existing media service.
 List JSON is a single API page; detail JSON includes attached files. Neither
 command provides hidden unlock credentials or direct storage access.
+
+`internal/client/media_download.go` reads metadata and downloads through the
+same proven daemon connection. It checks a complete response against the size
+and SHA-256 in those details; changed content fails rather than silently saving
+a different file. The CLI owns only its requested local output. It validates
+the parent directory before startup, writes a temporary copy, verifies and
+syncs it, then publishes it with a no-replace hardlink in the same directory.
+Cleanup removes the temporary name. There is no link to authoritative storage
+and no local catalog access. The result describes a plain copy, not a checkout.
+See [download commands](../guides/automation.md#download-an-original-or-attachment)
+for destination requirements, receipts, and failure behavior.
 
 `internal/client/search.go` shares the search Huma input and response types.
 `media search` validates filter syntax and page limits before automatic startup,

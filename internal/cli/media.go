@@ -24,13 +24,14 @@ func newMediaCmd() *cobra.Command {
 		Example: `  fotobank media list --type photo --limit 20 --json
   fotobank media list --camera "Example Camera" --has-gps
   fotobank media search "sunset" --type photo --json
-  fotobank media show <photo-id> --json`,
+  fotobank media show <photo-id> --json
+  fotobank media download <photo-id> --output photo.jpg`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_ = cmd.Usage()
 			return newUsageError("a subcommand is required")
 		},
 	}
-	cmd.AddCommand(newMediaListCmd(), newMediaSearchCmd(), newMediaShowCmd())
+	cmd.AddCommand(newMediaListCmd(), newMediaSearchCmd(), newMediaShowCmd(), newMediaDownloadCmd())
 	return cmd
 }
 

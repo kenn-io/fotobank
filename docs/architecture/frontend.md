@@ -37,7 +37,8 @@ the schema at `/api/openapi.json` and interactive documentation at `/api/docs`.
 
 Full-size media and thumbnail endpoints are raw byte routes because they need
 range requests, streaming, cache validators, and content headers. JSON routes
-remain in the generated contract.
+and the primary/attachment download routes appear in the generated contract;
+thumbnail and event routes are not included.
 
 ## Routes and state
 

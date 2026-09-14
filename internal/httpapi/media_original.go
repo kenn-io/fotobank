@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"go.kenn.io/fotobank/internal/auth/hidden"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/service"
@@ -18,12 +20,14 @@ import (
 // headers since content is content-addressed (SHA-256 is the ETag).
 // Callers that don't need media HTTP access (for example the OpenAPI
 // spec dumper) pass a Deps without a MediaService; this function then
-// returns without registering anything.
-func registerMediaOriginal(mux *http.ServeMux, svc *service.MediaService) {
+// publishes the OpenAPI operation without installing the byte handler.
+func registerMediaOriginal(mux *http.ServeMux, api huma.API, svc *service.MediaService) {
+	const path = "/api/v1/media/{id}/original"
+	registerDownloadSchema(api, path, "download-media-original", "id")
 	if svc == nil {
 		return
 	}
-	mux.Handle("GET /api/v1/media/{id}/original", WrapMuxHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET "+path, WrapMuxHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		ident, ok := IdentityFromContext(r.Context())
 		if !ok {
