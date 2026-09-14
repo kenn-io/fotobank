@@ -93,6 +93,7 @@ type NormalizedReq struct {
 	Filter        map[string]string
 	Owner         owners.Principal
 	GenerationID  int64
+	QueryVector   []float32
 	KPerSignal    int
 	RRFK          int
 }

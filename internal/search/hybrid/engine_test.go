@@ -151,7 +151,7 @@ func TestEngine_FilterOnlyForEmptyQ(t *testing.T) {
 
 	be := &fakeBackend{hits: []index.Hit{{MediaID: "m1"}}}
 	tc := &fakeTextClient{vec: make([]float32, 768)}
-	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return tc }, gens, engineCfg())
 
 	resp, err := eng.Search(context.Background(), hybrid.Request{
 		Owner: engineTestOwner,
@@ -184,7 +184,7 @@ func TestEngine_RelevanceWithoutQCoercedToNewest(t *testing.T) {
 
 	be := &fakeBackend{hits: nil}
 	tc := &fakeTextClient{vec: make([]float32, 768)}
-	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return tc }, gens, engineCfg())
 
 	resp, err := eng.Search(context.Background(), hybrid.Request{
 		Owner: engineTestOwner,
@@ -210,7 +210,7 @@ func TestEngine_BM25OnlyWhenNoActiveGen(t *testing.T) {
 
 	be := &fakeBackend{hits: []index.Hit{{MediaID: "m1"}}}
 	tc := &fakeTextClient{vec: make([]float32, 768)}
-	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return tc }, gens, engineCfg())
 
 	resp, err := eng.Search(context.Background(), hybrid.Request{
 		Owner: engineTestOwner,
@@ -242,7 +242,7 @@ func TestEngine_DegradesOnQueryEmbeddingFailure(t *testing.T) {
 
 	be := &fakeBackend{hits: []index.Hit{{MediaID: "m1"}}}
 	tc := &fakeTextClient{embedTextsErr: errors.New("provider 5xx")}
-	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return tc }, gens, engineCfg())
 
 	resp, err := eng.Search(context.Background(), hybrid.Request{
 		Owner: engineTestOwner,
@@ -273,7 +273,7 @@ func TestEngine_DateSortHybridCandidateSelection(t *testing.T) {
 
 	be := &fakeBackend{hits: []index.Hit{{MediaID: "m1"}}}
 	tc := &fakeTextClient{vec: make([]float32, 768)}
-	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return tc }, gens, engineCfg())
 
 	resp, err := eng.Search(context.Background(), hybrid.Request{
 		Owner: engineTestOwner,
@@ -304,7 +304,7 @@ func TestEngine_ImageOnlyClientDegrades(t *testing.T) {
 	_ = seedActiveGeneration(t, gens)
 
 	be := &fakeBackend{hits: []index.Hit{{MediaID: "m1"}}}
-	eng := hybrid.NewEngine(be, imageOnlyClient{}, gens, engineCfg())
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return imageOnlyClient{} }, gens, engineCfg())
 
 	resp, err := eng.Search(context.Background(), hybrid.Request{
 		Owner: engineTestOwner,
@@ -330,7 +330,7 @@ func TestEngine_PureJunkQueryFallsThroughToFilter(t *testing.T) {
 
 	be := &fakeBackend{hits: nil}
 	tc := &fakeTextClient{vec: make([]float32, 768)}
-	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return tc }, gens, engineCfg())
 
 	resp, err := eng.Search(context.Background(), hybrid.Request{
 		Owner: engineTestOwner,
@@ -365,7 +365,7 @@ func TestEngine_FilterOnly_NoActiveGenDoesNotSetSemanticUnavailable(t *testing.T
 
 	be := &fakeBackend{hits: nil}
 	tc := &fakeTextClient{vec: make([]float32, 768)}
-	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return tc }, gens, engineCfg())
 
 	resp, err := eng.Search(context.Background(), hybrid.Request{
 		Owner: engineTestOwner,
@@ -392,7 +392,7 @@ func TestEngine_FilterOnly_PureJunkNoActiveGenDoesNotSetSemanticUnavailable(t *t
 
 	be := &fakeBackend{hits: nil}
 	tc := &fakeTextClient{vec: make([]float32, 768)}
-	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return tc }, gens, engineCfg())
 
 	resp, err := eng.Search(context.Background(), hybrid.Request{
 		Owner: engineTestOwner,
@@ -418,7 +418,7 @@ func TestEngine_HasMoreRequiresLookahead(t *testing.T) {
 		{MediaID: "m3", Score: 0.3},
 	}}
 	tc := &fakeTextClient{vec: make([]float32, 768)}
-	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return tc }, gens, engineCfg())
 
 	resp, err := eng.Search(context.Background(), hybrid.Request{
 		Owner: engineTestOwner,
@@ -459,7 +459,7 @@ func TestEngine_FusedSearchUsesActiveGenerationFromRequest(t *testing.T) {
 
 	be := &fakeBackend{hits: []index.Hit{{MediaID: "m1"}}}
 	tc := &fakeTextClient{vec: make([]float32, 768)}
-	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return tc }, gens, engineCfg())
 
 	resp, err := eng.Search(context.Background(), hybrid.Request{
 		Owner: engineTestOwner,

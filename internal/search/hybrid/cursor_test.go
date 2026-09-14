@@ -147,7 +147,7 @@ func TestNormalizedHash_TagKeysOrderIndependent(t *testing.T) {
 		{MediaID: "m3", Score: 0.7},
 	}}
 	tc := &fakeTextClient{vec: make([]float32, 768)}
-	eng := hybrid.NewEngine(be, tc, gens, engineCfg())
+	eng := hybrid.NewEngine(be, func(context.Context) embedding.ClientIface { return tc }, gens, engineCfg())
 
 	owner := owners.Principal{Hub: "h", UserID: "u"}
 

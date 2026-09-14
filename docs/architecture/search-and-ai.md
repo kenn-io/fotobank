@@ -17,17 +17,21 @@ Both indexes are rebuildable projections keyed by the product media ID.
 Repositories update source metadata and FTS rows transactionally when a
 product mutation would otherwise expose stale text.
 
-The daemon always provides metadata search. When started with AI or embeddings
+The daemon always provides metadata search. When AI or embeddings are
 disabled, text queries use FTS5 without calling an
 embedding provider, even if the catalog retains an active embedding generation.
 Queries without searchable text use the catalog filters and date ordering.
 Disabled embeddings are an ordinary metadata-search mode, not a provider-outage
 banner.
 
-Search currently captures embedding settings at daemon startup. Unlike the
-workers, it does not consume later admin setting changes. Restart the daemon
-after changing these settings so search uses the new enablement, endpoint,
-or credentials. Removing this limitation is tracked in kata.
+Each text query obtains a client from the same current-settings snapshot used
+by embedding workers. Admin changes to enablement, endpoint, and credentials
+apply to the next query without a restart. An already-running query may finish
+with its captured settings.
+
+Queries still use the active generation's model and vector dimensions, even
+when admin settings name a new model whose generation is still building. A
+provider failure falls back to metadata search.
 
 `internal/search/hybrid` applies owner and visibility filters in SQL before
 ranking. Text search selects up to `search.k_per_signal` candidates from each
@@ -37,8 +41,12 @@ candidate cap.
 
 Each page requests one extra row to determine whether more results exist.
 An opaque cursor carries the next offset and binds it to the query, filters,
-owner, effective sort, search mode, ranking settings, and active hybrid
-generation. Reusing it with a different search returns a validation error.
+owner, effective sort, search mode, ranking settings, active hybrid generation,
+and query vector. Reusing it with a different search returns a validation error.
+If a provider change produces a different vector, pagination must restart;
+the web interface already does this on cursor rejection. This also applies
+if the same provider returns different vectors for repeated queries. The cursor
+contains only the combined hash and offset, not provider settings or credentials.
 Ties use the media ID for deterministic ordering. Pages are live reads, not
 a snapshot: imports, edits, and indexing between requests can shift results.
 
