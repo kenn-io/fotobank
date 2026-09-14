@@ -110,6 +110,13 @@ func TestMediaInvalidArgumentsDoNotStartDaemon(t *testing.T) {
 		{"media", "list", "--limit", "0"},
 		{"media", "list", "--limit", "1001"},
 		{"media", "list", "--offset", "-1"},
+		{"media", "search", "--type", "raw"},
+		{"media", "search", "--sort", "random"},
+		{"media", "search", "--limit", "0"},
+		{"media", "search", "--limit", "201"},
+		{"media", "search", "--date-after", "yesterday"},
+		{"media", "search", "--date-before", "tomorrow"},
+		{"media", "search", "unquoted", "query"},
 	} {
 		t.Run(args[1]+args[len(args)-1], func(t *testing.T) {
 			r := require.New(t)

@@ -29,7 +29,7 @@ const searchDefaultLimit = 60
 
 // searchMaxLimit is the inclusive upper bound on ?limit. Above this
 // value the route returns 400 BadRequest. The cap is enforced via
-// huma's `maximum:` tag on searchInput so the request fails before
+// huma's `maximum:` tag on SearchInput so the request fails before
 // any service / engine code runs; the runtime clamp below is a
 // defense-in-depth fallback for the same boundary.
 const searchMaxLimit = 200
@@ -54,7 +54,7 @@ func registerSearchRoutes(api huma.API, svc *searchsvc.Service, m *obs.Metrics) 
 		Method:      http.MethodGet,
 		Path:        "/api/v1/search",
 		Summary:     "Hybrid search across the caller's library",
-	}, func(ctx context.Context, in *searchInput) (*searchOutput, error) {
+	}, func(ctx context.Context, in *SearchInput) (*searchOutput, error) {
 		return handleSearch(ctx, svc, m, in)
 	})
 	registerSearchAutocompleteTags(api, svc)
@@ -185,7 +185,7 @@ func handleAutocompleteLocations(ctx context.Context, svc *searchsvc.Service, in
 // one SearchRequestsTotal increment per *successful* engine response —
 // failures (auth, translate) short-circuit before we know the engine
 // mode and so don't fan out into per-mode counters.
-func handleSearch(ctx context.Context, svc *searchsvc.Service, m *obs.Metrics, in *searchInput) (*searchOutput, error) {
+func handleSearch(ctx context.Context, svc *searchsvc.Service, m *obs.Metrics, in *SearchInput) (*searchOutput, error) {
 	id, ok := IdentityFromContext(ctx)
 	if !ok {
 		return nil, huma.Error401Unauthorized(errs.ErrIdentityMissing.Error())
@@ -300,7 +300,7 @@ func handleSearch(ctx context.Context, svc *searchsvc.Service, m *obs.Metrics, i
 		return nil, Translate(err)
 	}
 
-	body := searchBody{
+	body := SearchBody{
 		Results:                   toSearchResultDTOs(resp.Hits, resp.Explain),
 		HasMore:                   resp.HasMore,
 		Total:                     resp.Total,
@@ -317,7 +317,7 @@ func handleSearch(ctx context.Context, svc *searchsvc.Service, m *obs.Metrics, i
 	return &searchOutput{Body: body}, nil
 }
 
-// searchInput is the bound query-string surface for GET /api/v1/search.
+// SearchInput is the bound query-string surface for GET /api/v1/search.
 // Slice-typed Tag uses `explode` so repeated `?tag=a&tag=b` parses into
 // a slice; the default huma behaviour for a `[]string` query field
 // would otherwise comma-split a single value, which doesn't compose
@@ -328,7 +328,7 @@ func handleSearch(ctx context.Context, svc *searchsvc.Service, m *obs.Metrics, i
 // rather than `*bool` because huma v2 panics on pointer-typed query
 // params; the handler converts the literal to *bool before populating
 // the service request.
-type searchInput struct {
+type SearchInput struct {
 	Q             string    `query:"q" doc:"free-text query (filter-only browse when empty)"`
 	Sort          string    `query:"sort" enum:"relevance,newest,oldest" doc:"raw sort; engine may coerce (e.g. relevance + empty q → newest)"`
 	DateAfter     time.Time `query:"date_after" doc:"include media whose timestamp is at or after this RFC3339 instant"`
@@ -349,15 +349,15 @@ type searchInput struct {
 // searchOutput wraps the response body so huma can document it. The
 // Body field is populated by handleSearch.
 type searchOutput struct {
-	Body searchBody
+	Body SearchBody
 }
 
-// searchBody is the wire shape of the search response. Mirrors plan
+// SearchBody is the wire shape of the search response. Mirrors plan
 // O1's contract: a results array, an optional next_cursor for paging,
 // the engine's effective_sort (post-coercion), the embedding-completeness
 // pill input, and the semantic-unavailable banner inputs.
-type searchBody struct {
-	Results                   []searchResultDTO `json:"results"`
+type SearchBody struct {
+	Results                   []SearchResultDTO `json:"results"`
 	NextCursor                *string           `json:"next_cursor"`
 	HasMore                   bool              `json:"has_more"`
 	Total                     *int              `json:"total,omitempty"`
@@ -367,11 +367,11 @@ type searchBody struct {
 	SemanticUnavailableReason string            `json:"semantic_unavailable_reason"`
 }
 
-// searchResultDTO is the per-hit wire shape. Mirrors index.Hit but with
+// SearchResultDTO is the per-hit wire shape. Mirrors index.Hit but with
 // explicit JSON tags so the spec is stable against domain renames.
 // ScoreComponents is omitted when the underlying Hit didn't carry one
 // (e.g. an early degradation path that didn't compute per-signal ranks).
-type searchResultDTO struct {
+type SearchResultDTO struct {
 	MediaID      string     `json:"media_id"`
 	MediaType    string     `json:"media_type"`
 	Timestamp    *time.Time `json:"timestamp"`
@@ -386,16 +386,16 @@ type searchResultDTO struct {
 	// retry-on-version-bump path stayed broken.
 	ThumbStatus     string              `json:"thumb_status"`
 	Score           float64             `json:"score,omitempty"`
-	ScoreComponents *scoreComponentsDTO `json:"score_components,omitempty"`
+	ScoreComponents *ScoreComponentsDTO `json:"score_components,omitempty"`
 }
 
-// scoreComponentsDTO is the diagnostics-mode payload. RRF is the
+// ScoreComponentsDTO is the diagnostics-mode payload. RRF is the
 // non-nullable fused score; the per-signal pieces (bm25, vector, ranks)
 // are nullable because not every hit matched both signals. The wire
 // shape uses `float64` for RRF (not a pointer) because every Hit that
 // reaches this DTO has a valid RRF value — the index.Hit's *float64
 // representation is internal and gets defaulted to 0 here.
-type scoreComponentsDTO struct {
+type ScoreComponentsDTO struct {
 	RRF        float64  `json:"rrf"`
 	BM25       *float64 `json:"bm25"`
 	Vector     *float64 `json:"vector"`
@@ -413,8 +413,8 @@ type scoreComponentsDTO struct {
 // Inspection setting, and the engine forwards the gated value via
 // resp.Explain — so the HTTP handler reads resp.Explain (not the
 // raw request flag) to make this decision.
-func toSearchResultDTOs(hits []index.Hit, explain bool) []searchResultDTO {
-	out := make([]searchResultDTO, 0, len(hits))
+func toSearchResultDTOs(hits []index.Hit, explain bool) []SearchResultDTO {
+	out := make([]SearchResultDTO, 0, len(hits))
 	for _, h := range hits {
 		out = append(out, toSearchResultDTO(h, explain))
 	}
@@ -428,8 +428,8 @@ func toSearchResultDTOs(hits []index.Hit, explain bool) []searchResultDTO {
 // matching the field's non-nullable JSON shape. When explain is
 // false the entire score_components substruct is omitted so the
 // diagnostics-mode payload stays gated.
-func toSearchResultDTO(h index.Hit, explain bool) searchResultDTO {
-	dto := searchResultDTO{
+func toSearchResultDTO(h index.Hit, explain bool) SearchResultDTO {
+	dto := SearchResultDTO{
 		MediaID:      h.MediaID,
 		MediaType:    h.MediaType,
 		Timestamp:    h.Timestamp,
@@ -441,7 +441,7 @@ func toSearchResultDTO(h index.Hit, explain bool) searchResultDTO {
 		Score:        h.Score,
 	}
 	if explain && h.ScoreComponents != nil {
-		sc := &scoreComponentsDTO{
+		sc := &ScoreComponentsDTO{
 			BM25:       h.ScoreComponents.BM25,
 			Vector:     h.ScoreComponents.Vector,
 			RankBM25:   h.ScoreComponents.RankBM25,

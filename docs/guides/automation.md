@@ -113,6 +113,7 @@ Find photo IDs before adding them to albums or selecting a checkout:
 ```sh
 fotobank media list --type photo --limit 20 --json
 fotobank media list --camera "Example Camera" --lens "Wide" --has-gps --json
+fotobank media search "sunset" --type photo --limit 20 --json
 fotobank media show <media-uuid> --json
 fotobank albums add <album-uuid> <media-uuid> --json
 ```
@@ -127,15 +128,40 @@ repeat `--camera`, `--lens`, or `--tag` to match any value within that filter.
 Different filters combine. `--tag` takes a tag key, not a free-text search.
 Use `--has-gps` for geotagged photos or `--has-gps=false` for those without GPS.
 
+`media search [query]` uses the same search as the web interface. Quote queries
+containing spaces. Omit the query to browse by filters. Metadata search works
+without AI; when embeddings are available, text queries also use semantic search.
+Search accepts the type, camera, lens, tag-key, and GPS filters above. Add
+`--tag-label` to require a tag label; repeated labels must all match. Use
+`--location` for an exact location label and RFC3339 timestamps with
+`--date-after` (inclusive) or `--date-before` (exclusive).
+
+Search JSON returns `results`, `has_more`, and an optional `next_cursor`:
+
+```sh
+fotobank media search "sunset" --type photo --limit 20 --cursor <next-cursor> --json
+fotobank media search --date-after 2026-01-01T00:00:00Z --sort newest --json
+```
+
+Keep the query, filters, and sort unchanged when continuing. Pages default to
+60 results and accept 1–200. Sorting supports `relevance`, `newest`, and `oldest`;
+queries without text default to newest. Search pages are live reads, and text
+search covers a bounded candidate set, not an exhaustive catalog export.
+If the daemon rejects a cursor with HTTP 400, restart without `--cursor`.
+The CLI does not retry automatically. `effective_sort`, `semantic_unavailable`,
+and `semantic_unavailable_reason` describe how the returned page was searched.
+See [search architecture](../architecture/search-and-ai.md#search-indexes)
+for the candidate limit and cursor rules.
+
 `media show --json` returns the photo's metadata and primary filename, size,
 and checksum. `files` contains attached files with their IDs, roles, sizes,
 and checksums; an ordinary single-file photo has an empty `files` array.
-Without `--json`, both commands print a readable summary. Failed requests
+Without `--json`, these commands print a readable summary. Failed requests
 leave stdout empty and exit nonzero.
 
-These commands use the existing media HTTP endpoints and start the daemon if
+These commands use the existing photo HTTP endpoints and start the daemon if
 needed. They use the configured stub owner and do not unlock hidden media or
-read other owners' photos. Search and file downloads are not CLI commands yet.
+read other owners' photos. File downloads are not CLI commands yet.
 
 ## Organize albums
 

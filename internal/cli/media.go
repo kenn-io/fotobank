@@ -23,13 +23,14 @@ func newMediaCmd() *cobra.Command {
 		Long: "Find and inspect photos and videos belonging to the configured owner. Hidden media is not included. Commands use the daemon and start it when needed.",
 		Example: `  fotobank media list --type photo --limit 20 --json
   fotobank media list --camera "Example Camera" --has-gps
+  fotobank media search "sunset" --type photo --json
   fotobank media show <photo-id> --json`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_ = cmd.Usage()
 			return newUsageError("a subcommand is required")
 		},
 	}
-	cmd.AddCommand(newMediaListCmd(), newMediaShowCmd())
+	cmd.AddCommand(newMediaListCmd(), newMediaSearchCmd(), newMediaShowCmd())
 	return cmd
 }
 

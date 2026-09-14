@@ -246,6 +246,7 @@ connection, not a second set of operator-only album handlers:
 | --- | --- |
 | `albums create` | `POST /api/v1/albums` |
 | `media list` | `GET /api/v1/media` |
+| `media search` | `GET /api/v1/search` |
 | `media show` | `GET /api/v1/media/{id}` |
 | `albums rename` | `PATCH /api/v1/albums/{id}` |
 | `albums delete` | `DELETE /api/v1/albums/{id}` |
@@ -259,6 +260,15 @@ The CLI validates IDs and pagination before automatic startup, then delegates
 filtering, owner scope and hidden-media handling to the existing media service.
 List JSON is a single API page; detail JSON includes attached files. Neither
 command provides hidden unlock credentials or direct storage access.
+
+`internal/client/search.go` shares the search Huma input and response types.
+`media search` validates filter syntax and page limits before automatic startup,
+then requests one page from the existing search service. JSON preserves its
+cursor and semantic-availability fields. Search has the same stub-owner and
+hidden-media restrictions as the other media commands; it adds no local index
+or provider calls. Cursor rejection fails the command without printing results
+or automatically retrying. The [search page](search-and-ai.md#search-indexes)
+owns the ranking, candidate limits, and cursor contract.
 
 `internal/client/albums.go` uses request and response types from the Huma
 registrations in `internal/httpapi/albums.go`. The CLI validates argument syntax

@@ -201,7 +201,7 @@ func newSearchAPIFixtureWithSettings(t *testing.T, inspectionOn bool, opts *sear
 
 // searchBodyDTO mirrors the wire shape so tests can decode JSON without
 // reaching into the unexported types in search.go. Field names mirror
-// the JSON tags on searchBody.
+// the JSON tags on SearchBody.
 type searchBodyDTO struct {
 	Results                   []searchResultBodyDTO `json:"results"`
 	NextCursor                *string               `json:"next_cursor"`
@@ -604,7 +604,7 @@ func (f *searchCapturingFakeBackend) FilterOnly(_ context.Context, in index.Sear
 
 // TestRoute_Search_BindsSidebarFacetExplodeParams pins the SF-18 wire
 // contract: ?camera=A&camera=B must bind to a 2-element slice (the
-// `,explode` modifier on the searchInput field is load-bearing —
+// `,explode` modifier on the SearchInput field is load-bearing —
 // without it huma comma-splits a single value and the second
 // `?camera=B` is silently dropped). lens, facet_tag mirror the same
 // rule. has_gps is a literal "true"/"false". The test inspects the
