@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"go.kenn.io/fotobank/internal/config"
@@ -217,7 +218,8 @@ func (l Lifecycle) stopRecord(ctx context.Context, rec daemon.RuntimeRecord) err
 		if errors.Is(err, os.ErrNotExist) || !daemon.ProcessAlive(rec.PID) || daemon.CompareRuntimeProcessIdentity(rec) == daemon.ProcessIdentityMismatch {
 			return nil
 		}
-		if err != nil {
+		// Windows reports permission denied while the server's record deletion is pending.
+		if err != nil && (runtime.GOOS != "windows" || !errors.Is(err, os.ErrPermission)) {
 			return err
 		}
 		select {
