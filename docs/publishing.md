@@ -38,6 +38,21 @@ A successful build does not verify capability claims. Check commands, defaults,
 authorization rules, and failure behavior against the code. Keep aspirations
 separate from features that work today.
 
+## Which screenshots belong in the docs?
+
+Keep an image only when it helps readers understand the current product or
+complete a task. Architecture pages explain ownership, data flow, and interaction
+rules; they do not need a screenshot for each implemented control.
+
+Capture the running app with sample data and inspect the result before using it.
+Normal-use examples must show loaded media, not broken previews or tiny test
+images. An empty or failed state belongs only beside an explanation of that state.
+Keep review-only captures with the pull request instead of adding them to the
+architecture image collection. Remove unused images when their explanation goes.
+
+The homepage and README share the sample-library image below. Keep its full-size
+link, caption, and credits with it so readers can inspect the app clearly.
+
 ## Sample library screenshot
 
 `website/images/library.jpg` shows the built application after importing ten

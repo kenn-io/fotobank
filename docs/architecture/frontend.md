@@ -1,15 +1,5 @@
 # Frontend
 
-The Shares list uses a button on each share name to open the existing details
-drawer. Opening it moves keyboard focus to Close; closing returns focus to the
-share name. At phone widths, table fields stack with labels so details and
-Revoke/Retry stay available without horizontal scrolling.
-
-The shared desktop and mobile navigation links to `/settings`. That page routes
-users to existing AI controls, Hidden photos, and workflow guides. It does not
-edit host configuration or grant additional permissions. AI provider settings
-remain behind the existing admin checks on their own route.
-
 The web app lets people browse and manage the library through the daemon's API.
 This page describes its build, server contract, and shared interaction behavior.
 
@@ -42,6 +32,34 @@ thumbnail and event routes are not included.
 
 ## Routes and state
 
+`frontend/src/App.svelte` owns top-level routing and session feature flags.
+Route components cover the library, media detail, map, albums, hidden library,
+shares, search, sessions, and user/admin AI settings.
+
+The browser treats server data as authoritative. Local state holds view
+preferences, paging cursors, lightbox position, and short-lived optimistic UI
+only. Server-sent events invalidate affected views; reconnect or missed events
+fall back to ordinary refetches.
+
+Hidden-media unlock state is established by an HTTP-only cookie. Frontend code
+does not store the passcode or reproduce authorization decisions. A hidden
+route still expects the server to reject an expired or missing unlock.
+
+Sharing controls are shown only when `/me` reports the feature enabled. This is
+presentation policy; backend services remain authoritative for permissions.
+
+The shared desktop and mobile navigation links to `/settings`. That page routes
+users to existing AI controls, Hidden photos, and workflow guides. It does not
+edit host configuration or grant additional permissions. AI provider settings
+remain behind the existing admin checks on their own route.
+
+## Feedback and dialogs
+
+The Shares list uses a button on each share name to open the existing details
+drawer. Opening it moves keyboard focus to Close; closing returns focus to the
+share name. At phone widths, table fields stack with labels so details and
+Revoke/Retry stay available without horizontal scrolling.
+
 `ConfirmModal` uses Kit's focus attachment to move keyboard focus into the
 dialog, contain Tab navigation, and restore focus on dismissal. Fotobank's
 modal stack still owns Escape handling. While confirmation is pending, focus
@@ -72,22 +90,6 @@ someone else's library are directed to its operator. Sessions resets retained
 Library filters before loading. Filtered empty results and request failures
 keep their separate messages.
 
-`frontend/src/App.svelte` owns top-level routing and session feature flags.
-Route components cover the library, media detail, map, albums, hidden library,
-shares, search, sessions, and user/admin AI settings.
-
-The browser treats server data as authoritative. Local state holds view
-preferences, paging cursors, lightbox position, and short-lived optimistic UI
-only. Server-sent events invalidate affected views; reconnect or missed events
-fall back to ordinary refetches.
-
-Hidden-media unlock state is established by an HTTP-only cookie. Frontend code
-does not store the passcode or reproduce authorization decisions. A hidden
-route still expects the server to reject an expired or missing unlock.
-
-Sharing controls are shown only when `/me` reports the feature enabled. This is
-presentation policy; backend services remain authoritative for permissions.
-
 ## Media presentation
 
 Library and search results use thumbnail versions as cache-busting input.
@@ -99,12 +101,10 @@ RAW files normally display a generated JPEG preview. Camera source files and
 XMP sidecars are product relationships, not independent navigation identities
 in the asset model.
 
-![Media detail showing one asset with its JPEG primary and DNG original](images/asset-files.png)
-
 A single-file asset has no attachment rows, but its primary original remains
 available from the detail page.
 
-![Media detail showing the original download for a single-file asset](images/single-file-download.png)
+## Shared controls and layout
 
 Shared control behavior and accessibility come from the pinned
 `@kenn-io/kit-ui` source dependency. Fotobank imports the library's theme
@@ -113,8 +113,6 @@ to Fotobank's dense, amber-accented darkroom palette, IBM Plex UI type, and
 Fraunces display type. Existing components and new shared controls use the same
 token vocabulary, so adopting a shared control does not imply adopting another
 product's visual identity.
-
-![Fotobank header using the darkroom theme over kit-ui tokens](images/kit-ui-theme-foundation.png)
 
 At 760px and below, `ThreeColumnLayout` gives the main view the full width and
 puts the existing sidebar behind a “Browse & filters” button. The panel
@@ -127,13 +125,9 @@ The header puts search on its own row, and search options wrap on narrow views.
 The map fills the main pane's available height rather than subtracting a
 separate header estimate from the viewport.
 
-![Phone library with loaded synthetic photos](images/mobile-library.png)
-
 Album creation uses the shared modal, text field, buttons, and empty state.
 The controls inherit Fotobank's darkroom palette, and the modal supplies the
 close, backdrop, focus-trap, and keyboard behavior for the route.
-
-![New album dialog over synthetic album data](images/album-creation.png)
 
 The app header composes kit-ui's search field with Fotobank's navigation
 behavior. The shared control owns the search icon, shortcut badge, and clear
@@ -141,8 +135,6 @@ action; `SearchBar.svelte` owns query synchronization, the global keyboard
 shortcut, and trimmed submission to the router. Search sorting and media-type
 filters use shared segmented controls, while the hidden-media option uses the
 shared checkbox; the search route remains the owner of query and filter state.
-
-![Global search over loaded synthetic results](images/global-search.png)
 
 `make frontend-check` runs `kit-ui-check` in warning mode alongside type checks
 and unit tests. Warnings identify remaining local control equivalents without
