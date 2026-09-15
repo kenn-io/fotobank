@@ -121,6 +121,10 @@ Write for the person trying to use or maintain Fotobank.
   unreleased development builds unless the user explicitly requests them.
 - Lead with the outcome, name who does what, use short sentences, and explain
   unfamiliar terms.
+- Lead first-run guidance with one person's library. Do not make owner
+  registration, a dedicated service account, or a NAS appear required for a
+  local trial. Explain technical identity terms in administration references;
+  preserve exact configuration keys and authorization boundaries.
 - Organize around reader questions. Put purpose and current capabilities first.
   Separate limitations and future work. Use only the sections the topic needs.
 - Give each bullet one main idea. Use numbered steps for sequences, paragraphs

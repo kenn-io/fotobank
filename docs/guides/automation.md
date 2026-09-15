@@ -1,8 +1,11 @@
 # Automate Fotobank
 
-Scripts and agents should make storage and identity choices explicit. Set one
-configuration path for the whole operation instead of relying on the current
-working directory:
+Scripts and agents work with the same library as the web app. In the default
+single-user setup, no owner-registration or login command is needed. See
+[Set up Fotobank](setup.md#create-the-configuration) for that setup.
+
+Set one configuration path for the whole operation instead of relying on the
+current working directory:
 
 ```sh
 export FOTOBANK_CONFIG=/var/lib/fotobank-control/config.toml
@@ -32,7 +35,6 @@ fotobank checkout commit <checkout-uuid> --json
 fotobank daemon status --json
 fotobank albums list --json
 fotobank shares list --json
-fotobank owners list --json
 ```
 
 Do not parse human progress output when a JSON form exists. Commands return zero
@@ -265,9 +267,24 @@ before repeating a change. These commands do not provide header-mode login.
 
 ## Manage registered owners
 
-An owner identifies whose photos and catalog records Fotobank manages. These
-commands are host administration, not a photo-user login. Run them under the
-daemon's OS account with the same configuration, in either stub or header mode:
+This is advanced administration. The single-user setup registers your configured
+identity automatically; ordinary photo workflows do not need these commands.
+
+An **owner** records whose photos, albums, and other catalog records these are.
+It is not a copyright claim or a person recognized in a photo. Fotobank identifies
+an owner with `hub` (the identity provider or namespace) and `user_id` (the user
+within it). `handle` is a display name. `storage_key` is a stable storage UUID,
+not a password or access token.
+
+Registration creates that catalog record. It does not create a login, invite
+someone, or change the identity selected by the running daemon. In `stub` mode,
+configuration selects one identity for every request. In `header` mode, an
+external proxy supplies the authenticated identity. Owners share one embedded
+Docbank vault; Fotobank controls photo access, not separate Docbank accounts.
+
+These commands belong to the host operator: the person administering the daemon
+and storage, rather than an ordinary photo user. Run them under the daemon's OS
+account with the same configuration, in either stub or header mode:
 
 ```sh
 fotobank owners add --hub example --user-id user-a --handle "User A" --json
