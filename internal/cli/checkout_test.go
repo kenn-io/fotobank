@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	json "encoding/json/v2"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 
@@ -23,6 +25,7 @@ import (
 	"go.kenn.io/fotobank/internal/cli"
 	"go.kenn.io/fotobank/internal/content"
 	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil/assetfixture"
@@ -225,7 +228,7 @@ func TestCheckoutListAndStatus(t *testing.T) {
 
 }
 
-func TestCheckoutEstimateAndCreate(t *testing.T) {
+func TestCheckoutCLIWorkflow(t *testing.T) {
 	r := require.New(t)
 	tmp := t.TempDir()
 	cfgPath := writeBasicConfig(t, tmp)
@@ -259,7 +262,31 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := cli.RunContext(t.Context(), []string{
-		"checkout", "estimate", "--config", cfgPath, "--asset", item.ID,
+		"media", "list", "--config", cfgPath, "--type", "photo", "--json",
+	}, &stdout, &stderr)
+	r.Zero(code, "stderr=%s", stderr.String())
+	var page httpapi.MediaListResult
+	r.NoError(json.Unmarshal(stdout.Bytes(), &page))
+	var assetID string
+	for _, photo := range page.Items {
+		if photo.OriginalFilename == "IMG_0100.JPG" {
+			assetID = photo.ID
+		}
+	}
+	r.Equal(item.ID, assetID)
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
+		"media", "show", assetID, "--config", cfgPath, "--json",
+	}, &stdout, &stderr)
+	r.Zero(code, "stderr=%s", stderr.String())
+	var original httpapi.MediaDTO
+	r.NoError(json.Unmarshal(stdout.Bytes(), &original))
+	r.Equal(item.SHA256, original.SHA256)
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
+		"checkout", "estimate", "--config", cfgPath, "--asset", assetID,
 	}, &stdout, &stderr)
 	r.Equal(0, code, "stderr=%s", stderr.String())
 	r.Equal("files=1\tbytes=14\n", stdout.String())
@@ -269,33 +296,30 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	code = cli.RunContext(t.Context(), []string{
-		"checkout", "estimate", "--config", cfgPath, "--asset", item.ID, "--json",
+		"checkout", "estimate", "--config", cfgPath, "--asset", assetID, "--json",
 	}, &stdout, &stderr)
 	r.Zero(code, "stderr=%s", stderr.String())
 	r.JSONEq(`{"files":1,"bytes":14}`, stdout.String())
 	stdout.Reset()
 	stderr.Reset()
 	code = cli.RunContext(t.Context(), []string{
-		"checkout", "create", "--config", cfgPath, "--asset", item.ID, root, "--max-bytes", "1", "--json",
+		"checkout", "create", "--config", cfgPath, "--asset", assetID, root, "--max-bytes", "1", "--json",
 	}, &stdout, &stderr)
 	r.NotZero(code)
-	r.Contains(stdout.String(), "limit is 1")
+	var refused httpapi.CheckoutCreateResult
+	r.NoError(json.Unmarshal(stdout.Bytes(), &refused))
+	r.Contains(refused.Error, "limit is 1")
+	r.Empty(refused.CheckoutID)
+	r.Zero(refused.Materialized)
 	stdout.Reset()
 	stderr.Reset()
 	// Relative destinations are interpreted by the CLI, not the server.
 	t.Chdir(tmp)
 	code = cli.RunContext(t.Context(), []string{
-		"checkout", "create", "--config", cfgPath, "--asset", item.ID, "checkout", "--json",
+		"checkout", "create", "--config", cfgPath, "--asset", assetID, "checkout", "--json",
 	}, &stdout, &stderr)
 	r.Equal(0, code, "stderr=%s", stderr.String())
-	var created struct {
-		CheckoutID   string `json:"checkout_id"`
-		Materialized int    `json:"materialized"`
-		Files        int    `json:"files"`
-		Bytes        int64  `json:"bytes"`
-		Root         string `json:"root"`
-		Error        string `json:"error"`
-	}
+	var created httpapi.CheckoutCreateResult
 	r.NoError(json.Unmarshal(stdout.Bytes(), &created))
 	r.NotEmpty(created.CheckoutID)
 	r.Equal(1, created.Materialized)
@@ -309,7 +333,8 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	r.NoError(err)
 	r.True(os.SameFile(wantedRoot, reportedRoot), "creation must report the requested directory")
 	checkoutID := created.CheckoutID
-	got, err := os.ReadFile(filepath.Join(root, "undated", item.ID, "IMG_0100.JPG"))
+	workingPath := filepath.Join(root, "undated", assetID, original.OriginalFilename)
+	got, err := os.ReadFile(workingPath)
 	r.NoError(err)
 	r.Equal(body, got)
 	t.Run("relative symlink", func(t *testing.T) {
@@ -322,10 +347,10 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 		}
 		var output, errors bytes.Buffer
 		code := cli.RunContext(t.Context(), []string{
-			"checkout", "create", "--config", cfgPath, "--asset", item.ID, "shortcut/working", "--json",
+			"checkout", "create", "--config", cfgPath, "--asset", assetID, "shortcut/working", "--json",
 		}, &output, &errors)
 		check.Zero(code, "stderr=%s", errors.String())
-		copied, err := os.ReadFile(filepath.Join(target, "child", "working", "undated", item.ID, "IMG_0100.JPG"))
+		copied, err := os.ReadFile(filepath.Join(target, "child", "working", "undated", assetID, original.OriginalFilename))
 		check.NoError(err)
 		check.Equal(body, copied)
 		t.Run("Unix symlink parent", func(t *testing.T) {
@@ -336,10 +361,10 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 			check.NoError(os.Mkdir(filepath.Join(target, "working"), 0o700))
 			var output, errors bytes.Buffer
 			code := cli.RunContext(t.Context(), []string{
-				"checkout", "create", "--config", cfgPath, "--asset", item.ID, "shortcut/../working", "--json",
+				"checkout", "create", "--config", cfgPath, "--asset", assetID, "shortcut/../working", "--json",
 			}, &output, &errors)
 			check.Zero(code, "stderr=%s", errors.String())
-			copied, err := os.ReadFile(filepath.Join(target, "working", "undated", item.ID, "IMG_0100.JPG"))
+			copied, err := os.ReadFile(filepath.Join(target, "working", "undated", assetID, original.OriginalFilename))
 			check.NoError(err)
 			check.Equal(body, copied)
 		})
@@ -348,7 +373,7 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 		stdout.Reset()
 		stderr.Reset()
 		code = cli.RunContext(t.Context(), []string{
-			"checkout", "create", "--config", cfgPath, "--asset", item.ID, rejectedRoot, "--json",
+			"checkout", "create", "--config", cfgPath, "--asset", assetID, rejectedRoot, "--json",
 		}, &stdout, &stderr)
 		r.NotZero(code)
 		var failure struct {
@@ -371,23 +396,34 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	r.NotEqual(checkoutID, created.CheckoutID)
 	r.Zero(created.Materialized)
 	r.NotEmpty(created.Error)
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
+		"checkout", "status", created.CheckoutID, "--config", cfgPath, "--json",
+	}, &stdout, &stderr)
+	r.Zero(code, "stderr=%s", stderr.String())
+	var failed httpapi.CheckoutStatusOutput
+	r.NoError(json.Unmarshal(stdout.Bytes(), &failed))
+	r.Equal(checkout.StateError, failed.Checkout.State)
+	r.NotEmpty(failed.Checkout.LastError)
 
 	edited := []byte("edited checkout bytes")
-	r.NoError(os.WriteFile(
-		filepath.Join(root, "undated", item.ID, "IMG_0100.JPG"), edited, 0o600))
-	database, err = db.Open(dbPath)
-	r.NoError(err)
-	var failedState string
-	r.NoError(database.ReadDB().QueryRowContext(t.Context(),
-		`SELECT state FROM checkouts WHERE id = ?`, created.CheckoutID).Scan(&failedState))
-	r.Equal("error", failedState)
-	r.Eventually(func() bool {
-		var pending int
-		err := database.ReadDB().QueryRowContext(t.Context(),
-			`SELECT COUNT(*) FROM checkout_entries WHERE checkout_id = ? AND state = 'pending'`, checkoutID).Scan(&pending)
-		return err == nil && pending == 1
+	editedHash := fmt.Sprintf("%x", sha256.Sum256(edited))
+	r.NoError(os.WriteFile(workingPath, edited, 0o600))
+	r.EventuallyWithT(func(collect *assert.CollectT) {
+		var output, errors bytes.Buffer
+		code := cli.RunContext(t.Context(), []string{
+			"checkout", "status", checkoutID, "--config", cfgPath, "--json",
+		}, &output, &errors)
+		check := require.New(collect)
+		check.Zero(code, "stderr=%s", errors.String())
+		var status httpapi.CheckoutStatusOutput
+		check.NoError(json.Unmarshal(output.Bytes(), &status))
+		check.Equal(1, status.Checkout.Entries.Pending)
+		check.Len(status.Problems, 1)
+		check.Equal(checkout.EntryPending, status.Problems[0].State)
+		check.Equal(editedHash, status.Problems[0].ObservedSHA256)
 	}, 10*time.Second, 20*time.Millisecond)
-	r.NoError(database.Close())
 	for _, denied := range []struct {
 		name   string
 		token  string
@@ -469,13 +505,36 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	r.NoError(json.Unmarshal(stdout.Bytes(), &failure))
 	r.Equal("missing", failure.CheckoutID)
 	r.Contains(failure.Error, "not found")
-	database, err = db.Open(dbPath)
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
+		"media", "show", assetID, "--config", cfgPath, "--json",
+	}, &stdout, &stderr)
+	r.Zero(code, "stderr=%s", stderr.String())
+	var updated httpapi.MediaDTO
+	r.NoError(json.Unmarshal(stdout.Bytes(), &updated))
+	r.Equal(editedHash, updated.SHA256)
+	r.NotEqual(original.SHA256, updated.SHA256)
+	r.Equal(int64(len(edited)), updated.Size)
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
+		"media", "download", assetID, "--output", filepath.Join(tmp, "committed.jpg"), "--config", cfgPath, "--json",
+	}, &stdout, &stderr)
+	r.Zero(code, "stderr=%s", stderr.String())
+	var downloaded struct {
+		MediaID string `json:"media_id"`
+		Output  string `json:"output"`
+		Size    int64  `json:"size"`
+		SHA256  string `json:"sha256"`
+	}
+	r.NoError(json.Unmarshal(stdout.Bytes(), &downloaded))
+	r.Equal(assetID, downloaded.MediaID)
+	r.Equal(updated.SHA256, downloaded.SHA256)
+	r.Equal(updated.Size, downloaded.Size)
+	got, err = os.ReadFile(downloaded.Output)
 	r.NoError(err)
-	updated, err := media.NewRepo(database.WriteDB(), database.ReadDB()).GetByID(t.Context(), item.ID)
-	r.NoError(err)
-	r.NotEqual(item.CurrentVersionID, updated.CurrentVersionID)
-	r.NoError(database.Close())
-	workingPath := filepath.Join(root, "undated", item.ID, "IMG_0100.JPG")
+	r.Equal(edited, got)
 	r.NoError(os.WriteFile(workingPath, []byte("edits to keep locally"), 0o600))
 	for _, confirm := range []bool{false, true, true} {
 		stdout.Reset()
@@ -504,12 +563,16 @@ func TestCheckoutEstimateAndCreate(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	r.NotZero(cli.RunContext(t.Context(), []string{"checkout", "commit", checkoutID, "--config", cfgPath}, &stdout, &stderr))
-	database, err = db.Open(dbPath)
-	r.NoError(err)
-	afterRetirement, err := media.NewRepo(database.WriteDB(), database.ReadDB()).GetByID(t.Context(), item.ID)
-	r.NoError(err)
-	r.Equal(updated.CurrentVersionID, afterRetirement.CurrentVersionID)
-	r.NoError(database.Close())
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{
+		"media", "show", assetID, "--config", cfgPath, "--json",
+	}, &stdout, &stderr)
+	r.Zero(code, "stderr=%s", stderr.String())
+	var afterRetirement httpapi.MediaDTO
+	r.NoError(json.Unmarshal(stdout.Bytes(), &afterRetirement))
+	r.Equal(updated.SHA256, afterRetirement.SHA256)
+	r.Equal(updated.Size, afterRetirement.Size)
 }
 
 func TestCheckoutCommandsDoNotOpenStorageWhenLaunchFails(t *testing.T) {

@@ -11,6 +11,11 @@ commands on the server host under the same OS account, with the same stub-mode
 configuration and application version. They use the local operator connection,
 not the photo listener, and never open a second vault.
 
+To choose individual photos, use `media list --json` or `media search --json`,
+then inspect each with `media show <media-uuid> --json`. Pass its `id` to
+`--asset`. See [finding photos](automation.md#find-and-inspect-photos) for filters
+and pagination.
+
 Select assets, albums, capture years, or the complete visible library:
 
 ```sh
@@ -86,6 +91,13 @@ They report saved catalog observations through the daemon; the CLI does not
 open a database, scan, commit, rebuild, or remove working files. New untracked
 files are not included in this status view.
 
+For an edited file, find its `path` in `problems`. Wait for its `state` to be
+`pending` and its `observed_sha256` to match the bytes you intend to commit.
+`checkout.entries.pending` is only a count: editing an already-pending file does
+not increase it, and zero does not prove that a recent edit has been scanned.
+Check again after the configured scan and settle intervals, and stop on missing
+files, conflicts, or errors.
+
 ## Commit tracked edits
 
 Wait for the server's scanner to mark the edits pending and check status.
@@ -113,6 +125,18 @@ an `error` when work fails. Some entries may commit before another fails; inspec
 the counts even on a nonzero exit. If you cancel or lose the connection, inspect
 `checkout status --json` before retrying. Committed versions remain committed;
 retrying does not repeat an already completed entry.
+
+To check what was saved, inspect the photo again and download it to a new path:
+
+```sh
+fotobank media show <media-uuid> --json
+fotobank media download <media-uuid> --output /work/verified-photo.jpg --json
+```
+
+Compare the returned checksum with the edit you intended to save. The download
+verifies the stored bytes; it does not read the working copy. See
+[downloads](automation.md#download-an-original-or-attachment) for destination
+requirements and retry behavior.
 
 Uncommitted working files are excluded from archive backups. Commit edits before
 capturing an archive that must include them. Automatic reconstruction of working
