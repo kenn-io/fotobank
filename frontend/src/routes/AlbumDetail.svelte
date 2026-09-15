@@ -142,14 +142,17 @@
   function openShare(ids: string[]) { pendingIds = ids; shareOpen = true; }
 
   async function onRemove(ids: string[]): Promise<void> {
+    const albumName = detail.album?.name ?? "this album";
     const result = await detail.removeMany(ids);
     if (result.succeeded.length > 0) {
       selection.removeAll(result.succeeded);
     }
     if (result.failed.length > 0) {
-      // Toast surface lands later; for now log the partial-failure ids
-      // so a developer can investigate without a silent drop.
-      console.warn("partial remove failure:", result.failed);
+      const count = result.failed.length;
+      toastStore.push({
+        message: `${count} photo${count === 1 ? "" : "s"} could not be removed from ${albumName}. ${count === 1 ? "It is" : "They are"} still selected. Try again.`,
+        kind: "error",
+      });
     }
   }
 
@@ -228,6 +231,7 @@
     // while delete is in flight, the route's `id` would already point at
     // a different album by the time the 409 toast fires.
     const albumId = id;
+    const albumName = detail.album?.name ?? "this album";
     try {
       await detail.delete();
       // Drop from the AlbumsStore cache before navigating so the /albums
@@ -240,8 +244,10 @@
       if (status === 409) {
         deleteConflictAlbumId = albumId;
       } else {
-        // Generic toast surface lands later; for now, log.
-        console.error("delete failed:", e);
+        toastStore.push({
+          message: `Could not delete ${albumName}. Try again.`,
+          kind: "error",
+        });
       }
     }
   }
