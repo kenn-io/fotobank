@@ -9,7 +9,9 @@ function makeClient(responses: Record<string, Resp>) {
     calls.push({ path });
     return responses[path] ?? { error: { status: 500 } };
   };
-  return { GET: handler, calls };
+  return { GET: handler, calls ,
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); }
+};
 }
 
 describe("AppConfigStore", () => {
@@ -64,7 +66,9 @@ describe("AppConfigStore", () => {
       GET: async () => {
         throw new Error("network");
       },
-    };
+
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); }
+};
     const s = new AppConfigStore(client as never);
     await s.load();
     expect(s.ready).toBe(true);

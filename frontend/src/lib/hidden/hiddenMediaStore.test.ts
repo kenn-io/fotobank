@@ -7,7 +7,10 @@ function makeClient(responses: Record<string, { data?: unknown; error?: unknown 
     calls.push({ path });
     return responses[path] ?? { error: { status: 500 } };
   });
-  return { GET: handler, calls };
+  return { GET: handler, calls ,
+listHiddenMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/hidden/media", { params: { query: params }, ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
 }
 
 const rawItem = {
@@ -81,7 +84,10 @@ describe("HiddenMediaStore.loadMore", () => {
         if (callCount === 1) await firstPromise;
         return { data: { items: [], next_offset: null } };
       }),
-    };
+
+listHiddenMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/hidden/media", { params: { query: params }, ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new HiddenMediaStore(client as never);
     const p1 = store.loadMore();
     // Immediately try a second load while first is in-flight
@@ -146,7 +152,10 @@ describe("HiddenMediaStore.loadError (finding #6)", () => {
   it("sets loadError to 403 when the server returns 403", async () => {
     const client = {
       GET: vi.fn().mockResolvedValue({ error: { status: 403 }, data: undefined }),
-    };
+
+listHiddenMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/hidden/media", { params: { query: params }, ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new HiddenMediaStore(client as never);
     await store.loadInitial();
     expect(store.loadError).toBe(403);
@@ -156,7 +165,10 @@ describe("HiddenMediaStore.loadError (finding #6)", () => {
   it("sets loadError to 500 on server error", async () => {
     const client = {
       GET: vi.fn().mockResolvedValue({ error: { status: 500 }, data: undefined }),
-    };
+
+listHiddenMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/hidden/media", { params: { query: params }, ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new HiddenMediaStore(client as never);
     await store.loadInitial();
     expect(store.loadError).toBe(500);
@@ -170,7 +182,10 @@ describe("HiddenMediaStore.loadError (finding #6)", () => {
           data: { items: [rawItem], next_offset: null },
           error: undefined,
         }),
-    };
+
+listHiddenMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/hidden/media", { params: { query: params }, ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     // Reset nextOffset so second load doesn't short-circuit on exhausted
     const store = new HiddenMediaStore(client as never);
     await store.loadMore(); // 403

@@ -38,7 +38,11 @@ afterEach(() => vi.restoreAllMocks());
 function makeGeoStore(items: unknown[]): GeoStore {
   const client = {
     GET: async () => ({ data: { items } }),
-  } as unknown as Pick<Client, "GET">;
+
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+listMediaGeo(params?: any, options?: any) { return (this as any).GET("/api/v1/media/geo", { params: { query: params }, ...options }); }
+} as unknown as Client;
   return new GeoStore(client);
 }
 
@@ -58,7 +62,11 @@ function makeSequencedGeoStore(
       i++;
       return { data: r };
     },
-  } as unknown as Pick<Client, "GET">;
+
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+listMediaGeo(params?: any, options?: any) { return (this as any).GET("/api/v1/media/geo", { params: { query: params }, ...options }); }
+} as unknown as Client;
   return { store: new GeoStore(client), calls };
 }
 
@@ -171,7 +179,7 @@ describe("Map page focus retry", () => {
     });
     await waitFor(() => expect(calls.length).toBe(2));
     // First call: no params (visible-only). Second call: include_hidden=true.
-    expect(calls[0]?.params).toBeUndefined();
+    expect(calls[0]?.params).toEqual({ query: {} });
     expect(calls[1]?.params).toMatchObject({ query: { include_hidden: true } });
     // Photo was found on retry → no toast.
     expect(pushSpy).not.toHaveBeenCalled();
@@ -256,7 +264,7 @@ describe("Map page hidden-include toggle", () => {
     });
     const cb = (await findByLabelText(/include hidden/i)) as HTMLInputElement;
     expect(calls.length).toBe(1);
-    expect(calls[0]?.params).toBeUndefined();
+    expect(calls[0]?.params).toEqual({ query: {} });
     cb.click();
     await waitFor(() => expect(calls.length).toBe(2));
     expect(calls[1]?.params).toMatchObject({ query: { include_hidden: true } });
@@ -351,7 +359,7 @@ describe("Map page filter changes", () => {
     const { rerender } = render(Map, { props: baseProps });
     // Initial load: no filter params, no query passed.
     await waitFor(() => expect(calls.length).toBe(1));
-    expect(calls[0]?.params).toBeUndefined();
+    expect(calls[0]?.params).toEqual({ query: {} });
 
     // Re-render with a populated filter set; the change-effect must
     // re-fire geoStore.load with the new wire shape.

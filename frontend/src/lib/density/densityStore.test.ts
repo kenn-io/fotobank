@@ -3,14 +3,20 @@ import { DensityStore, ROW_HEIGHTS } from "./densityStore.svelte";
 
 describe("DensityStore", () => {
   it("defaults to comfortable", () => {
-    const store = new DensityStore({ GET: vi.fn(), PUT: vi.fn() } as never, "library");
+    const store = new DensityStore({ GET: vi.fn(), PUT: vi.fn() ,
+getUserSetting(key?: any, options?: any) { return (this as any).GET("/api/v1/settings/user/{key}", { params: { path: { key } }, ...options }); },
+putUserSetting(key?: any, userSettingPutInputBody?: any, options?: any) { return (this as any).PUT("/api/v1/settings/user/{key}", { params: { path: { key } }, body: userSettingPutInputBody, ...options }); }
+} as never, "library");
     expect(store.preset).toBe("comfortable");
     expect(store.targetRowHeight).toBe(ROW_HEIGHTS.comfortable);
   });
 
   it("persists per-context key", async () => {
     const PUT = vi.fn().mockResolvedValue({ error: undefined });
-    const store = new DensityStore({ GET: vi.fn(), PUT } as never, "library");
+    const store = new DensityStore({ GET: vi.fn(), PUT ,
+getUserSetting(key?: any, options?: any) { return (this as any).GET("/api/v1/settings/user/{key}", { params: { path: { key } }, ...options }); },
+putUserSetting(key?: any, userSettingPutInputBody?: any, options?: any) { return (this as any).PUT("/api/v1/settings/user/{key}", { params: { path: { key } }, body: userSettingPutInputBody, ...options }); }
+} as never, "library");
     await store.set("compact");
     expect(PUT).toHaveBeenCalledWith(
       "/api/v1/settings/user/{key}",
@@ -27,7 +33,10 @@ describe("DensityStore", () => {
       () => new Promise((res) => { resolveGet = res; }),
     );
     const PUT = vi.fn().mockResolvedValue({ error: undefined });
-    const store = new DensityStore({ GET, PUT } as never, "library");
+    const store = new DensityStore({ GET, PUT ,
+getUserSetting(key?: any, options?: any) { return (this as any).GET("/api/v1/settings/user/{key}", { params: { path: { key } }, ...options }); },
+putUserSetting(key?: any, userSettingPutInputBody?: any, options?: any) { return (this as any).PUT("/api/v1/settings/user/{key}", { params: { path: { key } }, body: userSettingPutInputBody, ...options }); }
+} as never, "library");
     const loading = store.load();
     await store.set("compact"); // user clicks before GET resolves
     expect(store.preset).toBe("compact");
@@ -40,7 +49,10 @@ describe("DensityStore", () => {
     // nudge() calls set() (which awaits PUT) but doesn't await — so we
     // mock PUT to resolve to satisfy the unhandled-rejection check.
     const PUT = vi.fn().mockResolvedValue({ error: undefined });
-    const store = new DensityStore({ GET: vi.fn(), PUT } as never, "library");
+    const store = new DensityStore({ GET: vi.fn(), PUT ,
+getUserSetting(key?: any, options?: any) { return (this as any).GET("/api/v1/settings/user/{key}", { params: { path: { key } }, ...options }); },
+putUserSetting(key?: any, userSettingPutInputBody?: any, options?: any) { return (this as any).PUT("/api/v1/settings/user/{key}", { params: { path: { key } }, body: userSettingPutInputBody, ...options }); }
+} as never, "library");
     store.preset = "compact";
     store.nudge(1);
     expect(store.preset).toBe("comfortable");

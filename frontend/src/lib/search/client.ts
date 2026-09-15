@@ -1,3 +1,6 @@
+import * as generated from "../api/generated/client";
+import type { SearchParams } from "../api/generated/models";
+import type { APIResult } from "../api/transport";
 import type {
   AutocompleteLocationsResponse,
   AutocompleteTagsResponse,
@@ -35,128 +38,34 @@ export interface SearchClient {
   ): Promise<AutocompleteLocationsResponse>;
 }
 
-// buildSearchQuery serializes SearchRequestParams into a URLSearchParams
-// instance. Repeated `tag` values use the `?tag=a&tag=b` form to match
-// the backend's `query:"tag,explode"` binding. Empty / undefined values
-// are dropped — the server treats absent params as "no filter", which
-// matches the SPA's intent.
-function buildSearchQuery(p: SearchRequestParams): URLSearchParams {
-  const q = new URLSearchParams();
-  if (p.q != null && p.q !== "") q.set("q", p.q);
-  if (p.sort != null) q.set("sort", p.sort);
-  if (p.date_after != null && p.date_after !== "") q.set("date_after", p.date_after);
-  if (p.date_before != null && p.date_before !== "") q.set("date_before", p.date_before);
-  if (p.tag) {
-    for (const t of p.tag) {
-      if (t !== "") q.append("tag", t);
-    }
-  }
-  if (p.location != null && p.location !== "") q.set("location", p.location);
-  if (p.media_type != null) q.set("media_type", p.media_type);
-  if (p.limit != null && p.limit > 0) q.set("limit", String(p.limit));
-  if (p.cursor != null && p.cursor !== "") q.set("cursor", p.cursor);
-  if (p.include_hidden) q.set("include_hidden", "true");
-  if (p.explain) q.set("explain", "true");
-  // SF-18 sidebar facets. camera/lens/facet_tag are repeated query
-  // params (huma's `,explode` modifier on the searchInput field).
-  // has_gps is the literal string "true"/"false" — the backend's enum
-  // constraint rejects "1"/"0" (matching the /facets convention).
-  if (p.camera) {
-    for (const c of p.camera) {
-      if (c !== "") q.append("camera", c);
-    }
-  }
-  if (p.lens) {
-    for (const l of p.lens) {
-      if (l !== "") q.append("lens", l);
-    }
-  }
-  if (p.facet_tag) {
-    for (const t of p.facet_tag) {
-      if (t !== "") q.append("facet_tag", t);
-    }
-  }
-  if (p.has_gps !== undefined) q.set("has_gps", p.has_gps ? "true" : "false");
-  return q;
-}
-
-// readErrorBody best-efforts a response body into a parsed shape so a
-// callsite can inspect status/message without re-parsing. JSON parse
-// failures fall back to raw text rather than a synthetic object — the
-// caller already has res.status, and a non-JSON body is informational
-// at best.
-async function readErrorBody(res: Response): Promise<unknown> {
-  const text = await res.text();
-  if (text === "") return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
-
-// FetchLike narrows the global fetch surface to what the client needs.
-// Tests inject a mock via createSearchClient({ fetch }); production uses
-// the global fetch.
-export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
-
+export type FetchLike = typeof fetch;
 export interface SearchClientOptions {
   fetch?: FetchLike;
   baseUrl?: string;
 }
 
-// createSearchClient builds a SearchClient backed by direct fetch. The
-// /search routes are not in the generated openapi schema yet (the
-// dumper passes Deps{} so they're absent), so we hand-roll the wire
-// path rather than going through openapi-fetch. The shape mirrors
-// internal/httpapi/search.go and the typed responses come from
-// ./types.ts.
 export function createSearchClient(opts: SearchClientOptions = {}): SearchClient {
-  const fetchFn: FetchLike = opts.fetch ?? ((input, init) => fetch(input, init));
-  const base = opts.baseUrl ?? "";
-
-  async function get<T>(path: string, query: URLSearchParams, signal?: AbortSignal): Promise<T> {
-    const qs = query.toString();
-    const url = `${base}${path}${qs === "" ? "" : `?${qs}`}`;
-    const init: RequestInit = { method: "GET", headers: { Accept: "application/json" } };
-    if (signal !== undefined) init.signal = signal;
-    const res = await fetchFn(url, init);
-    if (!res.ok) {
-      const body = await readErrorBody(res);
-      const msg = typeof body === "object" && body !== null && "message" in body
-        && typeof (body as { message?: unknown }).message === "string"
-          ? (body as { message: string }).message
-          : `${path} returned ${res.status}`;
-      throw new SearchHTTPError(res.status, msg, body);
+  async function result<T>(response: APIResult<T>): Promise<T> {
+    if (response.error) {
+      const body = response.error;
+      throw new SearchHTTPError(response.response.status, body.detail ?? body.title ?? `Search returned ${response.response.status}`, body);
     }
-    return (await res.json()) as T;
+    return response.data as T;
   }
-
   return {
-    search(params, signal) {
-      return get<SearchResponse>("/api/v1/search", buildSearchQuery(params), signal);
+    async search(params, signal) {
+      const { has_gps, ...rest } = params;
+      const query: SearchParams = rest;
+      if (has_gps !== undefined) query.has_gps = has_gps ? "true" : "false";
+      return await result(await generated.search(query, { ...opts, ...(signal ? { signal } : {}) })) as SearchResponse;
     },
-    autocompleteTags(params, signal) {
-      const q = new URLSearchParams();
-      q.set("prefix", params.prefix);
-      if (params.limit != null && params.limit > 0) q.set("limit", String(params.limit));
-      if (params.include_hidden) q.set("include_hidden", "true");
-      return get<AutocompleteTagsResponse>("/api/v1/search/autocomplete/tags", q, signal);
+    async autocompleteTags(params, signal) {
+      return await result(await generated.searchAutocompleteTags(params, { ...opts, ...(signal ? { signal } : {}) })) as AutocompleteTagsResponse;
     },
-    autocompleteLocations(params, signal) {
-      const q = new URLSearchParams();
-      q.set("substring", params.substring);
-      if (params.limit != null && params.limit > 0) q.set("limit", String(params.limit));
-      if (params.include_hidden) q.set("include_hidden", "true");
-      return get<AutocompleteLocationsResponse>(
-        "/api/v1/search/autocomplete/locations",
-        q,
-        signal,
-      );
+    async autocompleteLocations(params, signal) {
+      return await result(await generated.searchAutocompleteLocations(params, { ...opts, ...(signal ? { signal } : {}) })) as AutocompleteLocationsResponse;
     },
   };
 }
 
-// searchClient is the default singleton bound to same-origin fetch.
-// Mirrors the api singleton in lib/api/client.ts.
 export const searchClient: SearchClient = createSearchClient();

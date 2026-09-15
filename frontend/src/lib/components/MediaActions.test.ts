@@ -13,7 +13,9 @@ async function makeAppConfig(sharingEnabled: boolean): Promise<AppConfigStore> {
         features: { sharing_enabled: sharingEnabled },
       },
     }),
-  } as unknown as Pick<Client, "GET">;
+
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); }
+} as unknown as Client;
   const cfg = new AppConfigStore(client);
   await cfg.load();
   return cfg;
@@ -24,7 +26,9 @@ function defaultAppConfig(): AppConfigStore {
   // closed without an extra await.
   const client = {
     GET: async () => ({ data: undefined, error: { status: 0 } }),
-  } as unknown as Pick<Client, "GET">;
+
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); }
+} as unknown as Client;
   return new AppConfigStore(client);
 }
 

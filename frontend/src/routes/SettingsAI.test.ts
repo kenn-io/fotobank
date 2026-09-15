@@ -85,7 +85,14 @@ describe("SettingsAI", () => {
     aiHealthStore.health = { ...base };
     const PUT = vi.fn().mockResolvedValue({ error: undefined });
     const GET = vi.fn().mockResolvedValue({ data: undefined, error: undefined });
-    const store = new AIInspectionStore({ GET, PUT } as never);
+    const store = new AIInspectionStore({ GET, PUT ,
+aiFailures(params?: any, options?: any) { return (this as any).GET("/api/v1/ai/failures", { params: { query: params }, ...options }); },
+aiHealth(options?: any) { return (this as any).GET("/api/v1/ai/health", { ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+aiMediaView(mediaId?: any, options?: any) { return (this as any).GET("/api/v1/media/{media_id}/ai", { params: { path: { media_id: mediaId } }, body: mediaId, ...options }); },
+getUserSetting(key?: any, options?: any) { return (this as any).GET("/api/v1/settings/user/{key}", { params: { path: { key } }, ...options }); },
+putUserSetting(key?: any, userSettingPutInputBody?: any, options?: any) { return (this as any).PUT("/api/v1/settings/user/{key}", { params: { path: { key } }, body: userSettingPutInputBody, ...options }); }
+} as never);
     render(SettingsAI, { props: { inspectionStore: store } });
     flushSync();
     await tick();

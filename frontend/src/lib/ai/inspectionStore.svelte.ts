@@ -24,13 +24,11 @@ export class AIInspectionStore {
   // choice. Same pattern as densityStore.
   private dirty = false;
 
-  constructor(private client: Pick<Client, "GET" | "PUT">) {}
+  constructor(private client: Pick<Client, "getUserSetting" | "putUserSetting">) {}
 
   async load(): Promise<void> {
     try {
-      const res = await this.client.GET("/api/v1/settings/user/{key}", {
-        params: { path: { key: "ai.inspection" } },
-      });
+      const res = await this.client.getUserSetting("ai.inspection");
       if (!this.dirty && res.data?.value !== undefined) {
         try {
           const parsed = JSON.parse(res.data.value);
@@ -53,9 +51,6 @@ export class AIInspectionStore {
   async set(on: boolean): Promise<void> {
     this.enabled = on;
     this.dirty = true;
-    await this.client.PUT("/api/v1/settings/user/{key}", {
-      params: { path: { key: "ai.inspection" } },
-      body: { value: JSON.stringify(on) },
-    });
+    await this.client.putUserSetting("ai.inspection", { value: JSON.stringify(on) });
   }
 }

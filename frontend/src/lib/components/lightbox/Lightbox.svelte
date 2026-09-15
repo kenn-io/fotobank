@@ -184,15 +184,15 @@
     let cancelled = false;
     (async () => {
       try {
-        const resp = await fetch(`/api/v1/media/${currentId}`);
+        const resp = await api.getMedia(currentId);
         if (cancelled) return;
-        if (!resp.ok) {
-          loadError = resp.status;
+        if (resp.error || !resp.data) {
+          loadError = resp.response.status;
           return;
         }
-        const raw = await resp.json();
+        const raw = resp.data;
         if (cancelled) return;
-        lastRaw = raw as Record<string, unknown>;
+        lastRaw = raw as unknown as Record<string, unknown>;
         mediaStore.mergeRaw([raw]);
       } catch {
         if (cancelled) return;
@@ -307,15 +307,13 @@
             !exhausted &&
             pages < PAGE_CAP
           ) {
-            const resp = await fetch(
-              `/api/v1/albums/${albumId}/media?offset=${offset}&limit=200`,
-            );
+            const resp = await api.listAlbumMedia(albumId, { offset, limit: 200 });
             if (cancelled) return;
-            if (!resp.ok) {
+            if (resp.error || !resp.data) {
               reconstructionState = "failed";
               return;
             }
-            const data = (await resp.json()) as AlbumPage;
+            const data = (resp.data) as AlbumPage;
             const items = data.items ?? [];
             for (const it of items) ids.push(it.id);
             const next = data.next_offset ?? null;
@@ -356,19 +354,17 @@
             !exhausted &&
             pages < PAGE_CAP
           ) {
-            const resp = await fetch(
-              `/api/v1/hidden/media?offset=${offset}&limit=200`,
-            );
+            const resp = await api.listHiddenMedia({ offset, limit: 200 });
             if (cancelled) return;
-            if (resp.status === 403) {
+            if (resp.response.status === 403) {
               router.navigate("/hidden", { replace: true });
               return;
             }
-            if (!resp.ok) {
+            if (resp.error || !resp.data) {
               reconstructionState = "failed";
               return;
             }
-            const data = (await resp.json()) as AlbumPage;
+            const data = (resp.data) as AlbumPage;
             const items = data.items ?? [];
             for (const it of items) ids.push(it.id);
             const next = data.next_offset ?? null;
@@ -605,15 +601,12 @@
   async function onAdd(
     albumId: string,
   ): Promise<{ added: number; already_present: number }> {
-    const res = await api.POST("/api/v1/albums/{id}/media", {
-      params: { path: { id: albumId } } as never,
-      body: { media_ids: pendingMediaIds } as never,
-    });
+    const res = await api.addMediaToAlbum(albumId, { media_ids: pendingMediaIds });
     if (res.error) throw res.error;
     return res.data as { added: number; already_present: number };
   }
   async function onCreateShare(body: CreateShareBody): Promise<void> {
-    const res = await api.POST("/api/v1/shares", { body: body as never });
+    const res = await api.sharesCreate(body);
     if (res.error) throw res.error;
   }
 

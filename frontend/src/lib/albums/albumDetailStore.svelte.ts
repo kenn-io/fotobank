@@ -35,7 +35,7 @@ export class AlbumDetailStore {
   private loadToken = 0;
 
   constructor(
-    private client: Pick<Client, "GET" | "DELETE" | "PATCH">,
+    private client: Pick<Client, "deleteAlbum" | "getAlbum" | "listAlbumMedia" | "removeAlbumMedia" | "renameAlbum">,
     private media: MediaStore,
   ) {}
 
@@ -55,9 +55,7 @@ export class AlbumDetailStore {
 
     let meta;
     try {
-      meta = await this.client.GET("/api/v1/albums/{id}", {
-        params: { path: { id } } as never,
-      });
+      meta = await this.client.getAlbum(id);
     } finally {
       // Only clear metaLoading if we're still the active token.
       if (token === this.loadToken) this.metaLoading = false;
@@ -86,20 +84,15 @@ export class AlbumDetailStore {
     const token = this.loadToken;
     this.loading = true;
     try {
-      const res = await this.client.GET("/api/v1/albums/{id}/media", {
-        params: {
-          path: { id: this.albumId },
-          query: {
+      const res = await this.client.listAlbumMedia(this.albumId, {
             limit: 200,
             offset: this.nextOffset ?? 0,
             sort_by: this.sort,
             sort_asc: false,
-          },
-        } as never,
-      });
+          });
       if (token !== this.loadToken) return;
       if (res.error || !res.data) return;
-      const data = res.data as { items?: Array<Record<string, unknown>>; next_offset?: number | null };
+      const data = res.data as unknown as { items?: Array<Record<string, unknown>>; next_offset?: number | null };
       const items = data.items ?? [];
       this.media.mergeRaw(items);
       const newIds = items
@@ -142,9 +135,7 @@ export class AlbumDetailStore {
     // album's metadata (finding #11).
     const albumId = this.albumId;
     const token = this.loadToken;
-    const res = await this.client.GET("/api/v1/albums/{id}", {
-      params: { path: { id: albumId } } as never,
-    });
+    const res = await this.client.getAlbum(albumId);
     if (token !== this.loadToken || this.albumId !== albumId) return;
     if (res.error || !res.data) return;
     const a = res.data as Album;
@@ -189,9 +180,7 @@ export class AlbumDetailStore {
         const myIdx = i++;
         const mediaId = ids[myIdx]!;
         try {
-          const res = await client.DELETE("/api/v1/albums/{id}/media/{media_id}", {
-            params: { path: { id: albumId, media_id: mediaId } } as never,
-          });
+          const res = await client.removeAlbumMedia(albumId, mediaId);
           if (res.error) failed.push(mediaId);
           else succeeded.push(mediaId);
         } catch {
@@ -263,10 +252,7 @@ export class AlbumDetailStore {
     const trimmed = name.trim();
     if (trimmed.length === 0) throw new Error("Name is required");
     if (trimmed.length > 200) throw new Error("Name exceeds 200 characters");
-    const res = await this.client.PATCH("/api/v1/albums/{id}", {
-      params: { path: { id: targetId } } as never,
-      body: { name: trimmed } as never,
-    });
+    const res = await this.client.renameAlbum(targetId, { name: trimmed });
     if (res.error) throw res.error;
     const a = res.data as Album;
     // Only mutate the in-place album state if the route is still pointed
@@ -279,9 +265,7 @@ export class AlbumDetailStore {
 
   async delete(): Promise<void> {
     if (!this.albumId) return;
-    const res = await this.client.DELETE("/api/v1/albums/{id}", {
-      params: { path: { id: this.albumId } } as never,
-    });
+    const res = await this.client.deleteAlbum(this.albumId);
     if (res.error) throw res.error;
   }
 }

@@ -1,3 +1,4 @@
+import type { FacetsParams } from "../api/generated/models";
 import type { Client } from "../api/client";
 import { filterKey, type ActiveFilters } from "./activeFilters";
 
@@ -55,7 +56,7 @@ export class FacetsStore {
   private pendingResolvers: Array<() => void> = [];
 
   constructor(
-    private client: Pick<Client, "GET">,
+    private client: Pick<Client, "facets">,
     private debounceMs = 100,
   ) {}
 
@@ -115,12 +116,9 @@ export class FacetsStore {
         this.loading = true;
         this.error = null;
         try {
-          const path = this.buildPath(route, filters, effectiveScope);
-          // TODO: swap the `as never` cast for a properly-typed call
-          // once /api/v1/facets lands in the generated openapi schema.
-          const res = await this.client.GET(path as never);
+          const res = await this.client.facets(this.buildQuery(route, filters, effectiveScope));
           if (myToken !== this.fetchToken) return; // stale, drop
-          // openapi-fetch surfaces non-2xx responses on res.error and
+          // the API client surfaces non-2xx responses on res.error and
           // leaves res.data undefined. Without checking res.error, a
           // server-side 400/5xx would silently leave stale this.response
           // visible. Map the huma error shape ({title, detail, status})
@@ -137,7 +135,7 @@ export class FacetsStore {
             this.cache.set(key, r.data);
             this.response = r.data;
           } else {
-            // openapi-fetch always populates data OR error on a settled
+            // the API client always populates data OR error on a settled
             // response, but the type surface allows neither in principle.
             // Without an explicit fallback, the prior this.response would
             // remain visible with no error signal — the caller would
@@ -166,57 +164,17 @@ export class FacetsStore {
     });
   }
 
-  private buildPath(
-    route: RouteContext,
-    f: ActiveFilters,
-    scope: SearchScope | undefined,
-  ): string {
-    const sp = new URLSearchParams();
-    for (const v of f.cameras) sp.append("camera", v);
-    for (const v of f.lenses) sp.append("lens", v);
-    for (const v of f.tagKeys) sp.append("facet_tag", v);
-    // /facets accepts has_gps as the literal strings "true"/"false"
-    // (huma `enum:"true,false"` constraint, see internal/httpapi/facets.go).
-    // The URL convention used elsewhere in the SPA is "1"/"0"; only the
-    // facets backend insists on the canonical literal — keep this
-    // mapping local rather than spreading it across the URL surface.
-    if (f.hasGps !== null) sp.set("has_gps", f.hasGps ? "true" : "false");
-    if (f.mediaType !== null) sp.set("media_type", f.mediaType);
-    // /map's facet counts must be computed against geotagged photos
-    // only — that's the route's domain. The user can't toggle has_gps
-    // on /map (the design hides the Places facet there), so force
-    // has_gps=true unless the caller already pinned it. Without this,
-    // clicking a camera on /map would surface a count drawn from non-
-    // geotagged photos that the map can't even pin.
-    if (route === "map" && f.hasGps === null) {
-      sp.set("has_gps", "true");
-    }
-    // Search-scope params (route === "search" only — buildPath only
-    // receives a non-undefined scope on that route, since fetch()
-    // wipes scope on /library and /map). Without these, the facet
-    // counts on /search would be drawn from the whole library and
-    // miss the user's q / typed-tag / date / location / include_hidden
-    // narrowing (roborev finding 17964 #2).
-    if (scope !== undefined) {
-      if (scope.q !== undefined && scope.q !== "") sp.set("q", scope.q);
-      if (scope.dateAfter !== undefined && scope.dateAfter !== "") {
-        sp.set("date_after", scope.dateAfter);
-      }
-      if (scope.dateBefore !== undefined && scope.dateBefore !== "") {
-        sp.set("date_before", scope.dateBefore);
-      }
-      if (scope.tagLabels) {
-        for (const t of scope.tagLabels) {
-          if (t !== "") sp.append("tag", t);
-        }
-      }
-      if (scope.location !== undefined && scope.location !== "") {
-        sp.set("location", scope.location);
-      }
-      if (scope.includeHidden === true) sp.set("include_hidden", "true");
-    }
-    const qs = sp.toString();
-    return qs ? `/api/v1/facets?${qs}` : `/api/v1/facets`;
+  private buildQuery(route: RouteContext, f: ActiveFilters, scope: SearchScope | undefined): FacetsParams {
+    const query: FacetsParams = { camera: f.cameras, lens: f.lenses, facet_tag: f.tagKeys };
+    if (f.hasGps !== null) query.has_gps = f.hasGps ? "true" : "false";
+    else if (route === "map") query.has_gps = "true";
+    if (f.mediaType !== null) query.media_type = f.mediaType;
+    if (scope?.dateAfter) query.date_after = scope.dateAfter;
+    if (scope?.dateBefore) query.date_before = scope.dateBefore;
+    if (scope?.tagLabels) query.tag = scope.tagLabels.filter(Boolean);
+    if (scope?.location) query.location = scope.location;
+    if (scope?.includeHidden) query.include_hidden = true;
+    return query;
   }
 }
 

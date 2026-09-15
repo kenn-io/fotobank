@@ -1,84 +1,32 @@
-// Typed fetch wrappers for /api/v1/ai/*. The AI surface isn't included
-// in the generated openapi schema (the OpenAPI dumper passes Deps{} so
-// AI routes register only at runtime), so these wrappers carry their
-// own types via ./types.ts.
-
+import * as client from "../api/generated/client";
+import type { APIResult } from "../api/transport";
 import type { AIFailureRow, AIHealth, AITask } from "./types";
+export type { MediaView as AIMediaView } from "../api/generated/models";
+import type { MediaView } from "../api/generated/models";
 
-const baseHeaders = { "Content-Type": "application/json" };
+function result<T>(response: APIResult<T>): T {
+  if (response.error) throw new Error(`${response.response.url} ${response.response.status}`);
+  return response.data as T;
+}
 
 export async function getAIHealth(): Promise<AIHealth> {
-  const r = await fetch("/api/v1/ai/health");
-  if (!r.ok) throw new Error(`/ai/health ${r.status}`);
-  return (await r.json()) as AIHealth;
+  return result(await client.aiHealth()) as AIHealth;
 }
-
 export async function listAIFailures(task: AITask, limit = 5): Promise<AIFailureRow[]> {
-  const r = await fetch(`/api/v1/ai/failures?task=${task}&limit=${limit}`);
-  if (!r.ok) throw new Error(`/ai/failures ${r.status}`);
-  const body = (await r.json()) as { rows: AIFailureRow[] | null };
-  return body.rows ?? [];
+  return (result(await client.aiFailures({ task, limit })).rows ?? []) as AIFailureRow[];
 }
-
-export async function backfillAI(
-  task: AITask,
-  opts?: { force?: boolean },
-): Promise<{ enqueued: number }> {
-  const r = await fetch("/api/v1/ai/backfill", {
-    method: "POST",
-    headers: baseHeaders,
-    body: JSON.stringify({ task, force: opts?.force ?? false, scope: "all" }),
-  });
-  if (!r.ok) throw new Error(`/ai/backfill ${r.status}`);
-  return (await r.json()) as { enqueued: number };
+export async function backfillAI(task: AITask, opts?: { force?: boolean }): Promise<{ enqueued: number }> {
+  return result(await client.aiBackfill({ task, force: opts?.force ?? false, scope: "all" }));
 }
-
 export async function retryFailedAI(task: AITask): Promise<{ enqueued: number }> {
-  const r = await fetch("/api/v1/ai/retry-failed", {
-    method: "POST",
-    headers: baseHeaders,
-    body: JSON.stringify({ task }),
-  });
-  if (!r.ok) throw new Error(`/ai/retry-failed ${r.status}`);
-  return (await r.json()) as { enqueued: number };
+  return result(await client.aiRetryFailed({ task }));
 }
-
 export async function retryPhotoAI(mediaId: string, task: AITask): Promise<void> {
-  const r = await fetch("/api/v1/ai/retry-photo", {
-    method: "POST",
-    headers: baseHeaders,
-    body: JSON.stringify({ media_id: mediaId, task }),
-  });
-  if (!r.ok) throw new Error(`/ai/retry-photo ${r.status}`);
+  result(await client.aiRetryPhoto({ media_id: mediaId, task }));
 }
-
 export async function acknowledgeHiddenProcessing(): Promise<void> {
-  const r = await fetch("/api/v1/ai/acknowledge", {
-    method: "POST",
-    headers: baseHeaders,
-    body: JSON.stringify({ kind: "hidden_processing" }),
-  });
-  if (!r.ok) throw new Error(`/ai/acknowledge ${r.status}`);
+  result(await client.aiAcknowledge({ kind: "hidden_processing" }));
 }
-
-// AIMediaView is the per-photo lightbox bundle. Mirrors the
-// aiservice.MediaView wire shape; all fields are optional because the
-// backend omits them when there's no row.
-export interface AIMediaView {
-  tags?: Array<{ key: string; label: string; rank: number }>;
-  caption?: {
-    text: string;
-    model_id: string;
-    prompt_version: string;
-    generated_at: string;
-  };
-  skipped?: { reason: string };
-  tag_failure?: { kind: string; message: string };
-  caption_failure?: { kind: string; message: string };
-}
-
-export async function getMediaAIView(mediaId: string): Promise<AIMediaView> {
-  const r = await fetch(`/api/v1/media/${encodeURIComponent(mediaId)}/ai`);
-  if (!r.ok) throw new Error(`/media/${mediaId}/ai ${r.status}`);
-  return (await r.json()) as AIMediaView;
+export async function getMediaAIView(mediaId: string): Promise<MediaView> {
+  return result(await client.aiMediaView(mediaId));
 }

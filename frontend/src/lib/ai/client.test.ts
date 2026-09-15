@@ -16,7 +16,7 @@ describe("getAIHealth", () => {
   it("returns parsed JSON", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
+      text: async () => JSON.stringify(({
         enabled: true,
         paused_reason: "",
         vision: { reachable: true, last_check_at: "2026-04-30T18:42:11Z" },
@@ -40,7 +40,7 @@ describe("getAIHealth", () => {
           done: 0,
           throughput_per_min: 0,
         },
-      }),
+      })),
     });
     const h = await getAIHealth();
     expect(h.tag.active_fingerprint).toBe("m|tags-v1|ip");
@@ -49,7 +49,7 @@ describe("getAIHealth", () => {
 
 describe("backfillAI", () => {
   it("posts force=true correctly", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ enqueued: 5 }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify(({ enqueued: 5 })) });
     const out = await backfillAI("tag", { force: true });
     expect(out.enqueued).toBe(5);
     const args = mockFetch.mock.calls[0];
@@ -68,7 +68,7 @@ describe("backfillAI", () => {
 
 describe("retryPhotoAI", () => {
   it("404s surface as errors", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 , text: async () => "" });
     await expect(retryPhotoAI("m1", "tag")).rejects.toThrow(/404/);
   });
 });
@@ -77,7 +77,7 @@ describe("getMediaAIView", () => {
   it("returns parsed AIMediaView for a media", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
+      text: async () => JSON.stringify(({
         tags: [{ key: "dog", label: "Dog", rank: 1 }],
         caption: {
           text: "A small dog.",
@@ -85,7 +85,7 @@ describe("getMediaAIView", () => {
           prompt_version: "caption-v1",
           generated_at: "2026-04-30T18:42:11Z",
         },
-      }),
+      })),
     });
     const out = await getMediaAIView("m1");
     expect(out.tags).toEqual([{ key: "dog", label: "Dog", rank: 1 }]);
@@ -96,7 +96,7 @@ describe("getMediaAIView", () => {
   });
 
   it("URL-encodes the media id", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+    mockFetch.mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify(({})) });
     await getMediaAIView("m/1+2");
     const args = mockFetch.mock.calls[0];
     if (!args) throw new Error("expected fetch to have been called");
@@ -104,7 +104,7 @@ describe("getMediaAIView", () => {
   });
 
   it("non-200 surfaces as an error", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 , text: async () => "" });
     await expect(getMediaAIView("m1")).rejects.toThrow(/500/);
   });
 });

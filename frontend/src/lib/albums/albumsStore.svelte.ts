@@ -51,7 +51,7 @@ export class AlbumsStore {
   // navigates to the albums view rather than firing eagerly from any route.
   private stale = false;
 
-  constructor(private client: Pick<Client, "GET" | "POST" | "PATCH" | "DELETE">) {}
+  constructor(private client: Pick<Client, "createAlbum" | "deleteAlbum" | "listAlbums" | "renameAlbum">) {}
 
   async loadInitial(): Promise<void> {
     const token = ++this.initialToken;
@@ -77,9 +77,7 @@ export class AlbumsStore {
     this.loading = true;
     this.inflight = (async () => {
       try {
-        const res = await this.client.GET("/api/v1/albums", {
-          params: { query: { limit: 100, offset: this.nextOffset ?? 0 } } as never,
-        });
+        const res = await this.client.listAlbums({ limit: 100, offset: this.nextOffset ?? 0 });
         if (res.error || !res.data) {
           // loadError gates auto-retry effects in routes (so a transient
           // 5xx doesn't spin in an infinite refetch loop), but we MUST
@@ -91,7 +89,7 @@ export class AlbumsStore {
           this.loadError = true;
           return;
         }
-        const data = res.data as { items?: AlbumListItem[]; next_offset?: number };
+        const data = res.data as unknown as { items?: AlbumListItem[]; next_offset?: number };
         const items = data.items ?? [];
         this.albums = [...this.albums, ...items];
         const next = data.next_offset ?? null;
@@ -137,7 +135,7 @@ export class AlbumsStore {
     const trimmed = name.trim();
     if (trimmed.length === 0) throw new Error("Name is required");
     if (trimmed.length > 200) throw new Error("Name exceeds 200 characters");
-    const res = await this.client.POST("/api/v1/albums", { body: { name: trimmed } as never });
+    const res = await this.client.createAlbum({ name: trimmed });
     if (res.error) throw res.error;
     // Capture the new id BEFORE the refetch — the response body is the
     // created album. Returning the id lets callers (e.g. AddToAlbumModal)
@@ -153,10 +151,7 @@ export class AlbumsStore {
     const trimmed = name.trim();
     if (trimmed.length === 0) throw new Error("Name is required");
     if (trimmed.length > 200) throw new Error("Name exceeds 200 characters");
-    const res = await this.client.PATCH("/api/v1/albums/{id}", {
-      params: { path: { id } } as never,
-      body: { name: trimmed } as never,
-    });
+    const res = await this.client.renameAlbum(id, { name: trimmed });
     if (res.error) throw res.error;
     const updated = res.data as AlbumListItem;
     const idx = this.albums.findIndex((a) => a.id === id);
@@ -171,9 +166,7 @@ export class AlbumsStore {
   }
 
   async delete(id: string): Promise<void> {
-    const res = await this.client.DELETE("/api/v1/albums/{id}", {
-      params: { path: { id } } as never,
-    });
+    const res = await this.client.deleteAlbum(id);
     if (res.error) throw res.error;
     this.dropLocal(id);
   }

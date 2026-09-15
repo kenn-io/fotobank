@@ -59,15 +59,15 @@
     let cancelled = false;
     (async () => {
       try {
-        const resp = await fetch(`/api/v1/media/${currentId}`);
+        const resp = await api.getMedia(currentId);
         if (cancelled) return;
-        if (!resp.ok) {
-          loadError = `${resp.status}`;
+        if (resp.error || !resp.data) {
+          loadError = `${resp.response.status}`;
           return;
         }
-        const raw = await resp.json();
+        const raw = resp.data;
         if (cancelled) return;
-        lastRaw = raw as Record<string, unknown>;
+        lastRaw = raw as unknown as Record<string, unknown>;
         // Reuse the store's own JSON-adapter pathway: merge a single-item
         // array so byMediaId is also populated. The store knows how to
         // build thumbUrl from the raw row.
@@ -160,17 +160,14 @@
   }
 
   async function onAdd(albumId: string): Promise<{ added: number; already_present: number }> {
-    const res = await api.POST("/api/v1/albums/{id}/media", {
-      params: { path: { id: albumId } } as never,
-      body: { media_ids: pendingMediaIds } as never,
-    });
+    const res = await api.addMediaToAlbum(albumId, { media_ids: pendingMediaIds });
     if (res.error) throw res.error;
     // AddToAlbumModal calls onClose() itself on success.
     return res.data as { added: number; already_present: number };
   }
 
   async function onCreateShare(body: CreateShareBody): Promise<void> {
-    const res = await api.POST("/api/v1/shares", { body: body as never });
+    const res = await api.sharesCreate(body);
     if (res.error) throw res.error;
     // ShareModal calls onClose() itself on success — match the
     // AddToAlbumModal contract; no need to flip shareOpen here.

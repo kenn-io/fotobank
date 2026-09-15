@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { FacetsStore, type FacetsResponse } from "./facetsStore.svelte";
+import type { FacetsParams } from "../api/generated/models";
 import type { ActiveFilters } from "./activeFilters";
 
 const empty: ActiveFilters = {
@@ -12,13 +13,13 @@ const fakeResponse: FacetsResponse = {
 };
 
 function fakeClient(seq: FacetsResponse[]) {
-  const calls: string[] = [];
+  const calls: FacetsParams[] = [];
   let i = 0;
-  const GET = vi.fn(async (path: string) => {
-    calls.push(path);
+  const facets = vi.fn(async (params: FacetsParams) => {
+    calls.push(params);
     return { data: seq[Math.min(i++, seq.length - 1)] };
   });
-  return { client: { GET }, calls };
+  return { client: { facets }, calls };
 }
 
 describe("FacetsStore", () => {
@@ -54,7 +55,7 @@ describe("FacetsStore", () => {
     await new Promise((r) => setTimeout(r, 100));
     // Only the final request actually fires.
     expect(calls.length).toBe(1);
-    expect(calls[0]).toContain("camera=Canon");
+    expect(calls[0]?.camera).toEqual(["Canon EOS R5"]);
   });
 
   it("cache hit during in-flight GET clears loading (no stuck spinner)", async () => {
@@ -77,7 +78,9 @@ describe("FacetsStore", () => {
       places: { with_gps: 0, without_gps: 0 }, media_types: [],
     };
     const GET = vi.fn(async () => ({ data: await slowA }));
-    const s = new FacetsStore({ GET } as never, 0);
+    const s = new FacetsStore({ GET ,
+facets(params?: any, options?: any) { return (this as any).GET("/api/v1/facets", { params: { query: params }, ...options }); }
+} as never, 0);
 
     // Pre-warm cache for filterB. The cache key is
     // `${route}|${filterKey(filters)}|${scopeKey(scope)}`; on /library
@@ -137,7 +140,9 @@ describe("FacetsStore", () => {
       }
       return { data: respB };
     });
-    const s = new FacetsStore({ GET } as never, 0);
+    const s = new FacetsStore({ GET ,
+facets(params?: any, options?: any) { return (this as any).GET("/api/v1/facets", { params: { query: params }, ...options }); }
+} as never, 0);
 
     const pA = s.fetch("library", empty);
     // Yield so A's debounce timer fires and the slow GET is in flight.
@@ -169,10 +174,10 @@ describe("FacetsStore", () => {
     const { client, calls } = fakeClient([fakeResponse, fakeResponse]);
     const s = new FacetsStore(client as never, 0);
     await s.fetch("library", { ...empty, hasGps: true });
-    expect(calls[0]).toContain("has_gps=true");
-    expect(calls[0]).not.toContain("has_gps=1");
+    expect(calls[0]?.has_gps).toBe("true");
+    expect(calls[0]?.has_gps).not.toBe("1");
     await s.fetch("library", { ...empty, hasGps: false });
-    expect(calls[1]).toContain("has_gps=false");
+    expect(calls[1]?.has_gps).toBe("false");
   });
 
   it("forces has_gps=true on /map when caller hasn't pinned it", async () => {
@@ -181,7 +186,7 @@ describe("FacetsStore", () => {
     const { client, calls } = fakeClient([fakeResponse]);
     const s = new FacetsStore(client as never, 0);
     await s.fetch("map", empty);
-    expect(calls[0]).toContain("has_gps=true");
+    expect(calls[0]?.has_gps).toBe("true");
   });
 
   it("forwards search-scope params on /search and keys cache by them", async () => {
@@ -204,17 +209,17 @@ describe("FacetsStore", () => {
     });
     // First request URL carries the scope.
     expect(calls.length).toBe(1);
-    const u1 = new URL(calls[0]!, "http://localhost");
-    expect(u1.searchParams.get("q")).toBe("puppy");
-    expect(u1.searchParams.getAll("tag")).toEqual(["Dog"]);
-    expect(u1.searchParams.get("date_after")).toBe("2025-01-01T00:00:00Z");
-    expect(u1.searchParams.get("include_hidden")).toBe("true");
+    const u1 = calls[0]!;
+    expect(u1).not.toHaveProperty("q"); // The facets contract has no free-text parameter.
+    expect(u1.tag).toEqual(["Dog"]);
+    expect(u1.date_after).toBe("2025-01-01T00:00:00Z");
+    expect(u1.include_hidden).toBe(true);
 
     // Same sidebar filters, different q → cache miss, second GET.
     await s.fetch("search", empty, { q: "kitten" });
     expect(calls.length).toBe(2);
-    const u2 = new URL(calls[1]!, "http://localhost");
-    expect(u2.searchParams.get("q")).toBe("kitten");
+    const u2 = calls[1]!;
+    expect(u2).not.toHaveProperty("q");
 
     // Identical scope → cache hit, no third GET.
     await s.fetch("search", empty, { q: "kitten" });
@@ -235,11 +240,11 @@ describe("FacetsStore", () => {
     // Both calls hit the same cache slot — only the first GET fired.
     expect(calls.length).toBe(1);
     // And the URL never carried the scope.
-    expect(calls[0]).not.toContain("q=puppy");
+    expect(calls[0]).not.toHaveProperty("q");
   });
 
   it("populates this.error when response has neither data nor error", async () => {
-    // openapi-fetch always populates one of (data, error) on a settled
+    // The client transport always populates one of (data, error) on a settled
     // response, but the type surface admits neither. Without a fallback
     // the prior this.response would remain visible with no error
     // signal — the caller would think the new filter set succeeded
@@ -247,14 +252,16 @@ describe("FacetsStore", () => {
     const seq: Array<{ data?: FacetsResponse; error?: unknown }> = [{}];
     let i = 0;
     const GET = vi.fn(async () => seq[i++]);
-    const s = new FacetsStore({ GET } as never, 0);
+    const s = new FacetsStore({ GET ,
+facets(params?: any, options?: any) { return (this as any).GET("/api/v1/facets", { params: { query: params }, ...options }); }
+} as never, 0);
     await s.fetch("library", empty);
     expect(s.error).toContain("missing both data and error");
     expect(s.response).toBeNull();
   });
 
   it("populates this.error and leaves this.response unchanged on backend error", async () => {
-    // openapi-fetch surfaces non-2xx on res.error (not via thrown
+    // The client transport surfaces non-2xx on res.error (not via thrown
     // exception). Without reading res.error the store would silently
     // ignore a 400/5xx and leave a stale this.response visible.
     const seq: Array<{ data?: FacetsResponse; error?: { detail: string } }> = [
@@ -263,7 +270,9 @@ describe("FacetsStore", () => {
     ];
     let i = 0;
     const GET = vi.fn(async () => seq[i++]);
-    const s = new FacetsStore({ GET } as never, 0);
+    const s = new FacetsStore({ GET ,
+facets(params?: any, options?: any) { return (this as any).GET("/api/v1/facets", { params: { query: params }, ...options }); }
+} as never, 0);
     await s.fetch("library", empty);
     expect(s.response).toEqual(fakeResponse);
     expect(s.error).toBeNull();
@@ -280,7 +289,9 @@ describe("FacetsStore", () => {
     const fast = Promise.resolve(fakeResponse);
     let i = 0;
     const GET = vi.fn(async () => ({ data: i++ === 0 ? await slow : await fast }));
-    const s = new FacetsStore({ GET } as never, 0);
+    const s = new FacetsStore({ GET ,
+facets(params?: any, options?: any) { return (this as any).GET("/api/v1/facets", { params: { query: params }, ...options }); }
+} as never, 0);
 
     const p1 = s.fetch("library", empty);
     // Yield so the first debounce timer (debounceMs=0) actually fires

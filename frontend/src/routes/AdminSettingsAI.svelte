@@ -1,10 +1,7 @@
 <script lang="ts">
   import { api } from "../lib/api/client";
-  import type { components } from "../lib/api/generated/schema";
+  import type { EffectiveResponse, ApplyResponse, Result as ProbeResult } from "../lib/api/generated/models";
 
-  type EffectiveResponse = components["schemas"]["EffectiveResponse"];
-  type ApplyResponse = components["schemas"]["ApplyResponse"];
-  type ProbeResult = components["schemas"]["Result"];
   type FieldValue = string | number | boolean;
   type Section = "master" | "vision" | "tag" | "caption" | "embed";
   type FieldKind = "text" | "number" | "checkbox";
@@ -86,7 +83,7 @@
   async function load(): Promise<void> {
     loading = true;
     error = null;
-    const { data: body, error: apiError } = await api.GET("/api/v1/admin/settings", {});
+    const { data: body, error: apiError } = await api.adminSettingsGet();
     if (apiError || !body) {
       error = "Unable to load admin settings.";
       loading = false;
@@ -159,10 +156,7 @@
     error = null;
     try {
       const apiSection = section;
-      const { data: body, error: apiError } = await api.PUT("/api/v1/admin/settings/sections/{section}", {
-        params: { path: { section: apiSection } },
-        body: { values: forms[section] },
-      });
+      const { data: body, error: apiError } = await api.adminSettingsApplySection(apiSection, { values: forms[section] });
       if (apiError || !body) throw new Error(detail(apiError) || "Apply failed.");
       mergeApply(section, body);
       if (body.generation_id !== undefined) generationMessage = `Building generation #${body.generation_id}`;
@@ -188,9 +182,7 @@
     error = null;
     try {
       const apiSection = section;
-      const { data: body, error: apiError } = await api.DELETE("/api/v1/admin/settings/sections/{section}", {
-        params: { path: { section: apiSection } },
-      });
+      const { data: body, error: apiError } = await api.adminSettingsResetSection(apiSection);
       if (apiError || !body) throw new Error(detail(apiError) || "Reset failed.");
       mergeApply(section, body);
       if (body.generation_id !== undefined) generationMessage = `Building generation #${body.generation_id}`;
@@ -206,9 +198,7 @@
     busy = `reset-${key}`;
     error = null;
     try {
-      const { data: body, error: apiError } = await api.DELETE("/api/v1/admin/settings/keys/{key}", {
-        params: { path: { key } },
-      });
+      const { data: body, error: apiError } = await api.adminSettingsResetKey(key);
       if (apiError || !body) throw new Error(detail(apiError) || "Reset failed.");
       mergeApply(section, body);
       if (body.generation_id !== undefined) generationMessage = `Building generation #${body.generation_id}`;
@@ -225,25 +215,21 @@
     error = null;
     try {
       if (section === "embed") {
-        const { data: body, error: apiError } = await api.POST("/api/v1/admin/settings/test/embed", {
-          body: {
+        const { data: body, error: apiError } = await api.adminSettingsTestEmbed({
             endpoint: String(forms.embed["ai.embed.endpoint"] ?? ""),
             api_key_env: String(forms.embed["ai.embed.api_key_env"] ?? ""),
             model: String(forms.embed["ai.embed.model"] ?? ""),
             dimension: Number(forms.embed["ai.embed.dimension"] ?? 0),
-          },
-        });
+          });
         if (apiError || !body) throw new Error(detail(apiError) || "Probe failed.");
         probes = { ...probes, embed: body };
       } else {
         const modelKey = section === "caption" ? "ai.caption.model" : "ai.tag.model";
-        const { data: body, error: apiError } = await api.POST("/api/v1/admin/settings/test/vision", {
-          body: {
+        const { data: body, error: apiError } = await api.adminSettingsTestVision({
             endpoint: String(forms.vision["ai.vision.endpoint"] ?? ""),
             api_key_env: String(forms.vision["ai.vision.api_key_env"] ?? ""),
             model: String((forms[section] ?? forms.tag)[modelKey] ?? forms.tag["ai.tag.model"] ?? ""),
-          },
-        });
+          });
         if (apiError || !body) throw new Error(detail(apiError) || "Probe failed.");
         probes = { ...probes, [section]: body };
       }

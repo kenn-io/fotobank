@@ -14,7 +14,12 @@ function fakeClient(responses: Array<{ data?: any; error?: any }>) {
     PATCH: handler,
     DELETE: handler,
     calls,
-  };
+
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+createAlbum(albumNameRequest?: any, options?: any) { return (this as any).POST("/api/v1/albums", { body: albumNameRequest, ...options }); },
+deleteAlbum(id?: any, options?: any) { return (this as any).DELETE("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+renameAlbum(id?: any, albumNameRequest?: any, options?: any) { return (this as any).PATCH("/api/v1/albums/{id}", { params: { path: { id } }, body: albumNameRequest, ...options }); }
+};
 }
 
 describe("AlbumsStore.loadInitial", () => {
@@ -161,7 +166,12 @@ describe("AlbumsStore concurrent loadInitial", () => {
       POST: vi.fn(),
       PATCH: vi.fn(),
       DELETE: vi.fn(),
-    };
+
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+createAlbum(albumNameRequest?: any, options?: any) { return (this as any).POST("/api/v1/albums", { body: albumNameRequest, ...options }); },
+deleteAlbum(id?: any, options?: any) { return (this as any).DELETE("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+renameAlbum(id?: any, albumNameRequest?: any, options?: any) { return (this as any).PATCH("/api/v1/albums/{id}", { params: { path: { id } }, body: albumNameRequest, ...options }); }
+};
     const store = new AlbumsStore(client as any);
     const firstLoad = store.loadInitial();
     // Start a refresh while the first page is still pending.
@@ -189,7 +199,12 @@ describe("AlbumsStore.delete pagination correctness", () => {
       POST: vi.fn(),
       PATCH: vi.fn(),
       DELETE: vi.fn(async (...args: any[]) => { calls.push(["DELETE", ...args]); return responses[i++] ?? { data: null }; }),
-    };
+
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+createAlbum(albumNameRequest?: any, options?: any) { return (this as any).POST("/api/v1/albums", { body: albumNameRequest, ...options }); },
+deleteAlbum(id?: any, options?: any) { return (this as any).DELETE("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+renameAlbum(id?: any, albumNameRequest?: any, options?: any) { return (this as any).PATCH("/api/v1/albums/{id}", { params: { path: { id } }, body: albumNameRequest, ...options }); }
+};
     const store = new AlbumsStore(client as any);
     await store.loadInitial();
     expect((store as any).nextOffset).toBe(100);
@@ -209,7 +224,12 @@ describe("AlbumsStore.delete pagination correctness", () => {
       POST: vi.fn(),
       PATCH: vi.fn(),
       DELETE: vi.fn(async () => responses[i++] ?? { data: null }),
-    };
+
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+createAlbum(albumNameRequest?: any, options?: any) { return (this as any).POST("/api/v1/albums", { body: albumNameRequest, ...options }); },
+deleteAlbum(id?: any, options?: any) { return (this as any).DELETE("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+renameAlbum(id?: any, albumNameRequest?: any, options?: any) { return (this as any).PATCH("/api/v1/albums/{id}", { params: { path: { id } }, body: albumNameRequest, ...options }); }
+};
     const store = new AlbumsStore(client as any);
     await store.loadInitial();
     expect((store as any).nextOffset).toBe(100);

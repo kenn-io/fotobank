@@ -114,7 +114,7 @@ tidy: ## go mod tidy
 api-generate: ## Regenerate OpenAPI YAML and Go/TypeScript clients
 	go run ./cmd/fotobank-openapi -out openapi.yaml
 	go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.15 -config oapi-codegen.yaml openapi.yaml
-	cd frontend && bun install --frozen-lockfile && bunx openapi-typescript ../openapi.yaml -o src/lib/api/generated/schema.ts
+	cd frontend && bun install --frozen-lockfile && bunx orval
 
 docs-build: ## Build the marketing site, guide, and Zensical docs
 	mise exec -- node scripts/docs/build.mjs

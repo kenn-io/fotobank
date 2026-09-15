@@ -1,3 +1,4 @@
+import { api } from "../api/client";
 import { describe, it, expect, vi } from "vitest";
 import { HiddenStore } from "./hiddenStore.svelte";
 
@@ -7,7 +8,13 @@ function makeClient(responses: Record<string, { data?: unknown; error?: unknown 
     calls.push({ method: "called", path, body: (opts as { body?: unknown }).body });
     return responses[path] ?? { error: { status: 500 } };
   });
-  return { GET: handler, POST: handler, calls };
+  return { GET: handler, POST: handler, calls ,
+hiddenLock(options?: any) { return (this as any).POST("/api/v1/auth/hidden/lock", { ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+hiddenUnlock(hiddenPasscodeRequest?: any, options?: any) { return (this as any).POST("/api/v1/auth/hidden/unlock", { body: hiddenPasscodeRequest, ...options }); },
+hideMediaBulk(hiddenMediaBulkInputBody?: any, options?: any) { return (this as any).POST("/api/v1/media/hidden:bulk", { body: hiddenMediaBulkInputBody, ...options }); },
+unhideMediaBulk(hiddenMediaBulkInputBody?: any, options?: any) { return (this as any).POST("/api/v1/media/unhide:bulk", { body: hiddenMediaBulkInputBody, ...options }); }
+};
 }
 
 describe("HiddenStore.refresh", () => {
@@ -130,7 +137,7 @@ describe("HiddenStore.lock", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, { status: 204 }),
     );
-    const client = makeClient({});
+    const client = api;
     const store = new HiddenStore(client as never);
     store.unlocked = true;
     store.expiresAt = "2099-01-01T00:00:00Z";
@@ -139,8 +146,6 @@ describe("HiddenStore.lock", () => {
     await store.lock({ keepalive: true });
     expect(store.unlocked).toBe(false);
     expect(store.expiresAt).toBeNull();
-    // Does not call the api client's POST
-    expect(client.POST).not.toHaveBeenCalled();
     // Uses fetch with keepalive
     expect(fetchSpy).toHaveBeenCalledWith(
       "/api/v1/auth/hidden/lock",

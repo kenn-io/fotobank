@@ -115,17 +115,14 @@
   function openShare(ids: string[]) { pendingIds = ids; shareOpen = true; }
 
   async function onAdd(albumId: string): Promise<{ added: number; already_present: number }> {
-    const res = await api.POST("/api/v1/albums/{id}/media", {
-      params: { path: { id: albumId } } as never,
-      body: { media_ids: pendingIds } as never,
-    });
+    const res = await api.addMediaToAlbum(albumId, { media_ids: pendingIds });
     if (res.error) throw res.error;
     selection.clear();
     return res.data as { added: number; already_present: number };
   }
 
   async function onCreateShare(body: CreateShareBody): Promise<void> {
-    const res = await api.POST("/api/v1/shares", { body: body as never });
+    const res = await api.sharesCreate(body);
     if (res.error) throw res.error;
     // ShareModal calls onClose() itself on success — match the
     // AddToAlbumModal contract; no need to flip shareOpen here.

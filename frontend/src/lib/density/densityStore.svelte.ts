@@ -25,7 +25,7 @@ export class DensityStore {
   private dirty = false;
 
   constructor(
-    private client: Pick<Client, "GET" | "PUT">,
+    private client: Pick<Client, "getUserSetting" | "putUserSetting">,
     private context: string,
   ) {}
 
@@ -34,9 +34,7 @@ export class DensityStore {
   }
 
   async load() {
-    const res = await this.client.GET("/api/v1/settings/user/{key}", {
-      params: { path: { key: `density.${this.context}` } },
-    });
+    const res = await this.client.getUserSetting(`density.${this.context}`);
     if (!this.dirty && res.data?.value) {
       try {
         const v = JSON.parse(res.data.value);
@@ -53,10 +51,7 @@ export class DensityStore {
   async set(p: Preset) {
     this.preset = p;
     this.dirty = true;
-    await this.client.PUT("/api/v1/settings/user/{key}", {
-      params: { path: { key: `density.${this.context}` } },
-      body: { value: JSON.stringify(p) },
-    });
+    await this.client.putUserSetting(`density.${this.context}`, { value: JSON.stringify(p) });
   }
 
   nudge(delta: 1 | -1) {

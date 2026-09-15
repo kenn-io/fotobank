@@ -157,10 +157,7 @@
   }
 
   async function onAdd(albumId: string): Promise<{ added: number; already_present: number }> {
-    const res = await api.POST("/api/v1/albums/{id}/media", {
-      params: { path: { id: albumId } } as never,
-      body: { media_ids: pendingIds } as never,
-    });
+    const res = await api.addMediaToAlbum(albumId, { media_ids: pendingIds });
     if (res.error) throw res.error;
     selection.clear();
     if (albumId === id) {
@@ -172,7 +169,7 @@
   }
 
   async function onCreateShare(body: CreateShareBody): Promise<void> {
-    const res = await api.POST("/api/v1/shares", { body: body as never });
+    const res = await api.sharesCreate(body);
     if (res.error) throw res.error;
     // ShareModal calls onClose() itself on success — just clear the
     // selection. Whichever modal owns the open flag (shareOpen or

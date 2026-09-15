@@ -14,7 +14,10 @@ async function makeAppConfig(sharingEnabled: boolean): Promise<AppConfigStore> {
         features: { sharing_enabled: sharingEnabled },
       },
     }),
-  } as unknown as Pick<Client, "GET">;
+
+facets(params?: any, options?: any) { return (this as any).GET("/api/v1/facets", { params: { query: params }, ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); }
+} as unknown as Client;
   const cfg = new AppConfigStore(client);
   await cfg.load();
   return cfg;
@@ -26,7 +29,10 @@ function defaultAppConfig(): AppConfigStore {
   // safe because Sidebar reads sharingEnabled regardless of ready.
   const client = {
     GET: async () => ({ data: undefined, error: { status: 0 } }),
-  } as unknown as Pick<Client, "GET">;
+
+facets(params?: any, options?: any) { return (this as any).GET("/api/v1/facets", { params: { query: params }, ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); }
+} as unknown as Client;
   return new AppConfigStore(client);
 }
 
