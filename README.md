@@ -89,9 +89,9 @@ from the original bytes alone.
 ## What you can do today
 
 - Import photos, videos, RAW files, and sidecars without modifying the source.
-  Keep related files together and detect duplicate content within an owner.
+  Keep related files together and detect duplicate content in your library.
 - Browse the library, inspect photo details, organize albums, and manage
-  privacy and sharing. Owner-side sharing UI is optional; its CLI and API
+  privacy and sharing. The in-app sharing controls are optional; the CLI and API
   remain available.
 - Create partial, writable checkouts for editors and shell tools. Inspect
   changes and explicitly commit settled edits as new versions, with conflicts
@@ -126,6 +126,8 @@ share it. Broader enrichment and agent workflows remain aspirations.
 
 The [setup guide](docs/guides/setup.md) covers building the current source,
 configuring storage, starting the daemon, and importing a small collection.
+You can try it with local folders under your own OS account; a NAS and separate
+user registration are not required.
 The setup is developer-oriented; it is not a stable release or a managed service.
 
 After setup, use the same configuration and OS account for the web app and CLI:
