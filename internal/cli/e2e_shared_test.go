@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"io"
 	"net/http"
@@ -283,7 +284,7 @@ admin_listen = "127.0.0.1:0"
 	r.NoError(err)
 	r.Equal(http.StatusOK, resp.StatusCode)
 	var emptyResp struct {
-		Items []json.RawMessage `json:"items"`
+		Items []jsontext.Value `json:"items"`
 	}
 	r.NoError(json.NewDecoder(resp.Body).Decode(&emptyResp))
 	r.NoError(resp.Body.Close())

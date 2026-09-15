@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 
 	"go.kenn.io/fotobank/internal/owners"
@@ -101,7 +101,7 @@ type NormalizedReq struct {
 // NormalizedHash binds the request without delimiter ambiguity. The JSON
 // encoder sorts map keys; flattenFilter sorts multi-valued fields.
 func NormalizedHash(r NormalizedReq) string {
-	encoded, _ := json.Marshal(r)
+	encoded, _ := json.Marshal(r, json.Deterministic(true))
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])
 }

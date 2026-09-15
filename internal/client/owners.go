@@ -2,25 +2,29 @@ package client
 
 import (
 	"context"
-	"net/http"
-	"net/url"
 
+	"go.kenn.io/fotobank/internal/client/generated"
 	"go.kenn.io/fotobank/internal/httpapi"
 )
 
 func RegisterOwner(ctx context.Context, configPath, version string, request httpapi.RegisterOwnerRequest) (httpapi.OwnerResult, error) {
 	var result httpapi.OwnerResult
-	err := call(ctx, configPath, version, http.MethodPost, "/api/v1/operator/owners", request, &result, "list owners before retrying registration")
+	err := call(ctx, configPath, version, &result, "list owners before retrying registration", func(c *generated.Client) (*generated.RegisterOwnerResponse, error) {
+		return c.RegisterOwner(ctx, &generated.RegisterOwnerRequestOptions{Body: &request})
+	})
 	return result, err
 }
 
 func ListOwners(ctx context.Context, configPath, version string) (httpapi.OwnerListResult, error) {
 	var result httpapi.OwnerListResult
-	err := call(ctx, configPath, version, http.MethodGet, "/api/v1/operator/owners", nil, &result, "retry owner listing")
+	err := call(ctx, configPath, version, &result, "retry owner listing", func(c *generated.Client) (*generated.ListOwnersResponse, error) {
+		return c.ListOwners(ctx)
+	})
 	return result, err
 }
 
 func RemoveOwner(ctx context.Context, configPath, version string, request httpapi.RemoveOwnerRequest) error {
-	query := url.Values{"hub": {request.Hub}, "user_id": {request.UserID}}
-	return call(ctx, configPath, version, http.MethodDelete, "/api/v1/operator/owners?"+query.Encode(), nil, nil, "list owners before retrying removal")
+	return call(ctx, configPath, version, nil, "list owners before retrying removal", func(c *generated.Client) (*struct{}, error) {
+		return c.RemoveOwner(ctx, &generated.RemoveOwnerRequestOptions{Query: &generated.RemoveOwnerQuery{Hub: request.Hub, UserID: request.UserID}})
+	})
 }

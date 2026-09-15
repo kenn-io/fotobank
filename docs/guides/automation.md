@@ -385,7 +385,7 @@ than guessing from partially parsed text.
 
 Discover JSON operations, including checkout and backup commands, search, AI,
 and filter counts, through
-`/api/openapi.json` on the running server or the repository's `openapi.json`.
+`/api/openapi.json` on the running server or the repository's `openapi.yaml`.
 Interactive documentation is at `/api/docs`. A documented operation can still
 report that its service is unavailable; schema presence does not mean AI is
 enabled. Raw byte and event routes are outside that JSON contract. Consult the

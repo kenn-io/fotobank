@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 
@@ -34,7 +34,7 @@ func newBackupInitCmd() *cobra.Command {
 				return err
 			}
 			if asJSON {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(repository)
+				return json.MarshalWrite(cmd.OutOrStdout(), repository)
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "archive repository initialized: %s\n", repository.Root)
 			return err
@@ -75,14 +75,14 @@ func newBackupCreateCmd() *cobra.Command {
 			}
 			if err != nil {
 				if asJSON {
-					return errors.Join(err, json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
+					return errors.Join(err, json.MarshalWrite(cmd.OutOrStdout(), struct {
 						Error string `json:"error"`
 					}{err.Error()}))
 				}
 				return err
 			}
 			if asJSON {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(snapshot)
+				return json.MarshalWrite(cmd.OutOrStdout(), snapshot)
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "archive created: %s (%d content bytes)\n", snapshot.ID, snapshot.BlobBytes)
 			return err
@@ -121,7 +121,7 @@ func newBackupVerifyCmd() *cobra.Command {
 				return err
 			}
 			if asJSON {
-				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(report); err != nil {
+				if err := json.MarshalWrite(cmd.OutOrStdout(), report); err != nil {
 					return err
 				}
 			} else {
@@ -155,7 +155,7 @@ func listArchives(cmd *cobra.Command, repositoryPath string, asJSON bool) error 
 		return err
 	}
 	if asJSON {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(snapshots)
+		return json.MarshalWrite(cmd.OutOrStdout(), snapshots)
 	}
 	for _, snapshot := range snapshots {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %d bytes  %s\n", snapshot.ID, snapshot.CreatedAt, snapshot.BlobBytes, snapshot.Tag); err != nil {
@@ -214,7 +214,7 @@ func restoreArchive(cmd *cobra.Command, repositoryPath, snapshotID, target strin
 		return err
 	}
 	if asJSON {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(report)
+		return json.MarshalWrite(cmd.OutOrStdout(), report)
 	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "archive restored and verified: %s\nvault: %s\ncatalog: %s\nverified content references: %d\n", report.SnapshotID, report.VaultRoot, report.CatalogPath, report.ReferencesVerified)
 	return err

@@ -3,7 +3,7 @@ package brokerexec
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -173,7 +173,7 @@ func (r *Registrar) execOnce(ctx context.Context, op string,
 	defer cancel()
 
 	var stdinBuf bytes.Buffer
-	if err := json.NewEncoder(&stdinBuf).Encode(payload); err != nil {
+	if err := json.MarshalWrite(&stdinBuf, payload); err != nil {
 		return fmt.Errorf("brokerexec %s: marshal payload: %w", op, err)
 	}
 

@@ -111,9 +111,10 @@ nilaway: ## Run nilaway (pre-push tier)
 tidy: ## go mod tidy
 	go mod tidy
 
-api-generate: ## Regenerate OpenAPI spec + TypeScript schema
-	go run ./cmd/fotobank-openapi -out openapi.json
-	cd frontend && bun install && bunx openapi-typescript ../openapi.json -o src/lib/api/generated/schema.ts
+api-generate: ## Regenerate OpenAPI YAML and Go/TypeScript clients
+	go run ./cmd/fotobank-openapi -out openapi.yaml
+	go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.15 -config oapi-codegen.yaml openapi.yaml
+	cd frontend && bun install --frozen-lockfile && bunx openapi-typescript ../openapi.yaml -o src/lib/api/generated/schema.ts
 
 docs-build: ## Build the marketing site, guide, and Zensical docs
 	mise exec -- node scripts/docs/build.mjs
@@ -128,7 +129,7 @@ install-hooks: ## Install prek git hooks
 	prek install -f
 
 clean: ## Remove built artefacts
-	rm -rf $(BIN_DIR) openapi.json
+	rm -rf $(BIN_DIR)
 
 help: ## Print available targets
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)

@@ -69,8 +69,10 @@ Docbank vault, or provider. Missing search, AI, or facets services produce a
 operation from the contract. A configured server keeps its existing behavior.
 
 The server publishes the contract at `/api/openapi.json` and interactive docs
-at `/api/docs`. `make api-generate` writes the checked-in `openapi.json` and
-frontend TypeScript bindings. The primary and attached-file download registrations
+at `/api/docs`. `make api-generate` writes the checked-in `openapi.yaml`,
+Go client, and frontend TypeScript bindings. The Go client uses
+`github.com/doordash-oss/oapi-codegen-dd/v3` and shares the Huma wire types.
+The API installs an `encoding/json/v2` format for JSON requests and responses. The primary and attached-file download registrations
 also add their binary response contracts to Huma's OpenAPI document. Their raw
 handlers still own streaming, headers, and range behavior; other byte and event
 routes remain outside the generated contract. See

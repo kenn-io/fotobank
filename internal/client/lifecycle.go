@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"time"
 
+	"go.kenn.io/fotobank/internal/client/generated"
 	"go.kenn.io/fotobank/internal/config"
 	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/kit/daemon"
@@ -84,7 +84,7 @@ func (l Lifecycle) Status(ctx context.Context) (httpapi.DaemonStatus, error) {
 		return httpapi.DaemonStatus{}, err
 	}
 	var out httpapi.DaemonStatus
-	err = callRecord(ctx, rec, http.MethodGet, "/api/v1/operator/daemon", nil, &out, "retry daemon status")
+	err = callRecord(ctx, rec, &out, "retry daemon status", func(c *generated.Client) (*generated.DaemonStatusResponse, error) { return c.DaemonStatus(ctx) })
 	return out, err
 }
 
@@ -203,7 +203,7 @@ func (l Lifecycle) stopRecord(ctx context.Context, rec daemon.RuntimeRecord) err
 	defer cancel()
 	// Shutdown is an authenticated HTTP operation on every platform. Do not
 	// force-kill a daemon with outstanding writes when the drain budget expires.
-	if err := callRecord(ctx, rec, http.MethodPost, "/api/v1/operator/daemon/stop", nil, nil, "inspect daemon status before retrying"); err != nil {
+	if err := callRecord(ctx, rec, nil, "inspect daemon status before retrying", func(c *generated.Client) (*struct{}, error) { return c.StopDaemon(ctx) }); err != nil {
 		return err
 	}
 	store := daemon.RuntimeStore{Dir: l.ConfigPath + ".operator"}

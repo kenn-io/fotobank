@@ -2,7 +2,8 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"strings"
@@ -158,9 +159,7 @@ func runSharesCreate(ctx context.Context, o sharesCreateOpts) error {
 	if err != nil {
 		return err
 	}
-	enc := json.NewEncoder(o.w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(s)
+	return json.MarshalWrite(o.w, s, jsontext.WithIndent("  "))
 }
 
 // --- list / show / revoke / retry ---
@@ -241,9 +240,7 @@ func runSharesList(ctx context.Context, o sharesListOpts) error {
 		return err
 	}
 	if o.asJSON {
-		enc := json.NewEncoder(o.w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(page)
+		return json.MarshalWrite(o.w, page, jsontext.WithIndent("  "))
 	}
 	tw := tabwriter.NewWriter(o.w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "UUID\tSTATUS\tTARGET\tGRANTEE\tCREATED\tLAST ERROR")
@@ -277,9 +274,7 @@ func newSharesShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(det)
+			return json.MarshalWrite(cmd.OutOrStdout(), det, jsontext.WithIndent("  "))
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "")
@@ -304,9 +299,7 @@ func newSharesRevokeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(s)
+			return json.MarshalWrite(cmd.OutOrStdout(), s, jsontext.WithIndent("  "))
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "")
@@ -331,9 +324,7 @@ func newSharesRetryCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(s)
+			return json.MarshalWrite(cmd.OutOrStdout(), s, jsontext.WithIndent("  "))
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "")

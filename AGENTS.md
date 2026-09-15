@@ -21,7 +21,7 @@ make test-short       # short tests only
 make lint             # golangci-lint --fix + testify-helper-check
 make nilaway          # pre-push tier
 make tidy             # go mod tidy
-make api-generate     # regenerate openapi.json
+make api-generate     # regenerate openapi.yaml
 make docs-build       # build marketing site, guide, and Zensical docs
 make docs-check       # build and validate the complete docs site
 make docs-serve       # serve the generated site on localhost
@@ -33,7 +33,7 @@ make install-hooks    # install prek git hooks
 ```
 cmd/
 ├── fotobank/              — CLI entry; main wires into internal/cli
-└── fotobank-openapi/      — generates openapi.json from the huma API
+└── fotobank-openapi/      — generates openapi.yaml from the huma API
 
 internal/
 ├── album/                 — albums domain

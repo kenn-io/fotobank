@@ -3,7 +3,7 @@ package probe
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 )
 
@@ -68,7 +68,7 @@ func Vision(ctx context.Context, cfg VisionConfig) Result {
 	}
 
 	var decoded visionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &decoded); err != nil {
 		return malformed(latency, "decode response: "+err.Error())
 	}
 	if len(decoded.Choices) == 0 {

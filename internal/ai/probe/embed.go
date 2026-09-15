@@ -2,7 +2,7 @@ package probe
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 )
 
@@ -38,7 +38,7 @@ func Embed(ctx context.Context, cfg EmbedConfig) Result {
 	}
 
 	var decoded embedResponse
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &decoded); err != nil {
 		return malformed(latency, "decode response: "+err.Error())
 	}
 	if len(decoded.Data) == 0 {

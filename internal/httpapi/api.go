@@ -5,6 +5,8 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json/v2"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -173,6 +175,13 @@ func New(deps Deps) (http.Handler, error) {
 func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("Fotobank", version.Short)
+	cfg.Formats = map[string]huma.Format{
+		"application/json": {
+			Marshal:   func(w io.Writer, v any) error { return json.MarshalWrite(w, v) },
+			Unmarshal: func(data []byte, v any) error { return json.Unmarshal(data, v) },
+		},
+	}
+	cfg.Formats["json"] = cfg.Formats["application/json"]
 	// Huma's defaults register the OpenAPI spec, schemas, and docs UI at
 	// the document root (/openapi.{json,yaml}, /schemas, /docs). The
 	// outer mux in cmd/fotobank/server mounts this handler under /api/

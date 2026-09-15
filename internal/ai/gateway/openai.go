@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -160,7 +160,7 @@ func (c *OpenAICompatible) doOnce(ctx context.Context, payload []byte) (string, 
 	}
 
 	var r chatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &r); err != nil {
 		return "", 0, false, fmt.Errorf("%w: decode: %v", ErrTransient, err)
 	}
 	if len(r.Choices) == 0 {

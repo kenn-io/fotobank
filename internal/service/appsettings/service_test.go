@@ -2,7 +2,7 @@ package appsettings_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"os"
 	"path/filepath"
@@ -67,17 +67,17 @@ func TestKeysForSection(t *testing.T) {
 
 func TestValidateValueRejectsWrongJSONType(t *testing.T) {
 	require := require.New(t)
-	require.NoError(svc.ValidateValue("ai.enabled", json.RawMessage(`true`)))
-	require.Error(svc.ValidateValue("ai.enabled", json.RawMessage(`"true"`)))
-	require.NoError(svc.ValidateValue("ai.embed.dimension", json.RawMessage(`512`)))
-	require.Error(svc.ValidateValue("ai.embed.dimension", json.RawMessage(`"512"`)))
-	require.Error(svc.ValidateValue("ai.embed.dimension", json.RawMessage(`0`)))
-	require.NoError(svc.ValidateValue("ai.embed.model", json.RawMessage(`"clip"`)))
-	require.Error(svc.ValidateValue("ai.embed.model", json.RawMessage(`true`)))
+	require.NoError(svc.ValidateValue("ai.enabled", jsontext.Value(`true`)))
+	require.Error(svc.ValidateValue("ai.enabled", jsontext.Value(`"true"`)))
+	require.NoError(svc.ValidateValue("ai.embed.dimension", jsontext.Value(`512`)))
+	require.Error(svc.ValidateValue("ai.embed.dimension", jsontext.Value(`"512"`)))
+	require.Error(svc.ValidateValue("ai.embed.dimension", jsontext.Value(`0`)))
+	require.NoError(svc.ValidateValue("ai.embed.model", jsontext.Value(`"clip"`)))
+	require.Error(svc.ValidateValue("ai.embed.model", jsontext.Value(`true`)))
 }
 
 func TestNonEditableKeyReturnsSentinel(t *testing.T) {
-	err := svc.ValidateValue("http.listen_address", json.RawMessage(`"127.0.0.1:1"`))
+	err := svc.ValidateValue("http.listen_address", jsontext.Value(`"127.0.0.1:1"`))
 	require.ErrorIs(t, err, svc.ErrKeyNotEditable)
 	require.False(t, svc.Editable("http.listen_address"))
 }
