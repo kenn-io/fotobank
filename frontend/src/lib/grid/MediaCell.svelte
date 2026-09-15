@@ -1,11 +1,13 @@
 <!-- frontend/src/lib/grid/MediaCell.svelte -->
 <script lang="ts">
+  import { Checkbox } from "@kenn-io/kit-ui";
   import type { MediaLite } from "./monthChunkLayout";
 
-  let { media, selected, onCellClick }: {
+  let { media, selected, onCellClick, onSelect }: {
     media: MediaLite;
     selected: boolean;
     onCellClick: (e: MouseEvent) => void;
+    onSelect: (selected: boolean) => void;
   } = $props();
 
   // Tracks whether the current thumb URL has 404'd in this cell.
@@ -47,31 +49,52 @@
   );
 </script>
 
-<a
-  href={`/media/${media.id}`}
-  data-media-id={media.id}
-  data-thumb-status={media.thumbStatus ?? "pending"}
-  aria-label={`Photo ${media.id}`}
-  class:selected
-  onclick={onCellClick}
->
-  {#if visual === "ready" && media.thumbUrl}
-    <img
-      src={media.thumbUrl}
-      alt=""
-      loading="lazy"
-      decoding="async"
-      style="width:100%;height:100%;object-fit:cover"
-      onerror={() => (imgError = true)}
-    />
-  {:else if visual === "loading"}
-    <div class="shimmer" aria-label="Thumbnail still processing"></div>
-  {:else}
-    <div class="placeholder" aria-hidden="true"></div>
-  {/if}
-</a>
+<div class="media-cell">
+  <a
+    href={`/media/${media.id}`}
+    data-media-id={media.id}
+    data-thumb-status={media.thumbStatus ?? "pending"}
+    aria-label={`Photo ${media.id}`}
+    class:selected
+    onclick={onCellClick}
+  >
+    {#if visual === "ready" && media.thumbUrl}
+      <img
+        src={media.thumbUrl}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        style="width:100%;height:100%;object-fit:cover"
+        onerror={() => (imgError = true)}
+      />
+    {:else if visual === "loading"}
+      <div class="shimmer" aria-label="Thumbnail still processing"></div>
+    {:else}
+      <div class="placeholder" aria-hidden="true"></div>
+    {/if}
+  </a>
+  <Checkbox
+    class="photo-select"
+    ariaLabel={`Select ${media.id}`}
+    checked={selected}
+    onchange={onSelect}
+  />
+</div>
 
 <style>
+  .media-cell { position: relative; width: 100%; height: 100%; }
+  .media-cell :global(.photo-select) {
+    position: absolute;
+    top: 0;
+    left: 0;
+    /* Leave the photo link reachable even in short panorama rows. */
+    width: min(44px, 40%);
+    height: min(44px, 100%);
+    justify-content: center;
+    background: color-mix(in srgb, var(--bg-surface) 85%, transparent);
+    border-radius: 0 0 4px 0;
+  }
+  .media-cell :global(.kit-checkbox__box) { max-width: 100%; max-height: 100%; }
   a {
     display: block;
     width: 100%;

@@ -92,6 +92,13 @@ keep their separate messages.
 
 ## Media presentation
 
+Each grid photo has a Kit checkbox for touch and keyboard selection. The
+checkbox updates the shared selection without opening the photo; the photo
+link still opens detail or the lightbox. Ctrl/Cmd-click, Shift-click, and group
+selection keep their existing behavior. Selection actions use Kit buttons and
+wrap on narrow screens, with larger touch targets, so album removal and other
+bulk actions stay within the view.
+
 Library and search results use thumbnail versions as cache-busting input.
 Media detail and lightbox views request full-size media only when needed.
 Videos use HTTP byte ranges so browsers can seek without downloading the whole

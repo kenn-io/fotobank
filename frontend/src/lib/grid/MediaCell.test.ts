@@ -14,6 +14,7 @@ describe("MediaCell", () => {
     const { container } = render(MediaCell, {
       media: mediaWithThumb,
       selected: false,
+      onSelect: () => {},
       onCellClick: () => {},
     });
     const a = container.querySelector("a")!;
@@ -28,6 +29,7 @@ describe("MediaCell", () => {
     const { container } = render(MediaCell, {
       media: mediaWithThumb,
       selected: true,
+      onSelect: () => {},
       onCellClick: () => {},
     });
     expect(container.querySelector("a")?.classList.contains("selected")).toBe(true);
@@ -36,7 +38,7 @@ describe("MediaCell", () => {
   it("invokes onCellClick on click", async () => {
     const onCellClick = vi.fn();
     const { container } = render(MediaCell, {
-      media: mediaWithThumb, selected: false, onCellClick,
+      media: mediaWithThumb, selected: false, onCellClick, onSelect: () => {},
     });
     await fireEvent.click(container.querySelector("a")!);
     expect(onCellClick).toHaveBeenCalledTimes(1);
@@ -49,7 +51,7 @@ describe("MediaCell", () => {
     // shimmers to read as in-flight; the next refetch will land the
     // bumped ?v= URL and the imgError reset effect will re-attempt.
     const { container } = render(MediaCell, {
-      media: mediaWithThumb, selected: false, onCellClick: () => {},
+      media: mediaWithThumb, selected: false, onCellClick: () => {}, onSelect: () => {},
     });
     const img = container.querySelector("img")!;
     await fireEvent.error(img);
@@ -65,7 +67,7 @@ describe("MediaCell", () => {
     // `undefined`; omit the property instead.
     const { container } = render(MediaCell, {
       media: { id: "x", aspect: 1, thumbStatus: "no_preview" as const },
-      selected: false, onCellClick: () => {},
+      selected: false, onCellClick: () => {}, onSelect: () => {},
     });
     expect(container.querySelector("img")).toBeNull();
     expect(container.querySelector(".placeholder")).not.toBeNull();
@@ -79,7 +81,7 @@ describe("MediaCell", () => {
     // staying on the placeholder forever.
     const { container, rerender } = render(MediaCell, {
       media: { id: "x", aspect: 1, thumbUrl: "/api/v1/media/x/thumb?size=grid&v=1", thumbStatus: "ready" as const },
-      selected: false, onCellClick: () => {},
+      selected: false, onCellClick: () => {}, onSelect: () => {},
     });
     await fireEvent.error(container.querySelector("img")!);
     expect(container.querySelector("img")).toBeNull();
@@ -87,7 +89,7 @@ describe("MediaCell", () => {
 
     await rerender({
       media: { id: "x", aspect: 1, thumbUrl: "/api/v1/media/x/thumb?size=grid&v=2", thumbStatus: "ready" as const },
-      selected: false, onCellClick: () => {},
+      selected: false, onCellClick: () => {}, onSelect: () => {},
     });
     const img = container.querySelector("img");
     expect(img).not.toBeNull();
@@ -104,7 +106,7 @@ describe("MediaCell", () => {
     const url = "/api/v1/media/x/thumb?size=grid&v=1";
     const { container, rerender } = render(MediaCell, {
       media: { id: "x", aspect: 1, thumbUrl: url, thumbStatus: "ready" as const },
-      selected: false, onCellClick: () => {},
+      selected: false, onCellClick: () => {}, onSelect: () => {},
     });
     await fireEvent.error(container.querySelector("img")!);
     expect(container.querySelector("img")).toBeNull();
@@ -115,7 +117,7 @@ describe("MediaCell", () => {
     // changing thumb_version.
     await rerender({
       media: { id: "x", aspect: 1, thumbUrl: url, thumbStatus: "ready" as const },
-      selected: false, onCellClick: () => {},
+      selected: false, onCellClick: () => {}, onSelect: () => {},
     });
     expect(container.querySelector("img")).toBeNull();
     expect(container.querySelector(".shimmer")).not.toBeNull();

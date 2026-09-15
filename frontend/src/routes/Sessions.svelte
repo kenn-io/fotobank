@@ -226,6 +226,7 @@
           <MediaCell
             media={m}
             selected={selection.ids.has(m.id)}
+            onSelect={(checked) => selection.set(m.id, checked)}
             onCellClick={(e) => handleCellClick(e, m.id)}
           />
         {/snippet}

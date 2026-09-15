@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "@kenn-io/kit-ui";
   import type { AppConfigStore } from "../app/appConfig.svelte";
 
   let {
@@ -44,29 +45,31 @@
 
 {#if mediaIds.length > 0}
   <div class="media-actions">
-    <button type="button" onclick={() => onAdd(mediaIds)}>Add to album</button>
+    <Button onclick={() => onAdd(mediaIds)}>Add to album</Button>
 
     {#if showShare}
-      <button type="button" onclick={() => onShare(mediaIds)}>Share</button>
+      <Button onclick={() => onShare(mediaIds)}>Share</Button>
     {/if}
 
     {#if isUnhideContext && onUnhide}
-      <button type="button" onclick={() => onUnhide!(mediaIds)}>Unhide</button>
+      <Button onclick={() => onUnhide!(mediaIds)}>Unhide</Button>
     {/if}
 
     {#if showHide && onHide}
-      <button type="button" onclick={() => onHide!(mediaIds)}>Hide</button>
+      <Button onclick={() => onHide!(mediaIds)}>Hide</Button>
     {/if}
 
     {#if context === "album" && onRemove && albumId}
-      <button type="button" class="danger" onclick={() => onRemove!(mediaIds)}>
+      <Button tone="danger" onclick={() => onRemove!(mediaIds)}>
         Remove from this album
-      </button>
+      </Button>
     {/if}
   </div>
 {/if}
 
 <style>
-  .media-actions { display: flex; gap: 8px; }
-  .danger { color: var(--accent-red); border-color: var(--accent-red); }
+  .media-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  @media (max-width: 760px) {
+    .media-actions { --kit-control-height: 44px; }
+  }
 </style>

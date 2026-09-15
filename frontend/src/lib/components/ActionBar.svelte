@@ -1,6 +1,7 @@
 <!-- frontend/src/lib/components/ActionBar.svelte -->
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { Button } from "@kenn-io/kit-ui";
   import type { SelectionStore } from "../selection/selectionStore.svelte";
 
   // selectedCount overrides selection.ids.size for routes that scope
@@ -21,13 +22,14 @@
     {#if actions}
       <span class="actions">{@render actions()}</span>
     {/if}
-    <button type="button" onclick={() => selection.clear()}>Done</button>
+    <Button onclick={() => selection.clear()}>Done</Button>
   </div>
 {/if}
 
 <style>
   .action-bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
     padding: 8px 12px;
@@ -35,5 +37,8 @@
     border-bottom: 1px solid var(--border-default);
   }
   .count { font-weight: 600; }
-  .actions { display: flex; gap: 8px; }
+  .actions { display: flex; flex-wrap: wrap; min-width: 0; gap: 8px; }
+  @media (max-width: 760px) {
+    .action-bar { --kit-control-height: 44px; }
+  }
 </style>
