@@ -106,6 +106,9 @@ func TestMediaDiscovery(t *testing.T) {
 func TestMediaInvalidArgumentsDoNotStartDaemon(t *testing.T) {
 	for _, args := range [][]string{
 		{"media", "show", "not-an-id"},
+		{"media", "download", "not-an-id", "--output", "photo.jpg"},
+		{"media", "download", "550e8400-e29b-41d4-a716-446655440000"},
+		{"media", "download", "550e8400-e29b-41d4-a716-446655440000", "--file", "invalid", "--output", "photo.jpg"},
 		{"media", "list", "--type", "raw"},
 		{"media", "list", "--limit", "0"},
 		{"media", "list", "--limit", "1001"},

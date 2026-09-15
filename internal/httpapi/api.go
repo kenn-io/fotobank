@@ -169,7 +169,7 @@ func New(deps Deps) (http.Handler, error) {
 
 // buildAPI registers the JSON contract independently of runtime services so
 // New and OpenAPISpec share operation definitions. Handlers resolve services
-// only when called. Raw byte and event routes are outside the JSON contract.
+// only when called. Original-byte routes also publish their streaming contract.
 func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	mux := http.NewServeMux()
 	cfg := huma.DefaultConfig("Fotobank", version.Short)
@@ -200,8 +200,8 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerMe(api, deps.SharingEnabled, deps.AdminPrincipals)
 	registerMediaGeo(api, deps.MediaService, deps.HiddenAuth)
 	registerMedia(api, deps.MediaService)
-	registerMediaOriginal(mux, deps.MediaService)
-	registerMediaFile(mux, deps.MediaService)
+	registerMediaOriginal(mux, api, deps.MediaService)
+	registerMediaFile(mux, api, deps.MediaService)
 	registerMediaThumb(mux, deps.ThumbService)
 	registerAlbums(api, deps.AlbumService)
 	registerShares(api, deps.ShareService, deps.PrincipalDisplay)

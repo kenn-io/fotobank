@@ -161,7 +161,39 @@ leave stdout empty and exit nonzero.
 
 These commands use the existing photo HTTP endpoints and start the daemon if
 needed. They use the configured stub owner and do not unlock hidden media or
-read other owners' photos. File downloads are not CLI commands yet.
+read other owners' photos.
+
+## Download an original or attachment
+
+Save the primary file, or select an attachment ID from `media show`:
+
+```sh
+fotobank media download <photo-id> --output photo.jpg
+fotobank media download <photo-id> --file <file-id> --output photo.xmp --json
+```
+
+`--output` is required. Relative paths are relative to the CLI's working
+directory, not the daemon's. The parent directory must already exist and support
+hardlinks. An existing file, directory, or symlink is never replaced. Binary
+stdout, bulk downloads, resume, and overwrite are not supported.
+
+The CLI checks the destination before starting the daemon. It downloads to a
+temporary file in that directory, verifies the size and SHA-256 from the photo's
+metadata, then publishes the completed file. The hardlink is between two names
+of this new local copy, never a link to Docbank storage. The final name appears
+only after verification. Ctrl-C cancels the request. Failures before publication
+remove the temporary file during normal cleanup. An error during later cleanup
+or receipt output can leave the completed file; check the destination before
+retrying. Force-killing the process can leave a `.fotobank-download-*.tmp` file;
+remove it after confirming the command is no longer running.
+
+JSON success contains `media_id`, optional `file_id`, the absolute `output` path,
+`size`, and `sha256`. A failed request or verification writes no success receipt
+and exits nonzero. If the stored content changes between reading its metadata
+and downloading it, verification can fail; retry the command. The CLI does not
+retry automatically or unlock hidden media. A downloaded file is an ordinary
+copy: editing it does not update Fotobank. Use a [checkout](checkouts.md) when
+you want to commit edits as new versions.
 
 ## Organize albums
 

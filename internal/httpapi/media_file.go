@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"go.kenn.io/fotobank/internal/auth/hidden"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/media"
@@ -15,11 +17,13 @@ import (
 // registerMediaFile serves any file attached to an owned asset. The asset ID
 // remains the authorization boundary; a file ID from another asset is hidden
 // behind the same not-found response.
-func registerMediaFile(mux *http.ServeMux, svc *service.MediaService) {
+func registerMediaFile(mux *http.ServeMux, api huma.API, svc *service.MediaService) {
+	const path = "/api/v1/media/{id}/files/{fileID}/content"
+	registerDownloadSchema(api, path, "download-media-file", "id", "fileID")
 	if svc == nil {
 		return
 	}
-	mux.Handle("GET /api/v1/media/{id}/files/{fileID}/content", WrapMuxHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET "+path, WrapMuxHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ident, ok := IdentityFromContext(r.Context())
 		if !ok {
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
