@@ -88,6 +88,16 @@ func TestMediaDownloadInterruptCleanup(t *testing.T) {
 		<-done
 		r.FailNow("download did not start", "%s", stderr.String())
 	}
+	// A server flush does not mean the client has received the response yet.
+	// Interrupt only after bytes reach disk so this exercises partial-file cleanup.
+	r.Eventually(func() bool {
+		files, err := os.ReadDir(destination)
+		if err != nil || len(files) != 1 {
+			return false
+		}
+		info, err := files[0].Info()
+		return err == nil && info.Size() > 0
+	}, 5*time.Second, 10*time.Millisecond, "download must receive bytes before Ctrl-C")
 	r.NoError(command.Process.Signal(os.Interrupt))
 	<-done
 	r.Error(waitErr)
