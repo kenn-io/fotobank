@@ -338,6 +338,7 @@
 
 {#if detail.itemIds.length > 0}
   <VirtualGrid
+    selectable
     {months}
     onLoadMore={loadMore}
     targetRowHeight={200}

@@ -180,6 +180,7 @@
 <FilterChipStrip filters={activeFilters} {tagLabels} onChange={onFiltersChange} />
 
 <VirtualGrid
+  selectable
   months={mediaStore.months}
   onLoadMore={() => mediaStore.loadMore()}
   targetRowHeight={density.targetRowHeight}

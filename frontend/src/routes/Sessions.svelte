@@ -218,7 +218,7 @@
     {@const first = s.items[0]}
     {#if first}
       <MonthChunk
-        items={s.items.map((m) => ({ id: m.id, aspect: m.aspect, thumbUrl: m.thumbUrl }))}
+        items={s.items.map((m) => ({ id: m.id, aspect: m.aspect, thumbUrl: m.thumbUrl, thumbStatus: m.thumbStatus }))}
         label={`${first.taken.toUTCString().slice(0, 16)} · ${s.items.length} photos`}
         options={{ containerWidth, targetRowHeight: density.targetRowHeight, gap: 4 }}
       >
@@ -226,6 +226,7 @@
           <MediaCell
             media={m}
             selected={selection.ids.has(m.id)}
+            onSelect={(checked) => selection.set(m.id, checked)}
             onCellClick={(e) => handleCellClick(e, m.id)}
           />
         {/snippet}

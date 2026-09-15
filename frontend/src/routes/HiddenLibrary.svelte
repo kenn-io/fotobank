@@ -177,6 +177,7 @@
     </ActionBar>
 
     <VirtualGrid
+      selectable
       months={hiddenMediaStore.months}
       onLoadMore={() => hiddenMediaStore.loadMore()}
       onOpenMedia={openMedia}

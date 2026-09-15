@@ -92,6 +92,17 @@ keep their separate messages.
 
 ## Media presentation
 
+Library, Sessions, Albums, and Hidden offer Kit checkboxes for touch and
+keyboard selection. The checkbox updates the shared selection without opening
+the photo; the photo link still opens detail or the lightbox. These routes also
+support Ctrl/Cmd-click and Shift-click selection. Selection actions use Kit
+buttons and wrap on narrow screens, with larger touch targets.
+
+Grid selection is opt-in and requires a route with selection actions. Search
+and Map are browse-only: they show no selection controls or outlines, leave
+Ctrl/Cmd-click and Shift-click to the browser, and open the viewer on their
+current results without using another route's selection.
+
 Library and search results use thumbnail versions as cache-busting input.
 Media detail and lightbox views request full-size media only when needed.
 Videos use HTTP byte ranges so browsers can seek without downloading the whole
