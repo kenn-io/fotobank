@@ -61,6 +61,8 @@ func TestMediaDownload(t *testing.T) {
 	startCheckoutServer(t, cfg, dbPath)
 	destination := t.TempDir()
 	t.Chdir(destination)
+	canonicalDestination, err := filepath.EvalSymlinks(destination)
+	r.NoError(err)
 	for _, tc := range []struct {
 		name string
 		file []string
@@ -87,7 +89,7 @@ func TestMediaDownload(t *testing.T) {
 			}
 			r.NoError(json.Unmarshal(out.Bytes(), &result))
 			r.Equal(item.ID, result.MediaID)
-			r.Equal(filepath.Join(destination, tc.name), result.Output)
+			r.Equal(filepath.Join(canonicalDestination, tc.name), result.Output)
 			r.Equal(int64(len(tc.body)), result.Size)
 			r.Equal(tc.sha, result.SHA256)
 			if tc.file != nil {
