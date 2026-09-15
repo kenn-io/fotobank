@@ -39,11 +39,13 @@ func newOwnersAddCmd() *cobra.Command {
 		userID     string
 		storageKey string
 		handle     string
+		asJSON     bool
 	)
 	cmd := &cobra.Command{
-		Use:   "add",
-		Short: "Register a new owner",
-		Args:  usageArgs(cobra.NoArgs),
+		Use:     "add",
+		Short:   "Register a new owner",
+		Example: `  fotobank owners add --hub example --user-id user-a --handle "User A" --json`,
+		Args:    usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if hub == "" || userID == "" {
 				return newUsageError("--hub and --user-id are required")
@@ -65,6 +67,9 @@ func newOwnersAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if asJSON {
+				return json.MarshalWrite(cmd.OutOrStdout(), owner)
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), "added", owner.Hub+":"+owner.UserID, owner.StorageKey)
 			return nil
 		},
@@ -73,6 +78,7 @@ func newOwnersAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&userID, "user-id", "", "user ID within the hub (required)")
 	cmd.Flags().StringVar(&storageKey, "storage-key", "", "optional deterministic storage UUID")
 	cmd.Flags().StringVar(&handle, "handle", "", "optional display handle")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the registered owner as JSON")
 	return cmd
 }
 

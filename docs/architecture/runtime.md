@@ -419,9 +419,11 @@ The CLI validates required arguments and storage UUIDs before automatic startup;
 it never constructs an owner service or opens a catalog. `OwnerService` retains
 registration idempotency, immutable storage keys, display-handle updates, and
 refusal to remove owners referenced by assets or checkouts. Removal does not
-delete files; bulk purge remains unsupported. `owners list --json` returns the
-shared HTTP result with `items`. The configured stub owner is ensured at daemon
-startup, so a fresh stub deployment already contains that owner.
+delete files; bulk purge remains unsupported. `owners add --json` returns the
+shared HTTP owner record, and `owners list --json` returns records under `items`.
+Neither emits a success record when the request fails. The configured stub owner
+is ensured at daemon startup, so a fresh stub deployment already contains that
+owner.
 
 `OwnerAdminService` serializes registration/removal and updates the NAS store's
 locked owner-key map before returning. The thumbnail cache uses that same map,

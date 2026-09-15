@@ -270,7 +270,7 @@ commands are host administration, not a photo-user login. Run them under the
 daemon's OS account with the same configuration, in either stub or header mode:
 
 ```sh
-fotobank owners add --hub example --user-id user-a --handle "User A"
+fotobank owners add --hub example --user-id user-a --handle "User A" --json
 fotobank owners list --json
 fotobank owners remove --hub example --user-id user-a
 ```
@@ -278,10 +278,17 @@ fotobank owners remove --hub example --user-id user-a
 All three commands accept `--config`. Adding an owner generates a storage UUID
 unless you supply `--storage-key`. Repeating an add without a key keeps the
 existing key; specifying a different key for an existing owner returns a
-conflict. A non-empty `--handle` updates the display name. Listing returns
-`items` in JSON, with each owner's hub, user ID, storage key, handle, and creation
-time. The configured stub owner is registered automatically when the daemon
-starts; you do not need to add it first.
+conflict. A non-empty `--handle` updates the display name.
+
+`add --json` returns the registered owner with `hub`, `user_id`, `storage_key`,
+`handle`, and `created_at`. Repeating registration returns the existing storage
+key and creation time, with any requested display-name update. `list --json`
+returns these same records under `items`. Failed requests leave stdout empty,
+explain the failure on stderr, and exit nonzero. After a lost response, list
+owners before retrying; the registration may have succeeded.
+
+The configured stub owner is registered automatically when the daemon starts;
+you do not need to add it first.
 To choose its storage UUID, set `identity.stub.storage_key` before the first start.
 
 New registrations are usable without a restart. A storage UUID already assigned

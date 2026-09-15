@@ -89,20 +89,38 @@ func TestOwnersLiveAgainstDaemon(t *testing.T) {
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 	startCheckoutServer(t, cfg, dbPath)
 	var out, stderr bytes.Buffer
-	code := cli.RunContext(t.Context(), []string{"owners", "add", "--hub", "h", "--user-id", "guest", "--handle", "Guest"}, &out, &stderr)
+	code := cli.RunContext(t.Context(), []string{"owners", "add", "--hub", "h", "--user-id", "guest", "--handle", "Guest", "--json"}, &out, &stderr)
 	r.Zero(code, "%s", stderr.String())
+	var created httpapi.OwnerResult
+	r.NoError(json.Unmarshal(out.Bytes(), &created))
+	r.Equal("h", created.Hub)
+	r.Equal("guest", created.UserID)
+	r.Equal("Guest", created.Handle)
+	r.NotZero(created.StorageKey)
+	r.False(created.CreatedAt.IsZero())
+	out.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{"owners", "add", "--hub", "h", "--user-id", "guest", "--handle", "Guest updated", "--json"}, &out, &stderr)
+	r.Zero(code, "%s", stderr.String())
+	var repeated httpapi.OwnerResult
+	r.NoError(json.Unmarshal(out.Bytes(), &repeated))
+	r.Equal(created.StorageKey, repeated.StorageKey)
+	r.Equal(created.CreatedAt, repeated.CreatedAt)
+	r.Equal("Guest updated", repeated.Handle)
+	out.Reset()
+	stderr.Reset()
+	code = cli.RunContext(t.Context(), []string{"owners", "add", "--hub", "h", "--user-id", "guest", "--storage-key", "770e8400-e29b-41d4-a716-446655440000", "--json"}, &out, &stderr)
+	r.Equal(1, code)
+	r.Empty(out.String(), "a failed registration must not emit a success record")
+	r.Contains(stderr.String(), "409")
 	out.Reset()
 	stderr.Reset()
 	code = cli.RunContext(t.Context(), []string{"owners", "list", "--json"}, &out, &stderr)
 	r.Zero(code, "%s", stderr.String())
-	r.Contains(out.String(), "Guest")
-	var page struct {
-		Items []struct {
-			UserID string `json:"user_id"`
-		} `json:"items"`
-	}
+	var page httpapi.OwnerListResult
 	r.NoError(json.Unmarshal(out.Bytes(), &page))
 	r.Len(page.Items, 2)
+	r.Contains(page.Items, repeated)
 }
 
 func TestOwnersListShowsAddedRow(t *testing.T) {
@@ -148,8 +166,8 @@ func TestOwnersListRejectsBadFlags(t *testing.T) {
 
 func TestOwnersInvalidArgumentsBeforeStartup(t *testing.T) {
 	for _, args := range [][]string{
-		{"add", "--hub", "h"},
-		{"add", "--hub", "h", "--user-id", "guest", "--storage-key", "invalid"},
+		{"add", "--hub", "h", "--json"},
+		{"add", "--hub", "h", "--user-id", "guest", "--storage-key", "invalid", "--json"},
 		{"remove", "--hub", "h"},
 		{"remove", "--hub", "h", "--user-id", "guest", "--purge"},
 	} {
@@ -162,6 +180,7 @@ func TestOwnersInvalidArgumentsBeforeStartup(t *testing.T) {
 			var out, stderr bytes.Buffer
 			command := append([]string{"owners", "--config", cfg}, args...)
 			r.Equal(2, cli.RunContext(t.Context(), command, &out, &stderr), "%s", stderr.String())
+			r.Empty(out.String())
 			r.NoFileExists(dbPath)
 			r.NoDirExists(cfg + ".operator")
 		})
@@ -230,14 +249,20 @@ func TestOwnersHeaderDeployment(t *testing.T) {
 	t.Setenv("FOTOBANK_DB_PATH", dbPath)
 	startCheckoutServer(t, cfg, dbPath)
 	var out, stderr bytes.Buffer
-	r.Zero(cli.RunContext(t.Context(), []string{"owners", "add", "--config", cfg, "--hub", "example", "--user-id", "guest"}, &out, &stderr), "%s", stderr.String())
+	key := "660e8400-e29b-41d4-a716-446655440000"
+	r.Zero(cli.RunContext(t.Context(), []string{"owners", "add", "--config", cfg, "--hub", "example", "--user-id", "guest", "--storage-key", key, "--json"}, &out, &stderr), "%s", stderr.String())
+	var created httpapi.OwnerResult
+	r.NoError(json.Unmarshal(out.Bytes(), &created))
+	r.Equal("example", created.Hub)
+	r.Equal("guest", created.UserID)
+	r.Equal(key, created.StorageKey.String())
 	out.Reset()
 	stderr.Reset()
 	r.Zero(cli.RunContext(t.Context(), []string{"owners", "list", "--config", cfg, "--json"}, &out, &stderr), "%s", stderr.String())
 	var result httpapi.OwnerListResult
 	r.NoError(json.Unmarshal(out.Bytes(), &result))
 	r.Len(result.Items, 1)
-	r.Equal("guest", result.Items[0].UserID)
+	r.Equal(created, result.Items[0])
 	out.Reset()
 	stderr.Reset()
 	r.Zero(cli.RunContext(t.Context(), []string{"owners", "remove", "--config", cfg, "--hub", "example", "--user-id", "guest"}, &out, &stderr), "%s", stderr.String())
