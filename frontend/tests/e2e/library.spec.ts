@@ -12,9 +12,15 @@ test("library route renders shell + sidebar", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("sessions route renders", async ({ page }) => {
+test("sessions renders a ready thumbnail", async ({ page }) => {
   await page.goto("/sessions");
-  await expect(page.getByText("fotobank")).toBeVisible();
+  const photo = page.getByLabel("Photo search-fixture-vis-030", { exact: true });
+  await photo.scrollIntoViewIfNeeded();
+  const thumbnail = photo.locator("img");
+  await expect(thumbnail).toBeVisible();
+  await expect.poll(() => thumbnail.evaluate(
+    (img: HTMLImageElement) => img.complete && img.naturalWidth > 0,
+  )).toBe(true);
 });
 
 test("user_settings persists arbitrary key/value", async ({ page }) => {
