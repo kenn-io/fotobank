@@ -7,7 +7,7 @@
     media: MediaLite;
     selected: boolean;
     onCellClick: (e: MouseEvent) => void;
-    onSelect: (selected: boolean) => void;
+    onSelect?: ((selected: boolean) => void) | undefined;
   } = $props();
 
   // Tracks whether the current thumb URL has 404'd in this cell.
@@ -73,12 +73,14 @@
       <div class="placeholder" aria-hidden="true"></div>
     {/if}
   </a>
-  <Checkbox
-    class="photo-select"
-    ariaLabel={`Select ${media.id}`}
-    checked={selected}
-    onchange={onSelect}
-  />
+  {#if onSelect}
+    <Checkbox
+      class="photo-select"
+      ariaLabel={`Select ${media.id}`}
+      checked={selected}
+      onchange={onSelect}
+    />
+  {/if}
 </div>
 
 <style>

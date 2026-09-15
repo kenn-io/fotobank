@@ -1,5 +1,35 @@
 import { test, expect } from "@playwright/test";
 
+for (const route of ["/search?q=beach", "/map?z=12&c=37.7749,-122.4194"]) {
+  test(`${route} browses photos without bulk selection controls`, async ({ page }) => {
+    await page.goto(route);
+    const photo = page.getByRole("link", { name: /^Photo / }).first();
+    await expect(photo).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: /^Select / })).toHaveCount(0);
+    await photo.click();
+    await expect(page.getByTestId("lightbox")).toBeVisible();
+  });
+}
+
+test("Search viewer walks results rather than a prior Library selection", async ({ page }) => {
+  await page.goto("/search?q=beach");
+  const photos = page.getByRole("link", { name: /^Photo / });
+  await expect(photos.nth(2)).toBeVisible();
+  const ids = await photos.evaluateAll((links) => links.slice(0, 3).map((link) => link.getAttribute("data-media-id")!));
+  await page.getByRole("link", { name: "Library", exact: true }).click();
+  for (const id of [ids[0], ids[2]]) {
+    await page.getByRole("checkbox", { name: `Select ${id}`, exact: true }).check();
+  }
+  await expect(page.getByText("2 selected", { exact: true })).toBeVisible();
+  await page.getByRole("searchbox", { name: "Search", exact: true }).fill("beach");
+  await page.getByRole("searchbox", { name: "Search", exact: true }).press("Enter");
+  await expect(page).toHaveURL(/\/search\?q=beach/);
+  await page.getByLabel(`Photo ${ids[0]}`, { exact: true }).click();
+  await expect(page.getByTestId("lightbox")).toBeVisible();
+  await page.keyboard.press("ArrowRight");
+  await expect(page).toHaveURL(new RegExp(`/media/${ids[1]}\\?from=search`));
+});
+
 test("select photos with the keyboard in Library and Sessions", async ({
   page,
 }) => {

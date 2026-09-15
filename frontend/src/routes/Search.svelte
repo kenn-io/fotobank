@@ -31,7 +31,6 @@
   import { api } from "../lib/api/client";
   import { lightboxSession } from "../lib/lightbox/lightboxSession.svelte";
   import { captureMainScrollY } from "../lib/lightbox/scrollRestore.svelte";
-  import { selection } from "../lib/selection/selectionStore.svelte";
 
   // Tests inject a stub store via the optional `store` prop; production
   // callers omit it and the route constructs its own backed by the
@@ -406,9 +405,8 @@
 
   // openMedia captures the search-context source state into
   // lightboxSession before navigating to /media/:id?from=search.
-  // navIds walks the current results in display order (selection
-  // narrowing mirrors Library/Albums/Sessions when a multi-selection
-  // covers the clicked id). scoreComponentsByMediaId travels with the
+  // navIds walks the current results in display order, independent of
+  // any selection in other routes. scoreComponentsByMediaId travels with the
   // snapshot so LightboxMetadata can surface the Search relevance row
   // for whichever id is active in the lightbox.
   //
@@ -419,10 +417,7 @@
   // that's the explicit failure mode for the search reconstruction
   // path.
   function openMedia(id: string): void {
-    const all = s.results.map((r) => r.media_id);
-    const sel = selection.ids;
-    const useSelection = sel.size > 1 && sel.has(id);
-    const navIds = useSelection ? all.filter((x) => sel.has(x)) : all;
+    const navIds = s.results.map((r) => r.media_id);
     // qHash binds this snapshot to the canonical search-state key
     // (same shape computeKey emits for URL sync). The lightbox reads
     // ?qhash= back from the /media/:id URL and rejects the snapshot
@@ -454,7 +449,7 @@
     lightboxSession.open({
       source: { kind: "search" },
       navIds,
-      selected: useSelection,
+      selected: false,
       scrollY: captureMainScrollY(),
       returnFocusMediaId: id,
       returnHref: window.location.pathname + window.location.search,

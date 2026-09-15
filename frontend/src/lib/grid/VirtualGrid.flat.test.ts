@@ -4,6 +4,7 @@ import VirtualGrid from "./VirtualGrid.svelte";
 import VirtualGridHeaderActionFixture from "./VirtualGridHeaderActionFixture.svelte";
 import type { Month } from "../media/mediaStore.svelte";
 import { router } from "../router/router.svelte";
+import { selection } from "../selection/selectionStore.svelte";
 
 // VirtualGrid wires ResizeObserver + IntersectionObserver in $effect
 // blocks. jsdom doesn't ship either, so we stub no-op implementations
@@ -112,6 +113,27 @@ describe("VirtualGrid headerAction forwarding", () => {
 });
 
 describe("VirtualGrid onOpenMedia", () => {
+  it("leaves selection untouched and modifier clicks native by default", async () => {
+    selection.set("m1", true);
+    const onOpenMedia = vi.fn();
+    try {
+      const { getByRole, queryByRole } = render(VirtualGrid, {
+        props: { months, timelineChrome: false, onOpenMedia },
+      });
+      expect(queryByRole("checkbox", { name: "Select m1" })).toBeNull();
+      expect(getByRole("link", { name: "Photo m1" }).classList.contains("selected")).toBe(false);
+      for (const modifier of ["shiftKey", "ctrlKey", "metaKey"]) {
+        const event = new MouseEvent("click", { bubbles: true, cancelable: true, [modifier]: true });
+        await fireEvent(getByRole("link", { name: "Photo m2" }), event);
+        expect(event.defaultPrevented).toBe(false);
+        expect([...selection.ids]).toEqual(["m1"]);
+      }
+      expect(onOpenMedia).not.toHaveBeenCalled();
+    } finally {
+      selection.clear();
+    }
+  });
+
   it("invokes onOpenMedia(id) instead of router.navigate when prop is provided", async () => {
     const onOpenMedia = vi.fn();
     const navSpy = vi.spyOn(router, "navigate").mockImplementation(() => {});

@@ -22,7 +22,7 @@
   // disturb the justified layout.
   let {
     months, onLoadMore, targetRowHeight = 200, timelineChrome = true,
-    headerAction, onOpenMedia, cellOverlay,
+    headerAction, onOpenMedia, cellOverlay, selectable = false,
   }: {
     months: Month[];
     onLoadMore?: () => void;
@@ -31,6 +31,8 @@
     headerAction?: Snippet<[Month]>;
     onOpenMedia?: (id: string) => void;
     cellOverlay?: Snippet<[Media]>;
+    // Enable only when the route provides selection actions.
+    selectable?: boolean;
   } = $props();
 
   let containerEl: HTMLDivElement | null = $state(null);
@@ -194,11 +196,13 @@
     // hijack the new-tab gesture.
     if (e.button !== 0) return;
     if (e.shiftKey) {
+      if (!selectable) return;
       e.preventDefault();
       selection.range(id, orderedIds);
       return;
     }
     if (e.metaKey || e.ctrlKey) {
+      if (!selectable) return;
       e.preventDefault();
       selection.toggle(id);
       return;
@@ -244,8 +248,8 @@
               <div class="cell-host">
                 <MediaCell
                   media={m}
-                  selected={selection.ids.has(m.id)}
-                  onSelect={(checked) => selection.set(m.id, checked)}
+                  selected={selectable && selection.ids.has(m.id)}
+                  onSelect={selectable ? (checked) => selection.set(m.id, checked) : undefined}
                   onCellClick={(e) => handleCellClick(e, m.id)}
                 />
                 {#if cellOverlay}
@@ -266,8 +270,8 @@
               <div class="cell-host">
                 <MediaCell
                   media={m}
-                  selected={selection.ids.has(m.id)}
-                  onSelect={(checked) => selection.set(m.id, checked)}
+                  selected={selectable && selection.ids.has(m.id)}
+                  onSelect={selectable ? (checked) => selection.set(m.id, checked) : undefined}
                   onCellClick={(e) => handleCellClick(e, m.id)}
                 />
                 {#if cellOverlay}
@@ -292,8 +296,8 @@
             <div class="cell-host">
               <MediaCell
                 media={m}
-                selected={selection.ids.has(m.id)}
-                onSelect={(checked) => selection.set(m.id, checked)}
+                selected={selectable && selection.ids.has(m.id)}
+                onSelect={selectable ? (checked) => selection.set(m.id, checked) : undefined}
                 onCellClick={(e) => handleCellClick(e, m.id)}
               />
               {#if cellOverlay}
