@@ -50,6 +50,12 @@ deletion and share revocation. A share drawer stays open behind its revocation
 confirmation so canceling can return focus to Revoke; Escape closes only the
 confirmation while it is open. Other custom dialogs have separate lifecycles.
 
+Album removal reports server and connection failures through the shared
+notification stack. Each photo has its own result: successful removals update
+the album and clear that selection; failed photos remain selected for retry.
+Failed album deletion keeps the album open and shows a notification. Active
+CLI shares still block deletion with instructions for revoking those shares.
+
 Library, Sessions, and Search distinguish failed photo reads from successful
 empty results. Their stores retain the request and any loaded pages; an inline
 Retry action repeats the failed page without clearing filters or the query.

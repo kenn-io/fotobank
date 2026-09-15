@@ -188,11 +188,16 @@ export class AlbumDetailStore {
       while (i < ids.length) {
         const myIdx = i++;
         const mediaId = ids[myIdx]!;
-        const res = await client.DELETE("/api/v1/albums/{id}/media/{media_id}", {
-          params: { path: { id: albumId, media_id: mediaId } } as never,
-        });
-        if (res.error) failed.push(mediaId);
-        else succeeded.push(mediaId);
+        try {
+          const res = await client.DELETE("/api/v1/albums/{id}/media/{media_id}", {
+            params: { path: { id: albumId, media_id: mediaId } } as never,
+          });
+          if (res.error) failed.push(mediaId);
+          else succeeded.push(mediaId);
+        } catch {
+          // A failed connection affects this photo, not the whole batch.
+          failed.push(mediaId);
+        }
       }
     }
     await Promise.all(
