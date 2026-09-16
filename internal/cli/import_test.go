@@ -127,7 +127,10 @@ func TestLiveImportShutdownReportsInterruptedResult(t *testing.T) {
 	r.Error(err, "an interrupted stream must not report success")
 	recordPath, err := (daemon.RuntimeStore{Dir: configPath + ".operator"}).Path(record.PID)
 	r.NoError(err)
-	r.Eventually(func() bool { _, err := os.Stat(recordPath); return os.IsNotExist(err) }, 5*time.Second, 10*time.Millisecond)
+	// Discovery is removed only after requests, workers, and storage close.
+	// Match the fixture's 40s allowance for the 30s drain budget plus cleanup.
+	r.Eventually(func() bool { _, err := os.Stat(recordPath); return os.IsNotExist(err) },
+		40*time.Second, 10*time.Millisecond, "daemon discovery record remains after shutdown: %s", recordPath)
 }
 
 // fixtureDir mirrors the ingest_test helper: tests run from the package
