@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -85,6 +87,7 @@ func newAIBackfillCmd() *cobra.Command {
 		cfgPath  string
 		taskList []string
 		force    bool
+		asJSON   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "backfill",
@@ -103,14 +106,26 @@ func newAIBackfillCmd() *cobra.Command {
 				return err
 			}
 			total := 0
+			results := make(map[string]httpapi.AIEnqueuedResult)
+			var taskErr error
 			for _, t := range tasks {
 				result, err := client.BackfillAI(cmd.Context(), c.ConfigPath, c.Version, httpapi.AIBackfillRequest{Task: string(t), Force: force})
 				n := result.Enqueued
 				if err != nil {
-					return fmt.Errorf("backfill %s: %w", t, err)
+					taskErr = fmt.Errorf("backfill %s: %w", t, err)
+					break
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s: enqueued %d\n", t, n)
+				results[string(t)] = result
+				if !asJSON {
+					fmt.Fprintf(cmd.OutOrStdout(), "%s: enqueued %d\n", t, n)
+				}
 				total += n
+			}
+			if asJSON && len(results) > 0 {
+				return errors.Join(taskErr, jsonv2.MarshalWrite(cmd.OutOrStdout(), results))
+			}
+			if taskErr != nil {
+				return taskErr
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "total: %d\n", total)
 			return nil
@@ -119,6 +134,7 @@ func newAIBackfillCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
 	cmd.Flags().StringSliceVar(&taskList, "task", nil, "tag,caption,embed")
 	cmd.Flags().BoolVar(&force, "force", false, "include media that already have an active result")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "write completed task counts as JSON")
 	return cmd
 }
 
@@ -126,6 +142,7 @@ func newAIRetryFailedCmd() *cobra.Command {
 	var (
 		cfgPath  string
 		taskList []string
+		asJSON   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "retry-failed",
@@ -143,19 +160,29 @@ func newAIRetryFailedCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			results := make(map[string]httpapi.AIEnqueuedResult)
+			var taskErr error
 			for _, t := range tasks {
 				result, err := client.RetryFailedAI(cmd.Context(), c.ConfigPath, c.Version, httpapi.AIRetryFailedRequest{Task: string(t)})
 				n := result.Enqueued
 				if err != nil {
-					return fmt.Errorf("retry %s: %w", t, err)
+					taskErr = fmt.Errorf("retry %s: %w", t, err)
+					break
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s: re-enqueued %d\n", t, n)
+				results[string(t)] = result
+				if !asJSON {
+					fmt.Fprintf(cmd.OutOrStdout(), "%s: re-enqueued %d\n", t, n)
+				}
 			}
-			return nil
+			if asJSON && len(results) > 0 {
+				return errors.Join(taskErr, jsonv2.MarshalWrite(cmd.OutOrStdout(), results))
+			}
+			return taskErr
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
 	cmd.Flags().StringSliceVar(&taskList, "task", nil, "tag,caption,embed")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "write completed task counts as JSON")
 	return cmd
 }
 
@@ -264,6 +291,7 @@ func newAIPromoteGenerationCmd() *cobra.Command {
 	var (
 		cfgPath string
 		yes     bool
+		asJSON  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "promote-generation [generation-id]",
@@ -274,15 +302,16 @@ func newAIPromoteGenerationCmd() *cobra.Command {
 			if err != nil || id <= 0 {
 				return newUsageError("generation-id must be a positive integer")
 			}
-			return runAIPromoteGeneration(cmd, cfgPath, id, yes)
+			return runAIPromoteGeneration(cmd, cfgPath, id, yes, asJSON)
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the interactive confirm prompt")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "write the promoted generation as JSON")
 	return cmd
 }
 
-func runAIPromoteGeneration(cmd *cobra.Command, cfgPath string, id int64, yes bool) error {
+func runAIPromoteGeneration(cmd *cobra.Command, cfgPath string, id int64, yes, asJSON bool) error {
 	ctx := cmd.Context()
 	c, err := ensureAIDaemon(ctx, cfgPath)
 	if err != nil {
@@ -303,7 +332,11 @@ func runAIPromoteGeneration(cmd *cobra.Command, cfgPath string, id int64, yes bo
 		}
 	}
 	if !yes {
-		fmt.Fprintf(cmd.OutOrStdout(), "Promote generation %d (state=%s, fingerprint=%s) to active? [y/N]: ", row.ID, row.State, row.Fingerprint)
+		prompt := cmd.OutOrStdout()
+		if asJSON {
+			prompt = cmd.ErrOrStderr()
+		}
+		fmt.Fprintf(prompt, "Promote generation %d (state=%s, fingerprint=%s) to active? [y/N]: ", row.ID, row.State, row.Fingerprint)
 		answer, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 		if err != nil && err != io.EOF {
 			return err
@@ -317,6 +350,9 @@ func runAIPromoteGeneration(cmd *cobra.Command, cfgPath string, id int64, yes bo
 	if err != nil {
 		return err
 	}
+	if asJSON {
+		return jsonv2.MarshalWrite(cmd.OutOrStdout(), result)
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "promoted generation %d (fingerprint=%s)\n", result.ID, result.Fingerprint)
 	return nil
 }
@@ -325,21 +361,23 @@ func newAICompactRetiredGenerationsCmd() *cobra.Command {
 	var (
 		cfgPath string
 		dryRun  bool
+		asJSON  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "compact-retired-generations",
 		Short: "Drop retired generations older than [search] retain_retired_days",
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runAICompactRetiredGenerations(cmd.Context(), cfgPath, dryRun, cmd.OutOrStdout())
+			return runAICompactRetiredGenerations(cmd.Context(), cfgPath, dryRun, asJSON, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "path to config file (defaults to DefaultConfigPath)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "list candidates without dropping them")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "write compaction results as JSON")
 	return cmd
 }
 
-func runAICompactRetiredGenerations(ctx context.Context, cfgPath string, dryRun bool, stdout io.Writer) error {
+func runAICompactRetiredGenerations(ctx context.Context, cfgPath string, dryRun, asJSON bool, stdout io.Writer) error {
 	c, err := ensureAIDaemon(ctx, cfgPath)
 	if err != nil {
 		return err
@@ -347,6 +385,12 @@ func runAICompactRetiredGenerations(ctx context.Context, cfgPath string, dryRun 
 	result, err := client.CompactGenerations(ctx, c.ConfigPath, c.Version, dryRun)
 	if err != nil {
 		return err
+	}
+	if asJSON {
+		if result.Error != "" {
+			err = fmt.Errorf("compact: %s", result.Error)
+		}
+		return errors.Join(err, jsonv2.MarshalWrite(stdout, result))
 	}
 	if dryRun {
 		if result.Error != "" {

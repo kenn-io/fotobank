@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/fotobank/internal/ai/failures"
 	"go.kenn.io/fotobank/internal/cli"
 	"go.kenn.io/fotobank/internal/db"
+	"go.kenn.io/fotobank/internal/httpapi"
 	"go.kenn.io/fotobank/internal/media"
 	"go.kenn.io/fotobank/internal/owners"
 	"go.kenn.io/fotobank/internal/testutil/assetfixture"
@@ -411,6 +412,13 @@ func TestCLIAI_FailedCompactionDryRunHasNoSuccessOutput(t *testing.T) {
 	r.NotZero(code)
 	r.Contains(stderr, "retired generations")
 	r.Empty(out)
+	out, stderr, code = runAICLI("ai", "compact-retired-generations", "--dry-run", "--config", cfg, "--json")
+	r.Equal(1, code, stderr)
+	var result httpapi.CompactGenerationsResult
+	r.NoError(json.Unmarshal([]byte(out), &result))
+	r.Zero(result.Dropped)
+	r.Empty(result.Candidates)
+	r.Contains(result.Error, "retired generations")
 }
 
 func TestCLIAI_CompactRetiredGenerationsDryRun(t *testing.T) {
