@@ -22,7 +22,7 @@ hooks = [
     name = "regenerate openapi spec",
     language = "system",
     entry = "mise exec bun -- make api-generate",
-    files = "^(go\\.mod|go\\.sum|cmd/fotobank-openapi/.*\\.go|internal/httpapi/.*\\.go|internal/db/.*\\.go|oapi-codegen\\.yaml|scripts/codegen/.*|frontend/orval\\.config\\.ts)$",
+    files = "^(go\\.(mod|sum)|.*\\.go|Makefile|mise\\.toml|oapi-codegen\\.yaml|scripts/codegen/.*|frontend/(package\\.json|bun\\.lock|orval\\.config\\.ts|src/lib/api/transport\\.ts))$",
     pass_filenames = false,
     priority = 0,
   },
