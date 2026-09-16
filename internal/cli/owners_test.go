@@ -365,6 +365,8 @@ mode = "stub"
 hub = "h"
 user_id = "u"
 storage_key = "550e8400-e29b-41d4-a716-446655440000"
+[observability]
+admin_listen = "127.0.0.1:0"
 `, filepath.Join(tmp, "nas"), filepath.Join(tmp, "flash")), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "nas"), 0o700))
 	require.NoError(t, os.MkdirAll(filepath.Join(tmp, "flash"), 0o700))
