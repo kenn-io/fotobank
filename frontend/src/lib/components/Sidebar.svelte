@@ -119,7 +119,7 @@
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     font-size: 11px;
-    color: var(--fb-text-faint);
+    color: var(--text-muted);
   }
   .entry.active :global(.count) { color: var(--fb-accent-deep); }
 </style>

@@ -125,6 +125,10 @@ Fraunces display type. Existing components and new shared controls use the same
 token vocabulary, so adopting a shared control does not imply adopting another
 product's visual identity.
 
+Helper text, counts, and placeholders use the readable `--text-muted` color.
+The darker `--fb-text-faint` color is for decoration, such as dotted leaders,
+not text. Browser tests check representative text contrast on desktop and phone.
+
 At 760px and below, `ThreeColumnLayout` gives the main view the full width and
 puts the existing sidebar behind a “Browse & filters” button. The panel
 replaces the content view while open rather than covering it with a modal.

@@ -87,7 +87,7 @@
   .facet-search::placeholder {
     font-family: var(--font-sans);
     font-weight: 400;
-    color: var(--fb-text-faint);
+    color: var(--text-muted);
   }
   .rows {
     display: flex;
