@@ -27,7 +27,8 @@ export default defineConfig({
   // with its own e2e-server on a different port. Excluding it here keeps
   // the broad suite from running it under the default sharing-enabled
   // server (which would fail the assertions).
-  testIgnore: ["sharing-disabled.spec.ts"],
+  // Scale tests require their own bulk fixture and remain an explicit run.
+  testIgnore: ["sharing-disabled.spec.ts", "**/scale/**"],
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -36,6 +37,7 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     trace: "retain-on-failure",
+    screenshot: "only-on-failure",
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },

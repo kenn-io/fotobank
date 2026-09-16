@@ -192,8 +192,16 @@ includes a screenshot of the implemented result using synthetic data.
   behavior.
 - Playwright tests run against `cmd/e2e-server`, which builds a self-contained
   temporary Fotobank environment.
+- CI runs the ordinary Chromium workflow suite and the sharing-disabled suite
+  against a freshly built application. This job uses a disposable GitHub-hosted
+  Linux runner to install browser system dependencies. Failed tests retain
+  screenshots and traces for seven days; they contain synthetic fixture data.
+  Run them locally with `bun run test:e2e` and
+  `bun run test:e2e:sharing-disabled` from `frontend` after installing Chromium
+  with `bunx playwright install chromium`.
 - Scale fixtures are versioned and cached outside the repository. Bumping the
-  seed version invalidates the cache when fixture semantics change.
+  seed version invalidates the cache when fixture semantics change. Scale tests
+  are excluded from the ordinary suite; run `bun run test:e2e:scale` explicitly.
 
 Frontend tests do not call a developer's running Fotobank instance or reuse a
 real library.
