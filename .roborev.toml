@@ -47,14 +47,19 @@ sentinel to a generic response and must not expose the wrapped internal error.
 Do flag a remote route that returns different public responses for those cases
 or allows one owner to read another owner's checkout.
 
-## Go toolchain
+## Compiler and reviewer responsibilities
 
-Fotobank pins Go 1.27 through `go.mod`, and CI installs the version declared
-there. Go 1.27 includes the standard-library `uuid` package. A bare `"uuid"`
-import is valid in this repository; confirm package availability with the
-pinned toolchain before reporting it as a compile failure. The repository also
-uses `github.com/google/uuid` in older code, but that dependency does not make
-the standard package invalid or require new code to use it.
+The compiler and typechecker own syntax, type validity, and package availability.
+Leave compilation failures to those CI checks. RoboRev should review behavior,
+API contracts, and logic; do not emit compilation findings based on remembered
+language rules or unfamiliar syntax. If compiler results are unavailable, leave
+compilation unverified rather than guessing.
+
+Use the toolchain declared in `go.mod` as the language baseline. Do not request
+pointer helpers or addressable locals merely because code uses `new(expression)`,
+or reject a standard-library `"uuid"` import based on an older Go version.
+Existing third-party dependencies do not require new code to use them instead of
+the standard library.
 
 ## Local filesystem namespace
 
