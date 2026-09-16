@@ -198,6 +198,8 @@ hub = "local"
 user_id = "alice"
 [imports]
 file_lock_path = %q
+[observability]
+admin_listen = "127.0.0.1:0"
 `, nasRoot, filepath.Join(tmp, "flash"),
 		filepath.Join(tmp, "import.lock")), 0o600))
 
@@ -309,6 +311,8 @@ hub = "local"
 user_id = "alice"
 [imports]
 file_lock_path = %q
+[observability]
+admin_listen = "127.0.0.1:0"
 `, nasRoot, filepath.Join(tmp, "flash"), filepath.Join(tmp, "import.lock")), 0o600))
 	t.Setenv("FOTOBANK_DB_PATH", filepath.Join(tmp, "fotobank.sqlite"))
 
@@ -374,6 +378,8 @@ user_id = "alice"
 storage_key = "550e8400-e29b-41d4-a716-446655440000"
 [imports]
 file_lock_path = %q
+[observability]
+admin_listen = "127.0.0.1:0"
 `, nasRoot, filepath.Join(tmp, "flash"),
 		filepath.Join(tmp, "import.lock")), 0o600))
 
@@ -445,6 +451,8 @@ mode = "stub"
 hub = "local"
 user_id = "alice"
 storage_key = "550e8400-e29b-41d4-a716-446655440000"
+[observability]
+admin_listen = "127.0.0.1:0"
 `), 0o600))
 	r.NoError(os.MkdirAll(filepath.Join(home, "fotobank"), 0o700))
 
