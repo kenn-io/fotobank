@@ -10,6 +10,7 @@
      into the UI; an SSE handler invalidates the store's requestHash
      when the activator promotes a new generation. -->
 <script lang="ts">
+  import { Button } from "@kenn-io/kit-ui";
   import PhotoReadError from "../lib/components/PhotoReadError.svelte";
   import { createSearchStore, emptyFilters, type SearchStore } from "../lib/search/searchStore.svelte";
   import { searchClient } from "../lib/search/client";
@@ -92,6 +93,7 @@
   // while hydrated=false so the first user-driven mutation produces
   // the first URL write.
   let hydrated = $state(false);
+  let filtersOpen = $state(false);
 
   // lastHydratedKey deduplicates hydration: the URL-sync $effect writes
   // back to the URL after each store mutation, which mutates
@@ -465,11 +467,16 @@
 
 <div class="search-page">
   <div class="search-toolbar">
-    <SearchFiltersPopover filters={s.filters} onChange={onSearchFiltersChange} />
+    <Button ariaExpanded={filtersOpen} onclick={() => (filtersOpen = !filtersOpen)}>
+      Filters
+    </Button>
     <SearchSortSegment sort={s.sort} query={s.query} onChange={onSortChange} />
     {#if !s.loadError && !s.loading}
       <IndexingStatusPill completeness={s.embeddingCompleteness} />
     {/if}
+  </div>
+  <div hidden={!filtersOpen}>
+    <SearchFiltersPopover filters={s.filters} onChange={onSearchFiltersChange} />
   </div>
   <SearchFilterChips filters={s.filters} onChange={onSearchFiltersChange} />
   <FilterChipStrip filters={activeFilters} {tagLabels} onChange={onFiltersChange} />
@@ -527,5 +534,8 @@
     padding: 24px 16px;
     color: var(--text-secondary);
     text-align: center;
+  }
+  @media (max-width: 760px), (pointer: coarse) {
+    .search-page { --kit-control-height: 44px; }
   }
 </style>
