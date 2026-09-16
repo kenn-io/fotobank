@@ -4201,6 +4201,29 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Verify passcode and issue a hidden-unlock session cookie
+  /api/v1/events:
+    get:
+      description: Server-sent events scoped to the caller. Use EventSource with the generated URL for browser reconnection and Last-Event-ID handling.
+      operationId: events
+      parameters:
+        - in: header
+          name: Last-Event-ID
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          description: Server-sent event stream
+        "401":
+          description: Authentication required
+        "500":
+          description: Streaming unavailable
+      summary: Subscribe to photo library events
+      tags:
+        - streams
   /api/v1/facets:
     get:
       operationId: facets
@@ -4686,6 +4709,8 @@ paths:
         "500":
           description: Content unavailable or could not be opened
       summary: Read original file bytes
+      tags:
+        - streams
   /api/v1/media/{id}/original:
     get:
       description: Returns the owned file's current bytes with its stored media type. Hidden media requires an owner-matched unlock session. A file attached to a different asset returns 404. Use media details to obtain the expected size and SHA-256, then verify a complete download before using it; concurrent edits can invalidate those details.
@@ -4757,6 +4782,59 @@ paths:
         "500":
           description: Content unavailable or could not be opened
       summary: Read original file bytes
+      tags:
+        - streams
+  /api/v1/media/{id}/thumb:
+    get:
+      operationId: download-media-thumb
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: query
+          name: size
+          schema:
+            default: grid
+            enum:
+              - grid
+              - preview
+              - large
+            type: string
+        - in: query
+          name: v
+          required: true
+          schema:
+            minimum: 0
+            type: integer
+        - in: header
+          name: If-None-Match
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            image/jpeg:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Thumbnail JPEG
+        "304":
+          description: Cached thumbnail still current
+        "400":
+          description: Unknown thumbnail size
+        "401":
+          description: Authentication required
+        "404":
+          description: Thumbnail unavailable, version mismatched, or media not visible
+        "500":
+          description: Thumbnail could not be opened
+      summary: Read a versioned media thumbnail
+      tags:
+        - streams
   /api/v1/media/{media_id}/ai:
     get:
       operationId: ai-media-view

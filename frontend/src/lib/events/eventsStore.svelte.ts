@@ -1,3 +1,4 @@
+import { getEventsUrl } from "../api/generated/browser";
 export type SSEMessage = { id: string; type: string; data: unknown };
 
 const KNOWN_EVENTS = [
@@ -27,7 +28,7 @@ export class EventsStore {
     this.ctor = opts.EventSourceCtor ?? (EventSource as never);
   }
 
-  connect(url = "/api/v1/events") {
+  connect(url = getEventsUrl()) {
     if (this.es) return;
     this.es = new this.ctor(url);
     for (const name of KNOWN_EVENTS) {

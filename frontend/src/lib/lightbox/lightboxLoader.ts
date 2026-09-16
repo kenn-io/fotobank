@@ -1,3 +1,4 @@
+import { getDownloadMediaThumbUrl, type DownloadMediaThumbSize } from "../api/generated/browser";
 // Progressive image loader for the lightbox. Sequence:
 //   1. paint cached grid URL if available (synchronous src assignment)
 //   2. load + decode preview; swap when ready
@@ -7,13 +8,9 @@
 // the generation token; completions whose token doesn't match are
 // dropped (decoded image discarded, references released for GC).
 
-export type ThumbSize = "grid" | "preview" | "large";
-
-export function thumbUrl(id: string, size: ThumbSize, version: number): string {
-  // encodeURIComponent so ids that happen to contain reserved URL
-  // characters (`/`, `?`, `#`) don't break the path or sneak extra
-  // query params into the request.
-  return `/api/v1/media/${encodeURIComponent(id)}/thumb?size=${size}&v=${version}`;
+export function thumbUrl(id: string, size: DownloadMediaThumbSize, version: number): string {
+  // The generated URL builder encodes the ID and typed query parameters.
+  return getDownloadMediaThumbUrl(id, { size, v: version });
 }
 
 export type LoadOpts = {

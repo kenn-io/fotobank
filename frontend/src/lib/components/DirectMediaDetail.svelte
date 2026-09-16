@@ -1,5 +1,6 @@
 <!-- frontend/src/lib/components/DirectMediaDetail.svelte -->
 <script lang="ts">
+  import { getDownloadMediaThumbUrl, getDownloadMediaOriginalUrl, getDownloadMediaFileUrl } from "../api/generated/browser";
   import type { MediaStore } from "../media/mediaStore.svelte";
   import { toMedia } from "../media/mediaStore.svelte";
   import { handleInternalLinkClick, router } from "../router/router.svelte";
@@ -108,7 +109,7 @@
   );
 
   let previewUrl = $derived(
-    effectiveMedia ? `/api/v1/media/${effectiveMedia.id}/thumb?size=preview&v=${effectiveMedia.thumbVersion ?? 0}` : "",
+    effectiveMedia ? getDownloadMediaThumbUrl(effectiveMedia.id, { size: "preview", v: effectiveMedia.thumbVersion ?? 0 }) : "",
   );
 
   let imgError = $state(false);
@@ -289,13 +290,13 @@
       {#if effectiveMedia.files && effectiveMedia.files.length > 0}
         <dt>Files</dt>
         <dd class="files">
-          <a href="/api/v1/media/{effectiveMedia.id}/original" download={effectiveMedia.original_filename ?? effectiveMedia.id}>
+          <a href={getDownloadMediaOriginalUrl(effectiveMedia.id)} download={effectiveMedia.original_filename ?? effectiveMedia.id}>
             {effectiveMedia.original_filename ?? effectiveMedia.id}
           </a>
           {#each effectiveMedia.files as file (file.id)}
             <br />
             <a
-              href={`/api/v1/media/${effectiveMedia.id}/files/${file.id}/content`}
+              href={getDownloadMediaFileUrl(effectiveMedia.id, file.id)}
               download={file.original_filename}
             >{file.original_filename}</a>
             <span> ({file.role}, {formatBytes(file.size)})</span>
@@ -304,7 +305,7 @@
       {:else}
         <dt>Download</dt>
         <dd>
-          <a href="/api/v1/media/{effectiveMedia.id}/original" download={effectiveMedia.original_filename ?? effectiveMedia.id}>
+          <a href={getDownloadMediaOriginalUrl(effectiveMedia.id)} download={effectiveMedia.original_filename ?? effectiveMedia.id}>
             {effectiveMedia.original_filename ?? effectiveMedia.id}
           </a>
         </dd>

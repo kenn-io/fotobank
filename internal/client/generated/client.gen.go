@@ -149,6 +149,12 @@ type ClientInterface interface {
 	HiddenUnlock(ctx context.Context, options *HiddenUnlockRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
 	HiddenUnlockWithResponse(ctx context.Context, options *HiddenUnlockRequestOptions, reqEditors ...runtime.RequestEditorFn) (*HiddenUnlockResp, error)
 
+	// Events Subscribe to photo library events
+	Events(ctx context.Context, options *EventsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EventsResponse, error)
+	EventsWithResponse(ctx context.Context, options *EventsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EventsResp, error)
+	EventsStream(ctx context.Context, options *EventsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*runtime.Stream[[]byte], error)
+	EventsStreamWithResponse(ctx context.Context, options *EventsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EventsResp, error)
+
 	// Facets Per-facet counts for the caller's library (exclude-self semantics)
 	Facets(ctx context.Context, options *FacetsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FacetsResponse, error)
 	FacetsWithResponse(ctx context.Context, options *FacetsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FacetsResp, error)
@@ -192,6 +198,10 @@ type ClientInterface interface {
 	// DownloadMediaOriginal Read original file bytes
 	DownloadMediaOriginal(ctx context.Context, options *DownloadMediaOriginalRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadMediaOriginalResponse206, error)
 	DownloadMediaOriginalWithResponse(ctx context.Context, options *DownloadMediaOriginalRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadMediaOriginalResp, error)
+
+	// DownloadMediaThumb Read a versioned media thumbnail
+	DownloadMediaThumb(ctx context.Context, options *DownloadMediaThumbRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadMediaThumbResponse, error)
+	DownloadMediaThumbWithResponse(ctx context.Context, options *DownloadMediaThumbRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadMediaThumbResp, error)
 
 	// AiMediaView Get AI artifacts (tags, caption, skip, failures) for a media
 	AiMediaView(ctx context.Context, options *AiMediaViewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AiMediaViewResponse, error)
@@ -1927,6 +1937,37 @@ func (c *Client) HiddenUnlock(ctx context.Context, options *HiddenUnlockRequestO
 	return responseParser(ctx, resp)
 }
 
+// Events Subscribe to photo library events
+func (c *Client) Events(ctx context.Context, options *EventsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EventsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/events",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*EventsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		result := EventsResponse(bodyBytes)
+		return &result, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/events")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
 // Facets Per-facet counts for the caller's library (exclude-self semantics)
 func (c *Client) Facets(ctx context.Context, options *FacetsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FacetsResponse, error) {
 	var err error
@@ -2581,6 +2622,37 @@ func (c *Client) DownloadMediaOriginal(ctx context.Context, options *DownloadMed
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/{id}/original")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DownloadMediaThumb Read a versioned media thumbnail
+func (c *Client) DownloadMediaThumb(ctx context.Context, options *DownloadMediaThumbRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadMediaThumbResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/media/{id}/thumb",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*DownloadMediaThumbResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		result := DownloadMediaThumbResponse(bodyBytes)
+		return &result, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/{id}/thumb")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -5987,6 +6059,31 @@ func (o *HiddenUnlockRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// EventsRequestOptions is the options needed to make a request to Events.
+type EventsRequestOptions struct {
+	Header *EventsHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *EventsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *EventsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *EventsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *EventsRequestOptions) GetHeader() (map[string]string, error) {
+	return runtime.AsMap[string](o.Header)
+}
+
 // FacetsRequestOptions is the options needed to make a request to Facets.
 type FacetsRequestOptions struct {
 	Query *FacetsQuery
@@ -6211,6 +6308,33 @@ func (o *DownloadMediaOriginalRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *DownloadMediaOriginalRequestOptions) GetHeader() (map[string]string, error) {
+	return runtime.AsMap[string](o.Header)
+}
+
+// DownloadMediaThumbRequestOptions is the options needed to make a request to DownloadMediaThumb.
+type DownloadMediaThumbRequestOptions struct {
+	PathParams *DownloadMediaThumbPath
+	Query      *DownloadMediaThumbQuery
+	Header     *DownloadMediaThumbHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DownloadMediaThumbRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *DownloadMediaThumbRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DownloadMediaThumbRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DownloadMediaThumbRequestOptions) GetHeader() (map[string]string, error) {
 	return runtime.AsMap[string](o.Header)
 }
 
@@ -7218,6 +7342,93 @@ func (o *SharesRevokeRequestOptions) GetBody() any {
 // GetHeader returns the headers as a map.
 func (o *SharesRevokeRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
+}
+
+// EventsStream consumes the text/event-stream response of
+// Events as a live stream. The body is never buffered, so this works against
+// an endless stream. The caller must Close the returned stream.
+func (c *Client) EventsStream(ctx context.Context, options *EventsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*runtime.Stream[[]byte], error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/events",
+		Method:     "GET",
+		Stream:     "text/event-stream",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/events")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+
+		if resp.Raw != nil && resp.Raw.Body != nil {
+			_ = resp.Raw.Body.Close()
+		}
+		return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+			runtime.WithStatusCode(resp.StatusCode))
+	}
+
+	// Buffered at the streaming status means the server answered with another
+	// content type. Say so rather than return a stream that yields nothing.
+	if !resp.Streaming {
+		return nil, runtime.NewClientAPIError(
+			fmt.Errorf("expected a text/event-stream stream, got Content-Type %q", resp.Headers.Get("Content-Type")),
+			runtime.WithStatusCode(resp.StatusCode))
+	}
+
+	return runtime.NewEventStream[[]byte](resp.Raw), nil
+}
+
+// EventsStreamWithResponse is the envelope form: it populates
+// Stream200 instead of the buffered body field.
+func (c *Client) EventsStreamWithResponse(ctx context.Context, options *EventsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EventsResp, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/events",
+		Method:     "GET",
+		Stream:     "text/event-stream",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/events")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	out := &EventsResp{
+		HTTPResponse: resp.Raw,
+		Body:         resp.Content,
+		StatusCode:   resp.StatusCode,
+	}
+
+	switch resp.StatusCode {
+	case 200:
+		if !resp.Streaming {
+			return out, runtime.NewClientAPIError(
+				fmt.Errorf("expected a text/event-stream stream, got Content-Type %q", resp.Headers.Get("Content-Type")),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		out.Stream200 = runtime.NewEventStream[[]byte](resp.Raw)
+		return out, nil
+	default:
+
+		if resp.Raw != nil && resp.Raw.Body != nil {
+			_ = resp.Raw.Body.Close()
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	}
 }
 
 // ImportMediaStream consumes the application/x-ndjson response of
@@ -8519,6 +8730,39 @@ func (c *Client) HiddenUnlockWithResponse(ctx context.Context, options *HiddenUn
 	}
 }
 
+// Events Subscribe to photo library events
+func (c *Client) EventsWithResponse(ctx context.Context, options *EventsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EventsResp, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/events",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/events")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	out := &EventsResp{
+		HTTPResponse: resp.Raw,
+		Body:         resp.Content,
+		StatusCode:   resp.StatusCode,
+	}
+
+	switch resp.StatusCode {
+	case 200:
+		return out, nil
+	default:
+		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	}
+}
+
 // Facets Per-facet counts for the caller's library (exclude-self semantics)
 func (c *Client) FacetsWithResponse(ctx context.Context, options *FacetsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FacetsResp, error) {
 	var err error
@@ -9042,6 +9286,39 @@ func (c *Client) DownloadMediaOriginalWithResponse(ctx context.Context, options 
 			ContentLength: resp.Headers.Get("Content-Length"),
 			ContentRange:  resp.Headers.Get("Content-Range"),
 		}
+		return out, nil
+	default:
+		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	}
+}
+
+// DownloadMediaThumb Read a versioned media thumbnail
+func (c *Client) DownloadMediaThumbWithResponse(ctx context.Context, options *DownloadMediaThumbRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DownloadMediaThumbResp, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/media/{id}/thumb",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/{id}/thumb")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	out := &DownloadMediaThumbResp{
+		HTTPResponse: resp.Raw,
+		Body:         resp.Content,
+		StatusCode:   resp.StatusCode,
+	}
+
+	switch resp.StatusCode {
+	case 200:
 		return out, nil
 	default:
 		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
@@ -11231,6 +11508,14 @@ const (
 	ListMediaGeoQueryMediaTypeVideo ListMediaGeoQueryMediaType = "video"
 )
 
+type DownloadMediaThumbQuerySize string
+
+const (
+	Grid    DownloadMediaThumbQuerySize = "grid"
+	Large   DownloadMediaThumbQuerySize = "large"
+	Preview DownloadMediaThumbQuerySize = "preview"
+)
+
 type ListEmbeddingGenerationsQueryState string
 
 const (
@@ -11264,6 +11549,10 @@ const (
 	SearchQueryHasGpsTrue  SearchQueryHasGps = "true"
 )
 
+type EventsHeaders struct {
+	LastEventID *string `json:"Last-Event-ID,omitempty"`
+}
+
 type DownloadMediaFileHeaders struct {
 	// Range Optional single byte range
 	Range *string `json:"Range,omitempty"`
@@ -11277,6 +11566,10 @@ type DownloadMediaOriginalHeaders struct {
 	Range *string `json:"Range,omitempty"`
 
 	// IfNoneMatch Optional cached content ETag
+	IfNoneMatch *string `json:"If-None-Match,omitempty"`
+}
+
+type DownloadMediaThumbHeaders struct {
 	IfNoneMatch *string `json:"If-None-Match,omitempty"`
 }
 
@@ -11327,6 +11620,10 @@ type DownloadMediaFilePath struct {
 }
 
 type DownloadMediaOriginalPath struct {
+	ID uuid.UUID `json:"id"`
+}
+
+type DownloadMediaThumbPath struct {
 	ID uuid.UUID `json:"id"`
 }
 
@@ -11579,6 +11876,11 @@ type ListMediaGeoQuery struct {
 	MediaType *ListMediaGeoQueryMediaType `json:"media_type,omitempty"`
 }
 
+type DownloadMediaThumbQuery struct {
+	Size *DownloadMediaThumbQuerySize `json:"size,omitempty"`
+	V    int                          `json:"v"`
+}
+
 type ListEmbeddingGenerationsQuery struct {
 	State *ListEmbeddingGenerationsQueryState `json:"state,omitempty"`
 }
@@ -11787,6 +12089,8 @@ type HiddenStateErrorResponse = ErrorModel
 
 type HiddenUnlockErrorResponse = ErrorModel
 
+type EventsResponse = []byte
+
 type FacetsResponse = FacetsOutputBody
 
 type FacetsErrorResponse = ErrorModel
@@ -11830,6 +12134,8 @@ type DownloadMediaFileResponse206 = []byte
 type DownloadMediaOriginalResponse = []byte
 
 type DownloadMediaOriginalResponse206 = []byte
+
+type DownloadMediaThumbResponse = []byte
 
 type AiMediaViewResponse = service_ai.MediaView
 
@@ -12188,6 +12494,13 @@ type HiddenUnlockResp struct {
 	Headers204   *HiddenUnlockResp204Headers
 }
 
+type EventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	Stream200    *runtime.Stream[[]byte]
+}
+
 type FacetsResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -12287,6 +12600,12 @@ type DownloadMediaOriginalResp struct {
 	StatusCode   int
 	Headers200   *DownloadMediaOriginalResp200Headers
 	Headers206   *DownloadMediaOriginalResp206Headers
+}
+
+type DownloadMediaThumbResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
 }
 
 type AiMediaViewResp struct {

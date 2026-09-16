@@ -608,35 +608,6 @@ export const getMedia = (
     }
 
 /**
- * Returns the owned file's current bytes with its stored media type. Hidden media requires an owner-matched unlock session. A file attached to a different asset returns 404. Use media details to obtain the expected size and SHA-256, then verify a complete download before using it; concurrent edits can invalidate those details.
- * @summary Read original file bytes
- */
-export const downloadMediaFile = (
-    id: string,
-    fileID: string,
- options?: SecondParameter<typeof request<Blob>>,) => {
-      return request<Blob>(
-      {url: `/api/v1/media/${encodeURIComponent(String(id))}/files/${encodeURIComponent(String(fileID))}/content`, method: 'GET',
-        responseType: 'blob'
-    },
-      options);
-    }
-
-/**
- * Returns the owned file's current bytes with its stored media type. Hidden media requires an owner-matched unlock session. A file attached to a different asset returns 404. Use media details to obtain the expected size and SHA-256, then verify a complete download before using it; concurrent edits can invalidate those details.
- * @summary Read original file bytes
- */
-export const downloadMediaOriginal = (
-    id: string,
- options?: SecondParameter<typeof request<Blob>>,) => {
-      return request<Blob>(
-      {url: `/api/v1/media/${encodeURIComponent(String(id))}/original`, method: 'GET',
-        responseType: 'blob'
-    },
-      options);
-    }
-
-/**
  * @summary Get AI artifacts (tags, caption, skip, failures) for a media
  */
 export const aiMediaView = (

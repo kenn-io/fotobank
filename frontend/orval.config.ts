@@ -3,7 +3,10 @@ import { defineConfig } from "orval";
 
 export default defineConfig({
   fotobank: {
-    input: "../openapi.yaml",
+    input: {
+      target: "../openapi.yaml",
+      filters: { mode: "exclude", tags: ["streams"] },
+    },
     output: {
       target: "src/lib/api/generated/client.ts",
       schemas: "src/lib/api/generated/models",
@@ -21,6 +24,18 @@ export default defineConfig({
         },
         mutator: { path: "src/lib/api/transport.ts", name: "request" },
       },
+    },
+  },
+  browser: {
+    input: {
+      target: "../openapi.yaml",
+      filters: { mode: "include", tags: ["streams"] },
+    },
+    output: {
+      target: "src/lib/api/generated/browser.ts",
+      client: "fetch",
+      urlEncodeParameters: true,
+      override: { fetch: { includeHttpResponseReturnType: false } },
     },
   },
 });

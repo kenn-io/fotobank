@@ -211,13 +211,13 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 	registerMedia(api, deps.MediaService)
 	registerMediaOriginal(mux, api, deps.MediaService)
 	registerMediaFile(mux, api, deps.MediaService)
-	registerMediaThumb(mux, deps.ThumbService)
+	registerMediaThumb(mux, api, deps.ThumbService)
 	registerAlbums(api, deps.AlbumService)
 	registerShares(api, deps.ShareService, deps.PrincipalDisplay)
 	registerShared(api, deps.SharedRead)
 	registerSharedBytes(mux, deps.SharedRead)
 	registerUserSettings(api, deps.UserSettings)
-	registerEvents(mux, deps.EventBus)
+	registerEvents(mux, api, deps.EventBus)
 	cookieCfg := hidden.CookieConfigFor(deps.DevInsecureHiddenCookies)
 	registerHiddenAuth(api, deps.HiddenAuth, cookieCfg)
 	registerHiddenMedia(api, deps.MediaService, deps.HiddenAuth)
@@ -236,11 +236,27 @@ func buildAPI(deps Deps) (*http.ServeMux, huma.API) {
 // the route must sit behind the same middleware chain that powers the
 // huma routes — buildAPI is called before httpapi.New wraps the mux
 // with WithMiddleware, so this requirement is satisfied automatically.
-func registerEvents(mux *http.ServeMux, bus *EventBus) {
+func registerEvents(mux *http.ServeMux, api huma.API, bus *EventBus) {
+	const path = "/api/v1/events"
+	api.OpenAPI().AddOperation(&huma.Operation{
+		OperationID: "events", Method: http.MethodGet, Path: path,
+		Tags: []string{"streams"}, Summary: "Subscribe to photo library events",
+		Description: "Server-sent events scoped to the caller. Use EventSource with the generated URL for browser reconnection and Last-Event-ID handling.",
+		Parameters: []*huma.Param{
+			{Name: "Last-Event-ID", In: "header", Schema: &huma.Schema{Type: "string"}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Server-sent event stream", Content: map[string]*huma.MediaType{
+				"text/event-stream": {Schema: &huma.Schema{Type: "string"}},
+			}},
+			"401": {Description: "Authentication required"},
+			"500": {Description: "Streaming unavailable"},
+		},
+	})
 	if bus == nil {
 		return
 	}
-	mux.Handle("GET /api/v1/events", WrapMuxHandler(eventsHandler(bus)))
+	mux.Handle("GET "+path, WrapMuxHandler(eventsHandler(bus)))
 }
 
 type healthzOutput struct {

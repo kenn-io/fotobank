@@ -1,3 +1,4 @@
+import { getDownloadMediaThumbUrl } from "../api/generated/browser";
 import type { Client } from "../api/client";
 import type { ListMediaParams } from "../api/generated/models";
 import { filterKey, type ActiveFilters } from "../filters/activeFilters";
@@ -460,7 +461,7 @@ export function toMedia(raw: Record<string, unknown>): Media | null {
     timestamp: ts,
     taken,
     aspect: wn / hn,
-    thumbUrl: `/api/v1/media/${id}/thumb?size=grid&v=${thumbVersion}`,
+    thumbUrl: getDownloadMediaThumbUrl(id, { size: "grid", v: thumbVersion }),
     thumbStatus,
     thumbVersion,
   };
