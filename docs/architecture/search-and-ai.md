@@ -97,6 +97,13 @@ vectors. Retry captures a failure cutoff before its batch loop so fresh worker
 failures are not repeatedly retried by the same request. Queueing remains
 available while AI processing is globally paused.
 
+The backfill and retry CLI commands accept `--json` and collect the existing
+HTTP results by task. They preserve completed task results if a later request
+fails, then exit nonzero. They do not combine requests into a transaction or
+recover partial counts from a failed HTTP request. See
+[AI automation](../guides/automation.md#queue-ai-work-and-manage-search-generations)
+for output formats and examples.
+
 Embedding backfill and retry are restricted to stub identity mode at the
 service boundary. Generation activation and embedding events use the configured
 stub owner; header-mode requests are rejected before generation or queue writes.
@@ -108,6 +115,8 @@ provides generation details and the server's retention window for the CLI's
 warning and confirmation; the write transaction then requires the target to
 still be retired. Declining the prompt sends no promotion request. The daemon
 may start for this read-only inspection before the prompt appears.
+Promotion and compaction also accept `--json` and return the shared HTTP result
+types. JSON-mode confirmation goes to stderr, leaving stdout for the result.
 
 Compaction dry-run and the scheduled/manual sweep share the same candidate
 query on the read-only pool. Each deletion rechecks retirement and age in its

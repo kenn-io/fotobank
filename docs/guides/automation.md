@@ -265,6 +265,49 @@ state or revoking an already-revoked share returns a conflict and exits nonzero.
 Commands do not retry automatically after a lost response; inspect the share
 before repeating a change. These commands do not provide header-mode login.
 
+## Queue AI work and manage search generations
+
+These commands use the daemon in stub mode. Backfill queues work that is
+missing for the current AI settings; retry-failed queues recorded failures.
+Both require processing acknowledgment. Their counts describe queued jobs,
+not completed tagging, captions, or embeddings.
+
+```sh
+fotobank ai backfill --task tag,caption --json
+fotobank ai retry-failed --task embed --json
+fotobank ai list-generations --state retired
+fotobank ai promote-generation <generation-id> --yes --json
+fotobank ai compact-retired-generations --dry-run --json
+fotobank ai compact-retired-generations --json
+```
+
+Backfill and retry JSON contains the daemon's `enqueued` count for each
+completed task, for example `{"tag":{"enqueued":12},"caption":{"enqueued":8}}`.
+Tasks run in the requested order and stop at the first failure. If a later
+task fails, stdout still contains completed task results; stderr explains the
+failure and the exit code is nonzero. Failed and unattempted tasks have no
+entry. If no task completed, stdout is empty. A failed task may have queued
+some jobs before failing; these responses cannot report that partial count.
+Inspect `ai status` before retrying after a request failure.
+
+A search **generation** holds embeddings made with the same model and input
+settings. Promotion makes a retired generation active again; JSON returns its
+`id` and `fingerprint`. Without `--yes`, JSON mode puts the confirmation prompt
+on stderr. Declining leaves stdout empty and exits nonzero.
+
+Compaction removes retired generations older than the configured retention
+window. Its JSON contains `candidates`, `dropped`, and an optional `error`.
+Dry-run lists candidates without deleting them. A failed sweep still reports
+how many generations it dropped, then exits nonzero; earlier deletions are not
+undone. A failed dry-run also returns the error as JSON. A failed HTTP request
+leaves stdout empty. Promotion and compaction do not require a working AI
+provider or processing acknowledgment.
+
+Without `--json`, these four commands retain their readable output.
+`ai status` and `ai list-generations` always return JSON. See the
+[AI architecture](../architecture/search-and-ai.md#embedding-generations)
+for generation ownership and processing rules.
+
 ## Manage registered owners
 
 This is advanced administration. The single-user setup registers your configured
