@@ -4,6 +4,7 @@ test.describe("F2.3 owner-side sharing", () => {
   test("create media-set share from MediaDetail, see in /shares, revoke", async ({
     page,
   }) => {
+    await page.setViewportSize({ width: 390, height: 700 });
     // Unique-per-run label so a retry after a partial failure (share
     // created, test failed before revoke) doesn't see two rows match
     // "Test share". CI has retries enabled.
@@ -11,6 +12,12 @@ test.describe("F2.3 owner-side sharing", () => {
     await page.goto("/media/gps-fixture-1");
     await expect(page.getByText("fotobank")).toBeVisible();
     await page.getByRole("button", { name: "Share" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    const bounds = await dialog.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
     await page.getByPlaceholder("myhub:bob").fill("noop:test-grantee");
     await page.getByLabel("Label").fill(shareLabel);
     await page.getByRole("button", { name: "Create share" }).click();

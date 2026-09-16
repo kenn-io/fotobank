@@ -161,8 +161,7 @@
     background: var(--bg-surface);
     border: 1px solid var(--border-default);
     padding: var(--space-6);
-    min-width: 400px;
-    max-width: 480px;
+    width: min(480px, calc(100% - 2 * var(--space-4)));
     color: var(--text-primary);
     /* Relief — same elevated-panel treatment as ConfirmModal. */
     box-shadow: var(--fb-shadow-relief-strong);
