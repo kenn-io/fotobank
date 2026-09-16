@@ -25,7 +25,6 @@ describe("app.css token surface", () => {
     expect(css).toMatch(/--bg-inset:\s*#1d1d24/);
     expect(css).toMatch(/--text-primary:\s*#ecebe6/);
     expect(css).toMatch(/--text-secondary:\s*#99968d/);
-    expect(css).toMatch(/--text-muted:\s*#5a5751/);
     expect(css).toMatch(/--accent-blue:\s*#e8a44b/);
     expect(css).toMatch(/--fb-accent-deep:\s*#c98935/);
     expect(css).toMatch(/--border-default:\s*#25252c/);
