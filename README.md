@@ -91,8 +91,10 @@ from the original bytes alone.
 - Import photos, videos, RAW files, and sidecars without modifying the source.
   Keep related files together and detect duplicate content in your library.
 - Browse the library, inspect photo details, organize albums, and manage
-  privacy and sharing. The in-app sharing controls are optional; the CLI and API
-  remain available.
+  privacy. Sharing records and recipient access checks are implemented, but
+  sharing with another person requires an external identity and broker setup;
+  the default single-user configuration does not publish shares remotely.
+  See [sharing setup and limits](docs/guides/automation.md#manage-sharing).
 - Create partial, writable checkouts for editors and shell tools. Inspect
   changes and explicitly commit settled edits as new versions, with conflicts
   reported when the stored base has changed.

@@ -239,6 +239,20 @@ After a connection failure during a change, inspect the album before retrying.
 
 ## Manage sharing
 
+Sharing needs more setup than a local single-user library. The default
+`[broker].mode = "stub"` records successful publication without contacting any
+external system. A share can therefore show `broker_status = "active"` without
+reaching a recipient. The default `identity.mode = "stub"` also supplies the
+same identity to every request; it does not let another person sign in.
+
+For recipient access, configure the external identity proxy and broker
+integration described in [identity and authorization](../architecture/runtime.md#identity-and-authorization)
+and [sharing architecture](../architecture/product-features.md#sharing).
+`[broker].mode = "exec"` calls an operator-supplied broker executable; Fotobank
+does not supply that external service. In-app sharing controls are hidden by
+default; `[ui].sharing_enabled = true` shows them but does not configure identity
+or a broker. The CLI and API remain available when those controls are hidden.
+
 Sharing commands also use the configured stub owner through the daemon:
 
 ```sh
