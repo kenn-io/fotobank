@@ -1,5 +1,6 @@
 <!-- frontend/src/routes/SettingsAI.svelte -->
 <script lang="ts">
+  import { Button } from "@kenn-io/kit-ui";
   import { aiHealthStore } from "../lib/ai/health.svelte";
   import { AIInspectionStore } from "../lib/ai/inspectionStore.svelte";
   import { api } from "../lib/api/client";
@@ -23,6 +24,7 @@
   let tagFailures = $state<AIFailureRow[]>([]);
   let captionFailures = $state<AIFailureRow[]>([]);
   let busy = $state<string | null>(null);
+  let healthError = $state(false);
 
   void refreshAll();
   // Hydrate the toggle's persisted value on mount. Failures are silent
@@ -33,7 +35,13 @@
   void inspectionStore.load().catch(() => {});
 
   async function refreshAll(): Promise<void> {
-    await aiHealthStore.refresh();
+    healthError = false;
+    try {
+      await aiHealthStore.refresh();
+    } catch {
+      healthError = true;
+      return;
+    }
     const [tags, captions] = await Promise.all([
       listAIFailures("tag", 5).catch(() => []),
       listAIFailures("caption", 5).catch(() => []),
@@ -93,7 +101,12 @@
     {/if}
   </header>
 
-  {#if !aiHealthStore.health}
+  {#if healthError}
+    <div role="alert">
+      <p>Couldn’t load AI status.</p>
+      <Button onclick={refreshAll}>Retry</Button>
+    </div>
+  {:else if !aiHealthStore.health}
     <p class="muted">Loading…</p>
   {:else if aiHealthStore.health.paused_reason === "config_disabled"}
     <p class="muted">
