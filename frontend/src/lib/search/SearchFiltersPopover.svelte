@@ -1,8 +1,7 @@
 <!-- frontend/src/lib/search/SearchFiltersPopover.svelte
      U1: filter surface that surfaces date range, tag autocomplete,
      location autocomplete, and a media-type segmented control. The
-     component renders inline (popover-as-button is a future iteration);
-     it never owns filter state — the parent route holds the
+     parent route shows or hides this inline panel and holds the
      SearchFilters and re-renders this component when they change.
      Mutations bubble up via the onChange callback (Svelte 5 idiom).
      -->
@@ -292,10 +291,11 @@
 
 <style>
   .filters-popover {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 8px 12px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+    gap: 12px 16px;
+    padding: 12px;
+    margin-bottom: 12px;
     border: 1px solid var(--border-default);
     background: var(--bg-inset);
   }
@@ -303,6 +303,15 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-width: 0;
+  }
+  .filter-row:first-child {
+    flex-direction: row;
+    gap: 8px;
+  }
+  .filter-row:first-child .filter-label {
+    flex: 1;
+    min-width: 0;
   }
   .filter-label {
     display: flex;
@@ -312,7 +321,10 @@
     color: var(--text-secondary);
   }
   .filter-label input {
-    height: 26px;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    height: 32px;
     padding: 0 8px;
     border: 1px solid var(--border-default);
     background: var(--bg-surface);
@@ -345,5 +357,13 @@
   .suggestion-count {
     color: var(--text-secondary);
     font-size: 11px;
+  }
+  @media (max-width: 760px) {
+    .filters-popover { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 760px), (pointer: coarse) {
+    .filter-label input { height: 44px; font-size: 16px; }
+    .suggestion { min-height: 44px; }
+    .filter-row :global(.kit-checkbox) { min-height: 44px; }
   }
 </style>

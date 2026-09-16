@@ -146,6 +146,10 @@ action; `SearchBar.svelte` owns query synchronization, the global keyboard
 shortcut, and trimmed submission to the router. Search sorting and media-type
 filters use shared segmented controls, while the hidden-media option uses the
 shared checkbox; the search route remains the owner of query and filter state.
+Search opens with its filter panel collapsed. The Filters button reveals an
+inline panel, while sorting and removable active filters stay visible outside
+it. Closing the panel preserves its inputs; selected filters remain in the URL
+and survive reloads. Phone layouts stack field groups and enlarge touch targets.
 
 `make frontend-check` runs `kit-ui-check` in warning mode alongside type checks
 and unit tests. Warnings identify remaining local control equivalents without

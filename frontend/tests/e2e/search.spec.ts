@@ -90,13 +90,12 @@ test.describe("W1 Search", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Adding a tag chip narrows the result set. The popover renders inline
-  // (no click-to-open in v1), so we type into the tag autocomplete input
-  // and click the matching suggestion. The chip strip then shows the
-  // selected tag, and the URL gains a ?tag= param.
+  // Adding a tag chip through the filters panel narrows the result set
+  // and keeps the selected tag visible after the panel is closed.
   // -------------------------------------------------------------------------
   test("Tag chip filter narrows results and surfaces in URL", async ({ page }) => {
     await page.goto("/search?q=photo");
+    await page.getByRole("button", { name: "Filters", exact: true }).click();
     // Wait for the popover input to mount before typing — the route
     // hydrates from URL on mount, and an early focus race could drop
     // characters.
@@ -110,6 +109,7 @@ test.describe("W1 Search", () => {
     );
     await expect(mountainSuggestion).toBeVisible({ timeout: 5_000 });
     await mountainSuggestion.click();
+    await page.getByRole("button", { name: "Filters", exact: true }).click();
 
     // Chip strip shows the selected tag.
     await expect(page.getByTestId("chip-tag-mountain")).toBeVisible();
@@ -242,3 +242,49 @@ test.describe("W1 Search", () => {
     await expect(badges.first()).toBeVisible({ timeout: 5_000 });
   });
 });
+
+for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
+  test.describe(`Search filters at ${viewport.width}px`, () => {
+    test.use({ viewport });
+
+    test("collapse filters without hiding active choices or losing bookmarked values", async ({ page }) => {
+      await page.goto("/search?q=beach");
+      const toggle = page.getByRole("button", { name: "Filters", exact: true });
+      const after = page.getByTestId("search-filter-date-after");
+      await expect(after).not.toBeVisible();
+      await expect(page.getByRole("radio", { name: "Newest" })).toBeVisible();
+      await expect(page.getByLabel("Photo search-fixture-vis-001")).toBeInViewport();
+
+      await toggle.focus();
+      await toggle.press("Enter");
+      await expect(toggle).toHaveAttribute("aria-expanded", "true");
+      if (viewport.width <= 760) {
+        const hidden = page.getByRole("checkbox", { name: "Include hidden media" });
+        expect((await hidden.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      }
+      await after.fill("2000-01-01");
+      await page.getByRole("radio", { name: "Photos", exact: true }).click();
+      await expect(page).toHaveURL(/date_after=2000-01-01/);
+      await expect(page).toHaveURL(/media_type=photo/);
+      await expect(after).toBeVisible();
+
+      await toggle.focus();
+      await toggle.press("Space");
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await expect(after).not.toBeVisible();
+      await expect(page.getByTestId("chip-date-after")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Photo", exact: true })).toBeVisible();
+
+      await page.reload();
+      await expect(after).not.toBeVisible();
+      await expect(page.getByTestId("chip-date-after")).toBeVisible();
+      await page.getByRole("button", { name: "Remove after-date filter" }).click();
+      await expect(page).not.toHaveURL(/date_after=/);
+      await expect(page).toHaveURL(/q=beach/);
+      await expect(page).toHaveURL(/media_type=photo/);
+      await toggle.click();
+      await expect(after).toHaveValue("");
+      await expect(page.getByRole("radio", { name: "Photos", exact: true })).toBeChecked();
+    });
+  });
+}

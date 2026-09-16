@@ -4,11 +4,7 @@
      the parent route owns the SearchFilters and re-renders this
      component with the chip absent after onChange fires.
 
-     Chips are presentational; the popover is the source of truth for
-     values. We deliberately don't make a chip *click* re-open the
-     popover (the popover renders inline in v1), but we do guarantee
-     the × button on every chip dispatches the right onChange so chips
-     are usable on their own. -->
+     Chips stay visible and removable while the filters panel is closed. -->
 <script lang="ts">
   import type { SearchFilters } from "./types";
 
@@ -154,5 +150,9 @@
   .chip-remove:hover {
     background: var(--bg-inset);
     color: var(--text-primary);
+  }
+  @media (max-width: 760px), (pointer: coarse) {
+    .chip { padding: 0 0 0 12px; }
+    .chip-remove { width: 44px; height: 44px; }
   }
 </style>
