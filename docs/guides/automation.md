@@ -12,8 +12,9 @@ export FOTOBANK_CONFIG=/var/lib/fotobank-control/config.toml
 fotobank config validate
 ```
 
-An individual command can use `--config` instead. The explicit flag takes
-precedence over the environment variable.
+Commands that accept `--config` can use it instead; the explicit flag takes
+precedence over the environment variable. `config path` uses only the environment
+or default path; see [separate configurations](setup.md#use-a-separate-configuration).
 
 ## Prefer structured output
 
