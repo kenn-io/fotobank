@@ -12,11 +12,13 @@ test("AI status failure offers retry instead of endless loading", async ({ page 
 
   await page.goto("/settings/ai");
   await expect(page.getByRole("alert")).toContainText("Couldn’t load AI status.");
+  await expect(page.getByRole("link", { name: "AI status unavailable", exact: true })).toBeVisible();
   await expect(page.getByText("Loading…", { exact: true })).toBeHidden();
   unavailable = false;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByRole("alert")).toBeHidden();
   await expect(page.getByText("Loading…", { exact: true })).toBeHidden();
   await expect(page.locator(".ack-modal, .task-card").first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "AI status unavailable", exact: true })).toBeHidden();
   expect(errors).toEqual([]);
 });

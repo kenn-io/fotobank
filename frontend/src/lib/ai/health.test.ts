@@ -146,11 +146,16 @@ describe("AIHealthStore.refresh", () => {
     await store.refresh();
     expect(store.health).toEqual(base);
 
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503, text: async () => "" });
+    await expect(store.refresh()).rejects.toThrow();
+    expect(store.unavailable).toBe(true);
+
     const next: AIHealth = { ...base, tag: { ...base.tag, pending: 7 } };
     mockFetch.mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify(next) });
     await store.refresh();
     expect(store.health).toEqual(next);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(store.unavailable).toBe(false);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
   it("clears inflight after a failed fetch so the next refresh can retry", async () => {

@@ -58,6 +58,13 @@ users to existing AI controls, Hidden photos, and workflow guides. It does not
 edit host configuration or grant additional permissions. AI provider settings
 remain behind the existing admin checks on their own route.
 
+AI settings reports acknowledgement, queue, retry, and inspection-save results
+on the page. Failed actions stay retryable; an inspection preference becomes
+local state only after the daemon accepts it. Status and recent-failure reads
+have separate retry messages, so an unavailable list is not shown as an empty
+one. The shared health store marks failed refreshes as unavailable; the shell
+does not keep reporting an old healthy result during that outage.
+
 ## Feedback and dialogs
 
 The Shares list uses a button on each share name to open the existing details

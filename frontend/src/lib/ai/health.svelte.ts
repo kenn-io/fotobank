@@ -18,6 +18,7 @@ import type { AIDotInfo, AIHealth } from "./types";
 
 export class AIHealthStore {
   health = $state<AIHealth | null>(null);
+  unavailable = $state(false);
   private inflight: Promise<void> | null = null;
   private pending = false;
 
@@ -44,8 +45,10 @@ export class AIHealthStore {
           this.pending = false;
           try {
             this.health = await getAIHealth();
+            this.unavailable = false;
             lastErr = null;
           } catch (err) {
+            this.unavailable = true;
             lastErr = err;
           }
         } while (this.pending);
