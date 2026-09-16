@@ -1,4 +1,5 @@
 import type { Client } from "../api/client";
+import type { ListMediaParams } from "../api/generated/models";
 import { filterKey, type ActiveFilters } from "../filters/activeFilters";
 
 // thumb_status mirrors the backend enum on `media.thumb_status`. The
@@ -215,8 +216,8 @@ export class MediaStore {
    * (camera/lens/facet_tag/has_gps/media_type) ride alongside the
    * pagination/sort params; SF-17 will start honouring them server-side.
    */
-  private buildQuery(): Record<string, unknown> {
-    const q: Record<string, unknown> = {
+  private buildQuery(): ListMediaParams {
+    const q: ListMediaParams = {
       limit: 200,
       offset: this.nextOffset ?? 0,
       sort_desc: true,

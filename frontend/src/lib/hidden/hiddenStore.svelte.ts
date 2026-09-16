@@ -38,12 +38,11 @@ export class HiddenStore {
   async unlock(passcode: string): Promise<void> {
     const res = await this.client.hiddenUnlock({ passcode });
     if (res.error) {
-      const err = res.error as { status?: number; headers?: Record<string, string> };
-      const status = err.status ?? 0;
+      const status = res.response.status;
       if (status === 403) {
         this.error = { kind: "wrong_passcode" };
       } else if (status === 429) {
-        const retryHeader = err.headers?.["retry-after"] ?? "300";
+        const retryHeader = res.response.headers.get("Retry-After") ?? "300";
         const retryAfterSeconds = parseInt(retryHeader, 10) || 300;
         this.error = { kind: "locked_out", retryAfterSeconds };
       } else if (status === 400) {

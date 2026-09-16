@@ -1,4 +1,5 @@
 import type { Client } from "../api/client";
+import type { SharesListParams } from "../api/generated/models";
 
 export type ShareTargetType = "media_set" | "album_live";
 export type ShareBrokerStatus =
@@ -92,7 +93,7 @@ export class SharesStore {
     if (this.loading || this.exhausted) return;
     this.loading = true;
     try {
-      const query: Record<string, unknown> = {
+      const query: SharesListParams = {
         limit: 100,
         offset: this.nextOffset ?? 0,
         include_settled: this.showRevoked,
@@ -247,7 +248,7 @@ export class SharesStore {
     // "revoking" forever, polling indefinitely. The user-facing filter
     // is applied in the route view, not at the polling boundary.
     const token = this.loadToken;
-    const query: Record<string, unknown> = {
+    const query: SharesListParams = {
       limit: 200,
       offset: 0,
       include_settled: true,

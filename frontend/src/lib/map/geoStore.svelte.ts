@@ -10,6 +10,7 @@
 // know whether the cached set is hidden-aware.
 
 import type { Client } from "../api/client";
+import type { ListMediaGeoParams } from "../api/generated/models";
 import { toMedia, type Media } from "../media/mediaStore.svelte";
 
 // GeoLoadOptions narrows the geotagged set the same way ActiveFilters
@@ -94,7 +95,7 @@ export class GeoStore {
       this._includedHidden = false;
     }
     try {
-      const query: Record<string, unknown> = {};
+      const query: ListMediaGeoParams = {};
       if (includeHidden) query["include_hidden"] = true;
       if (cameras.length > 0) query["camera"] = [...cameras];
       if (lenses.length > 0) query["lens"] = [...lenses];
