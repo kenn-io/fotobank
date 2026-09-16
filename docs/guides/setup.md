@@ -233,6 +233,9 @@ and available listener ports; a different config file does not separate shared
 storage. Keep configuration and runtime files outside the photo storage roots
 so recovery can start when those roots are unavailable.
 
+`config path` prints the environment-selected or default path and does not
+accept `--config`. It does not remember an explicit path from an earlier command.
+
 ## Run under a service account
 
 This is optional administration, not a requirement for trying Fotobank.

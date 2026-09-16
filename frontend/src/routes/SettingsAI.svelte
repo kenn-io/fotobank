@@ -25,6 +25,9 @@
   let captionFailures = $state<AIFailureRow[]>([]);
   let busy = $state<string | null>(null);
   let healthError = $state(false);
+  let actionError = $state("");
+  let notice = $state("");
+  let failuresError = $state(false);
 
   void refreshAll();
   // Hydrate the toggle's persisted value on mount. Failures are silent
@@ -42,52 +45,63 @@
       healthError = true;
       return;
     }
-    const [tags, captions] = await Promise.all([
-      listAIFailures("tag", 5).catch(() => []),
-      listAIFailures("caption", 5).catch(() => []),
-    ]);
-    tagFailures = tags;
-    captionFailures = captions;
+    failuresError = false;
+    try {
+      [tagFailures, captionFailures] = await Promise.all([
+        listAIFailures("tag", 5),
+        listAIFailures("caption", 5),
+      ]);
+    } catch {
+      failuresError = true;
+    }
+  }
+
+  async function runAction(key: string, work: () => Promise<string>, failure: string): Promise<void> {
+    if (busy) return;
+    busy = key;
+    actionError = "";
+    notice = "";
+    try {
+      notice = await work();
+    } catch {
+      actionError = failure;
+    } finally {
+      busy = null;
+    }
   }
 
   async function toggleInspection(e: Event): Promise<void> {
-    const next = (e.currentTarget as HTMLInputElement).checked;
-    busy = "inspection";
-    try {
+    const input = e.currentTarget as HTMLInputElement;
+    const next = input.checked;
+    await runAction("inspection", async () => {
       await inspectionStore.set(next);
-    } finally {
-      busy = null;
-    }
+      return `AI Inspection ${next ? "enabled" : "disabled"}.`;
+    }, "Couldn’t save AI Inspection. Try again.");
+    input.checked = inspectionStore.enabled;
   }
 
   async function ack(): Promise<void> {
-    busy = "ack";
-    try {
+    await runAction("ack", async () => {
       await acknowledgeHiddenProcessing();
       await refreshAll();
-    } finally {
-      busy = null;
-    }
+      return "Acknowledgement saved.";
+    }, "Couldn’t save your acknowledgement. Try again.");
   }
 
   async function backfill(task: AITask): Promise<void> {
-    busy = `backfill-${task}`;
-    try {
-      await backfillAI(task);
+    await runAction(`backfill-${task}`, async () => {
+      const result = await backfillAI(task);
       await refreshAll();
-    } finally {
-      busy = null;
-    }
+      return `Queued ${result.enqueued} photos for ${task === "tag" ? "tagging" : "captioning"}.`;
+    }, "Couldn’t queue photos. Try again.");
   }
 
   async function retryAll(task: AITask): Promise<void> {
-    busy = `retry-${task}`;
-    try {
-      await retryFailedAI(task);
+    await runAction(`retry-${task}`, async () => {
+      const result = await retryFailedAI(task);
       await refreshAll();
-    } finally {
-      busy = null;
-    }
+      return `Queued ${result.enqueued} photos to retry ${task === "tag" ? "tagging" : "captioning"}.`;
+    }, "Couldn’t queue failed photos. Try again.");
   }
 </script>
 
@@ -100,8 +114,11 @@
       <span class="config-locked" title="Toggle in config.toml">Enabled via config.toml</span>
     {/if}
   </header>
+  <p class="intro">Manage optional tagging and captions. These actions send photos to your configured AI provider.</p>
+  {#if actionError}<p class="feedback" role="alert">{actionError}</p>{/if}
+  {#if notice}<p class="feedback" role="status">{notice}</p>{/if}
 
-  {#if healthError}
+  {#if healthError || aiHealthStore.unavailable}
     <div role="alert">
       <p>Couldn’t load AI status.</p>
       <Button onclick={refreshAll}>Retry</Button>
@@ -123,9 +140,9 @@
         Outputs stay owner-only and are only visible inside the unlocked Hidden context,
         but the image bytes are sent to the configured AI endpoint.
       </p>
-      <button type="button" onclick={ack} disabled={busy === "ack"}>
+      <Button onclick={ack} disabled={busy !== null}>
         {busy === "ack" ? "Acknowledging…" : "Acknowledge and start workers"}
-      </button>
+      </Button>
     </div>
   {:else}
     {@const tag = aiHealthStore.health.tag}
@@ -145,11 +162,11 @@
     <article class="task-card">
       <header class="task-header">
         <strong>Tag</strong>
-        <span class="meta">{tag.active_fingerprint}</span>
-        <button type="button" onclick={() => backfill("tag")} disabled={busy === "backfill-tag"}>
+        <Button onclick={() => backfill("tag")} disabled={busy !== null}>
           {busy === "backfill-tag" ? "Enqueuing…" : "Backfill all"}
-        </button>
+        </Button>
       </header>
+      <details class="model-details"><summary>Model details</summary><code>{tag.active_fingerprint}</code></details>
       <ul class="counters">
         <li>Done <strong>{tag.done}</strong></li>
         <li>Pending <strong>{tag.pending}</strong></li>
@@ -158,9 +175,7 @@
         <li>
           Failed <strong>{tag.failed_active}</strong>
           {#if tag.failed_active > 0}
-            <button type="button" class="link" onclick={() => retryAll("tag")} disabled={busy === "retry-tag"}>
-              retry all
-            </button>
+            <Button onclick={() => retryAll("tag")} disabled={busy !== null}>Retry failed</Button>
           {/if}
         </li>
       </ul>
@@ -169,11 +184,11 @@
     <article class="task-card">
       <header class="task-header">
         <strong>Caption</strong>
-        <span class="meta">{cap.active_fingerprint}</span>
-        <button type="button" onclick={() => backfill("caption")} disabled={busy === "backfill-caption"}>
+        <Button onclick={() => backfill("caption")} disabled={busy !== null}>
           {busy === "backfill-caption" ? "Enqueuing…" : "Backfill all"}
-        </button>
+        </Button>
       </header>
+      <details class="model-details"><summary>Model details</summary><code>{cap.active_fingerprint}</code></details>
       <ul class="counters">
         <li>Done <strong>{cap.done}</strong></li>
         <li>Pending <strong>{cap.pending}</strong></li>
@@ -182,15 +197,18 @@
         <li>
           Failed <strong>{cap.failed_active}</strong>
           {#if cap.failed_active > 0}
-            <button type="button" class="link" onclick={() => retryAll("caption")} disabled={busy === "retry-caption"}>
-              retry all
-            </button>
+            <Button onclick={() => retryAll("caption")} disabled={busy !== null}>Retry failed</Button>
           {/if}
         </li>
       </ul>
     </article>
 
-    {#if tagFailures.length > 0 || captionFailures.length > 0}
+    {#if failuresError}
+      <div role="alert">
+        <p>Couldn’t load recent failures.</p>
+        <Button onclick={refreshAll}>Retry</Button>
+      </div>
+    {:else if tagFailures.length > 0 || captionFailures.length > 0}
       <section class="failures">
         <h4>Recent failures</h4>
         <ul>
@@ -223,7 +241,7 @@
         type="checkbox"
         checked={inspectionStore.enabled}
         onchange={toggleInspection}
-        disabled={busy === "inspection"}
+        disabled={busy !== null}
         data-testid="ai-inspection-toggle"
       />
       <span>Enable AI Inspection</span>
@@ -232,27 +250,38 @@
 </section>
 
 <style>
-  .ai-panel { padding: 16px; max-width: 720px; }
-  .panel-header { display: flex; justify-content: space-between; align-items: baseline; }
-  .admin-link { font-size: 12px; color: var(--accent-blue); text-decoration: none; }
-  .config-locked { font-size: 11px; color: var(--text-muted); }
-  .banner { padding: 10px; border-radius: 6px; background: rgba(250, 204, 21, 0.1); border: 1px solid rgba(250, 204, 21, 0.4); margin: 12px 0; font-size: 11px; }
-  .ack-modal { padding: 14px; border-radius: 6px; background: var(--bg-surface); border: 1px solid var(--border-default); margin: 12px 0; }
-  .ack-modal h3 { margin: 0 0 8px 0; font-size: 13px; }
-  .vision { display: flex; align-items: center; gap: 6px; font-size: 11px; margin: 6px 0 12px; }
+  .ai-panel { padding: 24px; max-width: 800px; font-size: 14px; line-height: 1.6; }
+  .panel-header { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: baseline; }
+  .panel-header h2 { margin: 0; }
+  .admin-link { color: var(--accent-blue); }
+  .config-locked, .intro, .muted { color: var(--text-muted); }
+  .intro { margin: 12px 0 24px; }
+  .feedback { padding: 12px 16px; background: var(--bg-surface); border: 1px solid var(--border-default); }
+  .banner { padding: 16px; background: var(--bg-surface); border: 1px solid var(--border-default); margin: 16px 0; }
+  .ack-modal { padding: 16px; background: var(--bg-surface); border: 1px solid var(--border-default); margin: 16px 0; }
+  .ack-modal h3 { margin: 0 0 8px; font-size: 16px; }
+  .vision { display: flex; align-items: center; gap: 8px; margin: 16px 0; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-red); }
   .dot[data-reachable="true"] { background: var(--accent-green); }
-  .task-card { background: var(--bg-surface); border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
-  .task-header { display: flex; gap: 8px; align-items: center; }
-  .meta { font-size: 10px; color: var(--text-muted); flex: 1; }
-  .counters { list-style: none; padding: 0; margin: 8px 0 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; font-size: 10px; }
+  .task-card { padding: 20px 0; border-top: 1px solid var(--border-default); }
+  .task-header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: center; }
+  .model-details { margin: 12px 0; color: var(--text-muted); font-size: 12px; }
+  .model-details summary { cursor: pointer; }
+  .model-details code { display: block; overflow-wrap: anywhere; }
+  .counters { list-style: none; padding: 0; margin: 16px 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 16px; }
   .counters li { color: var(--text-muted); }
-  .counters strong { color: var(--text-primary); display: block; font-size: 14px; }
-  button.link { font-size: 9px; background: none; border: none; color: var(--text-secondary); text-decoration: underline; padding: 0; cursor: pointer; }
-  .failures ul { list-style: none; padding: 0; font-size: 10px; line-height: 1.6; }
-  .badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 9px; background: var(--bg-inset); color: var(--text-muted); margin-right: 6px; }
-  .inspection { margin-top: 16px; padding: 10px 12px; background: var(--bg-surface); border-radius: 6px; }
-  .inspection h4 { margin: 0 0 4px 0; font-size: 12px; }
-  .inspection .muted { font-size: 10px; color: var(--text-muted); margin: 0 0 8px 0; line-height: 1.5; }
-  .toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer; }
+  .counters strong { color: var(--text-primary); display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+  .failures ul { list-style: none; padding: 0; overflow-wrap: anywhere; }
+  .failures li { margin-bottom: 12px; }
+  .badge { color: var(--text-muted); margin-right: 8px; }
+  .inspection { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border-default); }
+  .inspection h4 { margin: 0 0 8px; font-size: 16px; }
+  .inspection .muted { margin: 0 0 12px; }
+  .toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
+  @media (max-width: 760px) {
+    .ai-panel { padding: 16px; }
+    .ai-panel :global(button), .admin-link, .model-details summary { min-height: 44px; }
+    .admin-link { display: inline-flex; align-items: center; }
+    .model-details summary { align-content: center; }
+  }
 </style>

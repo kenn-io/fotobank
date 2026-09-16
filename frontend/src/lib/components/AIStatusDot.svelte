@@ -6,7 +6,9 @@
 
   // App.svelte already calls aiHealthStore.refresh() on mount and on
   // ai.* SSE events; no per-component refresh needed.
-  const dot = $derived(deriveDot(aiHealthStore.health));
+  const dot = $derived(aiHealthStore.unavailable
+    ? { state: "unreachable" as const, label: "AI status unavailable" }
+    : deriveDot(aiHealthStore.health));
 
   const colorByState: Record<AIDotState, string> = {
     idle: "var(--accent-green)",

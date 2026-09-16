@@ -75,7 +75,8 @@ poll_interval = "5s"                 # how often to scan for pending rows
 lease_timeout = "10m"                # working rows reclaimed after this
 
 [broker]
-# v1 ships stub only. When Phase 2 lands, mode = "exec" with commands.
+# "stub" records success without publishing remotely. Use "exec" to call
+# your broker executable, configured below.
 mode = "stub"
 
 [broker.exec]

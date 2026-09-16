@@ -2,8 +2,8 @@ import type { Client } from "../api/client";
 
 // AIInspectionStore is a Svelte 5 rune-backed store for the per-user
 // "AI Inspection" toggle. Mirrors the densityStore pattern: load() pulls
-// the persisted JSON value at boot, set() flips the local state and PUTs
-// the new value, and a dirty flag protects an eager click from a late
+// the persisted JSON value at boot, set() confirms the PUT before changing
+// local state, and a dirty flag protects an eager click from a late
 // server response.
 //
 // Wire format: the user-settings route stores opaque JSON strings under
@@ -49,8 +49,9 @@ export class AIInspectionStore {
   }
 
   async set(on: boolean): Promise<void> {
-    this.enabled = on;
     this.dirty = true;
-    await this.client.putUserSetting("ai.inspection", { value: JSON.stringify(on) });
+    const result = await this.client.putUserSetting("ai.inspection", { value: JSON.stringify(on) });
+    if (result.error) throw new Error("Could not save AI Inspection");
+    this.enabled = on;
   }
 }
