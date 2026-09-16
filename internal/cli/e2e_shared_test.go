@@ -42,6 +42,8 @@ import (
 //     (scope carries allow_download=true);
 //     - /api/v1/shared/scopes with no X-Auth-Scopes returns an empty
 //     items list (header-attested scopes is the auth signal).
+//     - owner revocation removes recipient access even when requests
+//     still carry the previously valid scope header.
 //
 // Both boots bind 127.0.0.1:0 so the Guard trusts the ingress by
 // loopback. Each boot writes to its own FOTOBANK_TEST_LISTEN_ADDR_SINK
@@ -289,6 +291,36 @@ admin_listen = "127.0.0.1:0"
 	r.NoError(json.NewDecoder(resp.Body).Decode(&emptyResp))
 	r.NoError(resp.Body.Close())
 	r.Empty(emptyResp.Items)
+
+	// Revoke through the owner API on the same running server. Keep the
+	// recipient's old scope header to exercise local revocation enforcement.
+	revokeReq, err := http.NewRequestWithContext(headerCtx, http.MethodPost,
+		headerBase+"/api/v1/shares/"+scope.UUID+"/revoke", nil)
+	r.NoError(err)
+	revokeReq.Header.Set("X-Auth-Hub", "local")
+	revokeReq.Header.Set("X-Auth-User-ID", "alice")
+	revokeReq.Header.Set("X-Auth-Handle", "Alice")
+	resp, err = client.Do(revokeReq)
+	r.NoError(err)
+	r.NoError(resp.Body.Close())
+	r.Equal(http.StatusOK, resp.StatusCode)
+
+	resp, err = client.Do(newReq("/api/v1/shared/scopes", true))
+	r.NoError(err)
+	r.Equal(http.StatusOK, resp.StatusCode)
+	r.NoError(json.NewDecoder(resp.Body).Decode(&emptyResp))
+	r.NoError(resp.Body.Close())
+	r.Empty(emptyResp.Items)
+
+	for _, path := range []string{
+		"/api/v1/shared/albums/" + album.ID + "/media",
+		"/api/v1/shared/media/" + mediaID + "/original",
+	} {
+		resp, err = client.Do(newReq(path, true))
+		r.NoError(err)
+		r.NoError(resp.Body.Close())
+		r.Equal(http.StatusNotFound, resp.StatusCode, "revoked recipient access: %s", path)
+	}
 
 	// Shut down the header server.
 	client.CloseIdleConnections()
