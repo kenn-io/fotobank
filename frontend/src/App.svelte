@@ -70,8 +70,9 @@
   // counts) but the writer (URL → ActiveFilters → router.navigate)
   // also lives here, alongside the other route-level controllers.
   const facetsStore = new FacetsStore(api);
-  // Initial health snapshot — runs once on mount.
-  void aiHealthStore.refresh();
+  // Background health reads are best-effort; AI settings reports failures
+  // and offers retry without interrupting photo browsing.
+  void aiHealthStore.refresh().catch(() => {});
 
   onMount(() => {
     void appConfig.load();
@@ -173,7 +174,7 @@
       ev.type === "ai.caption.completed" ||
       ev.type === "ai.health.changed"
     ) {
-      void aiHealthStore.refresh();
+      void aiHealthStore.refresh().catch(() => {});
     }
   });
 
