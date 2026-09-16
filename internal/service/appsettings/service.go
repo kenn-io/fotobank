@@ -3,7 +3,7 @@ package appsettings
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -531,9 +531,6 @@ func intValue(value any) (int, bool) {
 			return 0, false
 		}
 		return int(v), true
-	case json.Number:
-		n, err := v.Int64()
-		return int(n), err == nil
 	default:
 		return 0, false
 	}

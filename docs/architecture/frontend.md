@@ -16,19 +16,24 @@ the normal full-product build.
 
 ## API contract
 
-The frontend calls `/api/v1`. Huma generates `openapi.json` through the same
+The frontend calls `/api/v1`. Huma generates `openapi.yaml` through the same
 JSON operation definitions used by the server, including search, AI, and
 facets. The generator supplies no runtime services and does not open storage
 or contact providers. Handlers check service availability when called.
 
-`make api-generate` updates the OpenAPI file and generated TypeScript schema.
-JSON API changes must regenerate both before commit. The live server exposes
+`make api-generate` updates the OpenAPI file and the Orval TypeScript client.
+Browser calls use its named operations. The shared fetch transport preserves
+HTTP error results, cancellation, and keepalive requests, and sends repeated
+query values as separate parameters. JSON API changes must regenerate the
+contract and clients before commit. The live server exposes
 the schema at `/api/openapi.json` and interactive documentation at `/api/docs`.
 
-Full-size media and thumbnail endpoints are raw byte routes because they need
-range requests, streaming, cache validators, and content headers. JSON routes
-and the primary/attachment download routes appear in the generated contract;
-thumbnail and event routes are not included.
+Full-size media, thumbnails, and events also appear in the generated contract.
+Orval's fetch generator emits `generated/browser.ts` for these streaming routes.
+Images, native download links, and EventSource use its typed URL builders, so
+browser code does not construct API paths. The browser still owns image loading,
+download streaming, and event reconnection; the raw Go handlers retain their
+existing cache, range, and streaming behavior.
 
 ## Routes and state
 

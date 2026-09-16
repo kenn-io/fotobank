@@ -10,7 +10,10 @@ function makeClient(byUrl: Record<string, Resp>) {
     calls.push({ path, params: (opts as { params?: unknown }).params });
     return byUrl[path] ?? { error: { status: 500 } };
   };
-  return { GET: handler, calls };
+  return { GET: handler, calls ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+listMediaGeo(params?: any, options?: any) { return (this as any).GET("/api/v1/media/geo", { params: { query: params }, ...options }); }
+};
 }
 
 const sampleItem = {
@@ -30,7 +33,7 @@ describe("GeoStore", () => {
         data: { items: [sampleItem] },
       },
     });
-    const s = new GeoStore(client as unknown as Pick<Client, "GET">);
+    const s = new GeoStore(client as unknown as Client);
     await s.load(false);
     expect(s.items.length).toBe(1);
     expect(s.includedHiddenAtFetch).toBe(false);
@@ -43,7 +46,7 @@ describe("GeoStore", () => {
         data: { items: [{ ...sampleItem, id: "h" }] },
       },
     });
-    const s = new GeoStore(client as unknown as Pick<Client, "GET">);
+    const s = new GeoStore(client as unknown as Client);
     await s.load(true);
     expect(s.items.length).toBe(1);
     expect(s.includedHiddenAtFetch).toBe(true);
@@ -57,7 +60,7 @@ describe("GeoStore", () => {
         data: { items: [sampleItem] },
       },
     });
-    const s = new GeoStore(client as unknown as Pick<Client, "GET">);
+    const s = new GeoStore(client as unknown as Client);
     await s.load(false);
     expect(s.findById("a")?.latitude).toBe(1);
     expect(s.findById("missing")).toBeUndefined();
@@ -67,7 +70,7 @@ describe("GeoStore", () => {
     const client = makeClient({
       "/api/v1/media/geo": { error: { status: 500 } },
     });
-    const s = new GeoStore(client as unknown as Pick<Client, "GET">);
+    const s = new GeoStore(client as unknown as Client);
     await s.load(false);
     expect(s.items).toEqual([]);
     expect(s.error).not.toBeNull();
@@ -87,7 +90,10 @@ describe("GeoStore", () => {
         if (call === 1) return new Promise((r) => (resolveOld = r));
         return new Promise((r) => (resolveNew = r));
       },
-    } as unknown as Pick<Client, "GET">;
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+listMediaGeo(params?: any, options?: any) { return (this as any).GET("/api/v1/media/geo", { params: { query: params }, ...options }); }
+} as unknown as Client;
     const s = new GeoStore(client);
     const oldP = s.load(false);
     const newP = s.load(true);
@@ -108,7 +114,7 @@ describe("GeoStore", () => {
     const client = makeClient({
       "/api/v1/media/geo": { data: { items: [raw] } },
     });
-    const s = new GeoStore(client as unknown as Pick<Client, "GET">);
+    const s = new GeoStore(client as unknown as Client);
     await s.load(false);
     expect(s.rawItems).toEqual([raw]);
   });
@@ -117,7 +123,7 @@ describe("GeoStore", () => {
     const client = makeClient({
       "/api/v1/media/geo": { data: { items: [sampleItem] } },
     });
-    const s = new GeoStore(client as unknown as Pick<Client, "GET">);
+    const s = new GeoStore(client as unknown as Client);
     await s.load(false, {
       cameras: ["Sony A7R IV"],
       lenses: ["Sony FE 24-70 GM"],
@@ -150,8 +156,11 @@ describe("GeoStore", () => {
         calls.push(opts?.params?.query ?? {});
         return responses[next++] ?? { error: { status: 500 } };
       },
-    };
-    const s = new GeoStore(client as unknown as Pick<Client, "GET">);
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+listMediaGeo(params?: any, options?: any) { return (this as any).GET("/api/v1/media/geo", { params: { query: params }, ...options }); }
+};
+    const s = new GeoStore(client as unknown as Client);
     await s.load(false);
     expect(s.items.length).toBe(2);
 

@@ -27,12 +27,12 @@ export class AppConfigStore {
   principal = $state<Principal | null>(null);
   ready = $state(false);
 
-  constructor(private client: Pick<Client, "GET">) {}
+  constructor(private client: Pick<Client, "me">) {}
 
   async load(): Promise<void> {
     try {
-      const { data } = await this.client.GET("/api/v1/me", {});
-      // openapi-fetch returns data===undefined for non-2xx responses;
+      const { data } = await this.client.me();
+      // the API client returns data===undefined for non-2xx responses;
       // both HTTP error and "no body" are treated as resolved-disabled.
       if (!data) {
         this.sharingEnabled = false;

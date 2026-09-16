@@ -11,7 +11,13 @@ import type { Client } from "../lib/api/client";
 function defaultAppConfig(): AppConfigStore {
   const c = {
     GET: async () => ({ data: undefined, error: { status: 0 } }),
-  } as unknown as Pick<Client, "GET">;
+
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+listHiddenMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/hidden/media", { params: { query: params }, ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as unknown as Client;
   return new AppConfigStore(c);
 }
 

@@ -23,7 +23,7 @@ export class HiddenMediaStore {
   private byMonth = new Map<string, Map<string, Media>>();
   private byId = new Map<string, string>();
 
-  constructor(private client: Pick<Client, "GET">) {}
+  constructor(private client: Pick<Client, "listHiddenMedia">) {}
 
   async loadInitial(): Promise<void> {
     await this.loadMore();
@@ -33,18 +33,14 @@ export class HiddenMediaStore {
     if (this.loading || this.exhausted) return;
     this.loading = true;
     try {
-      const res = await this.client.GET("/api/v1/hidden/media", {
-        params: {
-          query: { limit: 200, offset: this.nextOffset ?? 0 },
-        } as never,
-      });
+      const res = await this.client.listHiddenMedia({ limit: 200, offset: this.nextOffset ?? 0 });
       if (res.error || !res.data) {
         const status = (res.error as { status?: number } | undefined)?.status ?? 0;
         this.loadError = status;
         return;
       }
       this.loadError = null;
-      const items = ((res.data as { items?: Array<Record<string, unknown>> }).items ?? [])
+      const items = ((res.data as unknown as { items?: Array<Record<string, unknown>> }).items ?? [])
         .map(toMedia)
         .filter((m): m is Media => m !== null);
       this.merge(items);

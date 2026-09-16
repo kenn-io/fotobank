@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -86,12 +87,12 @@ func TestPublishAutoIDIsMonotonicPerPrincipal(t *testing.T) {
 	const n = 100
 	var prev int64
 	for range n {
-		id := bus.PublishAutoID(alice, "test", json.RawMessage(`{}`))
+		id := bus.PublishAutoID(alice, "test", jsontext.Value(`{}`))
 		r.Greater(id, prev, "Alice's IDs must be strictly increasing")
 		prev = id
 	}
 	// Bob's stream is independent — his first ID is 1, not 101.
-	bobID := bus.PublishAutoID(bob, "test", json.RawMessage(`{}`))
+	bobID := bus.PublishAutoID(bob, "test", jsontext.Value(`{}`))
 	r.EqualValues(1, bobID, "Bob's per-principal counter starts fresh")
 }
 

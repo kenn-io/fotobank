@@ -21,10 +21,10 @@ export class HiddenStore {
   lockedOutUntil = $state<string | null>(null);
   error = $state<HiddenError | null>(null);
 
-  constructor(private client: Pick<Client, "GET" | "POST">) {}
+  constructor(private client: Pick<Client, "hiddenLock" | "hiddenState" | "hiddenUnlock" | "hideMediaBulk" | "unhideMediaBulk">) {}
 
   async refresh(): Promise<void> {
-    const res = await this.client.GET("/api/v1/auth/hidden/state", {} as never) as {
+    const res = await this.client.hiddenState() as {
       data?: { configured: boolean; unlocked: boolean; expires_at?: string };
       error?: unknown;
     };
@@ -36,16 +36,13 @@ export class HiddenStore {
   }
 
   async unlock(passcode: string): Promise<void> {
-    const res = await this.client.POST("/api/v1/auth/hidden/unlock", {
-      body: { passcode } as never,
-    });
+    const res = await this.client.hiddenUnlock({ passcode });
     if (res.error) {
-      const err = res.error as { status?: number; headers?: Record<string, string> };
-      const status = err.status ?? 0;
+      const status = res.response.status;
       if (status === 403) {
         this.error = { kind: "wrong_passcode" };
       } else if (status === 429) {
-        const retryHeader = err.headers?.["retry-after"] ?? "300";
+        const retryHeader = res.response.headers.get("Retry-After") ?? "300";
         const retryAfterSeconds = parseInt(retryHeader, 10) || 300;
         this.error = { kind: "locked_out", retryAfterSeconds };
       } else if (status === 400) {
@@ -67,25 +64,21 @@ export class HiddenStore {
     this.unlocked = false;
     this.expiresAt = null;
     if (opts?.keepalive) {
-      void fetch("/api/v1/auth/hidden/lock", { method: "POST", keepalive: true });
+      void this.client.hiddenLock({ keepalive: true });
       return;
     }
-    await this.client.POST("/api/v1/auth/hidden/lock", {} as never);
+    await this.client.hiddenLock();
     await this.refresh();
   }
 
   async hide(ids: string[]): Promise<HiddenBulkResult> {
-    const res = await this.client.POST("/api/v1/media/hidden:bulk", {
-      body: { media_ids: ids } as never,
-    });
+    const res = await this.client.hideMediaBulk({ media_ids: ids });
     if (res.error) throw res.error;
     return res.data as HiddenBulkResult;
   }
 
   async unhide(ids: string[]): Promise<HiddenBulkResult> {
-    const res = await this.client.POST("/api/v1/media/unhide:bulk", {
-      body: { media_ids: ids } as never,
-    });
+    const res = await this.client.unhideMediaBulk({ media_ids: ids });
     if (res.error) {
       const err = res.error as { status?: number };
       if (err.status === 403) {

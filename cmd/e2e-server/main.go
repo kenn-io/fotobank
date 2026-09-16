@@ -32,7 +32,8 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"image"
@@ -295,7 +296,7 @@ func startMockVLM() (string, *http.Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		_ = json.MarshalWrite(w, map[string]any{
 			"data": []map[string]any{
 				{"id": e2eVisionModelID, "object": "model"},
 			},
@@ -311,7 +312,7 @@ func startMockVLM() (string, *http.Server, error) {
 				} `json:"content"`
 			} `json:"messages"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.UnmarshalRead(r.Body, &body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -333,7 +334,7 @@ func startMockVLM() (string, *http.Server, error) {
 			inner = `{"caption":"An e2e test photo of a small dog on a beach."}`
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		_ = json.MarshalWrite(w, map[string]any{
 			"choices": []map[string]any{
 				{"message": map[string]any{"role": "assistant", "content": inner}},
 			},
@@ -395,10 +396,10 @@ func startMockEmbed() (string, *http.Server, error) {
 			return
 		}
 		var body struct {
-			Input json.RawMessage `json:"input"`
-			Model string          `json:"model"`
+			Input jsontext.Value `json:"input"`
+			Model string         `json:"model"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.UnmarshalRead(r.Body, &body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -427,7 +428,7 @@ func startMockEmbed() (string, *http.Server, error) {
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(out)
+		_ = json.MarshalWrite(w, out)
 	})
 	srv := &http.Server{
 		Handler:           mux,

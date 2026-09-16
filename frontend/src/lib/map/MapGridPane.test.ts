@@ -35,12 +35,18 @@ function stubMediaStore(): MediaStore {
   // Real MediaStore with a no-op fake client; the empty-state and
   // clear-chip assertions don't trigger network paths, so the GET
   // is never invoked.
-  const client = { GET: vi.fn() } as unknown as Pick<Client, "GET">;
+  const client = { GET: vi.fn() ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+listMediaGeo(params?: any, options?: any) { return (this as any).GET("/api/v1/media/geo", { params: { query: params }, ...options }); }
+} as unknown as Client;
   return new MediaStore(client);
 }
 
 function stubGeoStore(): GeoStore {
-  const client = { GET: vi.fn() } as unknown as Pick<Client, "GET">;
+  const client = { GET: vi.fn() ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+listMediaGeo(params?: any, options?: any) { return (this as any).GET("/api/v1/media/geo", { params: { query: params }, ...options }); }
+} as unknown as Client;
   return new GeoStore(client);
 }
 

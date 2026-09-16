@@ -1,5 +1,6 @@
 <!-- frontend/src/lib/components/DirectMediaDetail.svelte -->
 <script lang="ts">
+  import { getDownloadMediaThumbUrl, getDownloadMediaOriginalUrl, getDownloadMediaFileUrl } from "../api/generated/browser";
   import type { MediaStore } from "../media/mediaStore.svelte";
   import { toMedia } from "../media/mediaStore.svelte";
   import { handleInternalLinkClick, router } from "../router/router.svelte";
@@ -59,15 +60,15 @@
     let cancelled = false;
     (async () => {
       try {
-        const resp = await fetch(`/api/v1/media/${currentId}`);
+        const resp = await api.getMedia(currentId);
         if (cancelled) return;
-        if (!resp.ok) {
-          loadError = `${resp.status}`;
+        if (resp.error || !resp.data) {
+          loadError = `${resp.response.status}`;
           return;
         }
-        const raw = await resp.json();
+        const raw = resp.data;
         if (cancelled) return;
-        lastRaw = raw as Record<string, unknown>;
+        lastRaw = raw as unknown as Record<string, unknown>;
         // Reuse the store's own JSON-adapter pathway: merge a single-item
         // array so byMediaId is also populated. The store knows how to
         // build thumbUrl from the raw row.
@@ -108,7 +109,7 @@
   );
 
   let previewUrl = $derived(
-    effectiveMedia ? `/api/v1/media/${effectiveMedia.id}/thumb?size=preview&v=${effectiveMedia.thumbVersion ?? 0}` : "",
+    effectiveMedia ? getDownloadMediaThumbUrl(effectiveMedia.id, { size: "preview", v: effectiveMedia.thumbVersion ?? 0 }) : "",
   );
 
   let imgError = $state(false);
@@ -160,17 +161,14 @@
   }
 
   async function onAdd(albumId: string): Promise<{ added: number; already_present: number }> {
-    const res = await api.POST("/api/v1/albums/{id}/media", {
-      params: { path: { id: albumId } } as never,
-      body: { media_ids: pendingMediaIds } as never,
-    });
+    const res = await api.addMediaToAlbum(albumId, { media_ids: pendingMediaIds });
     if (res.error) throw res.error;
     // AddToAlbumModal calls onClose() itself on success.
     return res.data as { added: number; already_present: number };
   }
 
   async function onCreateShare(body: CreateShareBody): Promise<void> {
-    const res = await api.POST("/api/v1/shares", { body: body as never });
+    const res = await api.sharesCreate(body);
     if (res.error) throw res.error;
     // ShareModal calls onClose() itself on success — match the
     // AddToAlbumModal contract; no need to flip shareOpen here.
@@ -292,13 +290,13 @@
       {#if effectiveMedia.files && effectiveMedia.files.length > 0}
         <dt>Files</dt>
         <dd class="files">
-          <a href="/api/v1/media/{effectiveMedia.id}/original" download={effectiveMedia.original_filename ?? effectiveMedia.id}>
+          <a href={getDownloadMediaOriginalUrl(effectiveMedia.id)} download={effectiveMedia.original_filename ?? effectiveMedia.id}>
             {effectiveMedia.original_filename ?? effectiveMedia.id}
           </a>
           {#each effectiveMedia.files as file (file.id)}
             <br />
             <a
-              href={`/api/v1/media/${effectiveMedia.id}/files/${file.id}/content`}
+              href={getDownloadMediaFileUrl(effectiveMedia.id, file.id)}
               download={file.original_filename}
             >{file.original_filename}</a>
             <span> ({file.role}, {formatBytes(file.size)})</span>
@@ -307,7 +305,7 @@
       {:else}
         <dt>Download</dt>
         <dd>
-          <a href="/api/v1/media/{effectiveMedia.id}/original" download={effectiveMedia.original_filename ?? effectiveMedia.id}>
+          <a href={getDownloadMediaOriginalUrl(effectiveMedia.id)} download={effectiveMedia.original_filename ?? effectiveMedia.id}>
             {effectiveMedia.original_filename ?? effectiveMedia.id}
           </a>
         </dd>

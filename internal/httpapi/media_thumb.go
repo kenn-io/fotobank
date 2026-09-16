@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"go.kenn.io/fotobank/internal/auth/hidden"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/service"
@@ -20,18 +22,39 @@ import (
 // `private, no-cache` so each reuse goes through ETag revalidation.
 // Versioned ?v= URLs still bust the cache instantly on regenerate.
 // Callers that don't need the thumb route (OpenAPI dumper, tests)
-// pass a Deps without a ThumbService; this function then returns
-// without registering anything.
+// pass a Deps without a ThumbService; this function still publishes
+// the OpenAPI operation without installing the byte handler.
 //
 // 404 responses are explicitly marked Cache-Control: no-store. A thumb
 // can transition from pending → ready and later have its version
 // bumped by a regenerate; caching a 404 would let clients miss that
 // transition until their cache entry expired.
-func registerMediaThumb(mux *http.ServeMux, svc *service.ThumbService) {
+func registerMediaThumb(mux *http.ServeMux, api huma.API, svc *service.ThumbService) {
+	const path = "/api/v1/media/{id}/thumb"
+	api.OpenAPI().AddOperation(&huma.Operation{
+		OperationID: "download-media-thumb", Method: http.MethodGet, Path: path,
+		Tags: []string{"streams"}, Summary: "Read a versioned media thumbnail",
+		Parameters: []*huma.Param{
+			{Name: "id", In: "path", Required: true, Schema: &huma.Schema{Type: "string", Format: "uuid"}},
+			{Name: "size", In: "query", Schema: &huma.Schema{Type: "string", Enum: []any{"grid", "preview", "large"}, Default: "grid"}},
+			{Name: "v", In: "query", Required: true, Schema: &huma.Schema{Type: "integer", Minimum: new(float64(0))}},
+			{Name: "If-None-Match", In: "header", Schema: &huma.Schema{Type: "string"}},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Thumbnail JPEG", Content: map[string]*huma.MediaType{
+				"image/jpeg": {Schema: &huma.Schema{Type: "string", Format: "binary"}},
+			}},
+			"304": {Description: "Cached thumbnail still current"},
+			"400": {Description: "Unknown thumbnail size"},
+			"401": {Description: "Authentication required"},
+			"404": {Description: "Thumbnail unavailable, version mismatched, or media not visible"},
+			"500": {Description: "Thumbnail could not be opened"},
+		},
+	})
 	if svc == nil {
 		return
 	}
-	mux.Handle("GET /api/v1/media/{id}/thumb", WrapMuxHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET "+path, WrapMuxHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		ident, ok := IdentityFromContext(r.Context())
 		if !ok {

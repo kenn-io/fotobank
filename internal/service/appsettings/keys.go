@@ -3,7 +3,8 @@
 package appsettings
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -107,7 +108,7 @@ func APIKeyEnvStatus(name string) APIKeyEnvStatusValue {
 }
 
 // ValidateValue verifies raw is valid JSON of the expected type for key.
-func ValidateValue(key string, raw json.RawMessage) error {
+func ValidateValue(key string, raw jsontext.Value) error {
 	if !Editable(key) {
 		return fmt.Errorf("%w: %s", ErrKeyNotEditable, key)
 	}

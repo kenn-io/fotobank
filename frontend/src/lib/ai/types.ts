@@ -1,8 +1,3 @@
-// SPA-facing types for the /api/v1/ai/* surface. These mirror the wire
-// shapes emitted by internal/service/ai (Health) and internal/httpapi
-// (aiFailureDTO, aiEnqueuedBody, etc.) so the frontend can stay decoupled
-// from the auto-generated openapi-typescript schema for the AI surface.
-
 export type AITask = "tag" | "caption";
 
 // Reasons the AI worker is paused. Empty string means "not paused".

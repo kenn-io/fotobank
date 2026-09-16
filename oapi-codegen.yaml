@@ -1,0 +1,14 @@
+package: generated
+output:
+  directory: internal/client/generated
+  use-single-file: true
+  filename: client.gen.go
+generate:
+  client: true
+  client-with-response: true
+  client-streaming: true
+  models: true
+  validation:
+    skip: true
+user-templates:
+  header.tmpl: scripts/codegen/header.tmpl

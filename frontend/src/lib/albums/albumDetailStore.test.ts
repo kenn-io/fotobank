@@ -9,7 +9,14 @@ function fakeClient(responses: Array<any>) {
     calls.push({ method: "h", path, opts });
     return responses[i++] ?? { data: null };
   });
-  return { GET: handler, POST: handler, PATCH: handler, DELETE: handler, calls };
+  return { GET: handler, POST: handler, PATCH: handler, DELETE: handler, calls ,
+deleteAlbum(id?: any, options?: any) { return (this as any).DELETE("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+getAlbum(id?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+renameAlbum(id?: any, albumNameRequest?: any, options?: any) { return (this as any).PATCH("/api/v1/albums/{id}", { params: { path: { id } }, body: albumNameRequest, ...options }); },
+listAlbumMedia(id?: any, params?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}/media", { params: { path: { id }, query: params }, ...options }); },
+removeAlbumMedia(id?: any, mediaId?: any, options?: any) { return (this as any).DELETE("/api/v1/albums/{id}/media/{media_id}", { params: { path: { id, media_id: mediaId } }, body: mediaId, ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
 }
 
 const fakeMedia = (id: string, ts = "2025-01-01T00:00:00Z") => ({
@@ -169,7 +176,14 @@ describe("AlbumDetailStore.refreshMeta", () => {
     const client = {
       GET: vi.fn(async () => responses[callIdx++] ?? { data: null }),
       PATCH: vi.fn(), DELETE: vi.fn(), POST: vi.fn(),
-    };
+
+deleteAlbum(id?: any, options?: any) { return (this as any).DELETE("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+getAlbum(id?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+renameAlbum(id?: any, albumNameRequest?: any, options?: any) { return (this as any).PATCH("/api/v1/albums/{id}", { params: { path: { id } }, body: albumNameRequest, ...options }); },
+listAlbumMedia(id?: any, params?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}/media", { params: { path: { id }, query: params }, ...options }); },
+removeAlbumMedia(id?: any, mediaId?: any, options?: any) { return (this as any).DELETE("/api/v1/albums/{id}/media/{media_id}", { params: { path: { id, media_id: mediaId } }, body: mediaId, ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const ms = new MediaStore(client as any);
     const store = new AlbumDetailStore(client as any, ms);
 

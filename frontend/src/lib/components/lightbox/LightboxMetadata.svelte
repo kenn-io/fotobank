@@ -1,5 +1,6 @@
 <!-- frontend/src/lib/components/lightbox/LightboxMetadata.svelte -->
 <script lang="ts">
+  import { getDownloadMediaOriginalUrl, getDownloadMediaFileUrl } from "../../api/generated/browser";
   import type { Media } from "../../media/mediaStore.svelte";
   import type { SearchScoreComponents } from "../../search/types";
   import { formatCoord } from "../../format/coords";
@@ -93,13 +94,13 @@
     {#if media.files && media.files.length > 0}
       <dt>Files</dt>
       <dd class="files">
-        <a href={`/api/v1/media/${media.id}/original`} download={media.original_filename ?? media.id}>
+        <a href={getDownloadMediaOriginalUrl(media.id)} download={media.original_filename ?? media.id}>
           {media.original_filename ?? media.id}
         </a>
         {#each media.files as file (file.id)}
           <br />
           <a
-            href={`/api/v1/media/${media.id}/files/${file.id}/content`}
+            href={getDownloadMediaFileUrl(media.id, file.id)}
             download={file.original_filename}
           >{file.original_filename}</a>
           <span> ({file.role}, {formatBytes(file.size)})</span>
@@ -108,7 +109,7 @@
     {:else}
       <dt>Download</dt>
       <dd>
-        <a href={`/api/v1/media/${media.id}/original`} download={media.original_filename ?? media.id}>
+        <a href={getDownloadMediaOriginalUrl(media.id)} download={media.original_filename ?? media.id}>
           {media.original_filename ?? media.id}
         </a>
       </dd>

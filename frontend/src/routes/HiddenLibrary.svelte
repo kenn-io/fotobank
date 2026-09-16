@@ -125,10 +125,7 @@
   function openAdd(ids: string[]) { pendingIds = ids; addOpen = true; }
 
   async function onAdd(albumId: string): Promise<{ added: number; already_present: number }> {
-    const res = await api.POST("/api/v1/albums/{id}/media", {
-      params: { path: { id: albumId } } as never,
-      body: { media_ids: pendingIds } as never,
-    });
+    const res = await api.addMediaToAlbum(albumId, { media_ids: pendingIds });
     if (res.error) throw res.error;
     selection.clear();
     return res.data as { added: number; already_present: number };

@@ -1,7 +1,7 @@
 package parse
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"regexp"
 	"strings"

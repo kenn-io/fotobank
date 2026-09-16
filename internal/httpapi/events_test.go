@@ -3,7 +3,7 @@ package httpapi_test
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -88,7 +88,7 @@ func TestEventsCatchupRequiredOnGap(t *testing.T) {
 	bus := httpapi.NewEventBusWithSize(4)
 	p := owners.Principal{Hub: "local", UserID: "alice"}
 	for i := int64(1); i <= 6; i++ {
-		bus.Publish(p, httpapi.Event{ID: i, Type: "test", Data: json.RawMessage(`{}`)})
+		bus.Publish(p, httpapi.Event{ID: i, Type: "test", Data: jsontext.Value(`{}`)})
 	}
 
 	h, err := httpapi.New(httpapi.Deps{IdentityProvider: prov, EventBus: bus})
@@ -167,7 +167,7 @@ func TestEventsSurvivesShortWriteTimeout(t *testing.T) {
 	// reset the server would have closed the connection by now.
 	time.Sleep(250 * time.Millisecond)
 	bus.Publish(owners.Principal{Hub: "local", UserID: "alice"},
-		httpapi.Event{ID: 1, Type: "ping", Data: json.RawMessage(`{}`)})
+		httpapi.Event{ID: 1, Type: "ping", Data: jsontext.Value(`{}`)})
 
 	frame := readSSEFrame(br, time.Now().Add(time.Second))
 	r.NotEmpty(frame, "expected ping frame to arrive after WriteTimeout window")

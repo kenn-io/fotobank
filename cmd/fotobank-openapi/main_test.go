@@ -1,7 +1,6 @@
 package main_test
 
 import (
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,11 +9,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestBinaryEmitsOpenAPIWithKnownPaths(t *testing.T) {
 	r := require.New(t)
-	out := filepath.Join(t.TempDir(), "spec.json")
+	out := filepath.Join(t.TempDir(), "spec.yaml")
 	cmd := exec.Command("go", "run", "./cmd/fotobank-openapi", "-out", out)
 	cmd.Dir = repoRoot(t)
 	r.NoError(cmd.Run())
@@ -22,7 +22,7 @@ func TestBinaryEmitsOpenAPIWithKnownPaths(t *testing.T) {
 	bytes, err := os.ReadFile(out)
 	r.NoError(err)
 	var doc map[string]any
-	r.NoError(json.Unmarshal(bytes, &doc))
+	r.NoError(yaml.Unmarshal(bytes, &doc))
 
 	paths, _ := doc["paths"].(map[string]any)
 	_, hasHealthz := paths["/api/v1/healthz"]

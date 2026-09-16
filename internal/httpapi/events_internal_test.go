@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"sync"
 	"testing"
 	"time"
@@ -23,7 +23,7 @@ func TestEventBusReplayAfterWraparound(t *testing.T) {
 	p := owners.Principal{Hub: "local", UserID: "alice"}
 
 	for i := int64(1); i <= 6; i++ {
-		bus.Publish(p, Event{ID: i, Type: "test", Data: json.RawMessage(`{}`)})
+		bus.Publish(p, Event{ID: i, Type: "test", Data: jsontext.Value(`{}`)})
 	}
 
 	got := bus.replayAfter(p, 0)
@@ -43,7 +43,7 @@ func TestEventBusReplayAfterFiltersByID(t *testing.T) {
 	p := owners.Principal{Hub: "local", UserID: "alice"}
 
 	for i := int64(1); i <= 4; i++ {
-		bus.Publish(p, Event{ID: i, Type: "test", Data: json.RawMessage(`{}`)})
+		bus.Publish(p, Event{ID: i, Type: "test", Data: jsontext.Value(`{}`)})
 	}
 	got := bus.replayAfter(p, 2)
 	r.Len(got, 2)
@@ -67,7 +67,7 @@ func TestEventBusSlowSubscriberDoesNotBlockPublisher(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		for i := int64(1); i <= 100; i++ {
-			bus.Publish(p, Event{ID: i, Type: "test", Data: json.RawMessage(`{}`)})
+			bus.Publish(p, Event{ID: i, Type: "test", Data: jsontext.Value(`{}`)})
 		}
 		close(done)
 	}()
@@ -91,7 +91,7 @@ func TestEventBusSubscribeFromReportsOldestID(t *testing.T) {
 	// Publish 6 events into a 4-slot ring; IDs 1 and 2 are evicted,
 	// IDs 3..6 survive. The oldest retained ID is therefore 3.
 	for i := int64(1); i <= 6; i++ {
-		bus.Publish(p, Event{ID: i, Type: "test", Data: json.RawMessage(`{}`)})
+		bus.Publish(p, Event{ID: i, Type: "test", Data: jsontext.Value(`{}`)})
 	}
 
 	// Client claims it last saw ID 1 (evicted). subscribeFrom should
@@ -141,7 +141,7 @@ func TestEventBusPublishAutoIDOrderUnderConcurrency(t *testing.T) {
 	for range n {
 		go func() {
 			defer wg.Done()
-			bus.PublishAutoID(p, "test", json.RawMessage(`{}`))
+			bus.PublishAutoID(p, "test", jsontext.Value(`{}`))
 		}()
 	}
 	wg.Wait()
@@ -171,12 +171,12 @@ func TestEventBusPublishAutoIDPerPrincipalGapDetection(t *testing.T) {
 	bob := owners.Principal{Hub: "local", UserID: "bob"}
 
 	// Interleave Alice and Bob; Alice's IDs must remain 1..4 contiguous.
-	bus.PublishAutoID(alice, "t", json.RawMessage(`{}`))
-	bus.PublishAutoID(bob, "t", json.RawMessage(`{}`))
-	bus.PublishAutoID(alice, "t", json.RawMessage(`{}`))
-	bus.PublishAutoID(bob, "t", json.RawMessage(`{}`))
-	bus.PublishAutoID(alice, "t", json.RawMessage(`{}`))
-	bus.PublishAutoID(alice, "t", json.RawMessage(`{}`))
+	bus.PublishAutoID(alice, "t", jsontext.Value(`{}`))
+	bus.PublishAutoID(bob, "t", jsontext.Value(`{}`))
+	bus.PublishAutoID(alice, "t", jsontext.Value(`{}`))
+	bus.PublishAutoID(bob, "t", jsontext.Value(`{}`))
+	bus.PublishAutoID(alice, "t", jsontext.Value(`{}`))
+	bus.PublishAutoID(alice, "t", jsontext.Value(`{}`))
 
 	// Alice's last seen ID is 3; nothing has been evicted from her ring
 	// (only 4 events, ring size 4). Gap check should NOT fire.
@@ -211,14 +211,14 @@ func TestEventBusSubscribeFromAtomic(t *testing.T) {
 		// replay or arrives via channel depends on scheduling, but
 		// it must NEVER be lost.
 		baseID := int64(iter * 10)
-		bus.Publish(p, Event{ID: baseID + 1, Type: "pre", Data: json.RawMessage(`{}`)})
+		bus.Publish(p, Event{ID: baseID + 1, Type: "pre", Data: jsontext.Value(`{}`)})
 
 		var wg sync.WaitGroup
 		wg.Add(1)
 		raceID := baseID + 2
 		go func() {
 			defer wg.Done()
-			bus.Publish(p, Event{ID: raceID, Type: "race", Data: json.RawMessage(`{}`)})
+			bus.Publish(p, Event{ID: raceID, Type: "race", Data: jsontext.Value(`{}`)})
 		}()
 
 		replay, _, ch, unsub := bus.subscribeFrom(p, baseID)

@@ -3,9 +3,11 @@ package gateway_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -61,6 +63,36 @@ func TestOpenAI_GenerateSuccess(t *testing.T) {
 	})
 	require.NoError(err)
 	require.JSONEq(`{"tags":["dog","beach"]}`, got.Text)
+}
+
+func TestOpenAI_MaxTokens(t *testing.T) {
+	for _, tokens := range []int{0, 128} {
+		t.Run(fmt.Sprintf("tokens=%d", tokens), func(t *testing.T) {
+			r := require.New(t)
+			bodies := make(chan []byte, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				body, err := io.ReadAll(req.Body)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				bodies <- body
+				_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+			}))
+			defer srv.Close()
+			c := gateway.NewOpenAICompatible(gateway.OpenAIConfig{Endpoint: srv.URL, MaxRetries: 1})
+			_, err := c.Generate(t.Context(), gateway.Request{Model: "m", Prompt: "describe", JPEG: []byte{0xff}, MaxTokens: tokens})
+			r.NoError(err)
+			body := <-bodies
+			var fields map[string]json.RawMessage
+			r.NoError(json.Unmarshal(body, &fields))
+			if tokens == 0 {
+				r.NotContains(fields, "max_tokens", "zero must leave the token limit to the provider")
+			} else {
+				r.JSONEq(strconv.Itoa(tokens), string(fields["max_tokens"]))
+			}
+		})
+	}
 }
 
 func TestOpenAI_RetriesOn5xxThenSucceeds(t *testing.T) {

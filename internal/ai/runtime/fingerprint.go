@@ -3,7 +3,7 @@ package runtime
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 
 	"go.kenn.io/fotobank/internal/ai"
 	"go.kenn.io/fotobank/internal/ai/embedding"
@@ -84,7 +84,7 @@ func deriveFingerprints(cfg ai.Config) (ClaimFingerprints, ResultFingerprints) {
 }
 
 func claimFingerprint(v map[string]any) string {
-	b, err := json.Marshal(v)
+	b, err := json.Marshal(v, json.Deterministic(true))
 	if err != nil {
 		panic(err)
 	}

@@ -1,13 +1,20 @@
+import { api } from "../api/client";
 import { describe, it, expect, vi } from "vitest";
 import { HiddenStore } from "./hiddenStore.svelte";
 
-function makeClient(responses: Record<string, { data?: unknown; error?: unknown }>) {
+function makeClient(responses: Record<string, { data?: unknown; error?: unknown; response?: Response }>) {
   const calls: Array<{ method: string; path: string; body?: unknown }> = [];
   const handler = vi.fn(async (path: string, opts: Record<string, unknown> = {}) => {
     calls.push({ method: "called", path, body: (opts as { body?: unknown }).body });
     return responses[path] ?? { error: { status: 500 } };
   });
-  return { GET: handler, POST: handler, calls };
+  return { GET: handler, POST: handler, calls ,
+hiddenLock(options?: any) { return (this as any).POST("/api/v1/auth/hidden/lock", { ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+hiddenUnlock(hiddenPasscodeRequest?: any, options?: any) { return (this as any).POST("/api/v1/auth/hidden/unlock", { body: hiddenPasscodeRequest, ...options }); },
+hideMediaBulk(hiddenMediaBulkInputBody?: any, options?: any) { return (this as any).POST("/api/v1/media/hidden:bulk", { body: hiddenMediaBulkInputBody, ...options }); },
+unhideMediaBulk(hiddenMediaBulkInputBody?: any, options?: any) { return (this as any).POST("/api/v1/media/unhide:bulk", { body: hiddenMediaBulkInputBody, ...options }); }
+};
 }
 
 describe("HiddenStore.refresh", () => {
@@ -64,7 +71,9 @@ describe("HiddenStore.unlock", () => {
 
   it("sets error.kind='wrong_passcode' on 403", async () => {
     const client = makeClient({
-      "/api/v1/auth/hidden/unlock": { error: { status: 403 } },
+      "/api/v1/auth/hidden/unlock": {
+        error: { status: 403 }, response: new Response(null, { status: 403 }),
+      },
       "/api/v1/auth/hidden/state": {
         data: { configured: true, unlocked: false },
       },
@@ -75,22 +84,29 @@ describe("HiddenStore.unlock", () => {
   });
 
   it("sets error.kind='locked_out' with retryAfterSeconds on 429", async () => {
-    const client = makeClient({
-      "/api/v1/auth/hidden/unlock": {
-        error: { status: 429, headers: { "retry-after": "120" } },
-      },
-    });
-    const store = new HiddenStore(client as never);
-    await expect(store.unlock("wrong")).rejects.toBeDefined();
-    expect(store.error?.kind).toBe("locked_out");
-    if (store.error?.kind === "locked_out") {
-      expect(store.error.retryAfterSeconds).toBeGreaterThan(0);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ status: 429 }), {
+        status: 429,
+        headers: { "Retry-After": "120" },
+      }),
+    );
+    try {
+      const store = new HiddenStore(api);
+      await expect(store.unlock("wrong")).rejects.toEqual({
+        kind: "locked_out",
+        retryAfterSeconds: 120,
+      });
+      expect(store.error).toEqual({ kind: "locked_out", retryAfterSeconds: 120 });
+    } finally {
+      fetchSpy.mockRestore();
     }
   });
 
   it("sets error.kind='invalid_input' on 400", async () => {
     const client = makeClient({
-      "/api/v1/auth/hidden/unlock": { error: { status: 400 } },
+      "/api/v1/auth/hidden/unlock": {
+        error: { status: 400 }, response: new Response(null, { status: 400 }),
+      },
     });
     const store = new HiddenStore(client as never);
     await expect(store.unlock("")).rejects.toBeDefined();
@@ -99,7 +115,9 @@ describe("HiddenStore.unlock", () => {
 
   it("sets error.kind='identity_required' on 401", async () => {
     const client = makeClient({
-      "/api/v1/auth/hidden/unlock": { error: { status: 401 } },
+      "/api/v1/auth/hidden/unlock": {
+        error: { status: 401 }, response: new Response(null, { status: 401 }),
+      },
     });
     const store = new HiddenStore(client as never);
     await expect(store.unlock("x")).rejects.toBeDefined();
@@ -130,7 +148,7 @@ describe("HiddenStore.lock", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, { status: 204 }),
     );
-    const client = makeClient({});
+    const client = api;
     const store = new HiddenStore(client as never);
     store.unlocked = true;
     store.expiresAt = "2099-01-01T00:00:00Z";
@@ -139,8 +157,6 @@ describe("HiddenStore.lock", () => {
     await store.lock({ keepalive: true });
     expect(store.unlocked).toBe(false);
     expect(store.expiresAt).toBeNull();
-    // Does not call the api client's POST
-    expect(client.POST).not.toHaveBeenCalled();
     // Uses fetch with keepalive
     expect(fetchSpy).toHaveBeenCalledWith(
       "/api/v1/auth/hidden/lock",

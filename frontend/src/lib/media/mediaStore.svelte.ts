@@ -1,4 +1,6 @@
+import { getDownloadMediaThumbUrl } from "../api/generated/browser";
 import type { Client } from "../api/client";
+import type { ListMediaParams } from "../api/generated/models";
 import { filterKey, type ActiveFilters } from "../filters/activeFilters";
 
 // thumb_status mirrors the backend enum on `media.thumb_status`. The
@@ -100,7 +102,7 @@ export class MediaStore {
   private currentFilterKey = filterKey(this.filters);
   private fetchToken = 0;
 
-  constructor(private client: Pick<Client, "GET">) {}
+  constructor(private client: Pick<Client, "listMedia">) {}
 
   /**
    * Update the active filters. If the filterKey changes, the store
@@ -177,21 +179,7 @@ export class MediaStore {
     this.loading = true;
     const p = (async () => {
       try {
-        const res = await this.client.GET("/api/v1/media", {
-          // sort_desc: true so the library opens at the most-recent
-          // capture (the backend defaults to ascending). Pagination then
-          // walks backwards in time as the user scrolls down.
-          //
-          // The camera/lens/facet_tag/has_gps/media_type params are
-          // forward-leaning: SF-17 wires them into media.ListFilter, but
-          // until then huma silently ignores unknown query params. This
-          // keeps the wire format aligned with what facetsStore sends
-          // and what /api/v1/facets already accepts (huma expects the
-          // literal "true"/"false" strings for *bool query params).
-          params: {
-            query: this.buildQuery(),
-          } as never,
-        });
+        const res = await this.client.listMedia(this.buildQuery());
         // Stale: a setFilters during the await invalidated us. Drop
         // every byte of this response so it cannot leak into the
         // post-reset store.
@@ -200,7 +188,7 @@ export class MediaStore {
           this.loadError = true;
           return;
         }
-        const items = ((res.data as { items?: Array<Record<string, unknown>> }).items ?? [])
+        const items = ((res.data as unknown as { items?: Array<Record<string, unknown>> }).items ?? [])
           .map(toMedia)
           .filter((m): m is Media => m !== null);
         this.merge(items);
@@ -229,8 +217,8 @@ export class MediaStore {
    * (camera/lens/facet_tag/has_gps/media_type) ride alongside the
    * pagination/sort params; SF-17 will start honouring them server-side.
    */
-  private buildQuery(): Record<string, unknown> {
-    const q: Record<string, unknown> = {
+  private buildQuery(): ListMediaParams {
+    const q: ListMediaParams = {
       limit: 200,
       offset: this.nextOffset ?? 0,
       sort_desc: true,
@@ -473,7 +461,7 @@ export function toMedia(raw: Record<string, unknown>): Media | null {
     timestamp: ts,
     taken,
     aspect: wn / hn,
-    thumbUrl: `/api/v1/media/${id}/thumb?size=grid&v=${thumbVersion}`,
+    thumbUrl: getDownloadMediaThumbUrl(id, { size: "grid", v: thumbVersion }),
     thumbStatus,
     thumbVersion,
   };

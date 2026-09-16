@@ -81,6 +81,9 @@ jobs:
       - name: Vet
         run: make vet
 
+      - name: Check Huma API contract
+        run: make huma-check
+
       - name: Test
         run: make test
 

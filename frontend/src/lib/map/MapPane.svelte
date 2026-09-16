@@ -19,6 +19,7 @@
      gallery anchored at the cluster.
 -->
 <script lang="ts">
+  import { getDownloadMediaThumbUrl } from "../api/generated/browser";
   import { onMount, onDestroy } from "svelte";
   import L from "leaflet";
   import "leaflet/dist/leaflet.css";
@@ -170,7 +171,7 @@
     for (const id of ids) {
       const m = itemsById.get(id);
       const v = m?.thumbVersion ?? 0;
-      const url = `/api/v1/media/${encodeURIComponent(id)}/thumb?size=grid&v=${v}`;
+      const url = getDownloadMediaThumbUrl(id, { size: "grid", v });
       const cell = document.createElement("button");
       cell.type = "button";
       cell.className = "map-cluster-popup__cell";

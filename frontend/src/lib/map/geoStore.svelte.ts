@@ -10,6 +10,7 @@
 // know whether the cached set is hidden-aware.
 
 import type { Client } from "../api/client";
+import type { ListMediaGeoParams } from "../api/generated/models";
 import { toMedia, type Media } from "../media/mediaStore.svelte";
 
 // GeoLoadOptions narrows the geotagged set the same way ActiveFilters
@@ -47,7 +48,7 @@ export class GeoStore {
   // and the includedHidden flag would lie about what's in items.
   private requestSeq = 0;
 
-  constructor(private client: Pick<Client, "GET">) {}
+  constructor(private client: Pick<Client, "listMediaGeo">) {}
 
   get items(): Media[] {
     return this._items;
@@ -94,17 +95,13 @@ export class GeoStore {
       this._includedHidden = false;
     }
     try {
-      const query: Record<string, unknown> = {};
+      const query: ListMediaGeoParams = {};
       if (includeHidden) query["include_hidden"] = true;
       if (cameras.length > 0) query["camera"] = [...cameras];
       if (lenses.length > 0) query["lens"] = [...lenses];
       if (facetTags.length > 0) query["facet_tag"] = [...facetTags];
       if (mediaType !== null) query["media_type"] = mediaType;
-      const fetchOpts =
-        Object.keys(query).length > 0
-          ? ({ params: { query } } as unknown as Parameters<Client["GET"]>[1])
-          : undefined;
-      const { data, error } = await this.client.GET("/api/v1/media/geo", fetchOpts);
+      const { data, error } = await this.client.listMediaGeo(query);
       if (myReq !== this.requestSeq) return;
       if (error || !data) {
         this._error = "geo fetch failed";

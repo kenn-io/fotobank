@@ -11,7 +11,14 @@ import type { Client } from "../lib/api/client";
 function defaultAppConfig(): AppConfigStore {
   const c = {
     GET: async () => ({ data: undefined, error: { status: 0 } }),
-  } as unknown as Pick<Client, "GET">;
+
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+getAlbum(id?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+listAlbumMedia(id?: any, params?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}/media", { params: { path: { id }, query: params }, ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as unknown as Client;
   return new AppConfigStore(c);
 }
 
@@ -24,7 +31,24 @@ vi.mock("../lib/api/client", () => {
     POST: vi.fn(),
     PATCH: vi.fn(),
     DELETE: vi.fn(),
-  };
+
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+createAlbum(albumNameRequest?: any, options?: any) { return (this as any).POST("/api/v1/albums", { body: albumNameRequest, ...options }); },
+deleteAlbum(id?: any, options?: any) { return (this as any).DELETE("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+getAlbum(id?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+renameAlbum(id?: any, albumNameRequest?: any, options?: any) { return (this as any).PATCH("/api/v1/albums/{id}", { params: { path: { id } }, body: albumNameRequest, ...options }); },
+listAlbumMedia(id?: any, params?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}/media", { params: { path: { id }, query: params }, ...options }); },
+addMediaToAlbum(id?: any, addAlbumMediaRequest?: any, options?: any) { return (this as any).POST("/api/v1/albums/{id}/media", { params: { path: { id } }, body: addAlbumMediaRequest, ...options }); },
+removeAlbumMedia(id?: any, mediaId?: any, options?: any) { return (this as any).DELETE("/api/v1/albums/{id}/media/{media_id}", { params: { path: { id, media_id: mediaId } }, body: mediaId, ...options }); },
+hiddenLock(options?: any) { return (this as any).POST("/api/v1/auth/hidden/lock", { ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+hiddenUnlock(hiddenPasscodeRequest?: any, options?: any) { return (this as any).POST("/api/v1/auth/hidden/unlock", { body: hiddenPasscodeRequest, ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+hideMediaBulk(hiddenMediaBulkInputBody?: any, options?: any) { return (this as any).POST("/api/v1/media/hidden:bulk", { body: hiddenMediaBulkInputBody, ...options }); },
+unhideMediaBulk(hiddenMediaBulkInputBody?: any, options?: any) { return (this as any).POST("/api/v1/media/unhide:bulk", { body: hiddenMediaBulkInputBody, ...options }); },
+sharesCreate(createShareRequest?: any, options?: any) { return (this as any).POST("/api/v1/shares", { body: createShareRequest, ...options }); }
+};
   return {
     api: client,
     createApiClient: () => client,
@@ -123,7 +147,14 @@ describe("AlbumDetail header hidden chip", () => {
       { data: { id: "a1", name: "Italy", item_count: 95, hidden_count: 0, cover: null, created_at: "x", updated_at: "x" } },
       { data: { items: [], next_offset: null } },
     ));
-    const ms = new MediaStore({ GET: vi.fn() } as never);
+    const ms = new MediaStore({ GET: vi.fn() ,
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+getAlbum(id?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+listAlbumMedia(id?: any, params?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}/media", { params: { path: { id }, query: params }, ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     const { container } = render(AlbumDetail, {
       props: {
         id: "a1",
@@ -144,7 +175,14 @@ describe("AlbumDetail header hidden chip", () => {
       { data: { id: "a1", name: "Italy", item_count: 95, hidden_count: 5, cover: null, created_at: "x", updated_at: "x" } },
       { data: { items: [], next_offset: null } },
     ));
-    const ms = new MediaStore({ GET: vi.fn() } as never);
+    const ms = new MediaStore({ GET: vi.fn() ,
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+getAlbum(id?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+listAlbumMedia(id?: any, params?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}/media", { params: { path: { id }, query: params }, ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     const { container } = render(AlbumDetail, {
       props: {
         id: "a1",
@@ -169,7 +207,14 @@ describe("AlbumDetail sharing gate", () => {
       { data: { id: "a1", name: "Italy", item_count: 5, hidden_count: 0, cover: null, created_at: "x", updated_at: "x" } },
       { data: { items: [], next_offset: null } },
     ));
-    const ms = new MediaStore({ GET: vi.fn() } as never);
+    const ms = new MediaStore({ GET: vi.fn() ,
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+getAlbum(id?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+listAlbumMedia(id?: any, params?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}/media", { params: { path: { id }, query: params }, ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     const { container, findByText } = render(AlbumDetail, {
       props: {
         id: "a1",
@@ -200,11 +245,25 @@ describe("AlbumDetail sharing gate", () => {
           features: { sharing_enabled: true },
         },
       }),
-    } as unknown as Pick<Client, "GET">;
+
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+getAlbum(id?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+listAlbumMedia(id?: any, params?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}/media", { params: { path: { id }, query: params }, ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as unknown as Client;
     const cfg = new AppConfigStore(enabledClient);
     await cfg.load();
 
-    const ms = new MediaStore({ GET: vi.fn() } as never);
+    const ms = new MediaStore({ GET: vi.fn() ,
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+getAlbum(id?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+listAlbumMedia(id?: any, params?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}/media", { params: { path: { id }, query: params }, ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     const { container, findByText } = render(AlbumDetail, {
       props: {
         id: "a1",
@@ -232,7 +291,14 @@ describe("AlbumDetail delete-blocked toast copy", () => {
     const mod = await getApiMock();
     mod.api.DELETE.mockResolvedValue({ error: { status: 409, message: "album has active shares" } });
 
-    const ms = new MediaStore({ GET: vi.fn() } as never);
+    const ms = new MediaStore({ GET: vi.fn() ,
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+getAlbum(id?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+listAlbumMedia(id?: any, params?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}/media", { params: { path: { id }, query: params }, ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     const { container, findByText } = render(AlbumDetail, {
       props: {
         id: "album-123",

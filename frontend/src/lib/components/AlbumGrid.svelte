@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getDownloadMediaThumbUrl } from "../api/generated/browser";
   import { handleInternalLinkClick } from "../router/router.svelte";
   import type { AlbumListItem } from "../albums/albumsStore.svelte";
 
@@ -6,7 +7,7 @@
 
   function thumbUrl(a: AlbumListItem): string | null {
     if (!a.cover) return null;
-    return `/api/v1/media/${a.cover.media_id}/thumb?size=grid&v=${a.cover.thumb_version}`;
+    return getDownloadMediaThumbUrl(a.cover.media_id, { size: "grid", v: a.cover.thumb_version });
   }
 </script>
 

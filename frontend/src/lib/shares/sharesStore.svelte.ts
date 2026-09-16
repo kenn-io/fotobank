@@ -1,4 +1,5 @@
 import type { Client } from "../api/client";
+import type { SharesListParams } from "../api/generated/models";
 
 export type ShareTargetType = "media_set" | "album_live";
 export type ShareBrokerStatus =
@@ -71,7 +72,7 @@ export class SharesStore {
   // can't overwrite a newer one's result.
   private loadToken = 0;
 
-  constructor(private client: Pick<Client, "GET" | "POST" | "DELETE">) {}
+  constructor(private client: Pick<Client, "sharesCreate" | "sharesGet" | "sharesList" | "sharesPreview" | "sharesRetry" | "sharesRevoke">) {}
 
   async loadInitial(): Promise<void> {
     const token = ++this.loadToken;
@@ -92,13 +93,13 @@ export class SharesStore {
     if (this.loading || this.exhausted) return;
     this.loading = true;
     try {
-      const query: Record<string, unknown> = {
+      const query: SharesListParams = {
         limit: 100,
         offset: this.nextOffset ?? 0,
         include_settled: this.showRevoked,
       };
       if (this.albumIDFilter) query["album_id"] = this.albumIDFilter;
-      const res = await this.client.GET("/api/v1/shares", { params: { query } as never });
+      const res = await this.client.sharesList(query);
       if (t !== this.loadToken) return;
       if (res.error || !res.data) {
         this.loadError = true;
@@ -108,7 +109,7 @@ export class SharesStore {
         this.exhausted = true;
         return;
       }
-      const data = res.data as { items?: ScopeListRow[]; next_offset?: number | null };
+      const data = res.data as unknown as { items?: ScopeListRow[]; next_offset?: number | null };
       const items = data.items ?? [];
       this.scopes = [...this.scopes, ...items];
       const next = data.next_offset ?? null;
@@ -130,16 +131,14 @@ export class SharesStore {
   }
 
   async create(input: CreateShareInput): Promise<void> {
-    const res = await this.client.POST("/api/v1/shares", { body: input as never });
+    const res = await this.client.sharesCreate(input);
     if (res.error) throw res.error;
     await this.refetchListPreservingFilter();
     this.maybeStartPolling();
   }
 
   async revoke(uuid: string): Promise<void> {
-    const res = await this.client.POST("/api/v1/shares/{uuid}/revoke", {
-      params: { path: { uuid } } as never,
-    });
+    const res = await this.client.sharesRevoke(uuid);
     if (res.error) throw res.error;
     this.detailCache.delete(uuid);
     this.previewCache.delete(uuid);
@@ -148,9 +147,7 @@ export class SharesStore {
   }
 
   async retry(uuid: string): Promise<void> {
-    const res = await this.client.POST("/api/v1/shares/{uuid}/retry", {
-      params: { path: { uuid } } as never,
-    });
+    const res = await this.client.sharesRetry(uuid);
     if (res.error) throw res.error;
     this.detailCache.delete(uuid);
     await this.refetchListPreservingFilter();
@@ -160,9 +157,7 @@ export class SharesStore {
   async getDetail(uuid: string): Promise<ScopeDetail | null> {
     const cached = this.detailCache.get(uuid);
     if (cached) return cached;
-    const res = await this.client.GET("/api/v1/shares/{uuid}", {
-      params: { path: { uuid } } as never,
-    });
+    const res = await this.client.sharesGet(uuid);
     if (res.error || !res.data) return null;
     const det = res.data as ScopeDetail;
     this.detailCache.set(uuid, det);
@@ -172,9 +167,7 @@ export class SharesStore {
   async getPreview(uuid: string): Promise<SharePreview | null> {
     const cached = this.previewCache.get(uuid);
     if (cached) return cached;
-    const res = await this.client.GET("/api/v1/shares/{uuid}/preview", {
-      params: { path: { uuid } } as never,
-    });
+    const res = await this.client.sharesPreview(uuid);
     if (res.error || !res.data) return null;
     this.previewCache.set(uuid, res.data);
     return res.data;
@@ -255,19 +248,19 @@ export class SharesStore {
     // "revoking" forever, polling indefinitely. The user-facing filter
     // is applied in the route view, not at the polling boundary.
     const token = this.loadToken;
-    const query: Record<string, unknown> = {
+    const query: SharesListParams = {
       limit: 200,
       offset: 0,
       include_settled: true,
     };
     if (this.albumIDFilter) query["album_id"] = this.albumIDFilter;
     try {
-      const res = await this.client.GET("/api/v1/shares", { params: { query } as never });
+      const res = await this.client.sharesList(query);
       // Drop the response if a user-initiated state-clearing call ran while
       // we were waiting; otherwise we'd merge stale data into the fresh list.
       if (token !== this.loadToken) return;
       if (res.error || !res.data) return;
-      const data = res.data as { items?: ScopeListRow[] };
+      const data = res.data as unknown as { items?: ScopeListRow[] };
       const fresh = new Map<string, ScopeListRow>();
       for (const row of data.items ?? []) fresh.set(row.uuid, row);
       this.scopes = this.scopes.map((row) => fresh.get(row.uuid) ?? row);

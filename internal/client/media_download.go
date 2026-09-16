@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"uuid"
 
+	"go.kenn.io/fotobank/internal/client/generated"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/httpapi"
 )
@@ -32,16 +33,15 @@ func DownloadMedia(ctx context.Context, configPath, version string, selection Me
 	if !found || rec.Version != version {
 		return file, fmt.Errorf("no matching Fotobank server; run fotobank daemon start")
 	}
-	path := "/api/v1/media/" + selection.MediaID.String()
 	var item httpapi.MediaDTO
-	if err := callRecord(ctx, rec, http.MethodGet, path, nil, &item, "retry media download"); err != nil {
+	if err := callRecord(ctx, rec, &item, "retry media download", func(c *generated.Client) (*generated.GetMediaResponse, error) {
+		return c.GetMedia(ctx, &generated.GetMediaRequestOptions{PathParams: &generated.GetMediaPath{ID: selection.MediaID.String()}})
+	}); err != nil {
 		return file, err
 	}
 	file = httpapi.FileDTO{Role: "primary", MimeType: item.MimeType,
 		OriginalFilename: item.OriginalFilename, Size: item.Size, SHA256: item.SHA256}
-	if selection.FileID == nil {
-		path += "/original"
-	} else {
+	if selection.FileID != nil {
 		matched := false
 		if item.Files != nil {
 			for _, attached := range *item.Files {
@@ -54,11 +54,31 @@ func DownloadMedia(ctx context.Context, configPath, version string, selection Me
 		if !matched {
 			return file, fmt.Errorf("download attachment: %w", errs.ErrNotFound)
 		}
-		path += "/files/" + selection.FileID.String() + "/content"
 	}
-	response, err := requestRecord(ctx, rec, http.MethodGet, path, nil, "retry media download")
+	api, transport, err := recordAPI(ctx, rec)
 	if err != nil {
 		return file, err
+	}
+	c := generated.NewClient(downloadAPI{api, transport})
+	var response *http.Response
+	if selection.FileID == nil {
+		result, requestErr := c.DownloadMediaOriginalWithResponse(ctx, &generated.DownloadMediaOriginalRequestOptions{PathParams: &generated.DownloadMediaOriginalPath{ID: selection.MediaID}})
+		if requestErr != nil {
+			if result != nil && result.HTTPResponse != nil {
+				_ = result.HTTPResponse.Body.Close()
+			}
+			return file, requestErr
+		}
+		response = result.HTTPResponse
+	} else {
+		result, requestErr := c.DownloadMediaFileWithResponse(ctx, &generated.DownloadMediaFileRequestOptions{PathParams: &generated.DownloadMediaFilePath{ID: selection.MediaID, FileID: *selection.FileID}})
+		if requestErr != nil {
+			if result != nil && result.HTTPResponse != nil {
+				_ = result.HTTPResponse.Body.Close()
+			}
+			return file, requestErr
+		}
+		response = result.HTTPResponse
 	}
 	defer func() { err = errors.Join(err, response.Body.Close()) }()
 	err = verifyDownload(dst, response, file)

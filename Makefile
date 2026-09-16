@@ -11,7 +11,7 @@ BIN_DIR := bin
 BINARY  := $(BIN_DIR)/fotobank
 
 .PHONY: build build-release install dev test test-short test-e2e vet lint nilaway \
-        testify-helper-check tidy api-generate \
+        testify-helper-check huma-check tidy api-generate \
         install-hooks clean help docs-build docs-check docs-serve \
         ensure-embed-dir frontend frontend-dev frontend-check air-install
 
@@ -105,15 +105,20 @@ lint: ## Run golangci-lint + testify-helper-check
 testify-helper-check: ## Enforce testify helper usage
 	go run go.kenn.io/kit/cmd/testify-helper-check ./...
 
+# Kit PR #84 is merged; pin its merge until huma-check has a release tag.
+huma-check: ## Check JSON v2, OpenAPI, and generated API clients
+	go run go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d ./...
+
 nilaway: ## Run nilaway (pre-push tier)
 	go run go.uber.org/nilaway/cmd/nilaway -tags sqlite_fts5 -include-pkgs=go.kenn.io/fotobank -exclude-pkgs=go.kenn.io/fotobank/frontend/node_modules ./...
 
 tidy: ## go mod tidy
 	go mod tidy
 
-api-generate: ## Regenerate OpenAPI spec + TypeScript schema
-	go run ./cmd/fotobank-openapi -out openapi.json
-	cd frontend && bun install && bunx openapi-typescript ../openapi.json -o src/lib/api/generated/schema.ts
+api-generate: ## Regenerate OpenAPI YAML and Go/TypeScript clients
+	go run ./cmd/fotobank-openapi -out openapi.yaml
+	go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.15 -config oapi-codegen.yaml openapi.yaml
+	cd frontend && bun install --frozen-lockfile && bunx orval
 
 docs-build: ## Build the marketing site, guide, and Zensical docs
 	mise exec -- node scripts/docs/build.mjs
@@ -128,7 +133,7 @@ install-hooks: ## Install prek git hooks
 	prek install -f
 
 clean: ## Remove built artefacts
-	rm -rf $(BIN_DIR) openapi.json
+	rm -rf $(BIN_DIR)
 
 help: ## Print available targets
 	@awk 'BEGIN{FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)

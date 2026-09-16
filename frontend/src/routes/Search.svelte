@@ -10,6 +10,7 @@
      into the UI; an SSE handler invalidates the store's requestHash
      when the activator promotes a new generation. -->
 <script lang="ts">
+  import { getDownloadMediaThumbUrl } from "../lib/api/generated/browser";
   import { Button } from "@kenn-io/kit-ui";
   import PhotoReadError from "../lib/components/PhotoReadError.svelte";
   import { createSearchStore, emptyFilters, type SearchStore } from "../lib/search/searchStore.svelte";
@@ -376,7 +377,7 @@
         id: r.media_id,
         timestamp: ts,
         aspect,
-        thumbUrl: `/api/v1/media/${r.media_id}/thumb?v=${r.thumb_version}`,
+        thumbUrl: getDownloadMediaThumbUrl(r.media_id, { v: r.thumb_version }),
         thumbStatus,
         taken: new Date(ts),
         thumbVersion: r.thumb_version,

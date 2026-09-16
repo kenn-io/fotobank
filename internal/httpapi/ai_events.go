@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 
 	"go.kenn.io/fotobank/internal/owners"
 )

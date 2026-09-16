@@ -1,12 +1,3 @@
-// Search v1 wire types — manually authored for T1 because the backend
-// only registers /api/v1/search* when Deps.Search is wired in (the
-// OpenAPI dumper passes Deps{} so these routes are absent from
-// openapi.json). Once the dumper picks them up these types should be
-// re-derived from the generated schema.
-//
-// The shape mirrors internal/httpapi/search.go (searchBody,
-// searchResultDTO, scoreComponentsDTO).
-
 // SearchSort is the raw sort the client requests. The engine may
 // coerce it (e.g. relevance + empty Q → newest); the *applied* sort
 // is reflected in SearchResponse.effective_sort.

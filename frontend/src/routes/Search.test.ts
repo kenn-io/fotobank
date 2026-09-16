@@ -100,7 +100,7 @@ function makeClient(): SearchClient {
 }
 
 // makeInspectionStore returns an AIInspectionStore wired to a stub
-// openapi-fetch shape that immediately resolves an empty value, so
+// client result shape that immediately resolves an empty value, so
 // load() flips the loaded flag before the page's hydration $effect
 // would otherwise gate. Tests that don't care about the toggle's
 // persisted value pass this directly; tests that drive a specific
@@ -112,7 +112,14 @@ function makeInspectionStore(getValue: string | undefined = undefined): AIInspec
       : { data: undefined, error: undefined },
   );
   const PUT = vi.fn().mockResolvedValue({ error: undefined });
-  return new AIInspectionStore({ GET, PUT } as never);
+  return new AIInspectionStore({ GET, PUT ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+search(params?: any, options?: any) { return (this as any).GET("/api/v1/search", { params: { query: params }, ...options }); },
+searchAutocompleteLocations(params?: any, options?: any) { return (this as any).GET("/api/v1/search/autocomplete/locations", { params: { query: params }, ...options }); },
+searchAutocompleteTags(params?: any, options?: any) { return (this as any).GET("/api/v1/search/autocomplete/tags", { params: { query: params }, ...options }); },
+getUserSetting(key?: any, options?: any) { return (this as any).GET("/api/v1/settings/user/{key}", { params: { path: { key } }, ...options }); },
+putUserSetting(key?: any, userSettingPutInputBody?: any, options?: any) { return (this as any).PUT("/api/v1/settings/user/{key}", { params: { path: { key } }, body: userSettingPutInputBody, ...options }); }
+} as never);
 }
 
 describe("Search.svelte", () => {
@@ -382,7 +389,14 @@ describe("Search.svelte", () => {
       return Promise.resolve({ data: undefined, error: undefined });
     });
     const PUT = vi.fn().mockResolvedValue({ error: undefined });
-    const inspectionStore = new AIInspectionStore({ GET, PUT } as never);
+    const inspectionStore = new AIInspectionStore({ GET, PUT ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+search(params?: any, options?: any) { return (this as any).GET("/api/v1/search", { params: { query: params }, ...options }); },
+searchAutocompleteLocations(params?: any, options?: any) { return (this as any).GET("/api/v1/search/autocomplete/locations", { params: { query: params }, ...options }); },
+searchAutocompleteTags(params?: any, options?: any) { return (this as any).GET("/api/v1/search/autocomplete/tags", { params: { query: params }, ...options }); },
+getUserSetting(key?: any, options?: any) { return (this as any).GET("/api/v1/settings/user/{key}", { params: { path: { key } }, ...options }); },
+putUserSetting(key?: any, userSettingPutInputBody?: any, options?: any) { return (this as any).PUT("/api/v1/settings/user/{key}", { params: { path: { key } }, body: userSettingPutInputBody, ...options }); }
+} as never);
 
     const client = makeClient();
     render(Search, { props: { client, inspectionStore } });

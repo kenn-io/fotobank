@@ -16,7 +16,9 @@ describe("MediaStore", () => {
       .mockResolvedValueOnce({ error: { status: 503 } })
       .mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }))
       .mockResolvedValueOnce({ data: { items: [], next_offset: null } });
-    const store = new MediaStore({ GET } as never);
+    const store = new MediaStore({ GET ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     await store.loadInitial();
     expect(store.loadError).toBe(true);
     const filters = { cameras: ["First"], lenses: [], tagKeys: [], hasGps: null, mediaType: null };
@@ -38,7 +40,9 @@ describe("MediaStore", () => {
     if (kind === "http") GET.mockResolvedValueOnce({ error: { status: 503 } });
     else GET.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     GET.mockResolvedValueOnce({ data: { items: [], next_offset: null } });
-    const store = new MediaStore({ GET } as never);
+    const store = new MediaStore({ GET ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     store.setFilters({ cameras: ["Camera"], lenses: [], tagKeys: [], hasGps: null, mediaType: null });
     await store.loadInitial();
     await store.loadMore();
@@ -66,7 +70,9 @@ describe("MediaStore", () => {
         },
         error: undefined,
       }),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadInitial();
     expect(store.months.map((m) => m.key)).toEqual(["2026-04", "2026-03"]);
@@ -97,7 +103,9 @@ describe("MediaStore", () => {
     };
     const fakeClient = {
       GET: vi.fn().mockResolvedValueOnce(page1).mockResolvedValueOnce(page2),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     await store.loadMore();
@@ -115,7 +123,9 @@ describe("MediaStore", () => {
         },
         error: undefined,
       }),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     expect(store.exhausted).toBe(true);
@@ -135,7 +145,9 @@ describe("MediaStore", () => {
         },
         error: undefined,
       }),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     expect(store.months.map((m) => m.key)).toEqual(["2026-02"]);
@@ -155,7 +167,9 @@ describe("MediaStore", () => {
         },
         error: undefined,
       }),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     expect(store.months.length).toBe(1);
@@ -178,7 +192,9 @@ describe("MediaStore", () => {
         },
         error: undefined,
       }),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     const items = store.months[0]?.items ?? [];
@@ -195,7 +211,9 @@ describe("MediaStore", () => {
         data: { items: [], next_offset: null },
         error: undefined,
       }),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     expect(fakeClient.GET).toHaveBeenCalledTimes(1);
@@ -226,7 +244,9 @@ describe("MediaStore", () => {
     };
     const fakeClient = {
       GET: vi.fn().mockResolvedValueOnce(page1).mockResolvedValueOnce(page2),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     await store.loadMore();
@@ -256,7 +276,9 @@ describe("MediaStore", () => {
     };
     const fakeClient = {
       GET: vi.fn().mockResolvedValueOnce(page1).mockResolvedValueOnce(page2),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     const before04 = store.months.find((m) => m.key === "2026-04");
@@ -300,7 +322,9 @@ describe("MediaStore", () => {
     };
     const fakeClient = {
       GET: vi.fn().mockResolvedValueOnce(page1).mockResolvedValueOnce(page2),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     expect(store.months.map((m) => m.key)).toEqual(["2026-04"]);
@@ -322,7 +346,9 @@ describe("MediaStore", () => {
       GET: vi.fn()
         .mockResolvedValueOnce({ data: { items, next_offset: 200 }, error: undefined })
         .mockResolvedValueOnce({ data: { items, next_offset: null }, error: undefined }),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     const refs = new Map(store.months.map((m) => [m.key, m]));
@@ -365,7 +391,9 @@ describe("MediaStore", () => {
         },
         error: undefined,
       }),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadInitial();
 
@@ -388,13 +416,17 @@ describe("MediaStore", () => {
   });
 
   it("get(id) returns undefined for an unknown id", () => {
-    const fakeClient = { GET: vi.fn() };
+    const fakeClient = { GET: vi.fn() ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     expect(store.get("missing")).toBeUndefined();
   });
 
   it("mergeRaw populates byMediaId from a raw API row", () => {
-    const store = new MediaStore({ GET: vi.fn() } as never);
+    const store = new MediaStore({ GET: vi.fn() ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     store.mergeRaw([
       { id: "x", timestamp: "2024-06-15T14:30:00Z", width: 1, height: 1, thumb_version: 5 },
     ]);
@@ -422,7 +454,9 @@ describe("MediaStore", () => {
     };
     const fakeClient = {
       GET: vi.fn().mockResolvedValueOnce(page1).mockResolvedValueOnce(page2),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     expect(store.get("a")?.thumbVersion).toBe(1);
@@ -475,14 +509,18 @@ describe("MediaStore hidden invariant", () => {
   });
 
   it("mergeRaw skips raw hidden rows — nothing lands in any index", () => {
-    const store = new MediaStore({ GET: vi.fn() } as never);
+    const store = new MediaStore({ GET: vi.fn() ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     store.mergeRaw([hiddenRaw]);
     expect(store.get("h")).toBeUndefined();
     expect(store.months).toHaveLength(0);
   });
 
   it("visible row re-merged as hidden is evicted from all indexes", () => {
-    const store = new MediaStore({ GET: vi.fn() } as never);
+    const store = new MediaStore({ GET: vi.fn() ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     // First merge: visible
     store.mergeRaw([visibleRaw]);
     expect(store.get("v")).toBeDefined();
@@ -495,7 +533,9 @@ describe("MediaStore hidden invariant", () => {
   });
 
   it("removeMany evicts from all indexes", () => {
-    const store = new MediaStore({ GET: vi.fn() } as never);
+    const store = new MediaStore({ GET: vi.fn() ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     store.mergeRaw([
       visibleRaw,
       { id: "w", timestamp: "2026-04-19T12:00:00Z", width: 1, height: 1 },
@@ -510,7 +550,9 @@ describe("MediaStore hidden invariant", () => {
   });
 
   it("removeMany evicts all ids and prunes empty month buckets", () => {
-    const store = new MediaStore({ GET: vi.fn() } as never);
+    const store = new MediaStore({ GET: vi.fn() ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     store.mergeRaw([visibleRaw]);
     store.removeMany(["v"], "2026-04-22T00:00:00Z");
     expect(store.months).toHaveLength(0);
@@ -518,7 +560,9 @@ describe("MediaStore hidden invariant", () => {
   });
 
   it("removeMany emits media:hidden event with ids and hiddenAt", () => {
-    const store = new MediaStore({ GET: vi.fn() } as never);
+    const store = new MediaStore({ GET: vi.fn() ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     store.mergeRaw([visibleRaw]);
 
     const received: Array<{ ids: string[]; hiddenAt: string }> = [];
@@ -533,7 +577,9 @@ describe("MediaStore hidden invariant", () => {
   });
 
   it("removeMany on unknown ids is a no-op and still emits the event", () => {
-    const store = new MediaStore({ GET: vi.fn() } as never);
+    const store = new MediaStore({ GET: vi.fn() ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     const received: Array<{ ids: string[]; hiddenAt: string }> = [];
     store.on("media:hidden", (payload) => received.push(payload));
 
@@ -543,7 +589,9 @@ describe("MediaStore hidden invariant", () => {
   });
 
   it("off() unregisters a media:hidden listener", () => {
-    const store = new MediaStore({ GET: vi.fn() } as never);
+    const store = new MediaStore({ GET: vi.fn() ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     store.mergeRaw([visibleRaw]);
 
     const received: Array<{ ids: string[]; hiddenAt: string }> = [];
@@ -559,7 +607,9 @@ describe("MediaStore hidden invariant", () => {
 
 describe("MediaStore merge with asset files", () => {
   it("preserves detailed files when a later list row omits them", () => {
-    const store = new MediaStore({ GET: vi.fn() } as never);
+    const store = new MediaStore({ GET: vi.fn() ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+} as never);
     const detail = {
       id: "p",
       timestamp: "2024-06-15T14:30:00Z",
@@ -588,7 +638,9 @@ describe("MediaStore merge with asset files", () => {
       GET: vi.fn()
         .mockResolvedValueOnce({ data: { items: [item], next_offset: 200 }, error: undefined })
         .mockResolvedValueOnce({ data: { items: [item], next_offset: null }, error: undefined }),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     const before = store.months.find((m) => m.key === "2024-06");
@@ -621,7 +673,9 @@ describe("MediaStore merge with asset files", () => {
       GET: vi.fn()
         .mockResolvedValueOnce({ data: { items: [page1Item], next_offset: 200 }, error: undefined })
         .mockResolvedValueOnce({ data: { items: [page2Item], next_offset: null }, error: undefined }),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(fakeClient as never);
     await store.loadMore();
     const before = store.months.find((m) => m.key === "2024-06");
@@ -658,7 +712,9 @@ describe("MediaStore filter-change reset protocol", () => {
         };
       },
     );
-    return { GET };
+    return { GET ,
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
   }
 
   const emptyFilters: ActiveFilters = {
@@ -711,7 +767,9 @@ describe("MediaStore filter-change reset protocol", () => {
     let call = 0;
     const client = {
       GET: vi.fn(async () => (call++ === 0 ? await stale : fastResponse)),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(client as never);
 
     const p1 = store.loadInitial();
@@ -740,7 +798,9 @@ describe("MediaStore filter-change reset protocol", () => {
         data: { items: [], next_offset: null },
         error: undefined,
       }),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(client as never);
     store.setFilters({
       cameras: ["Sony A7R IV", "Canon EOS R5"],
@@ -768,7 +828,9 @@ describe("MediaStore filter-change reset protocol", () => {
         data: { items: [], next_offset: null },
         error: undefined,
       }),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(client as never);
     store.setFilters({ ...emptyFilters, hasGps: false });
     await store.loadInitial();
@@ -785,7 +847,9 @@ describe("MediaStore filter-change reset protocol", () => {
         data: { items: [], next_offset: null },
         error: undefined,
       }),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(client as never);
     await store.loadInitial();
 
@@ -816,7 +880,9 @@ describe("MediaStore filter-change reset protocol", () => {
     };
     const client = {
       GET: vi.fn().mockResolvedValueOnce(page1).mockResolvedValueOnce(page2AfterReset),
-    };
+
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); }
+};
     const store = new MediaStore(client as never);
     await store.loadInitial();
     expect(client.GET.mock.calls[0]?.[1]?.params?.query?.offset).toBe(0);

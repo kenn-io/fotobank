@@ -123,7 +123,12 @@ describe("AddToAlbumModal", () => {
       POST: vi.fn(async () => ({ data: created })),
       PATCH: vi.fn(async () => ({ data: null })),
       DELETE: vi.fn(async () => ({ data: null })),
-    };
+
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+createAlbum(albumNameRequest?: any, options?: any) { return (this as any).POST("/api/v1/albums", { body: albumNameRequest, ...options }); },
+deleteAlbum(id?: any, options?: any) { return (this as any).DELETE("/api/v1/albums/{id}", { params: { path: { id } }, ...options }); },
+renameAlbum(id?: any, albumNameRequest?: any, options?: any) { return (this as any).PATCH("/api/v1/albums/{id}", { params: { path: { id } }, body: albumNameRequest, ...options }); }
+};
     const store = new AlbumsStore(fakeClient as never);
     await store.loadInitial();
 

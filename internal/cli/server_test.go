@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"io"
 	"net"
@@ -1088,7 +1089,7 @@ admin_listen = "127.0.0.1:0"
 	resp, err = client.Get("http://" + resolved + "/api/openapi.json")
 	r.NoError(err)
 	var contract struct {
-		Paths map[string]json.RawMessage `json:"paths"`
+		Paths map[string]jsontext.Value `json:"paths"`
 	}
 	err = json.NewDecoder(resp.Body).Decode(&contract)
 	_ = resp.Body.Close()

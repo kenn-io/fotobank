@@ -1,7 +1,8 @@
 package httpapi
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -43,9 +44,9 @@ type EventBus struct {
 // caller is responsible for assigning IDs); Type is the event name
 // emitted on the wire; Data is the JSON payload sent verbatim.
 type Event struct {
-	ID   int64           `json:"id"`
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data"`
+	ID   int64          `json:"id"`
+	Type string         `json:"type"`
+	Data jsontext.Value `json:"data"`
 }
 
 // ring is a per-principal slot: the buffered events plus the active
@@ -106,7 +107,7 @@ func (b *EventBus) Publish(p owners.Principal, ev Event) {
 // guarantees that subscribers observe events in the same order their
 // IDs were allocated, which is what the Last-Event-ID resume contract
 // depends on.
-func (b *EventBus) PublishAutoID(p owners.Principal, evType string, data json.RawMessage) int64 {
+func (b *EventBus) PublishAutoID(p owners.Principal, evType string, data jsontext.Value) int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	r := b.bufs[p]
@@ -369,7 +370,7 @@ func eventsHandler(bus *EventBus) http.HandlerFunc {
 			// the gap.
 			gap := oldestID == 0 || lastID < oldestID-1
 			if gap {
-				writeControlSSE(w, "catchup-required", json.RawMessage(`{}`))
+				writeControlSSE(w, "catchup-required", jsontext.Value(`{}`))
 			} else {
 				for _, ev := range replay {
 					writeSSE(w, ev)
@@ -407,7 +408,7 @@ func writeSSE(w http.ResponseWriter, ev Event) {
 // without an id field so EventSource does not advance the client's
 // lastEventId past sentinel frames. Per the SSE spec, omitting the
 // id field leaves lastEventId unchanged for the dispatched message.
-func writeControlSSE(w http.ResponseWriter, eventType string, data json.RawMessage) {
+func writeControlSSE(w http.ResponseWriter, eventType string, data jsontext.Value) {
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, string(data))
 }
 

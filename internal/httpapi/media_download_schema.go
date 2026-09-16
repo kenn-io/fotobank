@@ -26,6 +26,7 @@ func registerDownloadSchema(api huma.API, path, operationID string, pathParams .
 	}
 	api.OpenAPI().AddOperation(&huma.Operation{
 		OperationID: operationID, Method: http.MethodGet, Path: path,
+		Tags:        []string{"streams"},
 		Summary:     "Read original file bytes",
 		Description: "Returns the owned file's current bytes with its stored media type. Hidden media requires an owner-matched unlock session. A file attached to a different asset returns 404. Use media details to obtain the expected size and SHA-256, then verify a complete download before using it; concurrent edits can invalidate those details.",
 		Parameters:  params,

@@ -2,12 +2,11 @@ package client
 
 import (
 	"context"
-	"encoding/json/jsontext"
-	json "encoding/json/v2"
 	"errors"
 	"fmt"
-	"net/http"
+	"io"
 
+	"go.kenn.io/fotobank/internal/client/generated"
 	"go.kenn.io/fotobank/internal/httpapi"
 )
 
@@ -22,21 +21,17 @@ func Import(ctx context.Context, configPath, version string, input httpapi.Impor
 	if !found || rec.Version != version {
 		return result, fmt.Errorf("no matching Fotobank server; run fotobank daemon start")
 	}
-	response, err := requestRecord(ctx, rec, http.MethodPost, "/api/v1/operator/imports", input, "rerun the import to reconcile completed files")
+	c, err := recordClient(ctx, rec)
 	if err != nil {
 		return result, err
 	}
-	defer response.Body.Close()
-	decoder := jsontext.NewDecoder(response.Body)
-	for {
-		var event httpapi.ImportEvent
-		value, err := decoder.ReadValue()
-		if err == nil {
-			err = json.Unmarshal(value, &event)
-		}
-		if err != nil {
-			return result, fmt.Errorf("import response ended without a final result; rerun the import to reconcile completed files: %w", err)
-		}
+	stream, err := c.ImportMediaStream(ctx, &generated.ImportMediaRequestOptions{Body: &input})
+	if err != nil {
+		return result, fmt.Errorf("operator response unavailable; rerun the import to reconcile completed files: %w", err)
+	}
+	defer stream.Close()
+	for stream.Next() {
+		event := stream.Current()
 		switch event.Type {
 		case "progress":
 			if event.Progress == nil {
@@ -60,4 +55,5 @@ func Import(ctx context.Context, configPath, version string, input httpapi.Impor
 			return result, fmt.Errorf("unexpected import event %q", event.Type)
 		}
 	}
+	return result, fmt.Errorf("import response ended without a final result; rerun the import to reconcile completed files: %w", errors.Join(io.ErrUnexpectedEOF, stream.Err()))
 }

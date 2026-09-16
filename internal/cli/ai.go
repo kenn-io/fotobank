@@ -3,8 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
-	"encoding/json"
-	jsonv2 "encoding/json/v2"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -79,7 +78,7 @@ func runAIStatus(ctx context.Context, cfgPath string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(stdout).Encode(h)
+	return json.MarshalWrite(stdout, h)
 }
 
 func newAIBackfillCmd() *cobra.Command {
@@ -122,7 +121,7 @@ func newAIBackfillCmd() *cobra.Command {
 				total += n
 			}
 			if asJSON && len(results) > 0 {
-				return errors.Join(taskErr, jsonv2.MarshalWrite(cmd.OutOrStdout(), results))
+				return errors.Join(taskErr, json.MarshalWrite(cmd.OutOrStdout(), results))
 			}
 			if taskErr != nil {
 				return taskErr
@@ -175,7 +174,7 @@ func newAIRetryFailedCmd() *cobra.Command {
 				}
 			}
 			if asJSON && len(results) > 0 {
-				return errors.Join(taskErr, jsonv2.MarshalWrite(cmd.OutOrStdout(), results))
+				return errors.Join(taskErr, json.MarshalWrite(cmd.OutOrStdout(), results))
 			}
 			return taskErr
 		},
@@ -284,7 +283,7 @@ func runAIListGenerations(ctx context.Context, cfgPath, state string, stdout io.
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(stdout).Encode(result.Items)
+	return json.MarshalWrite(stdout, result.Items)
 }
 
 func newAIPromoteGenerationCmd() *cobra.Command {
@@ -351,7 +350,7 @@ func runAIPromoteGeneration(cmd *cobra.Command, cfgPath string, id int64, yes, a
 		return err
 	}
 	if asJSON {
-		return jsonv2.MarshalWrite(cmd.OutOrStdout(), result)
+		return json.MarshalWrite(cmd.OutOrStdout(), result)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "promoted generation %d (fingerprint=%s)\n", result.ID, result.Fingerprint)
 	return nil
@@ -390,7 +389,7 @@ func runAICompactRetiredGenerations(ctx context.Context, cfgPath string, dryRun,
 		if result.Error != "" {
 			err = fmt.Errorf("compact: %s", result.Error)
 		}
-		return errors.Join(err, jsonv2.MarshalWrite(stdout, result))
+		return errors.Join(err, json.MarshalWrite(stdout, result))
 	}
 	if dryRun {
 		if result.Error != "" {

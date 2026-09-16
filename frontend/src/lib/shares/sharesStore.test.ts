@@ -8,7 +8,14 @@ function fakeClient(responses: Array<any>) {
     calls.push({ method: "h", path, opts });
     return responses[i++] ?? { data: null };
   });
-  return { GET: handler, POST: handler, DELETE: handler, calls };
+  return { GET: handler, POST: handler, DELETE: handler, calls ,
+sharesList(params?: any, options?: any) { return (this as any).GET("/api/v1/shares", { params: { query: params }, ...options }); },
+sharesCreate(createShareRequest?: any, options?: any) { return (this as any).POST("/api/v1/shares", { body: createShareRequest, ...options }); },
+sharesGet(uuid?: any, options?: any) { return (this as any).GET("/api/v1/shares/{uuid}", { params: { path: { uuid } }, ...options }); },
+sharesPreview(uuid?: any, options?: any) { return (this as any).GET("/api/v1/shares/{uuid}/preview", { params: { path: { uuid } }, ...options }); },
+sharesRetry(uuid?: any, options?: any) { return (this as any).POST("/api/v1/shares/{uuid}/retry", { params: { path: { uuid } }, ...options }); },
+sharesRevoke(uuid?: any, options?: any) { return (this as any).POST("/api/v1/shares/{uuid}/revoke", { params: { path: { uuid } }, ...options }); }
+};
 }
 
 const baseRow = {
@@ -242,7 +249,7 @@ describe("SharesStore.getDetail / getPreview", () => {
   });
 
   it("getPreview returns null on error and does not poison cache", async () => {
-    const preview = { ok: true };
+    const preview = { ok: true , text: async () => "" };
     const client = fakeClient([
       { error: { status: 502, message: "broker unavailable" } },
       { data: preview },
@@ -318,7 +325,14 @@ describe("SharesStore concurrent loadInitial", () => {
       }),
       POST: vi.fn(),
       DELETE: vi.fn(),
-    };
+
+sharesList(params?: any, options?: any) { return (this as any).GET("/api/v1/shares", { params: { query: params }, ...options }); },
+sharesCreate(createShareRequest?: any, options?: any) { return (this as any).POST("/api/v1/shares", { body: createShareRequest, ...options }); },
+sharesGet(uuid?: any, options?: any) { return (this as any).GET("/api/v1/shares/{uuid}", { params: { path: { uuid } }, ...options }); },
+sharesPreview(uuid?: any, options?: any) { return (this as any).GET("/api/v1/shares/{uuid}/preview", { params: { path: { uuid } }, ...options }); },
+sharesRetry(uuid?: any, options?: any) { return (this as any).POST("/api/v1/shares/{uuid}/retry", { params: { path: { uuid } }, ...options }); },
+sharesRevoke(uuid?: any, options?: any) { return (this as any).POST("/api/v1/shares/{uuid}/revoke", { params: { path: { uuid } }, ...options }); }
+};
     const store = new SharesStore(client as any);
     const firstLoad = store.loadInitial();
     // Start a refresh while the first page is still pending.

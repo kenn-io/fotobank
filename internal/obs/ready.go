@@ -2,7 +2,7 @@ package obs
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"sync"
 	"sync/atomic"

@@ -11,12 +11,24 @@ import type { Client } from "../api/client";
 function defaultAppConfig(): AppConfigStore {
   const client = {
     GET: async () => ({ data: undefined, error: { status: 0 } }),
-  } as unknown as Pick<Client, "GET">;
+
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+getMedia(id?: any, options?: any) { return (this as any).GET("/api/v1/media/{id}", { params: { path: { id } }, ...options }); }
+} as unknown as Client;
   return new AppConfigStore(client);
 }
 
 function storeWith(raw: Record<string, unknown>): MediaStore {
-  const s = new MediaStore({ GET: vi.fn() } as never);
+  const s = new MediaStore({ GET: vi.fn() ,
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+getMedia(id?: any, options?: any) { return (this as any).GET("/api/v1/media/{id}", { params: { path: { id } }, ...options }); }
+} as never);
   s.mergeRaw([{ files: [], ...raw }]);
   return s;
 }
@@ -205,7 +217,13 @@ describe("DirectMediaDetail", () => {
           ),
         );
       });
-    const store = new MediaStore({ GET: vi.fn() } as never);
+    const store = new MediaStore({ GET: vi.fn() ,
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+getMedia(id?: any, options?: any) { return (this as any).GET("/api/v1/media/{id}", { params: { path: { id } }, ...options }); }
+} as never);
     const albumsStore = makeAlbumsStore();
     const hiddenStore = makeHiddenStore();
     const toastStore = makeToastStore();
@@ -216,12 +234,12 @@ describe("DirectMediaDetail", () => {
     });
     // Wait for the first fetch to settle.
     await new Promise((r) => setTimeout(r, 0));
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/media/first");
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/media/first", expect.objectContaining({ method: "GET" }));
     fetchMock.mockClear();
     // Second nav: id=second, also uncached → must trigger another fetch.
     await first.rerender({ id: "second", mediaStore: store, albumsStore, hiddenStore, toastStore, appConfig });
     await new Promise((r) => setTimeout(r, 0));
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/media/second");
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/media/second", expect.objectContaining({ method: "GET" }));
     fetchMock.mockRestore();
   });
 
@@ -279,7 +297,13 @@ describe("DirectMediaDetail", () => {
 
   it("DirectMediaDetail hidden→unhide clones raw with hidden_at=null and calls mergeRaw", async () => {
     // Build a store WITHOUT the item (simulates hidden: store skips it).
-    const store = new MediaStore({ GET: vi.fn() } as never);
+    const store = new MediaStore({ GET: vi.fn() ,
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+getMedia(id?: any, options?: any) { return (this as any).GET("/api/v1/media/{id}", { params: { path: { id } }, ...options }); }
+} as never);
     const mergeRawSpy = vi.spyOn(store, "mergeRaw");
     const unhide = vi.fn().mockResolvedValue({ succeeded: ["h1"], failed: [] });
 

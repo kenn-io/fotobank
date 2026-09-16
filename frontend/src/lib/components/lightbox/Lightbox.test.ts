@@ -9,7 +9,18 @@ import type { Client } from "../../api/client";
 function defaultAppConfig(): AppConfigStore {
   const c = {
     GET: async () => ({ data: undefined, error: { status: 0 } }),
-  } as unknown as Pick<Client, "GET">;
+
+aiFailures(params?: any, options?: any) { return (this as any).GET("/api/v1/ai/failures", { params: { query: params }, ...options }); },
+aiHealth(options?: any) { return (this as any).GET("/api/v1/ai/health", { ...options }); },
+listAlbums(params?: any, options?: any) { return (this as any).GET("/api/v1/albums", { params: { query: params }, ...options }); },
+listAlbumMedia(id?: any, params?: any, options?: any) { return (this as any).GET("/api/v1/albums/{id}/media", { params: { path: { id }, query: params }, ...options }); },
+hiddenState(options?: any) { return (this as any).GET("/api/v1/auth/hidden/state", { ...options }); },
+listHiddenMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/hidden/media", { params: { query: params }, ...options }); },
+me(options?: any) { return (this as any).GET("/api/v1/me", { ...options }); },
+listMedia(params?: any, options?: any) { return (this as any).GET("/api/v1/media", { params: { query: params }, ...options }); },
+getMedia(id?: any, options?: any) { return (this as any).GET("/api/v1/media/{id}", { params: { path: { id } }, ...options }); },
+aiMediaView(mediaId?: any, options?: any) { return (this as any).GET("/api/v1/media/{media_id}/ai", { params: { path: { media_id: mediaId } }, body: mediaId, ...options }); }
+} as unknown as Client;
   return new AppConfigStore(c);
 }
 
@@ -82,23 +93,22 @@ describe("Lightbox reconstruction", () => {
       if (url.startsWith("/api/v1/media/x")) {
         return Promise.resolve({
           ok: true,
-          json: () =>
-            Promise.resolve({
+          text: async () => JSON.stringify(await Promise.resolve({
               id: "x",
               thumb_version: 0,
               width: 1,
               height: 1,
               timestamp: "2026-04-20T00:00:00Z",
-            }),
+            })),
         });
       }
       if (url.includes("/albums/")) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ items: [], next_offset: null }),
+          text: async () => JSON.stringify(await Promise.resolve({ items: [], next_offset: null })),
         });
       }
-      return Promise.resolve({ ok: false, status: 404 });
+      return Promise.resolve({ ok: false, status: 404 , text: async () => "" });
     });
     vi.stubGlobal("fetch", fakeFetch);
     const { container } = render(Lightbox, {
@@ -150,7 +160,7 @@ describe("Lightbox (snapshot path)", () => {
     };
     const fakeFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve(detail),
+      text: async () => JSON.stringify(detail),
     });
     vi.stubGlobal("fetch", fakeFetch);
     const mergeRaw = vi.fn();
@@ -168,7 +178,7 @@ describe("Lightbox (snapshot path)", () => {
       } as never,
     });
 
-    await waitFor(() => expect(fakeFetch).toHaveBeenCalledWith("/api/v1/media/m1"));
+    await waitFor(() => expect(fakeFetch).toHaveBeenCalledWith("/api/v1/media/m1", expect.objectContaining({ method: "GET" })));
     await waitFor(() => expect(mergeRaw).toHaveBeenCalledWith([detail]));
     vi.unstubAllGlobals();
   });
@@ -407,17 +417,16 @@ describe("Lightbox (snapshot path)", () => {
       if (url.startsWith("/api/v1/media/m1")) {
         return Promise.resolve({
           ok: true,
-          json: () =>
-            Promise.resolve({
+          text: async () => JSON.stringify(await Promise.resolve({
               id: "m1",
               thumb_version: 0,
               width: 1,
               height: 1,
               timestamp: "2026-04-20T00:00:00Z",
-            }),
+            })),
         });
       }
-      return Promise.resolve({ ok: false, status: 404 });
+      return Promise.resolve({ ok: false, status: 404 , text: async () => "" });
     });
     vi.stubGlobal("fetch", fakeFetch);
     const { container } = render(Lightbox, {
@@ -504,18 +513,17 @@ describe("Lightbox.hiddenCrossContext — map source", () => {
       if (url.startsWith(`/api/v1/media/${id}`)) {
         return Promise.resolve({
           ok: true,
-          json: () =>
-            Promise.resolve({
+          text: async () => JSON.stringify(await Promise.resolve({
               id,
               thumb_version: 0,
               width: 1,
               height: 1,
               timestamp: "2026-04-20T00:00:00Z",
               hidden_at: "2026-05-02T00:00:00Z",
-            }),
+            })),
         });
       }
-      return Promise.resolve({ ok: false, status: 404 });
+      return Promise.resolve({ ok: false, status: 404 , text: async () => "" });
     });
     vi.stubGlobal("fetch", fakeFetch);
   }
