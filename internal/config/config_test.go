@@ -62,7 +62,7 @@ root = %q
 root = %q
 [docbank]
 root = %q
-`, flashRoot, nasRoot, vaultRoot)), 0o600))
+`, filepath.ToSlash(flashRoot), filepath.ToSlash(nasRoot), filepath.ToSlash(vaultRoot))), 0o600))
 
 	cfg, err := config.Load(p)
 	r.NoError(err)

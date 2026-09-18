@@ -565,7 +565,7 @@ func canonicalUnavailableConfigPath(value string) (string, error) {
 }
 
 func canonicalConfigPathMode(value string, allowDanglingSymlink bool, symlinkDepth int) (string, error) {
-	target := value
+	target := filepath.FromSlash(value)
 	if !filepath.IsAbs(target) {
 		cwd, err := os.Getwd()
 		if err != nil {
