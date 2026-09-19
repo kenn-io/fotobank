@@ -82,9 +82,23 @@ checks that you imported the intended file.
 
 ## Prove recovery before a larger import
 
+Create a small album before taking the backup so the drill checks catalog
+choices as well as stored files:
+
+```sh
+fotobank albums create "Recovery check" --json
+fotobank albums add <album-id> <media-id> --json
+fotobank albums show <album-id> --json
+```
+
+Use the album `id` returned by `create` and a photo ID from the first import.
+Save the album ID, its member IDs, and the source checksums for comparison
+after restoration.
+
 Follow [backup and restore](backup.md): initialize a separate repository, create
-and verify an archive, then restore into separate storage. Check an album and
-downloaded originals in the recovered library. Do not delete the original
+and verify an archive, then restore into separate storage. Confirm the saved
+album membership and compare downloaded originals with the saved checksums in
+the recovered library. Do not delete the original
 deployment to simulate a loss. Keep optional AI and scheduled backups disabled
 in the recovered test copy.
 

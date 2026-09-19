@@ -58,9 +58,18 @@ fotobank daemon restart
 fotobank ai status
 ```
 
-Status returns JSON and probes providers with synthetic inputs. A successful
-probe does not mean that queued photos have finished processing. An unavailable
-provider does not prevent startup or recording consent.
+Status returns JSON. Its vision check requests `/models` from the configured
+endpoint; success establishes reachability, not that the chosen model accepts
+images. When embeddings are enabled, their health check uses synthetic image
+and text inputs.
+
+To test a vision model with a synthetic image, use the vision test in the web
+app's admin AI settings (`POST /api/v1/admin/settings/test/vision`). It sends
+a chat-completions request using the form's endpoint and model. Review its
+result and any model-name warning before queueing photos. Tests may incur
+provider charges, but do not use library photos. A successful test does not
+mean queued work has finished. An unavailable provider does not prevent
+startup or recording consent.
 
 ## Approve processing and inspect results
 
