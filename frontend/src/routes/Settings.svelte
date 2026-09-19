@@ -16,11 +16,11 @@
 
   <h2>Workflow help</h2>
   <nav aria-label="Workflow help">
-    <a href="https://fotobank.kenn.io/docs/guides/import/">Import photos</a>
-    <a href="https://fotobank.kenn.io/docs/guides/checkouts/">Edit files in a checkout</a>
-    <a href="https://fotobank.kenn.io/docs/guides/backup/">Back up and restore</a>
+    <a href="https://fotobank.ai/docs/guides/import/">Import photos</a>
+    <a href="https://fotobank.ai/docs/guides/checkouts/">Edit files in a checkout</a>
+    <a href="https://fotobank.ai/docs/guides/backup/">Back up and restore</a>
   </nav>
-  <p class="host-note">Storage paths and daemon settings are managed on the machine running Fotobank, not on this page. See the <a href="https://fotobank.kenn.io/docs/guides/setup/">setup guide</a>, or ask the person who runs your library.</p>
+  <p class="host-note">Storage paths and daemon settings are managed on the machine running Fotobank, not on this page. See the <a href="https://fotobank.ai/docs/guides/setup/">setup guide</a>, or ask the person who runs your library.</p>
 </section>
 
 <style>

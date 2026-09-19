@@ -1,6 +1,6 @@
 [project]
 site_name = "Fotobank"
-site_url = "https://fotobank.kenn.io/docs/"
+site_url = "https://fotobank.ai/docs/"
 site_description = "Technical documentation for Fotobank, a self-hosted photo system of record built on Docbank."
 site_author = "Kenn Software LLC"
 copyright = 'Copyright &copy; 2026 <a href="https://kenn.io">Kenn Software LLC</a>.'

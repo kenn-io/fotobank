@@ -7,14 +7,6 @@
 - [Website Markdown](/index.md): Purpose, current workflows, the personal OS direction alongside Docbank and msgvault, and pre-alpha limits.
 - [Storage and editing guide](/guide.md): How one photograph moves from import through recovery.
 
-## Technical documentation
-
-- [Documentation](/docs/): Current architecture and operational boundaries.
-- [System map](/docs/architecture/): Package ownership and rules for changing the code.
-- [Content and storage](/docs/architecture/content-and-storage/): Docbank, NAS, thumbnails, imports, and checkouts.
-- [Data model](/docs/architecture/data-model/): Assets, files, albums, shares, and ownership.
-- [Search and AI](/docs/architecture/search-and-ai/): Current search and optional AI implementation.
-
 ## User and agent workflows
 
 - [Set up for someone else](/docs/guides/agent-setup/): Decisions, first-import checks, recovery drill, and operator handoff.
@@ -25,3 +17,11 @@
 - [Checkouts](/docs/guides/checkouts/): Create working copies, scan edits, inspect saved state, and explicitly commit.
 - [Backup and restore](/docs/guides/backup/): Archive both the catalog and content, schedule backups, and restore separately.
 - [Automation](/docs/guides/automation/): List, search, and inspect photos through the daemon; structured output and current command and API limits. MCP integration is not implemented.
+
+## Technical documentation
+
+- [Documentation](/docs/): Guides and current architecture.
+- [System map](/docs/architecture/): Package ownership and rules for changing the code.
+- [Content and storage](/docs/architecture/content-and-storage/): Docbank, NAS, thumbnails, imports, and checkouts.
+- [Data model](/docs/architecture/data-model/): Assets, files, albums, shares, and ownership.
+- [Search and AI](/docs/architecture/search-and-ai/): Current search and optional AI implementation.

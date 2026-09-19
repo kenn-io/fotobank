@@ -14,8 +14,8 @@ for (const view of ["library", "sessions"]) {
     failing = false;
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Add photos to your library" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Import guide", exact: true })).toHaveAttribute("href", "https://fotobank.kenn.io/docs/guides/import/");
-    await expect(page.getByRole("link", { name: "Setup guide", exact: true })).toHaveAttribute("href", "https://fotobank.kenn.io/docs/guides/setup/");
+    await expect(page.getByRole("link", { name: "Import guide", exact: true })).toHaveAttribute("href", "https://fotobank.ai/docs/guides/import/");
+    await expect(page.getByRole("link", { name: "Setup guide", exact: true })).toHaveAttribute("href", "https://fotobank.ai/docs/guides/setup/");
     await expect(page.locator("code")).toContainText("fotobank import");
     expect(await page.locator(".main").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   });

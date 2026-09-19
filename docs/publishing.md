@@ -19,6 +19,9 @@ work in kata, not in the documentation for current behavior.
 
 ## How is the site published?
 
+The canonical website is `https://fotobank.ai/`, with documentation under
+`https://fotobank.ai/docs/`. Use this domain in site metadata and public links.
+
 `zensical.toml` defines the technical documentation navigation. The build puts
 those pages under `site/docs/`, copies `website/` to `site/`, and adds the shared
 fonts. `scripts/docs/build.mjs` owns that generated output. Do not edit `site/`.
