@@ -4,6 +4,10 @@ Scripts and agents work with the same library as the web app. In the default
 single-user setup, no owner-registration or login command is needed. See
 [Set up Fotobank](setup.md#create-the-configuration) for that setup.
 
+For a new deployment, follow [setup for someone else](agent-setup.md) first.
+This page is the detailed command reference, including partial results and retry
+behavior. Provider setup and consent are in the [AI guide](ai.md).
+
 Set one configuration path for the whole operation instead of relying on the
 current working directory:
 
@@ -403,7 +407,9 @@ and filter counts, through
 `/api/openapi.json` on the running server or the repository's `openapi.yaml`.
 Interactive documentation is at `/api/docs`. A documented operation can still
 report that its service is unavailable; schema presence does not mean AI is
-enabled. Raw byte and event routes are outside that JSON contract. Consult the
+enabled. Original downloads, thumbnails, and events also have OpenAPI entries,
+but return streams rather than JSON. Shared-media byte routes remain outside
+the generated contract. Consult the
 [HTTP architecture](../architecture/runtime.md#http) and route implementations
 for those surfaces. Scripts should use supported
 commands and API operations rather than writing directly to the catalog or

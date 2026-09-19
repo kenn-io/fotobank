@@ -116,12 +116,6 @@ archive. Pruning removes unused packs and rewrites sparse packs whose retained
 content occupies less than half their indexed bytes. Fuller packs can keep
 unused bytes; pruning does not compact every partially used pack.
 
-Configurations containing `backup.dir`, `backup.keep_15min`,
-`backup.keep_hourly`, or `backup.keep_daily` are rejected with migration
-instructions. Remove those settings and configure the complete-archive
-repository above. Existing metadata-only SQLite backup files are not deleted
-automatically; retire them only after verifying a complete recovery.
-
 ## Restore a complete archive
 
 Choose a new or empty directory outside the configured storage and backup
