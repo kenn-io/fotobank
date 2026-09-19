@@ -17,7 +17,7 @@ changing interfaces and schemas. Keep independent copies of irreplaceable
 photos. Start with copies of a small collection and test recovery separately.
 
 [Try Fotobank](docs/guides/setup.md) · [How it works](website/guide.md) ·
-[Commands for agents](docs/guides/automation.md)
+[Setup for agents](docs/guides/agent-setup.md)
 
 ![Fotobank's library displaying a sample landscape collection](website/images/library.jpg)
 
@@ -118,6 +118,11 @@ acknowledging processing of hidden media. Hidden-media controls govern access
 through the application; they do not encrypt files. Read the
 [AI privacy rules](docs/architecture/search-and-ai.md#failure-and-privacy-rules)
 before enabling processing.
+
+The [AI guide](docs/guides/ai.md) explains provider setup, consent, costs, and
+how to stop processing. Check [file and preview support](docs/guides/formats.md)
+before importing a large collection; preserving an original does not guarantee
+a thumbnail or browser playback.
 
 Tagging, captioning, image embeddings, and search currently run in Fotobank.
 Embeddings are numeric descriptions used to compare images and search text.

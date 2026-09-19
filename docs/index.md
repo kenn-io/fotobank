@@ -15,12 +15,15 @@ start the daemon, and import a small collection. Then [create a backup and test
 recovery](guides/backup.md) into separate storage.
 
 If you are writing a script or using an agent, start with
-[Automate Fotobank](guides/automation.md). The CLI and web app use the same
+[Set up Fotobank for someone else](guides/agent-setup.md), then use the
+[command reference](guides/automation.md). The CLI and web app use the same
 daemon; an agent does not need direct database access.
 
 ## Use Fotobank
 
 - [Set up Fotobank](guides/setup.md) — build, configure, and try a first import.
+- [Choose whether to use AI](guides/ai.md) — providers, consent, costs, and stopping processing.
+- [Supported files and previews](guides/formats.md) — distinguish stored files from browsing support.
 - [Import and recover](guides/import.md) — copy media into Docbank and finish
   interrupted imports.
 - [Work with checkouts](guides/checkouts.md) — create ordinary writable

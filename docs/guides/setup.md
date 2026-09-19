@@ -9,7 +9,22 @@ existing OS account and local folders; you do not need a NAS, a separate
 Docbank server, or an account-registration step. Leave AI disabled while
 trying your first import.
 
-## Build the current source
+## Get Fotobank
+
+There is no public tagged release yet. Build the current source using the steps
+below. Do not
+use an unofficial installer or assume that a release URL exists.
+
+The intended release packages cover Linux, macOS, and Windows on AMD64 and
+ARM64 and include the web app. Public download and verification instructions
+will accompany the first release. Until then, the source-build path below is
+the documented installation route.
+
+If an agent is preparing your library, use the
+[setup and handoff procedure](agent-setup.md). It covers decisions to confirm
+before any files are imported or external services are enabled.
+
+### Build the current source
 
 The current setup is developer-oriented. You need Git, Make, Go 1.27 or newer,
 a C compiler for SQLite, and Bun 1.3.11 for the web app. The pinned frontend
@@ -165,8 +180,7 @@ fotobank media list --limit 5 --json
 Open the web UI URL printed at startup. Imported photos appear in the library;
 thumbnails are built in the background. Import copies source files rather than
 moving or editing them. A discovered file format is not a promise that every
-file of that type has a preview; see [import behavior](import.md) and
-[thumbnail processing](../architecture/content-and-storage.md#artifact-storage).
+file of that type has a preview; see [files and previews](formats.md).
 
 Next, [create and verify a backup](backup.md), then test restoration into a
 separate directory. Backups are disabled until you configure them. Keep source
