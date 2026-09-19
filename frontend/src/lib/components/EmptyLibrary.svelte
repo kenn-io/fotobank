@@ -8,8 +8,8 @@
   <pre><code>fotobank import /path/to/photos --config /path/to/config.toml</code></pre>
   <p>Replace the example paths with your photo folder and configuration file. If someone else runs this library, ask them to import your photos.</p>
   <nav aria-label="Getting started">
-    <a href="https://fotobank.kenn.io/docs/guides/import/">Import guide</a>
-    <a href="https://fotobank.kenn.io/docs/guides/setup/">Setup guide</a>
+    <a href="https://fotobank.ai/docs/guides/import/">Import guide</a>
+    <a href="https://fotobank.ai/docs/guides/setup/">Setup guide</a>
   </nav>
 </section>
 

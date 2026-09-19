@@ -38,7 +38,7 @@ async function htmlFiles(root) {
 }
 
 function localTarget(site, file, href) {
-  const origin = "https://fotobank.kenn.io";
+  const origin = "https://fotobank.ai";
   const page = new URL(`/${path.relative(site, file).split(path.sep).join("/")}`, origin);
   const parsed = new URL(href, page);
   if (parsed.origin !== origin) return undefined;
