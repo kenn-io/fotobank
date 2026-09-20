@@ -1,32 +1,32 @@
 review_guidelines = """
-Fotobank is currently a private, owner-controlled repository. Review the CI
-configuration against its actual trust model, not a generic public-project
-threat model.
+Review CI against the contributor trust boundary below. Repository visibility
+does not grant branch-write access or trusted-runner execution to visitors.
 
 ## CI trust boundary
 
 Same-repository contributors with permission to push branches are trusted to
-run native CI workloads on the co-located private runner. During this private
-phase, repository write access is intentionally also runner-execution
-authority. The private runner does not claim per-job filesystem, credential,
+run native CI workloads on the managed runner. Repository write access is
+intentionally also runner-execution authority. The runner does not claim
+per-job filesystem, credential,
 network, or persistent-state isolation between these trusted workloads. Do not
-report same-repository pull-request code running on `kenn-linux-x64` as a
+report same-repository pull-request code running on the managed fleet as a
 vulnerability, and do not require GitHub-hosted, ephemeral, virtual-machine, or
 container isolation for those jobs.
 
 Fork and external-contributor pull requests are untrusted and MUST NOT reach
-the private runner. The pull-request dispatcher calls the reusable workflow
+the managed fleet. The pull-request dispatcher calls the reusable workflow
 from the canonical repository's `main` branch. That reusable workflow derives
 runner eligibility from the GitHub event: the repository must be the canonical
 Fotobank repository and both the pull-request head and base repositories must
-match it. All other pull requests use GitHub-hosted runners. Do flag any change
-that lets a fork or external repository select `kenn-linux-x64`, supply a
+match it. Eligible jobs use `kenn-linux-x64` while private and
+`kenn-linux-x64-public` after publication. All other pull requests use
+GitHub-hosted runners. Do flag any change
+that lets a fork or external repository select a managed runner, supply a
 trusted-runner decision as an input, replace the main-pinned workflow, or
 otherwise cross this admission boundary.
 
-If Fotobank becomes public or its contributor trust policy changes, the runner
-admission design must be reassessed before that transition. Do not review the
-current private phase as though that future transition has already happened.
+The public runner group admits only the canonical CI workflow on main.
+Changes to contributor trust or workflow admission require a new assessment.
 
 Focus security findings on a concrete capability gained across an actual trust
 boundary. Focus other review findings on correctness, data integrity,

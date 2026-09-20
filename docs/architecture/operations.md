@@ -239,8 +239,10 @@ The normal local tiers are:
 GitHub Actions validates Linux amd64 tests, Windows amd64 CGO/SQLite behavior,
 lint, and the shared Testify rules. Pull-request dispatch selects approved
 runners from the workflow on `main`, while the reusable workflow tests the pull
-request commit. Runner admission is infrastructure policy, not an application
-security boundary.
+request commit. Same-repository jobs use the private runner while the repository
+is private and the approved public-project runner after publication. Fork jobs
+use GitHub-hosted runners. Runner admission is infrastructure policy, not an
+application security boundary.
 
 Performance workloads such as 10,000-file import and repeated XMP changes are
 repeatable benchmarks, not timing assertions in ordinary CI. They report
