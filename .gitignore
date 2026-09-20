@@ -103,6 +103,7 @@ ENV/
 
 # mkdocs documentation
 /site
+/.vercel/
 
 # mypy
 .mypy_cache/
