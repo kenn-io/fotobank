@@ -4,13 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Fotobank — a photo system of record you control</title>
-    <meta name="description" content="A photo system of record for you and your agents. Organize photographs, keep related files together, and work with versioned originals. Built on Docbank; pre-alpha.">
+    <meta name="description" content="A self-hosted photo library that keeps original files, related files, and every version together. Browse through a web app, the command line, or an agent. Built on Docbank; pre-alpha.">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/styles/site.css">
     <link rel="canonical" href="https://fotobank.ai/">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="A photo system of record you control.">
-    <meta property="og:description" content="A photo system of record for you and your agents, built on Docbank. Pre-alpha software, with no stability guarantees.">
+    <meta property="og:title" content="A photo system of record you control">
+    <meta property="og:description" content="A self-hosted photo library that keeps original files, related files, and every version together. Built on Docbank. Pre-alpha software.">
     <meta property="og:site_name" content="Fotobank">
     <meta property="og:url" content="https://fotobank.ai/">
   </head>
@@ -29,13 +29,13 @@
     <main id="main">
       <section class="hero">
         <div class="hero-copy">
-          <h1>A photo system of record <em>you control.</em></h1>
-          <p class="lede">Your photographs hold family history, creative work, and moments you cannot recreate. Fotobank brings them into a library you can browse, organize, and work with through your own tools and agents.</p>
+          <h1>A photo system of record <em>you control</em></h1>
+          <p class="lede">Fotobank is a self-hosted photo library. It keeps your original files and every later version, keeps related files together, and lets you browse and organize through a web app, the command line, or an agent.</p>
           <div class="actions">
             <a class="button primary" href="/docs/guides/setup/">Build from source</a>
             <a class="button" href="/docs/guides/agent-setup/">Set up with an agent</a>
           </div>
-          <p class="project-status">Fotobank is pre-alpha software, with no stability guarantees. Expect bugs and changing interfaces and schemas. Keep independent copies of irreplaceable photos.</p>
+          <p class="project-status">Fotobank is pre-alpha software with no stability guarantees. Expect bugs and changing interfaces and schemas. Keep independent copies of irreplaceable photos.</p>
         </div>
         <figure class="product-view">
           <a href="/images/library.jpg" aria-label="View the full-size Fotobank library screenshot"><img src="/images/library.jpg" width="1440" height="960" alt="Fotobank's library displaying landscape photos, with browsing filters and a capture-date timeline."></a>
@@ -45,45 +45,45 @@
 
       <section class="site-section" aria-labelledby="workflow-title">
         <div class="section-heading">
-          <h2 id="workflow-title">Your library, your way of working.</h2>
-          <p>Start with copies of a small collection. Browse in the web app, work with files in an editor, or use commands with an agent.</p>
+          <h2 id="workflow-title">What you can do</h2>
+          <p>Start with copies of a small collection.</p>
         </div>
         <div class="proof-grid">
-          <article><h3>Browse and organize.</h3><p>Import without modifying the source. Find photos by date, camera, tags, or location, and collect them into albums. Metadata search works without AI. <a href="/docs/guides/formats/">Check supported files and previews</a>.</p></article>
-          <article><h3>Edit ordinary files.</h3><p>A checkout is a working copy of selected files. Use your editor, then explicitly commit tracked edits as new versions. Uncommitted edits are not in archive backups. <a href="/docs/guides/checkouts/">Work with checkouts</a>.</p></article>
-          <article><h3>Work with an agent.</h3><p>List and search photos, inspect metadata, and manage albums through commands and a documented HTTP API. They use the same server as the web app. <a href="/docs/guides/agent-setup/">Set up a first library</a> or <a href="/docs/guides/automation/">read the command reference</a>.</p></article>
-          <article><h3>Choose whether to use AI.</h3><p>Optional tagging, captions, and semantic search require configured providers. AI is disabled by default. <a href="/docs/guides/ai/">Read about providers, consent, and costs</a> before enabling it.</p></article>
+          <article><h3>Browse and organize</h3><p>Import reads your files without changing them. Find photos by date, camera, tags, or location, and collect them into albums. Search by metadata does not need AI. <a href="/docs/guides/formats/">Check supported files and previews</a>.</p></article>
+          <article><h3>Edit files with your own tools</h3><p>A checkout is a working copy of selected files. Edit them with any program, then commit the edits as new versions. Edits you have not committed are not in backups. <a href="/docs/guides/checkouts/">Work with checkouts</a>.</p></article>
+          <article><h3>Use commands or an agent</h3><p>List and search photos, read metadata, and manage albums from the command line or the HTTP API. Both talk to the same server as the web app. <a href="/docs/guides/agent-setup/">Set up a first library</a> or <a href="/docs/guides/automation/">read the command reference</a>.</p></article>
+          <article><h3>Turn on AI if you want it</h3><p>AI is off by default. Tagging, captions, and semantic search need a configured provider. <a href="/docs/guides/ai/">Read about providers, consent, and costs</a> before turning it on.</p></article>
         </div>
-        <p class="workflow-backup">Before importing more, <a href="/docs/guides/backup/">back up and test recovery</a>. Archives include stored files and the photo catalog, but not configuration files, provider credentials, or working copies. Backup repositories are not encrypted.</p>
+        <p class="workflow-backup">Before importing more, <a href="/docs/guides/backup/">back up and test recovery</a>. Backups include stored files and the photo catalog. They do not include configuration files, provider credentials, or checkouts. Backup repositories are not encrypted.</p>
       </section>
 
       <section class="site-section" aria-labelledby="asset-title">
         <div class="section-heading">
           <div>
-            <h2 id="asset-title">One photograph. Every file and version.</h2>
+            <h2 id="asset-title">Related files stay together</h2>
           </div>
-          <p>A camera RAW, a JPEG, and an XMP sidecar can belong to the same photograph. Fotobank keeps them together in its catalog. <a href="https://docbank.ai/">Docbank</a> stores their exact bytes and versions, so an edit does not replace the earlier file.</p>
+          <p>A camera RAW, a JPEG, and an XMP sidecar can all belong to one photograph. Fotobank records them as one photo with three files. <a href="https://docbank.ai/">Docbank</a> stores the exact bytes of each file and every version, so an edit does not replace the earlier file.</p>
         </div>
-        <div class="asset-graph" role="img" aria-label="A photo asset connected to a primary JPEG, camera RAW, and XMP sidecar">
+        <div class="asset-graph" role="img" aria-label="A photo record connected to a display JPEG, a camera RAW, and an XMP sidecar">
           <div class="asset-node"><strong>Summer field</strong><span>Photo record</span></div>
           <div class="graph-line"></div>
           <div class="file-nodes">
-            <div><strong>IMG_1042.JPG</strong><span>Primary display file</span></div>
+            <div><strong>IMG_1042.JPG</strong><span>Display file</span></div>
             <div><strong>IMG_1042.CR2</strong><span>Camera source</span></div>
-            <div><strong>IMG_1042.CR2.XMP</strong><span>Edit metadata sidecar</span></div>
+            <div><strong>IMG_1042.CR2.XMP</strong><span>Edit sidecar</span></div>
           </div>
         </div>
-        <p class="section-note">Docbank also supplies source metadata and image previews. It runs inside Fotobank, not as a second server. Albums, privacy, sharing, and file relationships belong to Fotobank; recovery needs both systems' records. <a href="/guide/">See how storage, editing, and recovery fit together</a>.</p>
+        <p class="section-note">Docbank also reads source metadata and renders previews. It runs inside the Fotobank process, not as a second server. Fotobank owns albums, privacy, sharing, and the links between files. Restoring a library needs both. <a href="/guide/">See how storage, editing, and recovery fit together</a>.</p>
       </section>
 
       <section class="site-section direction" aria-labelledby="direction-title">
         <div>
-          <h2 id="direction-title">Part of a personal OS for the agentic era.</h2>
-          <p>The idea is simple: keep the important parts of your life in systems you control, with interfaces your chosen tools and agents can use. Fotobank is the photographic part of that work, alongside <a href="https://docbank.ai/">Docbank</a> and <a href="https://msgvault.io">msgvault</a>.</p>
+          <h2 id="direction-title">Related projects</h2>
+          <p>Fotobank is one of several Kenn projects for keeping personal data in software you run yourself. <a href="https://docbank.ai/">Docbank</a> stores files. <a href="https://msgvault.io">msgvault</a> stores messages. Each one has commands and an API so your tools and agents can use it.</p>
         </div>
         <div class="direction-details">
-          <p>Today, optional AI and search run in Fotobank. Moving reusable intelligence into Docbank is work ahead. Photo relationships, albums, privacy, and sharing stay in Fotobank.</p>
-          <p>Broader enrichment, people curation, and MCP integration are aspirations, not shipped features. Fotobank has no autonomous assistant.</p>
+          <p>Optional AI and search currently run in Fotobank. Some of that may move into Docbank later.</p>
+          <p>People grouping, MCP integration, and other AI features are not built. Fotobank has no autonomous assistant.</p>
         </div>
         <p><a href="/docs/guides/setup/">Build from source and try a small collection</a>, or follow the <a href="/docs/guides/agent-setup/">agent setup guide</a>.</p>
       </section>
