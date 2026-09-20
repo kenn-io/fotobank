@@ -1,7 +1,7 @@
 # From camera files to a library you control
 
 Follow a photograph from import to browsing, editing, and recovery. Fotobank
-organizes the library. Embedded Docbank keeps its exact files and versions.
+organizes the library. Embedded [Docbank](https://docbank.ai/) keeps its exact files and versions.
 
 Fotobank is pre-alpha software, with no stability guarantees. Keep independent
 copies of irreplaceable photos.
@@ -25,7 +25,7 @@ An example file group:
 
 Each file points to its own exact stored version.
 
-**Docbank keeps the files.** Fotobank supplies each file's SHA-256 checksum and
+**[Docbank](https://docbank.ai/) keeps the files.** Fotobank supplies each file's SHA-256 checksum and
 size. The checksum identifies the contents. Docbank checks the bytes and records
 an immutable version: later edits create new versions, not replacements.
 [Content and storage](/docs/architecture/content-and-storage/).

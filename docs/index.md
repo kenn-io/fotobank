@@ -1,7 +1,7 @@
 # Use and understand Fotobank
 
 Use these guides to set up Fotobank, manage your photos, and recover your library.
-Fotobank is a self-hosted photo system of record built on Docbank.
+Fotobank is a self-hosted photo system of record built on [Docbank](https://docbank.ai/).
 
 Fotobank is pre-alpha software, with no stability guarantees. Expect bugs and
 changing interfaces and schemas. Keep independent copies of irreplaceable

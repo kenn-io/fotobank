@@ -1,7 +1,7 @@
 # Fotobank
 
 Fotobank is a photo system of record for you and your agents, built on
-[Docbank](https://github.com/kenn-io/docbank).
+[Docbank](https://docbank.ai/).
 
 Your photos hold family history, creative work, and moments you cannot
 recreate. Fotobank keeps that record under your control: exact files and edits,
