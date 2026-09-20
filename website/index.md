@@ -1,13 +1,13 @@
 # A photo system of record you control
 
-Your photographs hold family history, creative work, and moments you cannot
-recreate. Fotobank brings them into a library you can browse, organize, and
-work with through your own tools and agents.
+Fotobank is a self-hosted photo library. It keeps your original files and every
+later version, keeps related files together, and lets you browse and organize
+through a web app, the command line, or an agent.
 
 [Build from source](/docs/guides/setup/) or
 [set up with an agent](/docs/guides/agent-setup/).
 
-Fotobank is pre-alpha software, with no stability guarantees. Expect bugs and
+Fotobank is pre-alpha software with no stability guarantees. Expect bugs and
 changing interfaces and schemas. Keep independent copies of irreplaceable photos.
 
 ![Fotobank's library displaying landscape photos, with browsing filters and a capture-date timeline.](/images/library.jpg)
@@ -15,69 +15,65 @@ changing interfaces and schemas. Keep independent copies of irreplaceable photos
 The running app with a sample library. [View full size](/images/library.jpg).
 Sample photos from [Unsplash](https://unsplash.com).
 
-## Your library, your way of working
+## What you can do
 
-Start with copies of a small collection. Browse in the web app, work with files
-in an editor, or use commands with an agent.
+Start with copies of a small collection.
 
 ### Browse and organize
 
-Import without modifying the source. Find photos by date, camera, tags, or
-location, and collect them into albums. Metadata search works without AI.
-[Check supported files and previews](/docs/guides/formats/).
+Import reads your files without changing them. Find photos by date, camera,
+tags, or location, and collect them into albums. Search by metadata does not
+need AI. [Check supported files and previews](/docs/guides/formats/).
 
-### Edit ordinary files
+### Edit files with your own tools
 
-A checkout is a working copy of selected files. Use your editor, then explicitly
-commit tracked edits as new versions. Uncommitted edits are not in archive
+A checkout is a working copy of selected files. Edit them with any program, then
+commit the edits as new versions. Edits you have not committed are not in
 backups. [Work with checkouts](/docs/guides/checkouts/).
 
-### Work with an agent
+### Use commands or an agent
 
-List and search photos, inspect metadata, and manage albums through commands
-and a documented HTTP API. They use the same server as the web app.
+List and search photos, read metadata, and manage albums from the command line
+or the HTTP API. Both talk to the same server as the web app.
 [Set up a first library](/docs/guides/agent-setup/) or
 [read the command reference](/docs/guides/automation/).
 
-### Choose whether to use AI
+### Turn on AI if you want it
 
-Optional tagging, captions, and semantic search require configured providers.
-AI is disabled by default. [Read about providers, consent, and costs](/docs/guides/ai/)
-before enabling it.
+AI is off by default. Tagging, captions, and semantic search need a configured
+provider. [Read about providers, consent, and costs](/docs/guides/ai/) before
+turning it on.
 
 Before importing more, [back up and test recovery](/docs/guides/backup/).
-Archives include stored files and the photo catalog, but not configuration
-files, provider credentials, or working copies. Backup repositories are not encrypted.
+Backups include stored files and the photo catalog. They do not include
+configuration files, provider credentials, or checkouts. Backup repositories are
+not encrypted.
 
-## One photograph. Every file and version.
+## Related files stay together
 
-A camera RAW, a JPEG, and an XMP sidecar can belong to the same photograph.
-Fotobank keeps them together in its catalog.
-[Docbank](https://docbank.ai/) stores their exact bytes and
-versions, so an edit does not replace the earlier file.
+A camera RAW, a JPEG, and an XMP sidecar can all belong to one photograph.
+Fotobank records them as one photo with three files.
+[Docbank](https://docbank.ai/) stores the exact bytes of each file and every
+version, so an edit does not replace the earlier file.
 
-For example, one photo record can connect `IMG_1042.JPG` (the primary display
-file), `IMG_1042.CR2` (the camera source), and `IMG_1042.CR2.XMP` (the edit
-metadata sidecar).
+For example, one photo record can connect `IMG_1042.JPG` (the display file),
+`IMG_1042.CR2` (the camera source), and `IMG_1042.CR2.XMP` (the edit sidecar).
 
-Docbank also supplies source metadata and image previews. It runs inside
-Fotobank, not as a second server. Albums, privacy, sharing, and file relationships
-belong to Fotobank; recovery needs both systems' records.
+Docbank also reads source metadata and renders previews. It runs inside the
+Fotobank process, not as a second server. Fotobank owns albums, privacy,
+sharing, and the links between files. Restoring a library needs both.
 [See how storage, editing, and recovery fit together](/guide/).
 
-## Part of a personal OS for the agentic era
+## Related projects
 
-The idea is simple: keep the important parts of your life in systems you
-control, with interfaces your chosen tools and agents can use. Fotobank is
-the photographic part of that work, alongside
-[Docbank](https://docbank.ai/) and [msgvault](https://msgvault.io).
+Fotobank is one of several Kenn projects for keeping personal data in software
+you run yourself. [Docbank](https://docbank.ai/) stores files.
+[msgvault](https://msgvault.io) stores messages. Each one has commands and an
+API so your tools and agents can use it.
 
-Today, optional AI and search run in Fotobank. Moving reusable intelligence into
-Docbank is work ahead. Photo relationships, albums, privacy, and sharing stay
-in Fotobank.
-
-Broader enrichment, people curation, and MCP integration are aspirations, not
-shipped features. Fotobank has no autonomous assistant.
+Optional AI and search currently run in Fotobank. Some of that may move into
+Docbank later. People grouping, MCP integration, and other AI features are not
+built. Fotobank has no autonomous assistant.
 
 [Build from source and try a small collection](/docs/guides/setup/), or follow
 the [agent setup guide](/docs/guides/agent-setup/).

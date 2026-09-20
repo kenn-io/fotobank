@@ -4,8 +4,8 @@
 
 ## Product overview
 
-- [Website Markdown](/index.md): Purpose, current workflows, the personal OS direction alongside Docbank and msgvault, and pre-alpha limits.
-- [Storage and editing guide](/guide.md): How one photograph moves from import through recovery.
+- [Website Markdown](/index.md): What Fotobank does, related Kenn projects, and pre-alpha limits.
+- [Storage and editing guide](/guide.md): How one photograph moves from import through backup and restore.
 
 ## User and agent workflows
 

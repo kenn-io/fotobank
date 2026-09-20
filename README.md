@@ -3,9 +3,9 @@
 Fotobank is a photo system of record for you and your agents, built on
 [Docbank](https://docbank.ai/).
 
-Your photos hold family history, creative work, and moments you cannot
-recreate. Fotobank keeps that record under your control: exact files and edits,
-a photo catalog, a web app, and commands for your tools and agents.
+Fotobank is a self-hosted photo library. It keeps your original files and
+every later version, keeps related files together, and lets you browse and
+organize through a web app, the command line, or an agent.
 
 Fotobank is pre-alpha software, with no stability guarantees. Expect bugs and
 changing interfaces and schemas. Start with copies of a small collection, keep
@@ -91,16 +91,16 @@ relationships cannot be rebuilt from the original bytes alone.
 See [how storage and editing work](website/guide.md) or the
 [architecture map](docs/architecture/README.md).
 
-## Part of a personal OS for the agentic era
+## Related projects
 
-A personal OS keeps the important parts of your life in systems you control,
-with interfaces your chosen tools and agents can use. Fotobank is the
-photographic part of that work, alongside Docbank and
-[msgvault](https://msgvault.io) ([source](https://github.com/kenn-io/msgvault)).
+Fotobank is one of several Kenn projects for keeping personal data in software
+you run yourself. Docbank stores files. [msgvault](https://msgvault.io)
+([source](https://github.com/kenn-io/msgvault)) stores messages. Each one has
+commands and an API so your tools and agents can use it.
 
-Optional AI and search currently run in Fotobank. Moving reusable intelligence
-into Docbank is work ahead. Broader enrichment, people curation, and MCP
-integration are aspirations; Fotobank has no autonomous assistant.
+Optional AI and search currently run in Fotobank. Some of that may move into
+Docbank later. People grouping, MCP integration, and other AI features are not
+built. Fotobank has no autonomous assistant.
 AI is disabled by default. Hidden-media access controls do not encrypt files,
 and enabling AI requires acknowledging its hidden-media processing policy.
 
