@@ -4,12 +4,14 @@ import {
   cp,
   lstat,
   mkdir,
+  mkdtemp,
   readFile,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { verifySite } from "./verify-site.mjs";
@@ -28,19 +30,27 @@ async function exists(target) {
   }
 }
 
-async function clearOwnedOutput(output) {
-  if (!(await exists(output))) return;
-  const marker = path.join(output, markerName);
-  if (!(await exists(marker)) || (await readFile(marker, "utf8")) !== markerContents) {
-    throw new Error(`refusing to replace unmarked docs output: ${output}`);
+export async function prepareOutput(output) {
+  if (await exists(output)) {
+    const marker = path.join(output, markerName);
+    if ((await exists(marker)) && (await readFile(marker, "utf8")) === markerContents) {
+      await rm(output, { recursive: true });
+    } else {
+      const cache = path.join(path.dirname(output), ".cache");
+      await mkdir(cache, { recursive: true });
+      const saved = path.join(await mkdtemp(path.join(cache, "docs-output-")), "site");
+      await rename(output, saved);
+      process.stderr.write(`preserved unmarked docs output at ${saved}\n`);
+    }
   }
-  await rm(output, { recursive: true });
+  await mkdir(output);
+  // Establish ownership before generation so an interrupted build can be retried.
+  await writeFile(path.join(output, markerName), markerContents);
 }
 
 export async function buildSite(repoRoot) {
   const output = path.join(repoRoot, "site");
-  await clearOwnedOutput(output);
-  await mkdir(output, { recursive: true });
+  await prepareOutput(output);
 
   try {
     await execFileAsync(
@@ -60,7 +70,6 @@ export async function buildSite(repoRoot) {
     await cp(path.join(repoRoot, "frontend", "public", "fonts"), path.join(output, "fonts"), { recursive: true });
     await copyFile(path.join(repoRoot, "website", "llms.txt"), path.join(output, "llms.txt"));
     await verifySite(output);
-    await writeFile(path.join(output, markerName), markerContents);
     return output;
   } catch (error) {
     await rm(output, { recursive: true, force: true });
@@ -68,7 +77,9 @@ export async function buildSite(repoRoot) {
   }
 }
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, "..", "..");
-const output = await buildSite(repoRoot);
-process.stdout.write(`built documentation site at ${output}\n`);
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const repoRoot = path.resolve(here, "..", "..");
+  const output = await buildSite(repoRoot);
+  process.stdout.write(`built documentation site at ${output}\n`);
+}
