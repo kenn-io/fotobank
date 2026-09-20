@@ -237,10 +237,9 @@ The normal local tiers are:
 - `prek run` for the commit hooks.
 
 GitHub Actions validates Linux amd64 tests, Windows amd64 CGO/SQLite behavior,
-lint, and the shared Testify rules. Pull-request dispatch selects approved
-runners from the workflow on `main`, while the reusable workflow tests the pull
-request commit. Runner admission is infrastructure policy, not an application
-security boundary.
+lint, and the shared Testify rules. All jobs use GitHub-hosted runners:
+`ubuntu-latest` for Linux and `windows-latest` for Windows. Pull requests use
+the reusable workflow on `main`, which tests the pull request commit.
 
 Performance workloads such as 10,000-file import and repeated XMP changes are
 repeatable benchmarks, not timing assertions in ordinary CI. They report
