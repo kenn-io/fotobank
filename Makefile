@@ -125,6 +125,7 @@ docs-build: ## Build the marketing site, guide, and Zensical docs
 	mise exec -- node scripts/docs/build.mjs
 
 docs-check: docs-build ## Validate the generated documentation site
+	mise exec -- node --test scripts/docs/build.test.mjs
 	mise exec -- node scripts/docs/verify-site.mjs site
 
 docs-serve: docs-build ## Serve the generated documentation site locally

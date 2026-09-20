@@ -112,7 +112,9 @@ jobs:
           version: "0.9.16"
 
       - name: Build and verify
-        run: node scripts/docs/build.mjs
+        run: |
+          node --test scripts/docs/build.test.mjs
+          node scripts/docs/build.mjs
 
   test:
     name: Linux tests

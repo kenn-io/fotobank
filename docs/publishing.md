@@ -25,6 +25,9 @@ The canonical website is `https://fotobank.ai/`, with documentation under
 `zensical.toml` defines the technical documentation navigation. The build puts
 those pages under `site/docs/`, copies `website/` to `site/`, and adds the shared
 fonts. `scripts/docs/build.mjs` owns that generated output. Do not edit `site/`.
+If `site/` has no valid build marker, the builder moves it to a unique folder
+under `.cache/docs-output-*/site` and prints that path before building afresh.
+It does not delete unrecognized output. Later builds replace only marked output.
 
 The website and guides describe the source revision being built. When describing
 a release, check its capabilities against that release rather than newer `main`
