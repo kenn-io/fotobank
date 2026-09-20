@@ -82,4 +82,7 @@ shipped features. Fotobank has no autonomous assistant.
 [Build from source and try a small collection](/docs/guides/setup/), or follow
 the [agent setup guide](/docs/guides/agent-setup/).
 
+[Fotobank on GitHub](https://github.com/kenn-io/fotobank) ·
+[Join the Kenn community on Discord](https://discord.gg/nEB7VaAnU9).
+
 Copyright 2026 Kenn Software LLC. Licensed under Apache-2.0.

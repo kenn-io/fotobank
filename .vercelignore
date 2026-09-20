@@ -1,0 +1,5 @@
+# Upload the generated website, not the application source or local state.
+/*
+!site
+!vercel.json
+site/.fotobank-docs-output

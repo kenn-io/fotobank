@@ -9,10 +9,11 @@ LDFLAGS_RELEASE := $(LDFLAGS) -s -w
 
 BIN_DIR := bin
 BINARY  := $(BIN_DIR)/fotobank
+VERCEL  := mise exec -- bunx vercel@58.4.4
 
 .PHONY: build build-release install dev test test-short test-e2e vet lint nilaway \
         testify-helper-check huma-check tidy api-generate \
-        install-hooks clean help docs-build docs-check docs-serve \
+        install-hooks clean help docs-build docs-check docs-serve docs-link docs-deploy \
         ensure-embed-dir frontend frontend-dev frontend-check air-install
 
 $(BIN_DIR):
@@ -128,6 +129,13 @@ docs-check: docs-build ## Validate the generated documentation site
 
 docs-serve: docs-build ## Serve the generated documentation site locally
 	mise exec -- node scripts/docs/serve.mjs site
+
+docs-link: ## Select the Vercel project for website deployments (once per checkout)
+	$(VERCEL) link
+
+docs-deploy: docs-check ## Build, check, and publish the website to Vercel production
+	@test -f .vercel/project.json || { echo "Run make docs-link first." >&2; exit 1; }
+	$(VERCEL) deploy --prod
 
 install-hooks: ## Install prek git hooks
 	prek install -f

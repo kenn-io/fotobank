@@ -103,6 +103,7 @@ ENV/
 
 # mkdocs documentation
 /site
+/.vercel/
 
 # mypy
 .mypy_cache/
@@ -137,3 +138,5 @@ coverage.out
 # artifacts elsewhere under .superpowers/ if needed in future)
 .superpowers/brainstorm/
 /frontend/.snapshots/
+.vercel
+.env*

@@ -25,6 +25,8 @@ make api-generate     # regenerate openapi.yaml
 make docs-build       # build marketing site, guide, and Zensical docs
 make docs-check       # build and validate the complete docs site
 make docs-serve       # serve the generated site on localhost
+make docs-link        # select the Vercel project (once per checkout)
+make docs-deploy      # build, check, and publish the website (explicit approval only)
 make install-hooks    # install prek git hooks
 ```
 

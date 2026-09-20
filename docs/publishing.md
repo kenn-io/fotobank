@@ -30,6 +30,59 @@ The website and guides describe the source revision being built. When describing
 a release, check its capabilities against that release rather than newer `main`
 code.
 
+## How do I deploy the website?
+
+An operator runs deployments manually. Publishing the website does not publish
+the source repository or create a software release. Git pushes do not trigger
+Vercel deployments.
+
+From the repository root, install the build tools and sign in to Vercel:
+
+```bash
+mise install
+mise exec -- bunx vercel@58.4.4 login
+```
+
+On a headless machine, open the printed sign-in URL in your laptop's browser.
+This signs the CLI into Vercel; a GitHub CLI login is not a substitute.
+
+Link this checkout once:
+
+```bash
+make docs-link
+```
+
+Choose the team that owns the site and select or create the `fotobank` project.
+Use `./` as the project directory. Do not connect a Git repository. The local
+link lives in `.vercel/`, which Git ignores. Keep the Vercel framework preset
+at **Other**; the repository configuration disables remote installation and
+build commands because the site is built locally.
+
+To publish, including each later update:
+
+```bash
+make docs-deploy
+```
+
+This rebuilds and checks the site before deploying to the linked project's
+production environment. The [Vercel upload allowlist](https://vercel.com/docs/deployments/vercel-ignore)
+includes only `site/` and `vercel.json`. It excludes application source, Git
+history, and local project credentials. Do not run a bare deployment command
+against an old `site/` directory.
+
+For the first deployment, open the project's **Settings → Domains**, add
+`fotobank.ai`, and apply the DNS records Vercel displays at your DNS provider.
+Do not replace unrelated mail or verification records. The deployment command
+does not change DNS. Once Vercel reports the domain ready, open
+`https://fotobank.ai/`, `/guide/`, `/docs/`, and `/llms.txt` to check the live site.
+
+After linking the project, inspect the upload without publishing anything:
+
+```bash
+make docs-check
+mise exec -- bunx vercel@58.4.4 deploy --dry
+```
+
 ## How do I check a change?
 
 1. Run `make docs-check` to build the full site and validate its links.
@@ -41,7 +94,12 @@ A successful build does not verify capability claims. Check commands, defaults,
 authorization rules, and failure behavior against the code. Keep aspirations
 separate from features that work today.
 
-## Which screenshots belong in the docs?
+## Which images belong in the docs?
+
+The GitHub and Discord marks in `website/icons/` come from
+[Simple Icons](https://github.com/simple-icons/simple-icons), under
+[CC0-1.0](https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md).
+Keep the community links usable without JavaScript or a GitHub API response.
 
 Keep an image only when it helps readers understand the current product or
 complete a task. Architecture pages explain ownership, data flow, and interaction
@@ -53,8 +111,8 @@ images. An empty or failed state belongs only beside an explanation of that stat
 Keep review-only captures with the pull request instead of adding them to the
 architecture image collection. Remove unused images when their explanation goes.
 
-The homepage and README share the sample-library image below. Keep its full-size
-link, caption, and credits with it so readers can inspect the app clearly.
+The homepage, guide, and README share the sample-library image below. Keep its
+full-size link, caption, and credits with it so readers can inspect the app clearly.
 
 ## Sample library screenshot
 
