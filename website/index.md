@@ -53,7 +53,7 @@ files, provider credentials, or working copies. Backup repositories are not encr
 
 A camera RAW, a JPEG, and an XMP sidecar can belong to the same photograph.
 Fotobank keeps them together in its catalog.
-[Docbank](https://github.com/kenn-io/docbank) stores their exact bytes and
+[Docbank](https://docbank.ai/) stores their exact bytes and
 versions, so an edit does not replace the earlier file.
 
 For example, one photo record can connect `IMG_1042.JPG` (the primary display
@@ -70,7 +70,7 @@ belong to Fotobank; recovery needs both systems' records.
 The idea is simple: keep the important parts of your life in systems you
 control, with interfaces your chosen tools and agents can use. Fotobank is
 the photographic part of that work, alongside
-[Docbank](https://github.com/kenn-io/docbank) and [msgvault](https://msgvault.io).
+[Docbank](https://docbank.ai/) and [msgvault](https://msgvault.io).
 
 Today, optional AI and search run in Fotobank. Moving reusable intelligence into
 Docbank is work ahead. Photo relationships, albums, privacy, and sharing stay
