@@ -6,15 +6,17 @@
 
 - [Website Markdown](/index.md): What Fotobank does, related Kenn projects, and pre-alpha limits.
 - [Storage and editing guide](/guide.md): How one photograph moves from import through backup and restore.
+- [Changelog](/docs/changelog/): New features, improvements, and bug fixes in 0.1.0.
 
 ## User and agent workflows
 
 - [Set up for someone else](/docs/guides/agent-setup/): Decisions, first-import checks, recovery drill, and operator handoff.
 - [Files and previews](/docs/guides/formats/): Import versus preview support, RAW files, color profiles, and video limits.
 - [Optional AI](/docs/guides/ai/): Provider setup, processing consent, cost considerations, and disabling AI.
-- [Setup](/docs/guides/setup/): Build from source, configure storage, start the daemon, and try a first import and backup.
-- [Import and recover](/docs/guides/import/): Import, finish interrupted imports, and refresh photo locations through the daemon, with structured results for automation.
-- [Checkouts](/docs/guides/checkouts/): Create working copies, scan edits, inspect saved state, and explicitly commit.
+- [Setup](/docs/guides/setup/): Build the 0.1.0 source tag, configure storage, start the daemon, and try a first import and backup.
+- [Browse and find photos](/docs/guides/browse/): Browse, search, select photos, organize albums, and download originals in the web app.
+- [Import photos](/docs/guides/import/): Import, finish interrupted imports, and refresh photo locations through the daemon, with structured results for automation.
+- [Edit files in a checkout](/docs/guides/checkouts/): Create working copies, scan edits, inspect saved state, and explicitly commit.
 - [Backup and restore](/docs/guides/backup/): Archive both the catalog and content, schedule backups, and restore separately.
 - [Automation](/docs/guides/automation/): List, search, and inspect photos through the daemon; structured output and current command and API limits. MCP integration is not implemented.
 

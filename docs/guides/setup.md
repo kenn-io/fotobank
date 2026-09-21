@@ -1,30 +1,26 @@
 # Set up Fotobank
 
-Fotobank is pre-alpha software, with no stability guarantees. Expect bugs and
+Set up your first library, import a small collection, and open it in the web
+app. You can use your existing OS account and local folders. You do not need a
+NAS, a separate Docbank server, or an account-registration step.
+
+Fotobank 0.1.0 is pre-alpha software, with no stability guarantees. Expect bugs and
 changing interfaces and schemas. Use copies of a small photo collection while
 trying it, and keep independent copies of irreplaceable files.
 
-This guide starts with one person's library on one machine. You can use your
-existing OS account and local folders; you do not need a NAS, a separate
-Docbank server, or an account-registration step. Leave AI disabled while
-trying your first import.
+Leave AI disabled while trying your first import.
 
 ## Get Fotobank
 
-There is no public tagged release yet. Build the current source using the steps
-below. Do not
-use an unofficial installer or assume that a release URL exists.
-
-The intended release packages cover Linux, macOS, and Windows on AMD64 and
-ARM64 and include the web app. Public download and verification instructions
-will accompany the first release. Until then, the source-build path below is
-the documented installation route.
+Build the [0.1.0 source tag](https://github.com/kenn-io/fotobank/tree/v0.1.0)
+using the steps below. See the [changelog](../changelog.md#010) for what this
+version includes.
 
 If an agent is preparing your library, use the
 [setup and handoff procedure](agent-setup.md). It covers decisions to confirm
 before any files are imported or external services are enabled.
 
-### Build the current source
+### Build 0.1.0 from source
 
 The current setup is developer-oriented. You need Git, Make, Go 1.27 or newer,
 a C compiler for SQLite, and Bun 1.3.11 for the web app. The pinned frontend
@@ -33,7 +29,7 @@ and tooling versions live in `frontend/package.json` and `mise.toml`.
 These commands use a POSIX shell:
 
 ```sh
-git clone https://github.com/kenn-io/fotobank.git
+git clone --branch v0.1.0 --depth 1 https://github.com/kenn-io/fotobank.git
 cd fotobank
 make build
 ```
@@ -41,6 +37,9 @@ make build
 `make build` builds the web app and embeds it in `bin/fotobank`. A direct
 `go build` alone does not build the web app. Try `./bin/fotobank --help` to
 see the commands without starting a server or creating a library.
+
+To work on newer development code instead, clone the default branch without
+`--branch v0.1.0 --depth 1`. Features added there may not be part of 0.1.0.
 
 The examples below use `fotobank` on your `PATH`. Either install it with
 `make install`, or use `./bin/fotobank` in place of `fotobank` from this checkout.
@@ -177,8 +176,9 @@ fotobank import /path/to/sample-photos
 fotobank media list --limit 5 --json
 ```
 
-Open the web UI URL printed at startup. Imported photos appear in the library;
-thumbnails are built in the background. Import copies source files rather than
+Open the web UI URL printed at startup to [browse and find photos](browse.md).
+Imported photos appear in the library; thumbnails are built in the background.
+Import copies source files rather than
 moving or editing them. A discovered file format is not a promise that every
 file of that type has a preview; see [files and previews](formats.md).
 

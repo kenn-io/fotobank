@@ -89,7 +89,7 @@ Three tiers per domain: **repo → service → transport**.
   lifetime lock. Recovery mode opens no photo storage and exposes only backup
   repository administration and lifecycle operations. Switching modes requires
   explicit restart; CLI commands must not silently switch modes.
-- Fotobank has no released API to preserve. Change the single contract in
+- Fotobank does not promise API stability. Change the single contract in
   place; do not add protocol-version counters or compatibility fallbacks.
 - Host-operator permissions and photo-user permissions remain distinct. A
   shared OpenAPI contract does not grant ordinary photo users access to host
@@ -119,7 +119,7 @@ Background workers (e.g. `internal/thumb/worker.go`) follow the same rule: they'
 
 Write for the person trying to use or maintain Fotobank.
 
-- Fotobank has never been released. Do not add upgrade or migration guides for
+- Fotobank 0.1.0 is a pre-alpha release. Do not add upgrade or migration guides for
   unreleased development builds unless the user explicitly requests them.
 - Lead with the outcome, name who does what, use short sentences, and explain
   unfamiliar terms.

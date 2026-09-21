@@ -1,8 +1,24 @@
 # Back up and restore
 
-Fotobank backs up its photo catalog and stored Docbank files together
-in a complete recovery archive. You can create an archive manually or enable a
-schedule in the running server. Scheduling is disabled by default.
+Recover your photo library from one archive containing the catalog and stored
+Docbank files. Create archives while Fotobank runs, either manually or on a
+schedule. Scheduling is disabled by default.
+
+Restore always writes to separate, empty storage. It can run when the original
+storage is unavailable, but you must start the server in recovery mode first.
+Starting the recovered library is a separate step.
+
+## What an archive includes
+
+| Included | Keep separately or rebuild |
+| --- | --- |
+| Original media and stored file versions | Uncommitted edits in checkout folders |
+| The catalog, including albums, related files, all owners, and hidden media | Configuration files and provider credentials |
+| Catalog settings and stored authentication hashes, including hidden-media passcode hashes | Thumbnails and other disposable caches |
+
+Commit checkout edits before taking an archive if you need those edits captured.
+Repositories are not encrypted; store them on protected storage. Keep a separate
+copy of your configuration and provider credentials.
 
 ## Create a complete archive
 
@@ -25,7 +41,7 @@ configuration and Fotobank version in stub identity mode:
 3. Create an archive:
 
    ```sh
-   fotobank backup create --repo /backups/photos --tag before-upgrade
+   fotobank backup create --repo /backups/photos --tag first-import
    ```
 
 4. List the saved recovery points:
@@ -66,17 +82,7 @@ adjacent daemon discovery directory must live on available local storage.
 Each command supports `--json`. Verification selects the latest
 recovery point by default; pass its ID or `--all` to select older points.
 
-The archive includes all owners and hidden media. The catalog is captured as
-`application/catalog.sqlite` during Docbank's brief metadata freeze and is
-covered by the same manifest checks as the content. Catalog settings and stored
-authentication hashes, including hidden-media passcode hashes, are preserved.
-Configuration files, provider credentials, disposable thumbnails, and working
-checkout files are excluded. Commit checkout edits before taking the archive
-if you need those edits captured. Keep configuration files and provider
-credentials separately.
-
-Repositories are not encrypted. Store them on protected storage. Manual
-archives are retained independently of the schedule. The tag
+Manual archives are retained independently of the schedule. The tag
 `fotobank:scheduled` is reserved for the scheduler and cannot be passed to
 `backup create --tag`.
 
@@ -112,9 +118,8 @@ points bearing `fotobank:scheduled` and asks Docbank to prune unused archive
 storage. Manual archives are untouched. A failed capture never starts cleanup.
 If cleanup fails, the new archive remains available, a warning and failure
 metric report the problem, and cleanup retries after the next successful
-archive. Pruning removes unused packs and rewrites sparse packs whose retained
-content occupies less than half their indexed bytes. Fuller packs can keep
-unused bytes; pruning does not compact every partially used pack.
+archive. Removing old recovery points does not necessarily reclaim all their
+disk space immediately; see [archive storage cleanup](../architecture/operations.md#backup-and-restore).
 
 ## Restore a complete archive
 
@@ -155,35 +160,17 @@ running installation to the recovered copy. If validation fails after files
 were restored, the command returns an error and leaves that separate directory
 for inspection. Use a different empty target for another attempt.
 
-For a recovery drill, keep the restored copy offline. Before starting it, make
-a separate configuration with `[docbank].root` set to the reported `vault_root`
-and separate NAS and flash roots. Set `FOTOBANK_DB_PATH` to the reported
-`catalog_path`. Restore configuration files and provider credentials separately.
-The catalog retains old checkout paths, but the archive does not contain those
-working files: review those paths before starting the server, whose scanner
-will inspect active checkouts. This command does not relocate checkouts or
-switch the running installation to the recovered copy.
-
-For an isolated drill, do not mount the original working folders into the test
-environment. After starting the normal daemon with the recovered configuration,
-inspect and retire obsolete bindings:
-
-```sh
-fotobank checkout list --config /saved/recovered.toml --json
-fotobank checkout retire <checkout-uuid> --config /saved/recovered.toml
-fotobank checkout retire <checkout-uuid> --config /saved/recovered.toml --confirm --json
-```
-
-Retirement works even when the old folder is missing. It keeps the historical
-entries and stops further scanning and commits; it never removes files or saves
-uncommitted edits. The recovery daemon does not expose this operation because
-it does not open the recovered catalog.
+The catalog retains old checkout paths, but the archive does not contain the
+working files. Review those paths before starting the restored server: its
+scanner will inspect active checkouts. Follow the drill below to try the
+recovered library without connecting it to the original working folders.
 
 ## Try the recovered library
 
-A successful restore is the start of the drill, not its finish. Use a separate
-machine or isolated environment where the original storage and working folders
-are unavailable. Do not delete your real library to simulate a loss.
+Check that you can browse albums, download files, and rebuild thumbnails from
+the restored library. Use a separate machine or isolated environment where the
+original storage and working folders are unavailable. Do not delete your real
+library to simulate a loss.
 
 1. Restore an archive as described above. Save its `vault_root` and
    `catalog_path` output. Stop the recovery daemon before opening the restored
@@ -209,8 +196,23 @@ are unavailable. Do not delete your real library to simulate a loss.
    ```
 
    Use the actual `catalog_path` from your restore output. The start command
-   prints the recovered web UI address. Inspect and retire old checkout
-   bindings using the commands above; their working files are not in the archive.
+   prints the recovered web UI address. Inspect old checkout records:
+
+   ```sh
+   fotobank checkout list --config /saved/recovered.toml --json
+   fotobank checkout retire <checkout-uuid> --config /saved/recovered.toml
+   ```
+
+   The second command shows saved status. For each obsolete checkout, confirm
+   retirement to stop tracking its old folder:
+
+   ```sh
+   fotobank checkout retire <checkout-uuid> --config /saved/recovered.toml --confirm --json
+   ```
+
+   Retirement works when the folder is missing. It keeps history and never
+   deletes files or saves uncommitted edits. Run it through the recovered normal
+   daemon; recovery mode does not open the catalog or expose checkout commands.
 
 3. Open the recovered web UI. Find a known album and confirm its membership.
    Download representative originals and attached files, such as XMP sidecars,
@@ -234,13 +236,6 @@ are unavailable. Do not delete your real library to simulate a loss.
    ```sh
    fotobank daemon stop --config /saved/recovered.toml
    ```
-
-The automated recovery test exercises this flow with synthetic JPEGs, an XMP
-attachment, an album, and a recorded checkout. It removes its temporary source
-storage before restoring, checks downloaded bytes against the inputs, and
-fetches rebuilt thumbnails through the recovered photo API. It does not prove
-that uncommitted working-folder edits or separately held credentials are backed
-up, and it does not exercise every media format or optional AI provider.
 
 `backup verify` checks stored bytes, including the captured catalog, but does
 not validate Fotobank's catalog-to-content relationships. `backup restore

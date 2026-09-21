@@ -1,50 +1,42 @@
-# Use and understand Fotobank
+# Use Fotobank
 
-Use these guides to set up Fotobank, manage your photos, and recover your library.
-Fotobank is a self-hosted photo system of record built on [Docbank](https://docbank.ai/).
+Keep original photos and their versions, organize your library, and edit files
+in your own tools. Fotobank runs on your machine and stores original files in
+embedded [Docbank](https://docbank.ai/).
 
-Fotobank is pre-alpha software, with no stability guarantees. Expect bugs and
-changing interfaces and schemas. Keep independent copies of irreplaceable
-photos. These pages describe current development code; planned features are
-identified separately.
+Start with [Set up Fotobank](guides/setup.md) to install it, import a small
+collection, and open the web app. Then [create a backup and test recovery](guides/backup.md)
+into separate storage.
 
-## Start here
+## Fotobank 0.1.0
 
-Follow [Set up Fotobank](guides/setup.md) to build the application, choose storage,
-start the daemon, and import a small collection. Then [create a backup and test
-recovery](guides/backup.md) into separate storage.
+Read the [0.1.0 changelog](changelog.md#010) for new features, improvements,
+and fixes. This is a pre-alpha release with no stability guarantees. Expect
+bugs and changing interfaces and schemas. Keep independent copies of
+irreplaceable photos.
 
-If you are writing a script or using an agent, start with
-[Set up Fotobank for someone else](guides/agent-setup.md), then use the
-[command reference](guides/automation.md). The CLI and web app use the same
-daemon; an agent does not need direct database access.
+The guides cover 0.1.0. Changes that require a newer development build are
+identified separately; architecture pages describe the source revision being built.
 
-## Use Fotobank
+## Choose a task
 
-- [Set up Fotobank](guides/setup.md) — build, configure, and try a first import.
-- [Choose whether to use AI](guides/ai.md) — providers, consent, costs, and stopping processing.
-- [Supported files and previews](guides/formats.md) — distinguish stored files from browsing support.
-- [Import and recover](guides/import.md) — copy media into Docbank and finish
-  interrupted imports.
-- [Work with checkouts](guides/checkouts.md) — create ordinary writable
-  files and commit tracked edits.
-- [Back up and restore](guides/backup.md) — create or schedule complete archives
-  and recover into separate storage.
-- [Automate Fotobank](guides/automation.md) — invoke commands predictably from
-  scripts and agents.
+| I want to… | Guide |
+| --- | --- |
+| Try my first library | [Set up Fotobank](guides/setup.md) |
+| Prepare a library for someone else | [Setup and handoff](guides/agent-setup.md) |
+| Find photos and organize albums | [Browse and find photos](guides/browse.md) |
+| Check file formats and preview limits | [Files and previews](guides/formats.md) |
+| Import a folder or finish an interrupted import | [Import photos](guides/import.md) |
+| Edit files in Lightroom or another tool | [Edit files in a checkout](guides/checkouts.md) |
+| Back up the library or recover it | [Back up and restore](guides/backup.md) |
+| Use scripts, agents, or the HTTP API | [Automate Fotobank](guides/automation.md) |
+| Add optional tags, captions, or image search | [Choose whether to use AI](guides/ai.md) |
 
 ## Understand or change the code
 
-Start with the [architecture map](architecture/README.md) for package ownership
-and links to each subsystem.
-
-- [Content and storage](architecture/content-and-storage.md) — imports,
-  Docbank, NAS, flash storage, thumbnails, and checkouts.
-- [Product features](architecture/product-features.md) — asset grouping,
-  metadata, albums, sharing, and hidden media.
-- [Search and AI](architecture/search-and-ai.md) — the current Fotobank-owned
-  search and optional AI implementation.
-- [Operations](architecture/operations.md) — configuration, backup,
-  observability, testing, and CI.
+The [architecture map](architecture/README.md) explains which component owns
+each part of the system and links to the implementation details. The CLI and
+web app use the same server; scripts and agents use its documented operations.
 
 For a product overview, read the [storage and editing guide](/guide/).
+To update these pages, follow [Maintaining the documentation](publishing.md).

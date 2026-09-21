@@ -1,8 +1,14 @@
-# Work with checkouts
+# Edit files in a checkout
 
-A checkout is an ordinary writable copy for editors, file managers, and shell
-tools. To save an edit in Docbank, wait until Fotobank marks the file pending,
-then run `checkout commit`.
+Edit photos in Lightroom or another tool, then save the changes as new versions
+in Fotobank. A **checkout** is a tracked working folder containing ordinary
+writable copies. Editing those copies leaves stored versions unchanged until
+you explicitly run `checkout commit`.
+
+The workflow is: choose photos, create the folder, edit, wait for Fotobank to
+detect settled changes, then inspect and commit them. Keep the daemon running
+while you edit so it can scan the folder. Conflicts are reported instead of
+overwriting a newer stored version.
 
 ## Estimate the copy
 
@@ -16,18 +22,21 @@ then inspect each with `media show <media-uuid> --json`. Pass its `id` to
 `--asset`. See [finding photos](automation.md#find-and-inspect-photos) for filters
 and pagination.
 
-Select assets, albums, capture years, or the complete visible library:
+Select photos, albums, capture years, or the complete visible library.
+The CLI calls a photo an asset:
 
 ```sh
 fotobank checkout estimate --year 2025
+fotobank checkout estimate --year 2023:2025
 fotobank checkout estimate --album <album-uuid>
 fotobank checkout estimate --asset <asset-uuid>
 fotobank checkout estimate --all
 fotobank checkout estimate --year 2025 --json
 ```
 
-Selectors are repeatable and may be combined. Hidden assets are excluded. An
-all-library checkout still requires an explicit byte limit at creation so it
+Year ranges include both end years. Selectors are repeatable and may be
+combined. Hidden photos are excluded. An all-library checkout still requires
+an explicit byte limit at creation so it
 cannot silently create a second full archive copy.
 
 ## Create the working folder
@@ -43,6 +52,7 @@ fotobank checkout create /work/photos-2025 --year 2025
 For the full visible library:
 
 ```sh
+mkdir -p /work/all-photos
 fotobank checkout create /work/all-photos --all --max-bytes 500000000000
 ```
 
@@ -84,12 +94,9 @@ fotobank checkout status <checkout-uuid>
 ```
 
 The status view shows pending edits, conflicts, missing files, and scan errors.
-Use `--json` with either command for structured output in scripts and agent
-workflows. Both require the running server under the same OS account,
-stub-mode configuration, and application version as other checkout commands.
-They report saved catalog observations through the daemon; the CLI does not
-open a database, scan, commit, rebuild, or remove working files. New untracked
-files are not included in this status view.
+Use `--json` with either command for scripts and agents. The results show the
+daemon's last saved observations, not a new scan. New untracked files are not
+included in this status view.
 
 For an edited file, find its `path` in `problems`. Wait for its `state` to be
 `pending` and its `observed_sha256` to match the bytes you intend to commit.
@@ -114,17 +121,11 @@ base version has changed, Fotobank reports a conflict and keeps the newer versio
 Current writeback does not import new untracked files, apply deletions, infer
 renames, or resolve conflicts.
 
-Commit connects to the running server using local operator authentication. Run
-it under the same OS account, with the same configuration and application
-version as `serve`. This currently requires stub identity mode. The command
-starts a missing daemon before sending its request; it never falls back to
-opening the vault itself.
-
 JSON output contains `checkout_id`, `pending`, `committed`, and `conflicts`, with
 an `error` when work fails. Some entries may commit before another fails; inspect
 the counts even on a nonzero exit. If you cancel or lose the connection, inspect
-`checkout status --json` before retrying. Committed versions remain committed;
-retrying does not repeat an already completed entry.
+`checkout status <checkout-uuid> --json` before retrying. Committed versions
+remain committed; retrying does not repeat an already completed entry.
 
 To check what was saved, inspect the photo again and download it to a new path:
 

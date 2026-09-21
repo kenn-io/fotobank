@@ -10,12 +10,27 @@ Follow the writing standard in `AGENTS.md` when changing prose.
 | Why does Fotobank exist? | `website/index.html` and `website/index.md` |
 | What should I know before using it? | `website/guide/index.html` and `website/guide.md` |
 | How do I perform a task? | `docs/guides/` |
+| What changed in a release? | `docs/changelog.md` |
 | How does the implementation work? | `docs/architecture/` |
 | Where do I start reading? | Root `README.md`, `docs/index.md`, and `website/llms.txt` |
 
 Keep each HTML page and its Markdown companion in sync. Keep detailed rules in
 their owning guide and link to them from introductions and indexes. Put proposed
 work in kata, not in the documentation for current behavior.
+
+## How should a page read?
+
+Start with what the reader can accomplish. Explain unfamiliar terms before
+using them in a procedure. Use short sentences, one action per step, and exact
+commands. Keep error behavior and limits beside the action they affect.
+
+User guides explain how to complete a task. Architecture pages explain current
+ownership, data flow, and implementation rules. Keep detailed internals there
+and link to them when a user needs more context.
+
+The changelog records released changes under **New features**, **Improvements**,
+and **Bug fixes**. Link to the owning guides for procedures instead of copying
+instructions into each release entry.
 
 ## How is the site published?
 
@@ -29,9 +44,11 @@ If `site/` has no valid build marker, the builder moves it to a unique folder
 under `.cache/docs-output-*/site` and prints that path before building afresh.
 It does not delete unrecognized output. Later builds replace only marked output.
 
-The website and guides describe the source revision being built. When describing
-a release, check its capabilities against that release rather than newer `main`
-code.
+The user guides cover 0.1.0; architecture pages describe the source revision
+being built. Label any guide or website capability that needs a newer development
+build. Check release claims against the tag, and verify published assets before
+adding binary download instructions. Keep the overview, setup guide, README,
+website, and `llms.txt` consistent with that release status.
 
 ## How do I deploy the website?
 

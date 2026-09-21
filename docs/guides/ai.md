@@ -26,7 +26,7 @@ Saved admin overrides take precedence over TOML; check the effective settings
 when a file change appears to have no effect. Admin access is distinct from
 ordinary photo access.
 
-For tags and captions, append these sections to your configuration. Replace
+For tags and captions, edit these sections in your configuration. Replace
 the example URL and model with a service that supports image input through an
 OpenAI-compatible chat-completions API:
 
@@ -96,10 +96,23 @@ same embedding space; a text-only embedding API is not enough.
 
 Configure `ai.embed.enabled`, `endpoint`, `api_key_env`, `model`, and `dimension`.
 The endpoint is the API base URL; Fotobank appends `/embeddings`. The dimension
-must match the chosen model. Keep `ai.enabled = true` for processing. Restart,
-check `ai status`, and queue `ai backfill --task embed --json` after consent.
+must match the chosen model. Keep `ai.enabled = true` for processing. After a
+TOML or environment change, restart the daemon. Check `ai status`, then queue
+`ai backfill --task embed --json` after consent.
 Model changes build a new search generation before activation; queued work is
 not immediately searchable. Provider failures fall back to metadata search.
+
+Changes saved in the web app's admin AI settings apply to new queries without
+a restart. A query already running may finish with its previous settings.
+Disabling AI or embeddings leaves metadata search available, even when stored
+embeddings remain in the catalog.
+
+## Recover from a settings error
+
+Open **Settings → AI processing** to inspect processing status and failures.
+If status cannot load, use **Retry**; an unavailable status is not a healthy
+provider result. A failed save stays unsaved. Correct the reported problem and
+retry before relying on the changed setting.
 
 ## Stop processing
 

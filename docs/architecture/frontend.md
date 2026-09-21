@@ -180,8 +180,8 @@ includes a screenshot of the implemented result using synthetic data.
 - The CI web-application job runs those checks and `make frontend`, building
   production assets from source and copying them into the Go embed directory.
   Its Node pin matches `mise.toml`; Bun reads its pin from
-  `frontend/package.json`. Like the other Linux jobs, same-repository changes
-  use the trusted runner; fork changes use GitHub-hosted runners.
+  `frontend/package.json`. Like the other Linux jobs, it runs on GitHub-hosted
+  `ubuntu-latest` runners.
 - `frontend/eslint.config.js` applies recommended JavaScript, TypeScript, and
   Svelte rules to hand-written code, including rune modules. Generated API
   types and build/test output are excluded from lint (generated types still
