@@ -1,7 +1,8 @@
 # Which files can I use?
 
-Importing a file preserves its exact bytes. Showing a thumbnail and playing a
-video are separate capabilities. Keep source copies while trying this pre-alpha.
+Keep the exact original file even when Fotobank cannot show a preview.
+The table below describes file and preview support in 0.1.0. Browser video
+playback is a separate capability. Keep source copies while trying this pre-alpha.
 
 | Files | What to expect |
 | --- | --- |

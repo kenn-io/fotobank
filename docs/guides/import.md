@@ -1,7 +1,8 @@
-# Import and recover
+# Import photos
 
-An import copies supported media into Docbank. It does not rename, move, or
-delete the source directory.
+Copy a folder into your photo library while Fotobank stays running. The import
+stores originals in Docbank and keeps related RAW and XMP files together.
+Your source files keep their names, locations, and contents.
 
 Import runs through the daemon and starts it if needed. Use the same OS account
 and configuration as the daemon, with `identity.mode = "stub"`. The source is
@@ -14,8 +15,9 @@ fotobank import /media/card-or-export --workers 2 --wait 30s --json
 
 Fotobank discovers JPEG, PNG, GIF, WebP, HEIC, common camera RAW formats, XMP
 sidecars, and common video containers. A JPEG and RAW file with the same name
-stem become one asset; a matching XMP file becomes a sidecar. Ambiguous groups
-and XMP files without a primary image are rejected.
+stem become one photo; a matching XMP file becomes an attachment. Ambiguous
+groups and XMP files without a primary image are rejected.
+See [files and previews](formats.md) for supported extensions and preview limits.
 
 The command prints its absolute source path before submitting the import. Use
 `fotobank config diagnose` to inspect configured storage locations. The source
@@ -37,9 +39,12 @@ automatically.
 
 ## Interrupted imports
 
-Fotobank saves import progress in its catalog and records files in Docbank. Run
-the recovery command after a crash or interrupted copy. It runs through the
-daemon, starting it if needed, with the same local operator access as import:
+Finish an interrupted import with `content recover`. It checks saved progress
+against files already stored in Docbank. This command repairs import records;
+to recover a lost library, use [backup restore](backup.md#restore-a-complete-archive).
+
+Run it after a crash or interrupted copy. It uses the daemon, starting it if
+needed, with the same local operator access as import:
 
 ```sh
 fotobank content recover
@@ -59,7 +64,6 @@ fotobank content recover --json
 JSON contains `reports` (one per owner) and an `error` when work could not
 finish. Errors exit nonzero and preserve any completed work. Cancellation or a
 lost connection is not proof of completion; rerun the command to reconcile it.
-This finishes interrupted imports; it does not restore a backup.
 
 If a pending operation still needs source bytes, run the original import again
 with the same source tree. The importer reuses the reserved identities instead
@@ -67,9 +71,10 @@ of creating a second asset.
 
 ## Refresh photo locations
 
-GPS backfill uses the running daemon's Docbank metadata and local place-name
-lookup. It starts a missing daemon; run it under the same OS account and config.
-It does not change the original files or process videos.
+Refresh photo coordinates or place names with `gps backfill`. It reads Docbank
+metadata and uses a local place-name lookup. Originals stay unchanged; videos
+are excluded. Run it under the daemon's OS account and configuration. The
+command starts the daemon if needed.
 
 ```sh
 fotobank gps backfill --mode fill-missing --since 168h --json

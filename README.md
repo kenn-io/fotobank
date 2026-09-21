@@ -12,6 +12,7 @@ changing interfaces and schemas. Start with copies of a small collection, keep
 independent originals, and test recovery separately.
 
 [Build from source](docs/guides/setup.md) ·
+[0.1.0 changelog](docs/changelog.md) ·
 [Set up with an agent](docs/guides/agent-setup.md) ·
 [How it works](website/guide.md) · [Website](https://fotobank.ai)
 
@@ -60,10 +61,10 @@ Storing an original does not guarantee a thumbnail or browser playback.
 
 ## Try a first library
 
-There is no public tagged release yet. The [setup guide](docs/guides/setup.md)
-explains how to build the current source, configure storage, and start the
-server. Local folders under your own OS account are enough; you do not need a
-NAS, a separate Docbank server, or user registration.
+The [setup guide](docs/guides/setup.md) explains how to build the 0.1.0 source
+tag, configure storage, and start the server. Local folders under your own
+OS account are enough; you do not need a NAS, a separate Docbank server, or
+user registration.
 
 After setup, use the same configuration and OS account for these commands:
 

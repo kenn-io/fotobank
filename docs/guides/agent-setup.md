@@ -1,7 +1,8 @@
 # Set up Fotobank for someone else
 
-Use this procedure when an agent or administrator prepares a person's first
-library. Fotobank is pre-alpha. Start with copies of a small collection, keep
+Hand over a library the person can browse, back up, and recover. Use this
+procedure when an agent or administrator prepares their first library.
+Fotobank is pre-alpha. Start with copies of a small collection, keep
 independent originals, and do not promise that a successful trial makes it safe
 to discard them.
 

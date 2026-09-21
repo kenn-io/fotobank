@@ -1,7 +1,8 @@
 # Automate Fotobank
 
-Scripts and agents work with the same library as the web app. In the default
-single-user setup, no owner-registration or login command is needed. See
+Find photos, download originals, and manage the library from scripts or agents.
+The commands use the same server as the web app. In the default single-user
+setup, no owner-registration or login command is needed. See
 [Set up Fotobank](setup.md#create-the-configuration) for that setup.
 
 For a new deployment, follow [setup for someone else](agent-setup.md) first.
@@ -12,7 +13,7 @@ Set one configuration path for the whole operation instead of relying on the
 current working directory:
 
 ```sh
-export FOTOBANK_CONFIG=/var/lib/fotobank-control/config.toml
+export FOTOBANK_CONFIG="$HOME/.config/fotobank/config.toml"
 fotobank config validate
 ```
 
@@ -22,28 +23,28 @@ or default path; see [separate configurations](setup.md#use-a-separate-configura
 
 ## Prefer structured output
 
-Use `--json` where the command provides it, including:
+Use `--json` to read results without parsing progress messages:
 
 ```sh
 fotobank config diagnose --json
-fotobank import /media/card-or-export --json
-fotobank content recover --json
-fotobank backup create --repo /backups/photos --json
-fotobank backup list --repo /backups/photos --json
-fotobank backup verify --repo /backups/photos --all --json
-fotobank backup restore --repo /backups/photos --target /recovery/photos --json
-fotobank checkout list --json
-fotobank checkout status <checkout-uuid> --json
-fotobank checkout estimate --year 2025 --json
-fotobank checkout create /work/photos-2025 --year 2025 --json
-fotobank checkout commit <checkout-uuid> --json
+fotobank media list --limit 20 --json
 fotobank daemon status --json
-fotobank albums list --json
-fotobank shares list --json
 ```
 
-Do not parse human progress output when a JSON form exists. Commands return zero
-on success, one for runtime failures, and two for invalid command usage.
+Check the exit code as well as stdout. Commands return zero on success, one for
+runtime failures, and two for invalid command usage. Some commands report
+completed work even when later work fails; a JSON result alone is not proof
+that the whole operation succeeded.
+
+| Task | Result and retry rules |
+| --- | --- |
+| Find or download photos | [Media commands](#find-and-inspect-photos) and [verified downloads](#download-an-original-or-attachment) |
+| Import or recover interrupted work | [Import results](import.md) |
+| Edit tracked files | [Checkout results and conflicts](checkouts.md) |
+| Create, inspect, or restore an archive | [Backup commands and required server mode](backup.md) |
+| Manage albums or shares | [Album results](#organize-albums) and [broker status](#manage-sharing) |
+| Queue AI work | [Completed task results and failures](#queue-ai-work-and-manage-search-generations) |
+| Register owners | [Owner results](#manage-registered-owners) |
 
 `config diagnose --json` writes an array of checks to stdout. Each check has
 `name`, `status`, and `detail`, plus `action` when there is a suggested next step.
@@ -204,7 +205,8 @@ you want to commit edits as new versions.
 
 ## Organize albums
 
-Album commands use the configured stub owner and start the daemon if needed.
+Create albums and change their membership without copying or deleting photos.
+Commands use the configured stub owner and start the daemon if needed.
 Run them under the same OS account and configuration as the server:
 
 ```sh
@@ -286,8 +288,9 @@ before repeating a change. These commands do not provide header-mode login.
 
 ## Queue AI work and manage search generations
 
-These commands use the daemon in stub mode. Backfill queues work that is
-missing for the current AI settings; retry-failed queues recorded failures.
+Queue missing AI work or retry recorded failures through the daemon in stub
+mode. Backfill finds work missing for the current AI settings; retry-failed
+selects recorded failures.
 Both require processing acknowledgment. Their counts describe queued jobs,
 not completed tagging, captions, or embeddings.
 
