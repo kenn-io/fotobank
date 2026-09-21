@@ -1,5 +1,5 @@
 version = 1
 
 [project]
-identity = "github.com/wesm/fotobank"
+identity = "github.com/kenn-io/fotobank"
 name     = "fotobank"
