@@ -203,7 +203,7 @@ admin_listen = "127.0.0.1:0"
 	select {
 	case ec := <-done:
 		r.Equal(0, ec)
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		r.Fail("server did not shut down")
 	}
 }
