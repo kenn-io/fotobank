@@ -196,6 +196,9 @@ Don't track ad-hoc one-turn tasks in kata — it's for outstanding designed/plan
 
 ## Git and pull requests
 
+For CI runner access levels and GitHub fork controls, read
+[Tests and CI](docs/architecture/operations.md#tests-and-ci).
+
 Renovate groups routine dependency updates on Monday mornings (America/Chicago)
 using `renovate.json`. Go, frontend, documentation, and build/CI updates have
 separate batches. Major upgrades need Dependency Dashboard approval; nothing

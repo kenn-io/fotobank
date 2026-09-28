@@ -237,9 +237,14 @@ The normal local tiers are:
 - `prek run` for the commit hooks.
 
 GitHub Actions validates Linux amd64 tests, Windows amd64 CGO/SQLite behavior,
-lint, and the shared Testify rules. All jobs use GitHub-hosted runners:
-`ubuntu-latest` for Linux and `windows-latest` for Windows. Pull requests use
-the reusable workflow on `main`, which tests the pull request commit.
+lint, and the shared Testify rules on Namespace Linux and Windows runners.
+Pull requests use the reusable workflow on `main`, which tests the pull
+request commit.
+
+Public CI profiles use Namespace's
+[Restricted access level](https://namespace.so/docs/solutions/github-actions/runner-controls/access-levels),
+which disables workload access to Namespace features and APIs. GitHub fork
+approvals, token permissions, and secrets are separate controls.
 
 Performance workloads such as 10,000-file import and repeated XMP changes are
 repeatable benchmarks, not timing assertions in ordinary CI. They report
