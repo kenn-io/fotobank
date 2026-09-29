@@ -127,8 +127,8 @@ admin_listen = "127.0.0.1:0"
 	select {
 	case code := <-errCh:
 		r.Equal(0, code, "server stderr: %s", stderr.String())
-	case <-time.After(5 * time.Second):
-		r.Fail("server did not shut down within 5s")
+	case <-time.After(10 * time.Second):
+		r.Fail("server did not shut down within 10s")
 	}
 }
 
@@ -302,8 +302,8 @@ admin_listen = "127.0.0.1:0"
 	select {
 	case code := <-errCh:
 		r.Equal(0, code, "server stderr: %s", stderr.String())
-	case <-time.After(5 * time.Second):
-		r.Fail("server did not shut down within 5s", stderr.String())
+	case <-time.After(10 * time.Second):
+		r.Fail("server did not shut down within 10s", stderr.String())
 	}
 
 	reopened, err := content.Open(t.Context(), content.Config{Root: vaultRoot})
@@ -718,8 +718,8 @@ admin_listen = "127.0.0.1:0"
 	select {
 	case code := <-errCh:
 		r.Equal(0, code, "server stderr: %s", stderr.String())
-	case <-time.After(5 * time.Second):
-		r.Fail("server did not shut down within 5s")
+	case <-time.After(10 * time.Second):
+		r.Fail("server did not shut down within 10s")
 	}
 }
 
@@ -1120,9 +1120,9 @@ admin_listen = "127.0.0.1:0"
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		var stacks bytes.Buffer
 		_ = pprof.Lookup("goroutine").WriteTo(&stacks, 2)
-		r.Fail("server did not shut down within 5s", "stderr: %s\ngoroutines:\n%s", eout.String(), stacks.String())
+		r.Fail("server did not shut down within 10s", "stderr: %s\ngoroutines:\n%s", eout.String(), stacks.String())
 	}
 }

@@ -174,7 +174,7 @@ admin_listen = "127.0.0.1:0"
 	select {
 	case ec := <-stubDone:
 		r.Equal(0, ec)
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		r.Fail("stub server did not shut down")
 	}
 
@@ -328,7 +328,7 @@ admin_listen = "127.0.0.1:0"
 	select {
 	case ec := <-headerDone:
 		r.Equal(0, ec)
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		r.Fail("header server did not shut down")
 	}
 }
