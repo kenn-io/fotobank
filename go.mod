@@ -8,6 +8,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/VictoriaMetrics/metrics v1.43.2
 	github.com/asg017/sqlite-vec-go-bindings v0.1.6
+	github.com/cenkalti/backoff/v7 v7.0.1
 	github.com/danielgtaylor/huma/v2 v2.38.0
 	github.com/doordash-oss/oapi-codegen-dd/v3 v3.75.15
 	github.com/gofrs/flock v0.13.0

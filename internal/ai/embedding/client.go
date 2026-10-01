@@ -31,6 +31,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cenkalti/backoff/v7"
 )
 
 // Sentinel errors. Callers should compare with errors.Is.
@@ -147,20 +149,22 @@ func (c *Client) callOnce(ctx context.Context, model string, dimension int, inpu
 
 	endpoint := c.cfg.Endpoint + "/embeddings"
 
-	var lastErr error
-	for attempt := 0; attempt <= c.cfg.MaxRetries; attempt++ {
+	if c.cfg.MaxRetries < 0 {
+		return nil, fmt.Errorf("%w: exhausted retries", ErrTransient)
+	}
+	result, err := backoff.Retry(ctx, func() ([][]float32, error) {
 		// Honor cancellation between attempts. Return the raw ctx
 		// error (context.Canceled / context.DeadlineExceeded) so
 		// callers can errors.Is(err, context.Canceled). Wrapping it
 		// behind ErrTransient would make the cancel indistinguishable
 		// from a 5xx and trigger needless retries upstream.
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, backoff.Permanent(err)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
-			return nil, fmt.Errorf("embedding: build request: %w", err)
+			return nil, backoff.Permanent(fmt.Errorf("embedding: build request: %w", err))
 		}
 		req.Header.Set("Content-Type", "application/json")
 		if c.cfg.APIKey != "" {
@@ -174,11 +178,10 @@ func (c *Client) callOnce(ctx context.Context, model string, dimension int, inpu
 			// and keeps errors.Is(err, context.Canceled) usable. Don't
 			// retry: the context isn't going to un-cancel.
 			if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
-				return nil, cerr
+				return nil, backoff.Permanent(cerr)
 			}
 			// Network errors are transient by policy.
-			lastErr = fmt.Errorf("%w: http do: %v", ErrTransient, err)
-			continue
+			return nil, fmt.Errorf("%w: http do: %v", ErrTransient, err)
 		}
 
 		out, class, perr := parse(resp, len(input), dimension)
@@ -188,9 +191,9 @@ func (c *Client) callOnce(ctx context.Context, model string, dimension int, inpu
 		case classOK:
 			return out, nil
 		case class4xx:
-			return nil, fmt.Errorf("%w: %v", ErrProvider4xx, perr)
+			return nil, backoff.Permanent(fmt.Errorf("%w: %v", ErrProvider4xx, perr))
 		case classMalformed:
-			return nil, fmt.Errorf("%w: %v", ErrMalformed, perr)
+			return nil, backoff.Permanent(fmt.Errorf("%w: %v", ErrMalformed, perr))
 		case classTransient:
 			// If the context was cancelled or the deadline expired
 			// during the body read, parse classifies the truncated
@@ -202,21 +205,23 @@ func (c *Client) callOnce(ctx context.Context, model string, dimension int, inpu
 			// happens to land just as ctx is cancelled must still be
 			// reported on its own merits.
 			if cerr := ctx.Err(); cerr != nil {
-				return nil, cerr
+				return nil, backoff.Permanent(cerr)
 			}
-			lastErr = fmt.Errorf("%w: %v", ErrTransient, perr)
-			continue
+			return nil, fmt.Errorf("%w: %v", ErrTransient, perr)
 		default:
 			// Should be unreachable; treat as malformed to fail loudly.
-			return nil, fmt.Errorf("%w: unknown classification", ErrMalformed)
+			return nil, backoff.Permanent(fmt.Errorf("%w: unknown classification", ErrMalformed))
 		}
+	}, backoff.WithBackOff(&backoff.ZeroBackOff{}),
+		backoff.WithMaxTries(uint(c.cfg.MaxRetries)+1), backoff.WithMaxElapsedTime(0))
+	if err == nil {
+		return result, nil
 	}
-
-	if lastErr == nil {
-		// MaxRetries < 0 or some other oddity that skipped the loop.
-		lastErr = fmt.Errorf("%w: exhausted retries", ErrTransient)
+	retryErr := backoff.AsRetryError(err)
+	if !errors.Is(retryErr.Cause, backoff.ErrPermanent) && !errors.Is(retryErr.Cause, backoff.ErrExhausted) {
+		return nil, ctx.Err()
 	}
-	return nil, lastErr
+	return nil, retryErr.LastErr
 }
 
 // classification names the result of inspecting one HTTP response.
