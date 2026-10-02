@@ -33,7 +33,7 @@ func mustBuildTinyJPEG() []byte {
 
 // Probe sends one image data URL and one short text string to the
 // configured embeddings endpoint and asserts that both responses come
-// back with a vector at cfg.Dimension. Alignment between the two
+// back with a vector at cfg.Model.Dimensions. Alignment between the two
 // modalities is a model contract — Probe cannot verify it.
 //
 // AI health invokes the probe on demand to report problems without making
@@ -52,32 +52,32 @@ func Probe(ctx context.Context, cfg Config) error {
 	cfg.MaxRetries = 0
 	c := NewClient(cfg)
 
-	imgs, err := c.EmbedImages(ctx, cfg.Model, cfg.Dimension, [][]byte{embeddedTinyJPEG})
+	imgs, err := c.EmbedImages(ctx, cfg.Model.Name, cfg.Model.Dimensions, [][]byte{embeddedTinyJPEG})
 	if err != nil {
 		// ErrMalformed from the client is an in-band dimension/shape
 		// mismatch (the response decoded fine but had the wrong vector
 		// length). Reword so the operator-facing message states
 		// "dimension" plainly without depending on the client's wording.
 		if errors.Is(err, ErrMalformed) {
-			return fmt.Errorf("embed probe (image): dimension mismatch (configured %d): %w", cfg.Dimension, err)
+			return fmt.Errorf("embed probe (image): dimension mismatch (configured %d): %w", cfg.Model.Dimensions, err)
 		}
 		return fmt.Errorf("embed probe (image): %w", err)
 	}
-	if len(imgs) != 1 || dimOf(imgs) != cfg.Dimension {
+	if len(imgs) != 1 || dimOf(imgs) != cfg.Model.Dimensions {
 		return fmt.Errorf("embed probe (image): expected 1 vector of dimension %d, got %d vectors of dim %d",
-			cfg.Dimension, len(imgs), dimOf(imgs))
+			cfg.Model.Dimensions, len(imgs), dimOf(imgs))
 	}
 
-	texts, err := c.EmbedTexts(ctx, cfg.Model, cfg.Dimension, []string{"a small dog on a beach"})
+	texts, err := c.EmbedTexts(ctx, cfg.Model.Name, cfg.Model.Dimensions, []string{"a small dog on a beach"})
 	if err != nil {
 		if errors.Is(err, ErrMalformed) {
-			return fmt.Errorf("embed probe (text): dimension mismatch (configured %d): %w", cfg.Dimension, err)
+			return fmt.Errorf("embed probe (text): dimension mismatch (configured %d): %w", cfg.Model.Dimensions, err)
 		}
 		return fmt.Errorf("embed probe (text): %w", err)
 	}
-	if len(texts) != 1 || dimOf(texts) != cfg.Dimension {
+	if len(texts) != 1 || dimOf(texts) != cfg.Model.Dimensions {
 		return fmt.Errorf("embed probe (text): expected 1 vector of dimension %d, got %d vectors of dim %d",
-			cfg.Dimension, len(texts), dimOf(texts))
+			cfg.Model.Dimensions, len(texts), dimOf(texts))
 	}
 	return nil
 }

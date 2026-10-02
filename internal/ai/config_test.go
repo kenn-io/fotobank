@@ -4,7 +4,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/embedconfig"
 
 	"go.kenn.io/fotobank/internal/ai"
 )
@@ -118,4 +120,34 @@ func TestConfig_EmbedValidatesIndependentOfAIEnabled(t *testing.T) {
 	}
 	c.ApplyDefaults()
 	r.ErrorContains(c.Validate(), "ai.embed.model")
+}
+
+func TestEmbedConfigPublicTOMLToKit(t *testing.T) {
+	r := require.New(t)
+	t.Setenv("FOTOBANK_TEST_EMBED_KEY", "synthetic-key")
+	var cfg ai.Config
+	_, err := toml.Decode(`
+ [embed]
+ enabled = true
+ endpoint = "http://localhost:8080/v1"
+ model = "image-model"
+ dimension = 768
+ api_key_env = "FOTOBANK_TEST_EMBED_KEY"
+ timeout = "7s"
+ batch_size = 4
+ input_edge = 384
+ `, &cfg)
+	r.NoError(err)
+	parts := cfg.Embed.EmbeddingParts()
+	r.Equal("http://localhost:8080/v1", parts.Deployment.BaseURL)
+	r.Equal("image-model", parts.Model.Name)
+	r.Equal(768, parts.Model.Dimensions)
+	r.Equal(embedconfig.NormalizationNone, parts.Model.Normalization)
+	r.Equal(embedconfig.InputTypeNone, parts.Roles.InputType)
+	r.False(parts.Model.RequestDimensions)
+	r.Equal(7*time.Second, parts.Transport.Timeout)
+	r.Equal(4, parts.Batch.Items)
+	r.Equal("synthetic-key", cfg.Embed.APIKey())
+	t.Setenv("FOTOBANK_TEST_EMBED_KEY", "")
+	r.Empty(cfg.Embed.APIKey(), "unset credential remains optional")
 }

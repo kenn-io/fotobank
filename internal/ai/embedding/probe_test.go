@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/fotobank/internal/ai"
 	"go.kenn.io/fotobank/internal/ai/embedding"
 )
 
@@ -48,10 +49,12 @@ func TestProbe_PassesWhenBothModalitiesReturnExpectedDim(t *testing.T) {
 	defer srv.Close()
 
 	err := embedding.Probe(context.Background(), embedding.Config{
-		Endpoint:  srv.URL + "/v1",
-		Model:     "siglip2",
-		Dimension: 768,
-		Timeout:   5 * time.Second,
+		Parts: (ai.EmbedConfig{
+			Endpoint:  srv.URL + "/v1",
+			Model:     "siglip2",
+			Dimension: 768,
+			Timeout:   5 * time.Second,
+		}).EmbeddingParts(),
 	})
 	r.NoError(err)
 }
@@ -70,10 +73,12 @@ func TestProbe_FailsOnDimensionMismatch(t *testing.T) {
 	defer srv.Close()
 
 	err := embedding.Probe(context.Background(), embedding.Config{
-		Endpoint:  srv.URL + "/v1",
-		Model:     "siglip2",
-		Dimension: 768,
-		Timeout:   5 * time.Second,
+		Parts: (ai.EmbedConfig{
+			Endpoint:  srv.URL + "/v1",
+			Model:     "siglip2",
+			Dimension: 768,
+			Timeout:   5 * time.Second,
+		}).EmbeddingParts(),
 	})
 	r.Error(err)
 	r.Contains(err.Error(), "dimension")
@@ -100,10 +105,12 @@ func TestProbe_FailsOnImageRejected(t *testing.T) {
 	defer srv.Close()
 
 	err := embedding.Probe(context.Background(), embedding.Config{
-		Endpoint:  srv.URL + "/v1",
-		Model:     "siglip2",
-		Dimension: 768,
-		Timeout:   5 * time.Second,
+		Parts: (ai.EmbedConfig{
+			Endpoint:  srv.URL + "/v1",
+			Model:     "siglip2",
+			Dimension: 768,
+			Timeout:   5 * time.Second,
+		}).EmbeddingParts(),
 	})
 	r.Error(err)
 	r.Contains(err.Error(), "image")

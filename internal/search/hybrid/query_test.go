@@ -40,7 +40,8 @@ func TestBuildMatchExpr(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := require.New(t)
-			got, ok := hybrid.BuildMatchExpr(tt.q)
+			got, ok, err := hybrid.BuildMatchExpr(tt.q)
+			r.NoError(err)
 			r.Equal(tt.wantOk, ok)
 			r.Equal(tt.want, got)
 		})

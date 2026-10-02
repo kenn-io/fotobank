@@ -28,10 +28,7 @@ func (p *realEmbedProbe) Health(ctx context.Context) aiservice.VisionPart {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	cfg := p.p.Effective().Config.Embed
-	key := embedding.Config{
-		Endpoint: cfg.Endpoint, APIKey: cfg.APIKey(), Model: cfg.Model,
-		Dimension: cfg.Dimension, Timeout: cfg.Timeout,
-	}
+	key := embedding.Config{Parts: cfg.EmbeddingParts(), APIKey: cfg.APIKey()}
 	if key == p.config && time.Now().Before(p.expires) {
 		return p.result
 	}

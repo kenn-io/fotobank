@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"os"
 	"time"
+
+	"go.kenn.io/kit/embedconfig"
 )
 
 // Config is the [ai] TOML block plus its sub-blocks.
@@ -71,6 +73,23 @@ type EmbedConfig struct {
 	// enqueued job is picked up promptly, long enough that an idle
 	// deployment isn't constantly hammering ai_jobs.
 	IdlePoll time.Duration `toml:"idle_poll"`
+}
+
+// EmbeddingParts translates the public TOML settings into Kit runtime types.
+// Credentials retain api_key_env's existing resolution rules. Do not use
+// Embedder.Parts: its normalization default would change query vectors relative
+// to images already stored in Fotobank's indexes.
+func (e EmbedConfig) EmbeddingParts() embedconfig.Parts {
+	return embedconfig.Parts{
+		Model: embedconfig.Model{
+			Name: e.Model, Dimensions: e.Dimension,
+			Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone,
+		},
+		Roles:      embedconfig.Roles{InputType: embedconfig.InputTypeNone},
+		Deployment: embedconfig.Deployment{BaseURL: e.Endpoint, TrustPrivateNetwork: true},
+		Batch:      embedconfig.Batch{Items: e.BatchSize},
+		Transport:  embedconfig.Transport{Timeout: e.Timeout},
+	}
 }
 
 // APIKey resolves the bearer token from the env var named in APIKeyEnv.

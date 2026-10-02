@@ -103,8 +103,9 @@ lint: ## Run golangci-lint + testify-helper-check
 	mise exec -- golangci-lint run --fix
 	$(MAKE) testify-helper-check
 
+# Keep the existing check; newer Kit releases replace it with broader rules.
 testify-helper-check: ## Enforce testify helper usage
-	go run go.kenn.io/kit/cmd/testify-helper-check ./...
+	go run go.kenn.io/kit/cmd/testify-helper-check@v0.24.1 ./...
 
 # Kit PR #84 is merged; pin its merge until huma-check has a release tag.
 huma-check: ## Check JSON v2, OpenAPI, and generated API clients

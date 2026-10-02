@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/fotobank/internal/ai"
 	"go.kenn.io/fotobank/internal/ai/embedding"
 )
 
@@ -59,10 +61,12 @@ func TestClient_BatchImagesReturnsVectorsByIndex(t *testing.T) {
 	defer srv.Close()
 
 	c := embedding.NewClient(embedding.Config{
-		Endpoint:  srv.URL + "/v1",
-		Model:     "siglip2",
-		Dimension: 768,
-		Timeout:   5 * time.Second,
+		Parts: (ai.EmbedConfig{
+			Endpoint:  srv.URL + "/v1",
+			Model:     "siglip2",
+			Dimension: 768,
+			Timeout:   5 * time.Second,
+		}).EmbeddingParts(),
 	})
 
 	out, err := c.EmbedImages(context.Background(), "", 0, [][]byte{[]byte("a-bytes"), []byte("b-bytes")})
@@ -99,10 +103,12 @@ func TestClient_ReordersOutOfOrderResponse(t *testing.T) {
 	defer srv.Close()
 
 	c := embedding.NewClient(embedding.Config{
-		Endpoint:  srv.URL + "/v1",
-		Model:     "siglip2",
-		Dimension: 768,
-		Timeout:   5 * time.Second,
+		Parts: (ai.EmbedConfig{
+			Endpoint:  srv.URL + "/v1",
+			Model:     "siglip2",
+			Dimension: 768,
+			Timeout:   5 * time.Second,
+		}).EmbeddingParts(),
 	})
 	out, err := c.EmbedImages(context.Background(), "", 0,
 		[][]byte{[]byte("a"), []byte("b"), []byte("c")})
@@ -124,10 +130,12 @@ func TestClient_RejectsDimensionMismatchAsMalformed(t *testing.T) {
 	defer srv.Close()
 
 	c := embedding.NewClient(embedding.Config{
-		Endpoint:  srv.URL + "/v1",
-		Model:     "siglip2",
-		Dimension: 768,
-		Timeout:   5 * time.Second,
+		Parts: (ai.EmbedConfig{
+			Endpoint:  srv.URL + "/v1",
+			Model:     "siglip2",
+			Dimension: 768,
+			Timeout:   5 * time.Second,
+		}).EmbeddingParts(),
 	})
 	_, err := c.EmbedImages(context.Background(), "", 0, [][]byte{[]byte("x")})
 	r.ErrorIs(err, embedding.ErrMalformed)
@@ -143,11 +151,13 @@ func TestClient_4xxIsPermanent(t *testing.T) {
 	defer srv.Close()
 
 	c := embedding.NewClient(embedding.Config{
-		Endpoint:   srv.URL + "/v1",
-		Model:      "x",
-		Dimension:  768,
-		Timeout:    5 * time.Second,
-		MaxRetries: 3, // would-be retries: 4xx must NOT trigger them.
+		Parts: (ai.EmbedConfig{
+			Endpoint:  srv.URL + "/v1",
+			Model:     "x",
+			Dimension: 768,
+			Timeout:   5 * time.Second,
+		}).EmbeddingParts(),
+		MaxRetries: 3,
 	})
 	_, err := c.EmbedImages(context.Background(), "", 0, [][]byte{[]byte("x")})
 	r.ErrorIs(err, embedding.ErrProvider4xx)
@@ -164,10 +174,12 @@ func TestClient_5xxRetriedAndEventuallyTransient(t *testing.T) {
 	defer srv.Close()
 
 	c := embedding.NewClient(embedding.Config{
-		Endpoint:   srv.URL + "/v1",
-		Model:      "x",
-		Dimension:  768,
-		Timeout:    5 * time.Second,
+		Parts: (ai.EmbedConfig{
+			Endpoint:  srv.URL + "/v1",
+			Model:     "x",
+			Dimension: 768,
+			Timeout:   5 * time.Second,
+		}).EmbeddingParts(),
 		MaxRetries: 1,
 	})
 	_, err := c.EmbedImages(context.Background(), "", 0, [][]byte{[]byte("x")})
@@ -190,10 +202,12 @@ func TestClient_ContextCancelDoesNotWrapAsTransient(t *testing.T) {
 	defer srv.Close()
 
 	c := embedding.NewClient(embedding.Config{
-		Endpoint:  srv.URL + "/v1",
-		Model:     "m",
-		Dimension: 768,
-		Timeout:   5 * time.Second,
+		Parts: (ai.EmbedConfig{
+			Endpoint:  srv.URL + "/v1",
+			Model:     "m",
+			Dimension: 768,
+			Timeout:   5 * time.Second,
+		}).EmbeddingParts(),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -227,10 +241,12 @@ func TestClient_ContextCanceledDuringBodyReadDoesNotWrapAsTransient(t *testing.T
 	defer srv.Close()
 
 	c := embedding.NewClient(embedding.Config{
-		Endpoint:  srv.URL + "/v1",
-		Model:     "m",
-		Dimension: 768,
-		Timeout:   5 * time.Second,
+		Parts: (ai.EmbedConfig{
+			Endpoint:  srv.URL + "/v1",
+			Model:     "m",
+			Dimension: 768,
+			Timeout:   5 * time.Second,
+		}).EmbeddingParts(),
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -262,10 +278,12 @@ func TestClient_NonZeroDimensionOverridesConfig(t *testing.T) {
 	defer srv.Close()
 
 	c := embedding.NewClient(embedding.Config{
-		Endpoint:  srv.URL + "/v1",
-		Model:     "siglip2",
-		Dimension: 768, // cfg fallback — the explicit per-call arg wins
-		Timeout:   5 * time.Second,
+		Parts: (ai.EmbedConfig{
+			Endpoint:  srv.URL + "/v1",
+			Model:     "siglip2",
+			Dimension: 768,
+			Timeout:   5 * time.Second,
+		}).EmbeddingParts(),
 	})
 
 	// Per-call dim=512 with a 512-vec response: passes validation.
@@ -294,10 +312,12 @@ func TestClient_DeadlineExceededDoesNotWrapAsTransient(t *testing.T) {
 	defer srv.Close()
 
 	c := embedding.NewClient(embedding.Config{
-		Endpoint:  srv.URL + "/v1",
-		Model:     "m",
-		Dimension: 768,
-		Timeout:   5 * time.Second,
+		Parts: (ai.EmbedConfig{
+			Endpoint:  srv.URL + "/v1",
+			Model:     "m",
+			Dimension: 768,
+			Timeout:   5 * time.Second,
+		}).EmbeddingParts(),
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 	defer cancel()
@@ -305,4 +325,95 @@ func TestClient_DeadlineExceededDoesNotWrapAsTransient(t *testing.T) {
 	r.Error(err)
 	r.ErrorIs(err, context.DeadlineExceeded, "got %v", err)
 	r.NotErrorIs(err, embedding.ErrTransient, "must not be wrapped as transient")
+}
+
+func TestClient_TextAndImageUseSameSpace(t *testing.T) {
+	r := require.New(t)
+	requests := make(chan map[string]json.RawMessage, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(req.Body).Decode(&body); !assert.NoError(t, err) {
+			w.WriteHeader(400)
+			return
+		}
+		requests <- body
+		assert.Equal(t, "Bearer synthetic-key", req.Header.Get("Authorization"))
+		_, _ = io.WriteString(w, `{"data":[{"index":0,"embedding":[3,4]}]}`)
+	}))
+	t.Cleanup(srv.Close)
+	c := embedding.NewClient(embedding.Config{Parts: (ai.EmbedConfig{
+		Endpoint: srv.URL, Model: "next-model", Dimension: 3,
+	}).EmbeddingParts(), APIKey: "synthetic-key"})
+	images, err := c.EmbedImages(t.Context(), "active-model", 2, [][]byte{{1, 2, 3}})
+	r.NoError(err)
+	text, err := c.EmbedTexts(t.Context(), "active-model", 2, []string{"a dog on a beach"})
+	r.NoError(err)
+	r.Equal([][]float32{{3, 4}}, text, "must not normalize query vectors against existing image vectors")
+	r.Equal(images, text)
+	r.Len(requests, 2)
+	received := []map[string]json.RawMessage{<-requests, <-requests}
+	for _, request := range received {
+		r.JSONEq(`"active-model"`, string(request["model"]))
+		r.NotContains(request, "input_type")
+		r.NotContains(request, "dimensions")
+	}
+	r.JSONEq(`["a dog on a beach"]`, string(received[1]["input"]))
+}
+
+func TestClient_TextRetryPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		status, attempts int
+		want             error
+	}{
+		{"rate limited", 429, 3, embedding.ErrTransient},
+		{"server failure", 503, 3, embedding.ErrTransient},
+		{"request timeout stays permanent", 408, 1, embedding.ErrProvider4xx},
+		{"credentials", 401, 1, embedding.ErrProvider4xx},
+		{"malformed", 200, 1, embedding.ErrMalformed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				// The old policy retries immediately, even when a provider sends this.
+				w.Header().Set("Retry-After", "60")
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, `{}`)
+			}))
+			t.Cleanup(srv.Close)
+			c := embedding.NewClient(embedding.Config{Parts: (ai.EmbedConfig{Endpoint: srv.URL, Model: "m", Dimension: 2}).EmbeddingParts(), MaxRetries: 2})
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			_, err := c.EmbedTexts(ctx, "", 0, []string{"dog"})
+			r.ErrorIs(err, tc.want)
+			r.EqualValues(tc.attempts, calls.Load())
+		})
+	}
+}
+
+func TestClient_TextCancellationDuringBodyRead(t *testing.T) {
+	r := require.New(t)
+	started := make(chan struct{})
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		close(started)
+		<-req.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	c := embedding.NewClient(embedding.Config{Parts: (ai.EmbedConfig{Endpoint: srv.URL, Model: "m", Dimension: 2}).EmbeddingParts(), MaxRetries: 2})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := c.EmbedTexts(ctx, "", 0, []string{"dog"}); done <- err }()
+	<-started
+	cancel()
+	err := <-done
+	r.ErrorIs(err, context.Canceled)
+	r.NotErrorIs(err, embedding.ErrTransient)
+	r.EqualValues(1, calls.Load())
 }

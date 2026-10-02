@@ -119,20 +119,45 @@ func scanGeneration(s rowScanner) (Row, error) {
 }
 
 // queryRower is the minimal interface needed to QueryRow against either
-// a *sql.DB or a *sql.Tx, used so findByHash works on either side of a
+// a *sql.DB or a *sql.Tx on either side of a
 // transaction boundary.
 type queryRower interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// findByHash looks up a generation row by fingerprint hash, returning
-// sql.ErrNoRows when no match exists. db may be a *sql.DB (read-only
-// pool, fast path) or a *sql.Tx (re-check inside the FindOrCreate tx).
-func findByHash(ctx context.Context, db queryRower, hash string) (Row, error) {
-	return scanGeneration(db.QueryRowContext(ctx,
-		`SELECT `+generationColumns+` FROM embedding_generations WHERE fingerprint_hash = ?`,
-		hash,
-	))
+// findMatching keeps the input recipe and width in the lookup even though
+// Kit's generation identity covers only the vector space. Legacy descriptors
+// recognize persisted Fotobank fingerprints without rewriting them.
+func findMatching(ctx context.Context, db interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, fp ai.Fingerprint, dim int) (Row, error) {
+	descriptor := Descriptor(fp, dim)
+	if err := descriptor.Validate(); err != nil {
+		return Row{}, err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT `+generationColumns+` FROM embedding_generations
+ WHERE model_id = ? AND input_profile = ? AND dimension = ? ORDER BY id`, fp.ModelID, fp.InputProfile, dim)
+	if err != nil {
+		return Row{}, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		row, err := scanGeneration(rows)
+		if err != nil {
+			return Row{}, err
+		}
+		matches, err := descriptor.Matches(row.Fingerprint)
+		if err != nil {
+			return Row{}, err
+		}
+		if matches {
+			return row, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Row{}, err
+	}
+	return Row{}, sql.ErrNoRows
 }
 
 func findByFingerprint(ctx context.Context, db queryRower, fp ai.Fingerprint) (Row, error) {
@@ -155,13 +180,11 @@ func findByFingerprint(ctx context.Context, db queryRower, fp ai.Fingerprint) (R
 // connection; the loser re-finds the winner's row inside the tx
 // re-check via the fingerprint_hash UNIQUE constraint.
 func (g *Generations) FindOrCreateBuilding(ctx context.Context, fp ai.Fingerprint, dim int) (Row, error) {
-	hash := fingerprintHash(fp, dim)
-
 	// Fast path: an existing row for this fingerprint.
-	if row, err := findByHash(ctx, g.ro, hash); err == nil {
+	if row, err := findMatching(ctx, g.ro, fp, dim); err == nil {
 		return row, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		return Row{}, fmt.Errorf("find by hash: %w", err)
+		return Row{}, fmt.Errorf("find matching generation: %w", err)
 	}
 	// Compatibility path for existing queue workers: ai_jobs rows carry
 	// only ai.Fingerprint, not the configured vector dimension yet. If a
@@ -219,10 +242,10 @@ func (g *Generations) findOrCreateBuildingTx(ctx context.Context, tx *sql.Tx, fp
 	// Re-check inside the tx in case a concurrent caller inserted while
 	// the public wrapper was on the fast path. Returning the existing row
 	// here matches the contract: idempotent under concurrent calls.
-	if row, err := findByHash(ctx, tx, hash); err == nil {
+	if row, err := findMatching(ctx, tx, fp, dim); err == nil {
 		return row, false, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		return Row{}, false, fmt.Errorf("re-find by hash: %w", err)
+		return Row{}, false, fmt.Errorf("re-find matching generation: %w", err)
 	}
 
 	// Insert with an empty vec_table_name placeholder; the column is
@@ -265,7 +288,7 @@ func (g *Generations) findOrCreateBuildingTx(ctx context.Context, tx *sql.Tx, fp
 		return Row{}, false, fmt.Errorf("create vec table %s: %w", tableName, err)
 	}
 
-	row, err := findByHash(ctx, tx, hash)
+	row, err := findMatching(ctx, tx, fp, dim)
 	if err != nil {
 		return Row{}, false, fmt.Errorf("read back: %w", err)
 	}
