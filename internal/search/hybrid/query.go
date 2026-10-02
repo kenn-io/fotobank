@@ -1,8 +1,11 @@
 package hybrid
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
+
+	"go.kenn.io/kit/search/lexical"
 )
 
 // BuildMatchExpr converts user-typed q into an FTS5 MATCH expression:
@@ -27,21 +30,25 @@ import (
 // short fragments. This rejects FTS5 column-prefix syntax (`col:term`),
 // the near-operator (`^`), parens, double-quotes, the prefix glob
 // (`*`), and any other punctuation a user might paste.
-func BuildMatchExpr(q string) (string, bool) {
+func BuildMatchExpr(q string) (string, bool, error) {
 	endsInSpace := q == "" || endsInWhitespace(q)
 	tokens := tokenize(q)
 	if len(tokens) == 0 {
-		return "", false
+		return "", false, nil
 	}
 	pieces := make([]string, len(tokens))
 	for i, tok := range tokens {
-		quoted := `"` + tok + `"`
+		prepared, err := lexical.Literal().PreparePhrase(tok)
+		if err != nil {
+			return "", false, fmt.Errorf("prepare search term: %w", err)
+		}
+		quoted := prepared.Match
 		if i == len(tokens)-1 && !endsInSpace {
 			quoted += "*"
 		}
 		pieces[i] = quoted
 	}
-	return strings.Join(pieces, " AND "), true
+	return strings.Join(pieces, " AND "), true, nil
 }
 
 // endsInWhitespace reports whether q's last rune is whitespace, using

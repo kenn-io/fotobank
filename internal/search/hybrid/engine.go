@@ -114,7 +114,10 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 	if effSort == "" {
 		effSort = string(index.SortRelevance)
 	}
-	matchExpr, hasText := BuildMatchExpr(req.Query)
+	matchExpr, hasText, err := BuildMatchExpr(req.Query)
+	if err != nil {
+		return Response{}, err
+	}
 	mode := engineModeFilterOnly
 	if !hasText && effSort == string(index.SortRelevance) {
 		effSort = string(index.SortNewest)
@@ -191,7 +194,6 @@ func (e *Engine) Search(ctx context.Context, req Request) (Response, error) {
 		Limit: req.Limit + 1, Offset: offset, Gen: activeGen,
 	}
 	var hits []index.Hit
-	var err error
 	switch mode {
 	case engineModeFilterOnly:
 		hits, err = e.backend.FilterOnly(ctx, in)

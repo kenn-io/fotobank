@@ -1286,14 +1286,7 @@ func runtimeEmbedWorkerConfig(p aiRuntimeProvider) func(context.Context) embeddi
 			Cfg:               cfg,
 			ClaimFingerprint:  snap.Claim.Embed,
 			ResultFingerprint: snap.Result.Embed,
-			Client: embedding.NewClient(embedding.Config{
-				Endpoint:   cfg.Endpoint,
-				APIKey:     cfg.APIKey(),
-				Model:      cfg.Model,
-				Dimension:  cfg.Dimension,
-				Timeout:    cfg.Timeout,
-				MaxRetries: cfg.MaxRetries,
-			}),
+			Client:            embedding.NewClient(embedding.Config{Parts: cfg.EmbeddingParts(), APIKey: cfg.APIKey(), MaxRetries: cfg.MaxRetries}),
 		}
 	}
 }

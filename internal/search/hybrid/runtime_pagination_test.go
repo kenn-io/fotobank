@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/fotobank/internal/ai"
 	"go.kenn.io/fotobank/internal/ai/embedding"
 	"go.kenn.io/fotobank/internal/errs"
 	"go.kenn.io/fotobank/internal/search/hybrid"
@@ -41,7 +42,7 @@ func TestSearchCursorRejectsChangedQueryEmbedding(t *testing.T) {
 	for _, change := range []string{"endpoint", "credentials"} {
 		t.Run(change, func(t *testing.T) {
 			r := require.New(t)
-			cfg := embedding.Config{Endpoint: provider.URL + "/first", APIKey: "synthetic-first-key"}
+			cfg := embedding.Config{Parts: (ai.EmbedConfig{Endpoint: provider.URL + "/first"}).EmbeddingParts(), APIKey: "synthetic-first-key"}
 			client := embedding.NewClient(cfg)
 			engine := hybrid.NewEngine(index.NewSQLiteVecBackend(d.ReadDB(), embedding.Row{}), func(context.Context) embedding.ClientIface {
 				return client
@@ -59,7 +60,7 @@ func TestSearchCursorRejectsChangedQueryEmbedding(t *testing.T) {
 			r.Equal(ids[1], second.Hits[0].MediaID)
 
 			if change == "endpoint" {
-				cfg.Endpoint = provider.URL + "/second"
+				cfg.Deployment.BaseURL = provider.URL + "/second"
 			} else {
 				cfg.APIKey = "synthetic-second-key"
 			}

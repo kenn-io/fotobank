@@ -766,3 +766,35 @@ func TestVecToBlob_RoundTrip(t *testing.T) {
 		r.InDelta(v, got, 1e-7)
 	}
 }
+
+func TestSQLiteVec_PropagatesSharedQueryAndFusionErrors(t *testing.T) {
+	r := require.New(t)
+	d := testutil.OpenTestDB(t)
+	owner := testutil.SeedOwner(t, d.WriteDB(), "example", "photographer")
+	id := seedSearchMedia(t, d, owner)
+	gen := mustCreateActiveGenWithVectors(t, d, 2, map[string][]float32{id: {1, 0}})
+	b := index.NewSQLiteVecBackend(d.ReadDB(), gen)
+	in := index.SearchInput{Query: `"dog"`, QueryVector: []float32{1, 0}, Filter: noFilter(owner), KPerSignal: 10, RRFK: 60, Limit: 5}
+	for _, mode := range []string{"candidate", "fusion", "execution"} {
+		t.Run(mode, func(t *testing.T) {
+			r := require.New(t)
+			bad := in
+			switch mode {
+			case "candidate":
+				bad.KPerSignal = 0
+			case "fusion":
+				bad.RRFK = -1
+			case "execution":
+				bad.Query = `"`
+			}
+			hits, err := b.FusedSearch(t.Context(), bad)
+			r.Error(err)
+			r.Empty(hits, "errors must not return a partial ranking")
+		})
+	}
+	// A failed leg must release its read transaction for the next request.
+	hits, err := b.FusedSearch(t.Context(), in)
+	r.NoError(err)
+	r.Len(hits, 1)
+	r.Equal(id, hits[0].MediaID)
+}

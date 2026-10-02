@@ -5,6 +5,9 @@ import (
 	"regexp"
 	"strconv"
 
+	"go.kenn.io/kit/embedconfig"
+	"go.kenn.io/kit/embedmodel"
+
 	"go.kenn.io/fotobank/internal/ai"
 )
 
@@ -61,4 +64,16 @@ func EdgeFromInputProfile(profile string) (int, error) {
 		return 0, fmt.Errorf("invalid edge in input profile %q", profile)
 	}
 	return edge, nil
+}
+
+// Descriptor describes the shared image/text space without changing provider
+// values. Legacy keeps Fotobank's model/input-profile identity. The registry
+// separately matches dimensions and input_profile, since Kit's Generation
+// identifies only the vector space, not the image preparation recipe.
+func Descriptor(fp ai.Fingerprint, dimension int) embedmodel.Descriptor {
+	return embedmodel.Descriptor{
+		Model:  (ai.EmbedConfig{Model: fp.ModelID, Dimension: dimension}).EmbeddingParts().Model,
+		Input:  embedconfig.InputLimits{Recipe: fp.InputProfile},
+		Legacy: []string{fp.String()},
+	}
 }

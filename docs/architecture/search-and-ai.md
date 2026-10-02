@@ -33,11 +33,44 @@ Queries still use the active generation's model and vector dimensions, even
 when admin settings name a new model whose generation is still building. A
 provider failure falls back to metadata search.
 
+Query-text requests use Kit's `embedclient`. Fotobank translates its existing
+TOML fields into `embedconfig` runtime types; `endpoint`, `dimension`, and
+`api_key_env` keep their names and credential-resolution behavior. Query text
+has no role prefix, `input_type`, or requested dimension override. The client
+validates the response against the active image generation's dimensions and
+keeps the provider's values unchanged.
+
+The shared model descriptor identifies a cosine embedding space with client
+normalization disabled. Existing sqlite-vec tables retain their L2 metric and
+stored vectors. Unit-normalized vectors have the same L2 and cosine ordering;
+preserving raw values and the existing metric also preserves ranking for
+providers that return other magnitudes. This adoption does not convert indexes
+or require embedding calls to rebuild them.
+
+Fotobank retains its retry policy for both image and text calls: `max_retries`
+counts additional immediate attempts for rate limits, server errors, and
+transport failures. Other HTTP 4xx responses, including 408, remain permanent;
+cancellation ends the call. Kit's opt-in retry policy is disabled because it
+also retries 408 and adds backoff and `Retry-After` waits. Kit owns text response
+validation and rejects zero or non-finite vectors. Its text transport pins the
+configured origin, rejects credential-bearing URLs, and allows plaintext HTTP
+only for loopback or trusted private-network endpoints. Fotobank opts into
+private-network endpoints for its operator-configured gateway.
+
 `internal/search/hybrid` applies owner and visibility filters in SQL before
 ranking. Text search selects up to `search.k_per_signal` candidates from each
 index (200 by default), then combines their ranks when embeddings are available.
 Pagination traverses that bounded candidate set; filter-only browsing has no
 candidate cap.
+
+Kit's `search/sqlitefts` builds lexical candidates, and `search/hybrid` fuses
+the lexical and vector legs on one read transaction. Fotobank retains the
+10-fold vector overfetch, filters candidates before the per-signal cap, and
+hydrates eligible assets before the final SQL date/relevance sort and page
+limit. The final sort uses media IDs for ties rather than Kit's discovery order.
+The ANN query remains Fotobank-owned because Kit's SQLite candidate builder
+requires Kit's storage layout. `search/lexical` quotes terms; Fotobank retains
+punctuation stripping, short-token removal, and the final-token prefix rule.
 
 Each page requests one extra row to determine whether more results exist.
 An opaque cursor carries the next offset and binds it to the query, filters,
@@ -138,6 +171,13 @@ vectors in one search space.
 
 Only one generation is active for search. Thumbnail regeneration invalidates
 the affected media's current mapping because the visual input changed.
+
+Kit descriptors recognize existing fingerprints through `Legacy` and `Matches`.
+The registry still matches the stored input profile and dimensions separately:
+Kit's `Generation` identifies a vector space, while `InputIdentity` includes
+the input recipe. Changing the JPEG input edge therefore still creates a new
+generation. Fingerprints, vector tables, queue identities, activation, and
+compaction remain in Fotobank's existing format and workflow.
 
 The current implementation keeps vectors, prompts, job queues, and search
 lifecycle in Fotobank. Source projections use Fotobank media/asset identity and

@@ -3,8 +3,13 @@ package index
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
+
+	kithybrid "go.kenn.io/kit/search/hybrid"
+	"go.kenn.io/kit/search/sqlitefts"
+	"go.kenn.io/kit/search/sqlquery"
 
 	"go.kenn.io/fotobank/internal/ai/embedding"
 	"go.kenn.io/fotobank/internal/errs"
@@ -28,7 +33,7 @@ import (
 const annOverfetchFactor = 10
 
 // SQLiteVecBackend is the production Backend. It runs the composed
-// BM25 + ANN + filter intersection + RRF fusion in one SQL statement
+// BM25 + ANN + filter intersection + RRF fusion in one read transaction
 // against the read-only pool, joining the per-generation vec0 virtual
 // table with media_fts and the resolved filter CTE.
 type SQLiteVecBackend struct {
@@ -99,24 +104,10 @@ func validateFilter(in SearchInput) error {
 	return nil
 }
 
-// FusedSearch runs the composed BM25 + ANN + filter intersection +
-// RRF fusion. The skeleton lives in the plan; this is the concrete
-// SQL with both CTEs intersected against the filter CTE.
-//
-// SQLite has no FULL OUTER JOIN, so the `fused` CTE emulates one with
-// two LEFT JOINs UNION'd: every BM25 row (with its optional ANN
-// counterpart) and every ANN-only row that didn't appear in BM25.
-//
-// The vec_table_name segment is interpolated via fmt.Sprintf because
-// it's application-derived from gen.ID and never user input. Every
-// other value is parameterised with `?`.
-//
-// Per-request generation: when in.Gen is non-nil it overrides the
-// construction-time b.gen. The server wires the backend with a
-// zero-value Row and lets the engine populate Gen per-request from
-// FindActive — that way a promote/retire that lands between boot and
-// the request takes effect on the next query without re-creating the
-// backend.
+// FusedSearch retrieves both candidate legs on one read snapshot, fuses their
+// ranks with Kit, then hydrates and sorts the bounded candidate set in SQL.
+// Fotobank owns the ANN query because its vector layout and L2 indexes predate
+// Kit's store. Unit-normalized vectors have the same L2 and cosine ordering.
 func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]Hit, error) {
 	gen := b.gen
 	if in.Gen != nil {
@@ -135,104 +126,116 @@ func (b *SQLiteVecBackend) FusedSearch(ctx context.Context, in SearchInput) ([]H
 		return nil, err
 	}
 
-	// SQL skeleton documented in the plan. Inline the CTE bodies in
-	// the order: filter, bm25_raw + bm25 (FTS5 disallows bm25() inside
-	// a window function in the same context, so the score is computed
-	// once in bm25_raw and ROW_NUMBER is assigned over its alias),
-	// ann_raw + ann (sqlite-vec MATCH must be the only constraint on
-	// the vec0 base table, so the filter and rank assignment happen in
-	// outer CTEs), fused (UNION-emulated FULL OUTER JOIN).
-	var sb strings.Builder
-	sb.WriteString("WITH\n")
-	sb.WriteString("  filter AS (")
-	sb.WriteString(in.Filter.SQL)
-	sb.WriteString("),\n")
-	sb.WriteString("  bm25_raw AS (\n")
-	sb.WriteString("    SELECT mf.media_id AS id, bm25(media_fts) AS score\n")
-	sb.WriteString("    FROM media_fts mf JOIN filter f ON f.id = mf.media_id\n")
-	sb.WriteString("    WHERE media_fts MATCH ?\n")
-	sb.WriteString("    ORDER BY score, id\n")
-	sb.WriteString("    LIMIT ?\n")
-	sb.WriteString("  ),\n")
-	sb.WriteString("  bm25 AS (\n")
-	sb.WriteString("    SELECT id, score, ROW_NUMBER() OVER (ORDER BY score, id) AS rank_bm25\n")
-	sb.WriteString("    FROM bm25_raw\n")
-	sb.WriteString("  ),\n")
-	sb.WriteString("  ann_raw AS (\n")
-	sb.WriteString("    SELECT v.vec_id, v.distance\n")
-	fmt.Fprintf(&sb, "    FROM %s v\n", gen.VecTableName)
-	sb.WriteString("    WHERE v.embedding MATCH vec_f32(?) AND v.k = ?\n")
-	sb.WriteString("  ),\n")
-	sb.WriteString("  ann AS (\n")
-	sb.WriteString("    SELECT x.media_id AS id, ann_raw.distance AS score,\n")
-	sb.WriteString("           ROW_NUMBER() OVER (ORDER BY ann_raw.distance, x.media_id) AS rank_vector\n")
-	sb.WriteString("    FROM ann_raw\n")
-	sb.WriteString("    JOIN media_embedding_ids x ON x.generation_id = ? AND x.vec_id = ann_raw.vec_id\n")
-	sb.WriteString("    JOIN filter f ON f.id = x.media_id\n")
-	// Cap the post-filter ANN candidate pool at KPerSignal.
-	// Without this, the over-fetched ann_raw (k=KPerSignal *
-	// annOverfetchFactor) bleeds straight into the fusion pool when
-	// the filter doesn't shrink the slate — polluting RRF with
-	// candidates the plan never intended to fuse. The over-fetch
-	// stays in ann_raw to absorb owner-imbalance scenarios; ann
-	// then trims back down to KPerSignal post-filter.
-	//
-	// ORDER BY before LIMIT is load-bearing: without it, SQLite is
-	// free to drop arbitrary post-filter candidates and the cap
-	// could lose the actual nearest vectors in favour of farther
-	// ones that happened to be processed first. The ann_raw rows
-	// arrive in ann.distance order (vec0 returns top-k by distance)
-	// but the JOINs to media_embedding_ids and filter can re-order
-	// the iteration, so the explicit ORDER BY is what guarantees
-	// the nearest survive the cap.
-	sb.WriteString("    ORDER BY ann_raw.distance, x.media_id\n")
-	sb.WriteString("    LIMIT ?\n")
-	sb.WriteString("  ),\n")
-	sb.WriteString("  fused AS (\n")
-	sb.WriteString("    SELECT b.id AS id, b.rank_bm25 AS rank_bm25, a.rank_vector AS rank_vector,\n")
-	sb.WriteString("           b.score AS bm25, a.score AS vec\n")
-	sb.WriteString("    FROM bm25 b LEFT JOIN ann a ON a.id = b.id\n")
-	sb.WriteString("    UNION ALL\n")
-	sb.WriteString("    SELECT a.id, NULL, a.rank_vector, NULL, a.score\n")
-	sb.WriteString("    FROM ann a LEFT JOIN bm25 b ON b.id = a.id\n")
-	sb.WriteString("    WHERE b.id IS NULL\n")
-	sb.WriteString("  )\n")
-	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version, m.thumb_status,\n")
-	sb.WriteString("       (CASE WHEN fused.rank_bm25 IS NOT NULL THEN 1.0 / (? + fused.rank_bm25) ELSE 0 END +\n")
-	sb.WriteString("        CASE WHEN fused.rank_vector IS NOT NULL THEN 1.0 / (? + fused.rank_vector) ELSE 0 END) AS rrf,\n")
-	sb.WriteString("       fused.bm25, fused.vec, fused.rank_bm25, fused.rank_vector\n")
-	sb.WriteString("FROM fused JOIN assets m ON m.id = fused.id AND m.state = 'ready'\n")
-	// Candidates are picked by relevance (BM25 + ANN, fused via RRF
-	// inside the bm25/ann CTEs); the final page sort is then applied
-	// over that pool. SortNewest / SortOldest let the user request a
-	// date-sorted view that still scopes to relevance-selected
-	// candidates — consistent with the msgvault pattern. SortRelevance
-	// (and the zero value) falls through to RRF DESC.
-	sb.WriteString(fusedOrderBy(in.Sort))
-	sb.WriteString("LIMIT ? OFFSET ?")
-
-	args := make([]any, 0, len(in.Filter.Args)+10)
-	args = append(args, in.Filter.Args...)
-	// bm25_raw: MATCH ? then LIMIT ?
-	args = append(args, in.Query, in.KPerSignal)
-	// ann_raw: vec_f32(?), k = KPerSignal * annOverfetchFactor.
-	// vec0 MATCH applies its k-cap before the filter join, so a query
-	// that filters down to a small slice (owner-scoped, hidden=false)
-	// can come up empty if k=KPerSignal happens to be filled by other
-	// owners' vectors. Over-fetching gives the filter room to narrow.
-	args = append(args, embedding.VecToBlob(in.QueryVector), in.KPerSignal*annOverfetchFactor)
-	// ann: generation_id = ?, then LIMIT KPerSignal (post-filter cap).
-	args = append(args, gen.ID, in.KPerSignal)
-	// SELECT: RRF k for BM25 then for vector, then outer LIMIT.
-	args = append(args, in.RRFK, in.RRFK, in.Limit, in.Offset)
-
-	rows, err := b.ro.QueryContext(ctx, sb.String(), args...)
+	lexical, err := lexicalCandidates(in)
 	if err != nil {
-		return nil, fmt.Errorf("fused search: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	ann := sqlquery.Query{
+		SQL: fmt.Sprintf(`WITH filter AS (%s), ann_raw AS (
+   SELECT vec_id, distance FROM %s
+   WHERE embedding MATCH vec_f32(?) AND k = ?
+  )
+  SELECT x.media_id, ann_raw.distance FROM ann_raw
+  JOIN media_embedding_ids x ON x.generation_id = ? AND x.vec_id = ann_raw.vec_id
+  JOIN filter f ON f.id = x.media_id
+  ORDER BY ann_raw.distance, x.media_id LIMIT ?`, in.Filter.SQL, gen.VecTableName),
+		Args: append(append([]any{}, in.Filter.Args...), embedding.VecToBlob(in.QueryVector), in.KPerSignal*annOverfetchFactor, gen.ID, in.KPerSignal),
+	}
+	tx, err := b.ro.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("begin search snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	bm25Scores, vectorScores := map[string]float64{}, map[string]float64{}
+	result, err := kithybrid.Run(ctx, tx, float64(in.RRFK), []kithybrid.Leg[string]{
+		{Name: "bm25", Weight: 1, Query: lexical, CandidateLimit: in.KPerSignal,
+			Scan: func(rows *sql.Rows) (string, error) {
+				var id string
+				var score float64
+				err := rows.Scan(&id, &score)
+				bm25Scores[id] = -score // Kit exposes higher-is-better; the API exposes SQLite BM25.
+				return id, err
+			}},
+		{Name: "vector", Weight: 1, Query: ann, CandidateLimit: in.KPerSignal,
+			Scan: func(rows *sql.Rows) (string, error) {
+				var id string
+				var distance float64
+				err := rows.Scan(&id, &distance)
+				vectorScores[id] = distance
+				return id, err
+			}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fuse search candidates: %w", err)
+	}
+	// Keep final eligibility and date sorting at the existing SQL boundary.
+	// JSON carries only the bounded candidate rows, with parameterized values.
+	type candidate struct {
+		ID         string   `json:"id"`
+		Score      float64  `json:"score"`
+		BM25       *float64 `json:"bm25"`
+		Vector     *float64 `json:"vector"`
+		RankBM25   *int     `json:"rank_bm25"`
+		RankVector *int     `json:"rank_vector"`
+	}
+	candidates := make([]candidate, 0, len(result.Hits))
+	for _, hit := range result.Hits {
+		c := candidate{ID: hit.Key, Score: hit.Score}
+		for _, contribution := range hit.Contributions {
+			switch contribution.Leg {
+			case "bm25":
+				c.BM25, c.RankBM25 = new(bm25Scores[hit.Key]), new(contribution.Rank)
+			case "vector":
+				c.Vector, c.RankVector = new(vectorScores[hit.Key]), new(contribution.Rank)
+			}
+		}
+		candidates = append(candidates, c)
+	}
+	payload, err := json.Marshal(candidates)
+	if err != nil {
+		return nil, fmt.Errorf("encode search candidates: %w", err)
+	}
+	rows, err := tx.QueryContext(ctx, `
+ SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version, m.thumb_status,
+  json_extract(c.value, '$.score') AS rrf,
+  json_extract(c.value, '$.bm25'), json_extract(c.value, '$.vector'),
+  json_extract(c.value, '$.rank_bm25'), json_extract(c.value, '$.rank_vector')
+ FROM json_each(?) c JOIN assets m ON m.id = json_extract(c.value, '$.id') AND m.state = 'ready'
+ `+fusedOrderBy(in.Sort)+`LIMIT ? OFFSET ?`, string(payload), in.Limit, in.Offset)
+	if err != nil {
+		return nil, fmt.Errorf("hydrate fused search: %w", err)
+	}
+	hits, err := scanFusedHits(rows)
+	closeErr := rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close fused search: %w", closeErr)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit search snapshot: %w", err)
+	}
+	return hits, nil
+}
 
-	return scanFusedHits(rows)
+// lexicalCandidates applies the existing owner/visibility filter before the
+// candidate cap. The shared helper returns negated BM25 and orders ties by ID.
+func lexicalCandidates(in SearchInput) (sqlquery.Query, error) {
+	helper, err := sqlitefts.New(
+		sqlitefts.WithIndexTable("media_fts"), sqlitefts.WithIndexKey("media_id"),
+		sqlitefts.WithSourceTable("filter"), sqlitefts.WithSourceKey("id"),
+	)
+	if err != nil {
+		return sqlquery.Query{}, fmt.Errorf("configure lexical candidates: %w", err)
+	}
+	q, err := helper.Build(sqlitefts.Request{Match: in.Query, CandidateLimit: in.KPerSignal})
+	if err != nil {
+		return sqlquery.Query{}, fmt.Errorf("build lexical candidates: %w", err)
+	}
+	q.SQL = "WITH filter AS (" + in.Filter.SQL + ") " + q.SQL
+	q.Args = append(append([]any{}, in.Filter.Args...), q.Args...)
+	return q, nil
 }
 
 // BM25Only runs only the bm25 CTE against the filter, returning hits
@@ -246,36 +249,21 @@ func (b *SQLiteVecBackend) BM25Only(ctx context.Context, in SearchInput) ([]Hit,
 		return nil, err
 	}
 
-	var sb strings.Builder
-	sb.WriteString("WITH\n")
-	sb.WriteString("  filter AS (")
-	sb.WriteString(in.Filter.SQL)
-	sb.WriteString("),\n")
-	sb.WriteString("  bm25_raw AS (\n")
-	sb.WriteString("    SELECT mf.media_id AS id, bm25(media_fts) AS score\n")
-	sb.WriteString("    FROM media_fts mf JOIN filter f ON f.id = mf.media_id\n")
-	sb.WriteString("    WHERE media_fts MATCH ?\n")
-	sb.WriteString("    ORDER BY score, id\n")
-	sb.WriteString("    LIMIT ?\n")
-	sb.WriteString("  ),\n")
-	sb.WriteString("  bm25 AS (\n")
-	sb.WriteString("    SELECT id, score, ROW_NUMBER() OVER (ORDER BY score, id) AS rank_bm25\n")
-	sb.WriteString("    FROM bm25_raw\n")
-	sb.WriteString("  )\n")
-	sb.WriteString("SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version, m.thumb_status,\n")
-	sb.WriteString("       bm25.score AS bm25, bm25.rank_bm25\n")
-	sb.WriteString("FROM bm25 JOIN assets m ON m.id = bm25.id AND m.state = 'ready'\n")
-	// Same candidates-by-relevance / page-by-date split as
-	// FusedSearch: the bm25 CTE picks the top-K by BM25 score, then
-	// the final SELECT applies the user's sort over that pool.
-	sb.WriteString(bm25OrderBy(in.Sort))
-	sb.WriteString("LIMIT ? OFFSET ?")
+	candidates, err := lexicalCandidates(in)
+	if err != nil {
+		return nil, err
+	}
+	query := `WITH bm25_raw AS (` + candidates.SQL + `), bm25 AS (
+ SELECT doc_key AS id, -score AS score,
+  ROW_NUMBER() OVER (ORDER BY score DESC, doc_key) AS rank_bm25 FROM bm25_raw
+ )
+ SELECT m.id, m.media_type, m.timestamp, m.imported_at, m.width, m.height, m.thumb_version, m.thumb_status,
+  bm25.score, bm25.rank_bm25
+ FROM bm25 JOIN assets m ON m.id = bm25.id AND m.state = 'ready'
+ ` + bm25OrderBy(in.Sort) + `LIMIT ? OFFSET ?`
+	args := append(candidates.Args, in.Limit, in.Offset)
 
-	args := make([]any, 0, len(in.Filter.Args)+4)
-	args = append(args, in.Filter.Args...)
-	args = append(args, in.Query, in.KPerSignal, in.Limit, in.Offset)
-
-	rows, err := b.ro.QueryContext(ctx, sb.String(), args...)
+	rows, err := b.ro.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("bm25-only search: %w", err)
 	}

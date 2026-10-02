@@ -30,9 +30,10 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/cenkalti/backoff/v7"
+	"go.kenn.io/kit/embedclient"
+	"go.kenn.io/kit/embedconfig"
 )
 
 // Sentinel errors. Callers should compare with errors.Is.
@@ -53,33 +54,12 @@ var (
 	ErrMalformed = errors.New("embedding: malformed response")
 )
 
-// Config configures an embedding Client.
+// Config combines shared embedding settings with Fotobank's retry policy.
 type Config struct {
-	// Endpoint is the OpenAI-compatible base URL ending in /v1
-	// (e.g. "https://api.openai.com/v1"). The client appends "/embeddings".
-	Endpoint string
-
-	// APIKey is an optional bearer token. When empty, no Authorization
-	// header is set — convenient for self-hosted servers without auth.
+	embedconfig.Parts
 	APIKey string
-
-	// Model is the model name forwarded as the "model" field of the
-	// request body.
-	Model string
-
-	// Dimension is the expected length of every returned embedding vector.
-	// A response with any vector of a different length is rejected with
-	// ErrMalformed.
-	Dimension int
-
-	// Timeout is the per-request HTTP timeout. Applied to the underlying
-	// http.Client; covers connect + headers + body.
-	Timeout time.Duration
-
-	// MaxRetries is the number of additional attempts after the first one
-	// for transient failures. MaxRetries=0 means a single attempt total;
-	// MaxRetries=1 means one initial attempt and one retry. Permanent
-	// 4xx and malformed responses are not retried regardless.
+	// MaxRetries counts additional attempts. Retries are immediate; HTTP 408
+	// remains permanent. Kit's opt-in Retry policy has different semantics.
 	MaxRetries int
 }
 
@@ -90,11 +70,11 @@ type Client struct {
 }
 
 // NewClient builds a Client using the supplied Config. The http.Client
-// timeout is set from cfg.Timeout (zero = no timeout).
+// timeout is set from cfg.Transport.Timeout (zero = no timeout).
 func NewClient(cfg Config) *Client {
 	return &Client{
 		cfg:  cfg,
-		http: &http.Client{Timeout: cfg.Timeout},
+		http: &http.Client{Timeout: cfg.Transport.Timeout},
 	}
 }
 
@@ -108,14 +88,14 @@ func NewClient(cfg Config) *Client {
 // endpoint and validates against its own dimension. The worker passes
 // the claim's fingerprint.ModelID and the matched generation's
 // Dimension. An empty model and a non-positive dimension fall back to
-// cfg.Model / cfg.Dimension — the boot probe and unit tests rely on
+// cfg.Model.Name / cfg.Model.Dimensions — the boot probe and unit tests rely on
 // that.
 func (c *Client) EmbedImages(ctx context.Context, model string, dimension int, jpegs [][]byte) ([][]float32, error) {
 	inputs := make([]string, len(jpegs))
 	for i, b := range jpegs {
 		inputs[i] = "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(b)
 	}
-	return c.callOnce(ctx, model, dimension, inputs)
+	return c.callImages(ctx, model, dimension, inputs)
 }
 
 // EmbedTexts is the query-time counterpart to EmbedImages. The
@@ -123,19 +103,56 @@ func (c *Client) EmbedImages(ctx context.Context, model string, dimension int, j
 // for hybrid ranking to remain comparable. See EmbedImages for the
 // model and dimension fallback semantics.
 func (c *Client) EmbedTexts(ctx context.Context, model string, dimension int, texts []string) ([][]float32, error) {
-	// Defensive copy is unnecessary — strings are immutable. Pass through.
-	return c.callOnce(ctx, model, dimension, texts)
-}
-
-// callOnce is the request engine: builds the JSON body once, then loops
-// up to MaxRetries+1 attempts. Per-attempt classification routes to the
-// appropriate sentinel.
-func (c *Client) callOnce(ctx context.Context, model string, dimension int, input []string) ([][]float32, error) {
 	if model == "" {
-		model = c.cfg.Model
+		model = c.cfg.Model.Name
 	}
 	if dimension <= 0 {
-		dimension = c.cfg.Dimension
+		dimension = c.cfg.Model.Dimensions
+	}
+	parts := c.cfg.Parts
+	parts.Model.Name, parts.Model.Dimensions = model, dimension
+	// Preserve one provider request per caller batch and the provider's raw
+	// values. Neither input_type nor a dimensions override is sent.
+	parts.Batch.Items = max(1, len(texts))
+	client, err := embedclient.New(embedclient.Options{
+		Model: parts.Model, Roles: parts.Roles, Deployment: parts.Deployment,
+		Batch: parts.Batch, Transport: parts.Transport, APIKey: c.cfg.APIKey,
+		HTTP: c.http,
+		// Retry stays disabled: retry owns Fotobank's existing policy below.
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configure text embedding: %w", err)
+	}
+	return c.retry(ctx, func() ([][]float32, error) {
+		vectors, err := client.EmbedTexts(ctx, embedconfig.RoleQuery, texts)
+		if err == nil {
+			return vectors, nil
+		}
+		if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
+			return nil, cerr
+		}
+		if api, ok := errors.AsType[*embedclient.APIError](err); ok {
+			if api.StatusCode == http.StatusTooManyRequests || api.StatusCode >= 500 || api.StatusCode < 400 {
+				return nil, fmt.Errorf("%w: %w", ErrTransient, err)
+			}
+			return nil, fmt.Errorf("%w: %w", ErrProvider4xx, err)
+		}
+		if _, ok := errors.AsType[*embedclient.TransportError](err); ok {
+			return nil, fmt.Errorf("%w: %w", ErrTransient, err)
+		}
+		return nil, fmt.Errorf("%w: %w", ErrMalformed, err)
+	})
+}
+
+// callImages owns the image request transport: builds the body once, then loops
+// up to MaxRetries+1 attempts. Per-attempt classification routes to the
+// appropriate sentinel.
+func (c *Client) callImages(ctx context.Context, model string, dimension int, input []string) ([][]float32, error) {
+	if model == "" {
+		model = c.cfg.Model.Name
+	}
+	if dimension <= 0 {
+		dimension = c.cfg.Model.Dimensions
 	}
 	body, err := json.Marshal(map[string]any{
 		"input": input,
@@ -147,24 +164,12 @@ func (c *Client) callOnce(ctx context.Context, model string, dimension int, inpu
 		return nil, fmt.Errorf("embedding: marshal request: %w", err)
 	}
 
-	endpoint := c.cfg.Endpoint + "/embeddings"
+	endpoint := c.cfg.Deployment.BaseURL + "/embeddings"
 
-	if c.cfg.MaxRetries < 0 {
-		return nil, fmt.Errorf("%w: exhausted retries", ErrTransient)
-	}
-	result, err := backoff.Retry(ctx, func() ([][]float32, error) {
-		// Honor cancellation between attempts. Return the raw ctx
-		// error (context.Canceled / context.DeadlineExceeded) so
-		// callers can errors.Is(err, context.Canceled). Wrapping it
-		// behind ErrTransient would make the cancel indistinguishable
-		// from a 5xx and trigger needless retries upstream.
-		if err := ctx.Err(); err != nil {
-			return nil, backoff.Permanent(err)
-		}
-
+	return c.retry(ctx, func() ([][]float32, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
-			return nil, backoff.Permanent(fmt.Errorf("embedding: build request: %w", err))
+			return nil, fmt.Errorf("embedding: build request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 		if c.cfg.APIKey != "" {
@@ -178,7 +183,7 @@ func (c *Client) callOnce(ctx context.Context, model string, dimension int, inpu
 			// and keeps errors.Is(err, context.Canceled) usable. Don't
 			// retry: the context isn't going to un-cancel.
 			if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
-				return nil, backoff.Permanent(cerr)
+				return nil, cerr
 			}
 			// Network errors are transient by policy.
 			return nil, fmt.Errorf("%w: http do: %v", ErrTransient, err)
@@ -191,9 +196,9 @@ func (c *Client) callOnce(ctx context.Context, model string, dimension int, inpu
 		case classOK:
 			return out, nil
 		case class4xx:
-			return nil, backoff.Permanent(fmt.Errorf("%w: %v", ErrProvider4xx, perr))
+			return nil, fmt.Errorf("%w: %v", ErrProvider4xx, perr)
 		case classMalformed:
-			return nil, backoff.Permanent(fmt.Errorf("%w: %v", ErrMalformed, perr))
+			return nil, fmt.Errorf("%w: %v", ErrMalformed, perr)
 		case classTransient:
 			// If the context was cancelled or the deadline expired
 			// during the body read, parse classifies the truncated
@@ -205,13 +210,31 @@ func (c *Client) callOnce(ctx context.Context, model string, dimension int, inpu
 			// happens to land just as ctx is cancelled must still be
 			// reported on its own merits.
 			if cerr := ctx.Err(); cerr != nil {
-				return nil, backoff.Permanent(cerr)
+				return nil, cerr
 			}
 			return nil, fmt.Errorf("%w: %v", ErrTransient, perr)
 		default:
 			// Should be unreachable; treat as malformed to fail loudly.
-			return nil, backoff.Permanent(fmt.Errorf("%w: unknown classification", ErrMalformed))
+			return nil, fmt.Errorf("%w: unknown classification", ErrMalformed)
 		}
+	})
+}
+
+// retry is shared by image and query calls so migration does not change which
+// failures retry, their attempt budget, or cancellation behavior.
+func (c *Client) retry(ctx context.Context, call func() ([][]float32, error)) ([][]float32, error) {
+	if c.cfg.MaxRetries < 0 {
+		return nil, fmt.Errorf("%w: exhausted retries", ErrTransient)
+	}
+	result, err := backoff.Retry(ctx, func() ([][]float32, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, backoff.Permanent(err)
+		}
+		result, err := call()
+		if err != nil && !errors.Is(err, ErrTransient) {
+			return nil, backoff.Permanent(err)
+		}
+		return result, err
 	}, backoff.WithBackOff(&backoff.ZeroBackOff{}),
 		backoff.WithMaxTries(uint(c.cfg.MaxRetries)+1), backoff.WithMaxElapsedTime(0))
 	if err == nil {
