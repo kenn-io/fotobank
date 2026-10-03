@@ -1,3 +1,8 @@
+---
+title: "How Fotobank stores and edits photos"
+description: "Follow a photograph through import, browsing, tracked edits, backup, and recovery across Fotobank and embedded Docbank."
+last_edited: 2026-09-20
+---
 # How Fotobank stores and edits photos
 
 Follow one photograph from import through browsing, editing, and recovery.

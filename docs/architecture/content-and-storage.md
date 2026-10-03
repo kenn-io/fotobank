@@ -1,3 +1,8 @@
+---
+title: "Content and Storage"
+description: "How Fotobank stores exact file versions in Docbank, coordinates content writes, builds thumbnails, and tracks writable checkouts."
+last_edited: 2026-09-19
+---
 # Content and Storage
 
 Docbank keeps original files and their versions. Fotobank records how those

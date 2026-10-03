@@ -1,3 +1,8 @@
+---
+title: "Set up Fotobank for someone else"
+description: "Prepare and hand over a first Fotobank library, verify imports and recovery, and confirm storage and provider choices."
+last_edited: 2026-09-21
+---
 # Set up Fotobank for someone else
 
 Hand over a library the person can browse, back up, and recover. Use this

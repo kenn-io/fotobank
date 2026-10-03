@@ -1,3 +1,8 @@
+---
+title: "Choose whether to use AI"
+description: "Choose and configure optional AI providers, acknowledge processing policy, inspect results, and stop processing."
+last_edited: 2026-09-21
+---
 # Choose whether to use AI
 
 Import, browsing, albums, backups, and metadata search work without AI. Optional

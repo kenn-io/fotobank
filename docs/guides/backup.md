@@ -1,3 +1,8 @@
+---
+title: "Back up and restore"
+description: "Create and verify complete photo-library archives, configure scheduled retention, and test recovery into separate storage."
+last_edited: 2026-09-21
+---
 # Back up and restore
 
 Recover your photo library from one archive containing the catalog and stored

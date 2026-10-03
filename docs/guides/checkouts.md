@@ -1,3 +1,8 @@
+---
+title: "Edit files in a checkout"
+description: "Create tracked working folders, inspect settled edits and conflicts, commit new versions, and retire checkouts."
+last_edited: 2026-09-21
+---
 # Edit files in a checkout
 
 Edit photos in Lightroom or another tool, then save the changes as new versions

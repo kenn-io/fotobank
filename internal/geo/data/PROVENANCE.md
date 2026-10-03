@@ -1,3 +1,8 @@
+---
+title: "Natural Earth gazetteer — provenance"
+description: "Natural Earth gazetteer sources, releases, conversion commands, checksums, and public-domain licensing."
+last_edited: 2026-08-29
+---
 # Natural Earth gazetteer — provenance
 
 These GeoJSON files are vendored from Natural Earth 1:10m cultural vectors

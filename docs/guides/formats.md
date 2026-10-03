@@ -1,3 +1,8 @@
+---
+title: "Which files can I use?"
+description: "Supported photo, video, RAW, and sidecar formats, preview limitations, related-file grouping, and checkout constraints."
+last_edited: 2026-09-21
+---
 # Which files can I use?
 
 Keep the exact original file even when Fotobank cannot show a preview.

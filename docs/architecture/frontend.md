@@ -1,3 +1,8 @@
+---
+title: "Frontend"
+description: "The embedded Svelte web app, generated API contract, browser state, shared controls, and frontend tests."
+last_edited: 2026-09-21
+---
 # Frontend
 
 The web app lets people browse and manage the library through the daemon's API.

@@ -1,3 +1,8 @@
+---
+title: "Data Model"
+description: "Fotobank catalog tables, ownership rules, file-version references, privacy state, and transactional invariants."
+last_edited: 2026-09-13
+---
 # Data Model
 
 The catalog records your photos, their related files, and your organizational

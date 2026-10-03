@@ -1,3 +1,8 @@
+---
+title: "Maintaining the documentation"
+description: "Where to edit Fotobank documentation, how to build and check the site, and how operators publish it manually."
+last_edited: 2026-09-21
+---
 # Maintaining the documentation
 
 Edit the source pages, then build the complete site to check their links.

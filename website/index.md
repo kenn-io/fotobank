@@ -1,3 +1,8 @@
+---
+title: "A photo system of record you control"
+description: "Fotobank product overview covering a self-hosted photo library, related files, editing, automation, and optional AI."
+last_edited: 2026-09-20
+---
 # A photo system of record you control
 
 Fotobank is a self-hosted photo library. It keeps your original files and every

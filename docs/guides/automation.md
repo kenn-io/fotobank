@@ -1,3 +1,8 @@
+---
+title: "Automate Fotobank"
+description: "CLI and HTTP workflows for scripts and agents, including structured results, permissions, partial failures, and retry behavior."
+last_edited: 2026-09-21
+---
 # Automate Fotobank
 
 Find photos, download originals, and manage the library from scripts or agents.

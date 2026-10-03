@@ -1,3 +1,8 @@
+---
+title: "Import photos"
+description: "Import local photo folders without changing source files, recover interrupted imports, and refresh photo locations."
+last_edited: 2026-09-21
+---
 # Import photos
 
 Copy a folder into your photo library while Fotobank stays running. The import

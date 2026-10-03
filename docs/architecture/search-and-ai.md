@@ -1,3 +1,8 @@
+---
+title: "Search and AI"
+description: "Metadata and semantic search indexes, optional AI jobs, embedding generations, provider boundaries, and privacy rules."
+last_edited: 2026-10-02
+---
 # Search and AI
 
 Fotobank searches photo metadata and can use optional AI to describe and find

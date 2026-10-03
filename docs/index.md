@@ -1,3 +1,8 @@
+---
+title: "Use Fotobank"
+description: "Find Fotobank user guides, release information, architecture references, and documentation maintenance instructions."
+last_edited: 2026-09-21
+---
 # Use Fotobank
 
 Keep original photos and their versions, organize your library, and edit files

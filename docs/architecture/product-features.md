@@ -1,3 +1,8 @@
+---
+title: "Product Features"
+description: "The services behind photo imports, metadata, thumbnails, albums, sharing, hidden media, settings, and events."
+last_edited: 2026-09-13
+---
 # Product Features
 
 Fotobank groups related files into photos, organizes them into albums, and

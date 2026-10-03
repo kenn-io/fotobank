@@ -1,3 +1,8 @@
+---
+title: "Set up Fotobank"
+description: "Build Fotobank 0.1.0, configure local storage, start a first library, import sample photos, and manage the daemon."
+last_edited: 2026-09-21
+---
 # Set up Fotobank
 
 Set up your first library, import a small collection, and open it in the web

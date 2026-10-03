@@ -1,3 +1,8 @@
+---
+title: "Fotobank Architecture"
+description: "A map of Fotobank architecture, component ownership, implementation entry points, and system invariants."
+last_edited: 2026-09-13
+---
 # Fotobank Architecture
 
 Use this map to find who owns each part of Fotobank and which rules a code

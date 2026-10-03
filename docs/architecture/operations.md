@@ -1,3 +1,8 @@
+---
+title: "Operations"
+description: "Fotobank configuration, server lifecycle, coordinated backup and restore, observability, maintenance, and CI."
+last_edited: 2026-09-28
+---
 # Operations
 
 Use this reference to understand configuration, server lifecycle, backup, and

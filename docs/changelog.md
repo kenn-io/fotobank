@@ -1,3 +1,8 @@
+---
+title: "Changelog"
+description: "Released Fotobank features, improvements, and bug fixes, starting with the pre-alpha 0.1.0 release."
+last_edited: 2026-09-21
+---
 # Changelog
 
 See what changed in each Fotobank release. For installation and a first import,

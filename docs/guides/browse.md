@@ -1,3 +1,8 @@
+---
+title: "Browse and find photos"
+description: "Browse and search photos, manage album selections, download originals, and find privacy and workflow settings."
+last_edited: 2026-09-21
+---
 # Browse and find photos
 
 Use the web app to find photos, organize albums, and download original files.

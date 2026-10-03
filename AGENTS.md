@@ -119,6 +119,11 @@ Background workers (e.g. `internal/thumb/worker.go`) follow the same rule: they'
 
 Write for the person trying to use or maintain Fotobank.
 
+Every new Markdown file, except root `README.md` and `AGENTS.md`, must have YAML
+frontmatter with `title`, `description`, and `last_edited`, in that order.
+Update `last_edited` to the body-edit date whenever you change the body of any
+nonexempt Markdown file; preserve it for metadata-only edits.
+
 - Fotobank 0.1.0 is a pre-alpha release. Do not add upgrade or migration guides for
   unreleased development builds unless the user explicitly requests them.
 - Lead with the outcome, name who does what, use short sentences, and explain

@@ -1,3 +1,8 @@
+---
+title: "Runtime and Boundaries"
+description: "Fotobank daemon composition, package boundaries, identity and authorization, HTTP contracts, and operator lifecycle."
+last_edited: 2026-09-16
+---
 # Runtime and Boundaries
 
 The daemon owns the catalog, file storage, and background work. The CLI and web
