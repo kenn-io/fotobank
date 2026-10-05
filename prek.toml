@@ -38,7 +38,7 @@ hooks = [
     id = "huma-check",
     name = "huma API contract check",
     language = "system",
-    entry = "make huma-check",
+    entry = "make huma-check HUMA_CHECK_FLAGS=-fix=false",
     stages = ["pre-push"],
     always_run = true,
     pass_filenames = false,
