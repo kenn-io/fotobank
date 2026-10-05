@@ -241,6 +241,8 @@ the remaining dependency advisories tracked in kata.
    user explicitly asks you to monitor CI. Opening or updating a pull request
    does not grant that authority. Report any immediately available status and
    hand off without waiting for checks to finish.
+10. Pull requests must have a user-facing benefit or improve the developer
+    experience, and the body must say which one.
 
 ## Instructions for agents
 
