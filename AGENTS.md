@@ -215,8 +215,9 @@ the remaining dependency advisories tracked in kata.
    when concurrent work must not share a checkout.
 3. Push the feature branch and open or update its pull request as part of the
    handoff. Do not merge pull requests; merging is the user's job.
-4. Run `prek run` before committing. Never bypass hooks with `--no-verify`; fix
-   the underlying problem.
+4. Run `prek run` before committing. Commit hooks format and regenerate; lint,
+   short tests, huma-check, and nilaway run on push. Never bypass hooks with
+   `--no-verify`; fix the underlying problem.
 5. Use conventional commit messages (`fix:`, `feat:`, `refactor:`, `docs:`,
    `test:`, `chore:`, optionally scoped like `fix(httpapi):`). Use imperative
    mood and a subject of at most 72 characters. Keep one logical change per
