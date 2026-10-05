@@ -19,6 +19,7 @@ make dev              # live-reload via air (runs `serve`)
 make test             # go test ./... -shuffle=on
 make test-short       # short tests only
 make lint             # golangci-lint --fix + testify-helper-check
+make lint-check       # golangci-lint without --fix (pre-push hook)
 make nilaway          # pre-push tier
 make tidy             # go mod tidy
 make api-generate     # regenerate openapi.yaml

@@ -11,7 +11,7 @@ BIN_DIR := bin
 BINARY  := $(BIN_DIR)/fotobank
 VERCEL  := mise exec -- bunx vercel@58.4.4
 
-.PHONY: build build-release install dev test test-short test-e2e vet lint nilaway \
+.PHONY: build build-release install dev test test-short test-e2e vet lint lint-check nilaway \
         testify-helper-check huma-check tidy api-generate \
         install-hooks clean help docs-build docs-check docs-serve docs-link docs-deploy \
         ensure-embed-dir frontend frontend-dev frontend-check air-install
@@ -102,6 +102,9 @@ vet: ## Run go vet
 lint: ## Run golangci-lint + testify-helper-check
 	mise exec -- golangci-lint run --fix
 	$(MAKE) testify-helper-check
+
+lint-check: ## Run golangci-lint without fixing files
+	mise exec -- golangci-lint run
 
 # Keep the existing check; newer Kit releases replace it with broader rules.
 testify-helper-check: ## Enforce testify helper usage

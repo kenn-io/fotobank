@@ -46,9 +46,9 @@ hooks = [
   },
   {
     id = "golangci-lint",
-    name = "golangci-lint --fix",
+    name = "golangci-lint",
     language = "system",
-    entry = "make lint",
+    entry = "make lint-check",
     stages = ["pre-push"],
     files = "^(go\\.mod|go\\.sum|.*\\.go)$",
     pass_filenames = false,
