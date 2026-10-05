@@ -11,7 +11,7 @@ BIN_DIR := bin
 BINARY  := $(BIN_DIR)/fotobank
 VERCEL  := mise exec -- bunx vercel@58.4.4
 
-.PHONY: build build-release install dev test test-short test-e2e vet lint nilaway \
+.PHONY: build build-release install dev test test-short test-e2e vet lint lint-check nilaway \
         testify-helper-check huma-check tidy api-generate \
         install-hooks clean help docs-build docs-check docs-serve docs-link docs-deploy \
         ensure-embed-dir frontend frontend-dev frontend-check air-install
@@ -103,13 +103,16 @@ lint: ## Run golangci-lint + testify-helper-check
 	mise exec -- golangci-lint run --fix
 	$(MAKE) testify-helper-check
 
+lint-check: ## Run golangci-lint without fixing files
+	mise exec -- golangci-lint run
+
 # Keep the existing check; newer Kit releases replace it with broader rules.
 testify-helper-check: ## Enforce testify helper usage
 	go run go.kenn.io/kit/cmd/testify-helper-check@v0.24.1 ./...
 
 # Kit PR #84 is merged; pin its merge until huma-check has a release tag.
 huma-check: ## Check JSON v2, OpenAPI, and generated API clients
-	go run go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d ./...
+	go run go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d $(HUMA_CHECK_FLAGS) ./...
 
 nilaway: ## Run nilaway (pre-push tier)
 	go run go.uber.org/nilaway/cmd/nilaway -tags sqlite_fts5 -include-pkgs=go.kenn.io/fotobank -exclude-pkgs=go.kenn.io/fotobank/frontend/node_modules ./...
