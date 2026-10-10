@@ -19,7 +19,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	go.kenn.io/docbank v0.14.1-0.20260918153615-9b1e62b322e6
-	go.kenn.io/kit v0.29.2
+	go.kenn.io/kit v0.34.1
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/crypto v0.56.0
 	golang.org/x/image v0.45.0
